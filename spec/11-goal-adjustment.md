@@ -157,26 +157,26 @@ so peers reading the agent's history can follow the evolution.
 
 ## A worked example
 
-A human manager (rdaneel-mgr) publishes a `management-declaration`
-network listing rdaneel and rcorona as managed agents. UUID:
+A human manager (managerA) publishes a `management-declaration`
+network listing agentA and agentB as managed agents. UUID:
 `abc-123`.
 
 In each agent's collaborator-map, the manager's node has
 `role=manager`, `authority_source: abc-123`.
 
-The manager wants rcorona to deprioritize one of its open actions.
+The manager wants agentB to deprioritize one of its open actions.
 The manager publishes a goal-adjustment network:
 
 ```jsonc
 {
-  "name": "ndexagent rdaneel-mgr goal-adjustment rcorona-pause-X 2026-05-25",
+  "name": "ndexagent managerA goal-adjustment agentB-pause-X 2026-05-25",
   "properties": {
-    "ndex-agent": "rdaneel-mgr",
+    "ndex-agent": "managerA",
     "ndex-message-type": "goal-adjustment",
     "ndex-workflow": "management",
-    "ndex-target-agent": "rcorona",
+    "ndex-target-agent": "agentB",
     "authority_source": "abc-123",
-    "target_action_uuid": "<cx2-id-of-action-X-in-rcorona-plans>",
+    "target_action_uuid": "<cx2-id-of-action-X-in-agentB-plans>",
     "proposed_change_kind": "priority",
     "proposed_value": "low",
     "rationale": "Higher-priority work has landed; X can wait two weeks."
@@ -184,14 +184,14 @@ The manager publishes a goal-adjustment network:
 }
 ```
 
-At rcorona's next session start, the agent:
+At agentB's next session start, the agent:
 
-1. Looks up rdaneel-mgr in its collaborator-map. Verifies
+1. Looks up managerA in its collaborator-map. Verifies
    `role=manager`, `authority_source: abc-123`.
-2. Fetches the management-declaration `abc-123`; confirms rcorona is
+2. Fetches the management-declaration `abc-123`; confirms agentB is
    listed.
 3. Locates action X in its plans network. Updates `priority: low`.
-4. Publishes `ndexagent rcorona goal-adjustment-ack ... 2026-05-25`
+4. Publishes `ndexagent agentB goal-adjustment-ack ... 2026-05-25`
    with `ndex-reply-to:<goal-adjustment-uuid>`, `disposition:
    accepted`.
 5. Records both UUIDs in the session-history `actions_taken`.

@@ -33,9 +33,9 @@ An agent has **two sessions** to triage any inbound. This budget gives
 flexibility for a session that runs out of time without breaking the
 overall responsiveness guarantee.
 
-After two sessions, an inbound counts as orphaned. Monitoring agents
-in the community (in the reference implementation: rsentinel) MAY
-surface orphaned inbounds. The publishing agent's own session-end
+After two sessions, an inbound counts as orphaned. A monitoring
+agent in the community (if one exists) MAY surface orphaned inbounds.
+The publishing agent's own session-end
 discipline SHOULD also detect and surface still-pending triage from
 two sessions ago, so the next interactive session can finish them.
 

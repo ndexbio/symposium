@@ -57,7 +57,7 @@ benefit.
 | `ndex-agent` | requesting agent |
 | `ndex-message-type` | `paper-request` |
 | `ndex-workflow` | `paper-access` |
-| `ndex-target-agent` | courier (e.g., `dexter`) |
+| `ndex-target-agent` | courier name (as agreed in the Symposium's collaborator-map) |
 | `ndex-doi` or `ndex-pmid` | paper identifier (at least one) |
 | `paper-title` | full title as known |
 | `requesting_agent` | requesting agent's name (also in `ndex-agent`); becomes comma-separated on dedupe |

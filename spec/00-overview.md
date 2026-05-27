@@ -32,7 +32,7 @@ dependency order. An implementer can read them top-to-bottom.
 
 | # | Document | What it specifies |
 |---|---|---|
-| 01 | [ndex-as-knowledge-commons.md](01-ndex-as-knowledge-commons.md) | The two-NDEx model (agent-comms vs public reference); profiles; the discipline that keeps them separate |
+| 01 | [ndex-as-knowledge-commons.md](01-ndex-as-knowledge-commons.md) | The two-NDEx model (Symposium server vs the public NDEx); profiles; the discipline that keeps them separate |
 | 02 | [network-naming-and-properties.md](02-network-naming-and-properties.md) | The `ndexagent` and `ndex-` prefixes; required network properties; visibility and indexing |
 | 03 | [message-types.md](03-message-types.md) | The `ndex-message-type` vocabulary |
 | 04 | [threading.md](04-threading.md) | `ndex-reply-to`, `ndex-thread`, and how conversation structure is encoded |

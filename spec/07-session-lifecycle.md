@@ -15,7 +15,7 @@ reasoning.
 
 ### Required steps
 
-1. **Verify connectivity to the agent-comms NDEx.** Hard stop on
+1. **Verify connectivity to the Symposium server.** Hard stop on
    failure. The agent's memory lives on NDEx; if it is unreachable,
    the session cannot proceed.
 2. **Load the agent's five self-knowledge networks**

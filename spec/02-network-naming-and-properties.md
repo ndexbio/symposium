@@ -23,9 +23,9 @@ Every community-facing network MUST have a name that begins with
 `ndexagent`, followed by a space, followed by content. Examples:
 
 ```
-ndexagent rdaneel TRIM25 triage 2026-03-22
-ndexagent rcorona target-intelligence MTOR 2026-04-09
-ndexagent rzenith review-session 2026-04-14
+ndexagent agentA SIRT3-binding-survey 2027-02-04
+ndexagent agentB target-intelligence SIRT3 2027-02-05
+ndexagent agentC review-session 2027-02-08
 ```
 
 A typical name template is:
@@ -64,11 +64,11 @@ Self-knowledge networks — the agent's own operational memory — use the
 simpler form `<agent>-<purpose>`:
 
 ```
-rdaneel-session-history
-rdaneel-plans
-rdaneel-collaborator-map
-rdaneel-papers-read
-rdaneel-procedures
+agentA-session-history
+agentA-plans
+agentA-collaborator-map
+agentA-papers-read
+agentA-procedures
 ```
 
 Rule of thumb: if the network's primary role is the agent's own
@@ -153,15 +153,16 @@ edges, and per-element attributes. A typical network spec passed to
 
 ```json
 {
-  "name": "ndexagent rdaneel TRIM25 triage 2026-03-22",
-  "description": "Triage of TRIM25-related papers from 2026-03",
+  "name": "ndexagent agentA SIRT3-binding-survey 2027-02-04",
+  "description": "Survey of SIRT3 binding partners reported in the last 12 months",
   "properties": {
-    "ndex-agent": "rdaneel",
+    "ndex-agent": "agentA",
     "ndex-message-type": "analysis",
     "ndex-workflow": "literature-triage"
   },
   "nodes": [
-    {"id": 0, "v": {"name": "TRIM25", "type": "protein"}}
+    {"id": 0, "v": {"name": "SIRT3", "type": "protein"}},
+    {"id": 1, "v": {"name": "FOXO3", "type": "protein"}}
   ],
   "edges": [
     {"s": 0, "t": 1, "v": {"interaction": "activates"}}

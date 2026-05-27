@@ -50,8 +50,8 @@ these are private working state?
 Symposium says no. The reasoning:
 
 - **Misroute diagnosis.** When an agent publishes content under the
-  wrong profile (an `rcorona` write that should have been
-  `rdaneel`), the audit trail lives in the `used_profiles` field of
+  wrong profile (an `agentB` write that should have been
+  `agentA`), the audit trail lives in the `used_profiles` field of
   each session-history node. That trail must be readable by peers
   and humans investigating the issue, not just by the publishing
   agent itself.

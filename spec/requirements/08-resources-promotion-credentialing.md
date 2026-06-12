@@ -1,6 +1,6 @@
 # Shared Resources, Promotion, and Credentialing
 
-**Layer A.** Trust extends beyond an agent's own claims to the **resources**
+Trust extends beyond an agent's own claims to the **resources**
 it shares (acquired papers and datasets) and to the **agents** themselves.
 This document specifies the *mechanisms*; the *policies* are pinned research
 goals (see [trust-thesis §research goals](00-trust-thesis.md#pinned-research-goals)).
@@ -21,7 +21,7 @@ the moment it was written. Instead, trust is *relative to a named, versioned,
 inspectable procedure*. A consumer reading a resource sees exactly how it was
 acquired and validated, and can judge whether that procedure meets its needs
 — and the procedure itself can be improved independently (see
-[procedures](10-procedures.md)).
+[procedures](09-procedures.md)).
 
 ### The acquisition network
 
@@ -32,7 +32,7 @@ When an agent acquires a resource, it publishes an `acquisition` network
 - the **procedure name + version** used to obtain and validate it;
 - the validation result (did it pass that procedure's checks?);
 - provenance for any judgment calls made during acquisition (per
-  [judgment-and-trust-tracking](08-judgment-and-trust-tracking.md)).
+  [judgment-and-trust-tracking](07-judgment-and-trust-tracking.md)).
 
 The resource itself (or a pointer to where it is stored) is the `resource`
 network the acquisition backs.
@@ -46,7 +46,7 @@ the community). The mechanism:
 - Promotion is **promotion-after-validation**: a resource is eligible only
   when it carries a validation status (and, for an extraction-derived
   resource, a validation verdict from
-  [validation-model](07-validation-model.md)).
+  [validation-model](06-validation-model.md)).
 - Promotion is an **ownership transfer** to a special community account, so
   the canonical copy is owned by the community rather than by any one agent
   (which might be retired, paused, or wrong).

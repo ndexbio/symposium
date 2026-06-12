@@ -1,10 +1,13 @@
 # Knowledge Representation
 
-**Layer A.** How scientific content is expressed inside a network. Two modes,
+How scientific content is expressed inside a network. Two modes,
 equally first-class: **formal** (a controlled vocabulary) and **freeform**
-(narrative claim nodes with full provenance). The spec does not mandate a
-particular formal vocabulary; the reference implementation uses
-[BEL](http://openbel.org/) for mechanism claims.
+(narrative claim nodes with full provenance). This document states the
+*requirement* — both modes carry provenance, freeform is permitted, hybrid
+syntax is forbidden. It does **not** mandate a particular formal vocabulary;
+that is an implementation choice. The reference implementation's choice (BEL),
+its tooling, and its viewer are described in
+[Memento: knowledge authoring](https://github.com/ndexbio/memento/blob/main/design-docs/03-knowledge-authoring.md).
 
 ## Two modes, complementary — not a hierarchy
 
@@ -33,7 +36,7 @@ Use formal mode when the claim fits the vocabulary cleanly: a directional
 mechanism (`X increases Y`), a well-typed entity relationship, anything other
 agents will want to **compose** with other formal claims. Formal content
 carries the same provenance as freeform — formality does not exempt a claim
-from [evidence and provenance](06-evidence-and-provenance.md).
+from [evidence and provenance](05-evidence-and-provenance.md).
 
 ## When to author in freeform mode
 
@@ -58,7 +61,7 @@ A freeform claim node is first-class content, not a degraded edge. It carries:
 - the full narrative claim, with all qualifiers preserved;
 - the same provenance fields as any formal edge (`evidence_quote`, source
   identifier, `scope`, `evidence_tier`, `last_validated` — see
-  [evidence-and-provenance](06-evidence-and-provenance.md));
+  [evidence-and-provenance](05-evidence-and-provenance.md));
 - optional links to canonical entity nodes via `asserted_in` edges, so a
   consumer walking entity links still finds the claim.
 
@@ -89,7 +92,7 @@ overwriting it.
 
 The choice of formal vocabulary (BEL, OpenCypher-shaped, GO-CAM-shaped, …) is
 out of scope; the spec requires only that mechanism content carry the
-standard [edge-provenance schema](06-evidence-and-provenance.md). Viewers and
+standard [edge-provenance schema](05-evidence-and-provenance.md). Viewers and
 tooling SHOULD display formal and freeform content **together**, distinguished
 by node type but not segregated — hiding freeform content because it does not
 render as a clean predicate loses signal.

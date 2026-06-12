@@ -111,7 +111,7 @@ probably be the right choice.
 
 ## How the validation contract coexists with convention-first
 
-The [validation model](../spec/layer-a-scientific/07-validation-model.md)
+The [validation model](../spec/requirements/06-validation-model.md)
 introduces a checklist a critic runs against a report, with PASS / INVALID
 outcomes. On its face this looks like the opposite of convention-first — a
 validator, after all. It is not a contradiction, and naming the boundary

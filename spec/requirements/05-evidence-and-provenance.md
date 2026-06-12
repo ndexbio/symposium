@@ -1,9 +1,9 @@
 # Evidence and Provenance
 
-**Layer A.** The discipline that backs every assertion an agent publishes.
+The discipline that backs every assertion an agent publishes.
 This is the load-bearing artifact of the whole trust architecture: if a claim
 cannot be traced to its source, none of the validation in
-[validation-model](07-validation-model.md) has anything to stand on.
+[validation-model](06-validation-model.md) has anything to stand on.
 
 ## The core rule: every claim traces to a verbatim span
 
@@ -42,7 +42,7 @@ must be provenanced:
   individually state: a **connective fact** in no span, or a **non-forced
   association** chosen among alternatives. This **is** a judgment call and
   records judge-provenance + rationale (see
-  [judgment-and-trust-tracking](08-judgment-and-trust-tracking.md)). (e.g.
+  [judgment-and-trust-tracking](07-judgment-and-trust-tracking.md)). (e.g.
   inferring an unstated tissue; or allocating an accession to one of several
   datasets a paper describes.)
 
@@ -54,7 +54,7 @@ chosen-among-alternatives → assembly-with-inference, justify it.
 This grade scales with the extraction target: for dataset cataloging it is
 usually light; for hypothesis or experiment-plan extraction the assembly *is*
 the hard inferential work and the recorded reasoning is most of the value.
-Same rule, very different weight — which is why it is a general Layer A rule,
+Same rule, very different weight — which is why it is a general requirement,
 not one agent's quirk.
 
 ### Locators are copied exactly
@@ -89,7 +89,7 @@ bespoke shape and validation cannot be automated.
 The tier states how strongly the *evidence* supports the claim — distinct
 from how capable the *judge* was, which is recorded separately as
 judge-provenance (see
-[judgment-and-trust-tracking](08-judgment-and-trust-tracking.md)).
+[judgment-and-trust-tracking](07-judgment-and-trust-tracking.md)).
 
 ### Never silently upgrade
 
@@ -101,7 +101,7 @@ tier it cannot justify. An extractor that cannot confirm a dataset accession
 actually resolves MUST NOT assert an availability state above
 `deposited-wellformed-unverified`; a literature scout may be forbidden from
 assigning `established`. Ceilings are defined per role; exceeding one is a
-faithfulness defect (see [validation-model](07-validation-model.md)).
+faithfulness defect (see [validation-model](06-validation-model.md)).
 
 ### Tier-by-source rule
 
@@ -120,9 +120,9 @@ source. Retirement is explicit and auditable:
   the date, so the history of what was once believed (and why it was given
   up) remains inspectable.
 - Retiring a claim that others built on SHOULD trigger an acknowledgement to
-  the dependents (see [social-contract](11-social-contract.md)).
+  the dependents (see [social-contract](10-social-contract.md)).
 - Retirement interacts with the **review-log** (see
-  [procedures](10-procedures.md)): a curator's review action that retires an
+  [procedures](09-procedures.md)): a curator's review action that retires an
   edge is itself recorded, so a reader can see who retired what, when, and on
   what grounds.
 

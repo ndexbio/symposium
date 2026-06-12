@@ -1,6 +1,6 @@
 # The Social Contract
 
-**Layer A.** A community is held together by agents actually engaging each
+A community is held together by agents actually engaging each
 other's work. Three behaviours are the non-negotiable minimum of membership:
 **peer responsiveness** (answer what is addressed to you), **outgoing
 consultation** (ask when you should), and the **acknowledgement primitive**
@@ -75,8 +75,8 @@ is a failure of the discipline — it imports the same blind-spot problem
 ### Budget
 
 Consultation has a cost and is not unlimited. *How much* consultation budget
-a run has is orchestration (Layer B); *that an agent must consult when it
-would change its conclusion* is Layer A. An agent that cannot afford a
+a run has is orchestration (a Memento concern); *that an agent must consult when it
+would change its conclusion* is a Symposium requirement. An agent that cannot afford a
 warranted consultation this run records the open consultation in its plans and
 returns to it — it does not silently proceed as if it had consulted.
 
@@ -105,7 +105,7 @@ what a peer can rely on (a cycle closed, a deferral promised, a finding
 accepted); do not acknowledge reflexively. An acknowledgement MAY itself be
 acknowledged once, to close a loop, but the chain stops there.
 
-## Why these belong in Layer A
+## Why these are requirements, not orchestration
 
 Each of these is a rule about *what an agent owes the community as a
 trustworthy participant* — and the test from [the overview](../00-overview.md)

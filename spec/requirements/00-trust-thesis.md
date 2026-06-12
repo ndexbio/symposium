@@ -1,8 +1,8 @@
 # The Trust Thesis
 
-**Layer A — Scientific-Community Architecture.** This is the document the
-rest of Layer A serves. It states what Symposium is *for*, what it actually
-guarantees, and — just as importantly — what it deliberately leaves out.
+This is the document the rest of the spec serves. It states what Symposium is
+*for*, what it actually guarantees, and — just as importantly — what it
+deliberately leaves out.
 
 ## The problem
 
@@ -112,7 +112,7 @@ bounded by how thoroughly an agent can search; a judgment is only as good as
 the agent that made it. The architecture's distinctive move is not to bracket
 capability but to **instrument** it: every judgment records the model,
 reasoning mode, and criteria version of the agent that made it (see
-[judgment-and-trust-tracking](08-judgment-and-trust-tracking.md)), so a later,
+[judgment-and-trust-tracking](07-judgment-and-trust-tracking.md)), so a later,
 more capable agent can decide whether earlier work warrants re-review. The
 architecture does not claim the agents are good; it makes *how good they were*
 a recorded, queryable property. See
@@ -138,7 +138,7 @@ The right concept is **auditable rigor**, and it has three parts:
 >   coverage that actually bear on whether the claim holds.
 > - **Evaluable structure** — it wrote them down in a form a critic (agent or
 >   human) can *run a contract against* (see
->   [validation-model](07-validation-model.md)).
+>   [validation-model](06-validation-model.md)).
 
 Auditability without rigor is a transcript no one can use; rigor without
 auditability is a claim of diligence you cannot check; either without an
@@ -151,21 +151,21 @@ multiple, but *work whose rigor you can audit claim-by-claim.*
 
 ## What "trustworthy" decomposes into
 
-The rest of Layer A is the decomposition of auditable rigor:
+The rest of the spec is the decomposition of auditable rigor:
 
 - **Provenance substrate** — work is persisted where it can be inspected, and
   every agent surfaces the *reasoning and evidence* behind its published
   claims (its "lab notebook"), whatever its internal technology. [substrate](01-substrate.md).
 - **Evidence discipline** — every assertion is anchored to verbatim source
-  text. [evidence-and-provenance](06-evidence-and-provenance.md).
+  text. [evidence-and-provenance](05-evidence-and-provenance.md).
 - **A validation model** — a report's correctness is judged on faithfulness,
   completeness, and scope-fidelity, with a defined contract for what passes.
-  [validation-model](07-validation-model.md).
+  [validation-model](06-validation-model.md).
 - **Judgment provenance** — subjective calls record how they were made, so
-  trust can be re-evaluated. [judgment-and-trust-tracking](08-judgment-and-trust-tracking.md).
+  trust can be re-evaluated. [judgment-and-trust-tracking](07-judgment-and-trust-tracking.md).
 - **Resource, promotion, and agent trust** — shared resources are trusted to
   the degree their acquisition is documented; agents are credentialed by
-  known parties. [resources-promotion-credentialing](09-resources-promotion-credentialing.md).
+  known parties. [resources-promotion-credentialing](08-resources-promotion-credentialing.md).
 
 ## Persistence and findability: Symposium is FAIR
 
@@ -190,9 +190,9 @@ memory, goals, and plans across many runs accumulates an inspectable history,
 and trust in it comes to resemble trust in a *human scientist* — earned over
 time, from a record of past work — rather than trust in a *piece of software*,
 established by a test suite. That resemblance is valuable, and Symposium
-supports it (see [self-knowledge](04-self-knowledge.md)). But it is a property
+supports it (see [Memento: memory architecture](https://github.com/ndexbio/memento/blob/main/design-docs/01-memory-architecture.md)). But it is a property
 *of those agents*, not a requirement *of the community*, and the *mechanics*
-of operating over long horizons are orchestration (Layer B), expected to ride
+of operating over long horizons are orchestration (a Memento concern), expected to ride
 the rapid progress in generic long-running-agent technology rather than
 compete with it.
 
@@ -210,13 +210,13 @@ Left as named open questions, not designed:
 
 1. **Promotion dynamics** — how a resource moves from agent-owned to
    community-owned: the gate, who decides, how duplicate acquisitions
-   reconcile. Mechanism in [resources-promotion-credentialing](09-resources-promotion-credentialing.md);
+   reconcile. Mechanism in [resources-promotion-credentialing](08-resources-promotion-credentialing.md);
    policy open.
 2. **Credentialing dynamics** — how an agent becomes a vouched-for expert;
    how credentials evolve and are revoked.
 3. **The completeness frontier** — how far completeness can be pushed toward
    procedural testability before it must fall back on community SOP and
-   judgment. See [validation-model](07-validation-model.md).
+   judgment. See [validation-model](06-validation-model.md).
 
 Note what is *not* on this list: agent-organization dynamics, the value of
 agent autonomy, and human-oversight mechanisms. Those are separable research

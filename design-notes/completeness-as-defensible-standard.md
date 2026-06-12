@@ -10,7 +10,7 @@ important single idea in the trust architecture.
 
 Faithfulness is grounded: every claim points at a span, so a checker verifies
 the link without re-deriving the science (see
-[evidence-and-provenance](../spec/layer-a-scientific/06-evidence-and-provenance.md)).
+[evidence-and-provenance](../spec/requirements/05-evidence-and-provenance.md)).
 Completeness has no such ground. To know what the report *omitted*, a checker
 would have to know what the source contains that the report does not — which is
 to say, it would have to redo the extraction. "Did the agent find every
@@ -64,7 +64,7 @@ adequate. This has three payoffs:
    report that cited an old version remains interpretable.
 3. **A rising bar.** The community decides which coverage procedures count as
    adequate, and that bar rises as agents improve. This is the
-   [completeness frontier](../spec/layer-a-scientific/07-validation-model.md)
+   [completeness frontier](../spec/requirements/06-validation-model.md)
    research goal: how far completeness can be pushed toward procedural
    testability before it must fall back on SOP and judgment.
 
@@ -88,5 +88,5 @@ budget and the context to do so. When it did not — too small a batch, the
 supplementary never loaded — the agent does not get to claim "done." It records
 what it could cover and the verdict becomes VALID-WITH-GAPS. The standard stays
 fixed; the shortfall is recorded, not hidden. This is the adequacy rule (see
-[layer-separation.md](layer-separation.md) and
+[requirements-vs-methods.md](requirements-vs-methods.md) and
 [CRITIQUE.md §7](../CRITIQUE.md)), and completeness is the place it bites hardest.

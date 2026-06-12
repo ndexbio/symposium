@@ -91,9 +91,10 @@ free to hold its diary however it likes. The reference implementation
 (*Self KB*) plus a query cache (*Local Store*), and derives the published
 notebook from Self KB — but a different agent could use a database, flat files,
 or nothing, and remain conformant. Self KB and Local Store are *a* way to hold
-the diary, documented in [substrate](../spec/layer-a-scientific/01-substrate.md)
-and [self-knowledge](../spec/layer-a-scientific/04-self-knowledge.md); they are
-not what Symposium requires.
+the diary, summarized in [substrate](../spec/requirements/01-substrate.md) and
+documented in
+[Memento's memory-architecture design doc](https://github.com/ndexbio/memento/blob/main/design-docs/01-memory-architecture.md);
+they are not what Symposium requires.
 
 ## The one decision still worth confirming
 

@@ -1,6 +1,6 @@
 # The Validation Model
 
-**Layer A.** How the *correctness of an agent's report* is judged: what is
+How the *correctness of an agent's report* is judged: what is
 being judged, what can be tested procedurally, what must fall to documented
 judgment, how an agent knows it is done, and the contract a critic runs
 against any report. This is the operational heart of the trust claim.
@@ -82,7 +82,7 @@ interpretation.
 ## 3. Faithfulness — a mechanical core and a bounded judgment shell
 
 The discipline that makes faithfulness checkable is in
-[evidence-and-provenance](06-evidence-and-provenance.md): verbatim spans, the
+[evidence-and-provenance](05-evidence-and-provenance.md): verbatim spans, the
 span *set* as anchor, the **assembly / assembly-with-inference** grade, exact
 locators. This document is about what a *checker* can verify.
 
@@ -176,28 +176,31 @@ improve.
 ### 4.3 The coverage procedure is a first-class, versioned artifact
 
 Because "done" rests on the coverage procedure, that procedure is a
-**versioned, cited artifact** (see [procedures](10-procedures.md)). A report
+**versioned, cited artifact** (see [procedures](09-procedures.md)). A report
 records *which* coverage procedure + version it ran. Trust in the report's
 completeness is then no better and no worse than trust in that procedure —
 and the procedure is inspectable and improvable independently. A report
 validated under coverage-procedure v1.3 stays honestly labeled after v1.4
 exists; re-validation under v1.4 is a distinct, logged act.
 
-### 4.4 The Layer B adequacy rule
+### 4.4 The adequacy rule
 
 Completeness presumes the orchestration gave the agent enough budget and
 enough of the source in view to *run* the coverage procedure. That dependency
 is real and is stated, not hidden:
 
-> **Layer A defines the standard; Layer B (orchestration) must be adequate to
-> it. Where orchestration cannot afford the coverage procedure — too small a
-> batch, too tight a budget, the supplementary never in context — the result
-> is VALID-WITH-GAPS, never silently "done."**
+> **Symposium defines the standard; the orchestration (a Memento concern) must
+> be adequate to it. Where orchestration cannot afford the coverage procedure —
+> too small a batch, too tight a budget, the supplementary never in context —
+> the result is VALID-WITH-GAPS, never silently "done."**
 
-This keeps the standard wholly in Layer A while making the dependency
-explicit and honest. See
-[layer-b-orchestration/00-why-this-is-separate.md](../layer-b-orchestration/00-why-this-is-separate.md)
-and [CRITIQUE.md §7](../../CRITIQUE.md).
+This keeps the standard wholly in the requirements while making the dependency
+on orchestration explicit and honest. The requirement/method boundary — and
+why orchestration is a Memento concern rather than a Symposium one — is in
+[design-notes/requirements-vs-methods.md](../../design-notes/requirements-vs-methods.md);
+the orchestration design itself is in
+[Memento's orchestration design doc](https://github.com/ndexbio/memento/blob/main/design-docs/02-orchestration.md).
+See also [CRITIQUE.md §7](../../CRITIQUE.md).
 
 *dscout instance:* dscout's coverage procedure names the sections to sweep,
 the identifier patterns per repository-of-interest, and the dataset-mention
@@ -240,7 +243,7 @@ report. This is the concrete artifact to stress-test.
 
 *Judgment provenance:*
 - [ ] Every judgment-call step carries judge-provenance proportional to its
-      stakes (see [judgment-and-trust-tracking](08-judgment-and-trust-tracking.md)).
+      stakes (see [judgment-and-trust-tracking](07-judgment-and-trust-tracking.md)).
 
 ### The trichotomy
 
@@ -250,7 +253,7 @@ report. This is the concrete artifact to stress-test.
 - **VALID-WITH-GAPS** when faithfulness and scope hold, fields are explicitly
   dispositioned, and the coverage procedure ran — but the procedure or a
   reviewer flags a known residual completeness risk (recorded, not hidden);
-  or when the Layer B adequacy rule (§4.4) could not be met.
+  or when the adequacy rule (§4.4) could not be met.
 - **VALID** when all checks pass with no flagged residual risk.
 
 The VALID / VALID-WITH-GAPS / INVALID verdict is itself a **trust signal that
@@ -264,7 +267,7 @@ decision consumes.** A report's validation status, its coverage-procedure
 citation, and its judgment-provenance are exactly what a promotion gate
 weighs. The validation model here is the *mechanism*; the promotion *policy*
 (who decides, what threshold, how duplicates reconcile) is a pinned research
-goal — see [resources-promotion-credentialing](09-resources-promotion-credentialing.md).
+goal — see [resources-promotion-credentialing](08-resources-promotion-credentialing.md).
 
 ## 7. Open seams
 
@@ -281,6 +284,6 @@ goal — see [resources-promotion-credentialing](09-resources-promotion-credenti
 3. **Criteria versioning.** Faithfulness/completeness/scope criteria are
    themselves versioned SOPs. Where they live (community SOP networks vs.
    per-agent procedures) and how an agent learns the current version needs a
-   home — see [procedures](10-procedures.md).
+   home — see [procedures](09-procedures.md).
 4. **VALID-WITH-GAPS semantics.** Whether this is one state or a small graded
    vocabulary, and how downstream consumers are required to treat it.

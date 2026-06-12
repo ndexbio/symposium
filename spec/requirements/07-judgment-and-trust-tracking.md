@@ -1,6 +1,6 @@
 # Judgment Provenance and Trust-Tracking
 
-**Layer A.** Many validation steps are not fully mechanical. The trust
+Many validation steps are not fully mechanical. The trust
 architecture's response is not to eliminate judgment but to make every
 judgment **provenanced and reviewable** — and to scale the weight of that
 provenance to the stakes.
@@ -11,14 +11,14 @@ The recurring judgment types:
 
 - **cross-span assembly-with-inference** — does joining these non-contiguous
   spans introduce a fact, or a chosen-among-alternatives association? (see
-  [evidence-and-provenance](06-evidence-and-provenance.md)). The most
+  [evidence-and-provenance](05-evidence-and-provenance.md)). The most
   frequent and the most error-prone: misallocating a statement to the wrong
   dataset, or importing an implied-but-unstated fact, is precisely the
   failure recorded reasoning is meant to surface.
 - **span-set support** — do the spans jointly support the claim?
 - **material-caveat** — is this assay caveat worth recording?
 - **coverage-adequacy** — was the sweep enough? (see
-  [validation-model](07-validation-model.md)).
+  [validation-model](06-validation-model.md)).
 
 ## Every judgment call carries judge-provenance
 

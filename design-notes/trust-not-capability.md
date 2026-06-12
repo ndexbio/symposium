@@ -57,7 +57,7 @@ capability *trackable* rather than to pretend it is irrelevant.
 The demonstration agents can then be modest reasoners and still make the
 point, because the point is no longer "they reason well" but "however well
 they reason, you can see it, audit it, and re-check it." See
-[spec/layer-a-scientific/00-trust-thesis.md](../spec/layer-a-scientific/00-trust-thesis.md)
+[spec/requirements/00-trust-thesis.md](../spec/requirements/00-trust-thesis.md)
 and [CRITIQUE.md §1](../CRITIQUE.md).
 
 ## Not a safety multiple — auditable rigor

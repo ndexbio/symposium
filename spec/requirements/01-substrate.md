@@ -1,6 +1,6 @@
 # The Persistence & Provenance Substrate
 
-**Layer A.** The architecture that makes an agent's work inspectable after
+The architecture that makes an agent's work inspectable after
 the fact. The normative core is small and **technology-agnostic**: a
 community commons to publish to, and a requirement that every agent surface
 the reasoning and evidence behind what it publishes. How an agent stores its
@@ -34,8 +34,7 @@ Symposium is **private to the community** — a lab or set of collaborating
 labs. This is deliberate: scientists want pre-publication work kept inside the
 community. The wider **public NDEx server is out of scope** for now, by
 choice. An agent may *read* reference content from the public NDEx as an
-external resource; it never publishes community content there. See
-[design-notes/substrate-three-roles.md](../../design-notes/substrate-three-roles.md).
+external resource; it never publishes community content there.
 
 Symposium is **ground truth for community content.** When the community needs
 to know what was claimed, by whom, and on what basis, Symposium is the
@@ -60,14 +59,14 @@ Concretely, the notebook an agent MUST surface — published *with* the claim it
 backs, in the community commons — includes:
 
 - the **verbatim source spans** anchoring each claim (see
-  [evidence-and-provenance](06-evidence-and-provenance.md));
+  [evidence-and-provenance](05-evidence-and-provenance.md));
 - the **judge-provenance** behind any subjective verdict — the judging agent,
   model, reasoning mode, and criteria version (see
-  [judgment-and-trust-tracking](08-judgment-and-trust-tracking.md));
+  [judgment-and-trust-tracking](07-judgment-and-trust-tracking.md));
 - the **coverage-procedure citation** (name + version) behind any "done"
-  claim (see [validation-model](07-validation-model.md));
+  claim (see [validation-model](06-validation-model.md));
 - the **acquisition/validation procedure** behind any shared resource (see
-  [resources-promotion-credentialing](09-resources-promotion-credentialing.md));
+  [resources-promotion-credentialing](08-resources-promotion-credentialing.md));
 - the **identity** under which a published network was written.
 
 Whatever an agent keeps beyond that — scratch plans, internal state, a
@@ -93,34 +92,22 @@ backs no community assertion. So the audit trail for everything the community
 can see and rely on lives in the community layer, independent of any agent's
 internal storage and independent of any management utility.
 
-## The reference implementation's private side (Self KB + Local Store)
+## The private side is the implementation's business
 
-The reference implementation ([Memento](https://github.com/ndexbio/memento))
-meets the private-state need with two mechanisms. **Neither is required by
-Symposium**; they are documented so implementers have a concrete model.
+Symposium requires the commons and the notebook; it does **not** specify how an
+agent holds its private working state (the diary). An implementation may use a
+database, flat files, a private NDEx, or keep no persistent state at all, and
+remains conformant as long as it publishes to the commons and surfaces the
+notebook for every claim.
 
-- **Self KB** — each agent's *own* NDEx, holding its self-knowledge networks
-  (work history, plans, collaborator map, papers read, procedures) as ground
-  truth, private to the agent. This is the diary. It is persisted via a
-  host-mounted directory so it survives container restart. The notebook an
-  agent surfaces is *derived from* Self KB and published to Symposium; Self KB
-  itself stays private. See [self-knowledge](04-self-knowledge.md).
-- **Local Store** — a queryable cache (SQLite catalog + LadybugDB graph DB)
-  holding copies of networks from either Self KB or Symposium, so the agent
-  can run cross-network queries without round-trips.
-
-The critical rule for the cache:
-
-> **Local Store is ground truth for nothing.** It is rebuilt at any time from
-> Self KB and Symposium. If it disagrees with a source, the source wins,
-> always.
-
-This keeps the reference substrate honest: Self KB is the agent's private
-truth, Symposium is the community's truth, Local Store is convenience.
-Durability means a write reached Self KB or Symposium — never that it reached
-the cache. A different implementation may hold its diary any way it likes (a
-database, files, nothing at all) and remains conformant as long as it
-publishes to the commons and surfaces the notebook.
+For a concrete model, the reference implementation
+([Memento](https://github.com/ndexbio/memento)) holds the diary as a per-agent
+private NDEx (*Self KB*, ground truth for the agent's own state) plus a query
+cache (*Local Store*) that is authoritative for nothing and rebuildable from
+Self KB and the commons. The design and its rationale — including why the cache
+is ground truth for nothing and how the published notebook is derived from the
+private diary — are in
+[Memento's memory-architecture design doc](https://github.com/ndexbio/memento/blob/main/design-docs/01-memory-architecture.md).
 
 ## Why NDEx
 
@@ -138,5 +125,5 @@ mechanism and FAIR guarantees apply throughout. See
 - Is this the agent's *private working state*, backing no community claim? →
   the agent's **diary**, kept however the implementation likes. Not required
   to be shared.
-- Is this a *copy held only to make querying convenient*? → a cache (Local
-  Store, in the reference implementation), authoritative for nothing.
+- Is this a *copy held only to make querying convenient*? → a cache,
+  authoritative for nothing (Local Store, in the reference implementation).

@@ -58,7 +58,7 @@ legible and auditable.* This is strictly stronger than "trust, not
 capability" — it owns the fact that capability matters and shows the
 architecture's distinctive move is to make capability *trackable* rather
 than to pretend it is irrelevant. The slogan survives; the dichotomy is
-dropped. (Reflected in `spec/layer-a-scientific/00-trust-thesis.md`.)
+dropped. (Reflected in `spec/requirements/00-trust-thesis.md`.)
 
 ## 2. The self-driving-car analogy promises a safety case the project disclaims
 
@@ -122,7 +122,7 @@ the same judge-provenance discipline as everything else. Don't let
 "procedural" do summary work that the detailed text already qualifies. The
 honest claim — "faithfulness has a checkable core and a small, bounded,
 provenanced judgment surface" — is more defensible and loses nothing.
-(Reflected in `spec/layer-a-scientific/07-validation-model.md`.)
+(Reflected in `spec/requirements/06-validation-model.md`.)
 
 ## 4. The privacy reversal is the weakest link in the audit story
 
@@ -173,7 +173,7 @@ than defer it. Two coherent options:
 
 The rewrite adopts (a) as the design and marks it as a deviation from the
 source documents, because leaving auditability to "utilities, out of scope"
-undercuts the thesis. See `spec/layer-a-scientific/01-substrate.md` and
+undercuts the thesis. See `spec/requirements/01-substrate.md` and
 `design-notes/community-privacy.md`. **This one is worth an explicit
 decision from you.**
 
@@ -230,9 +230,15 @@ nothing) and social pattern; the other is enforced by critic agents and
 human reviewers as a community standard that rises over time. Stating this
 boundary removes the contradiction and actually clarifies both ideas.
 (Reflected in `design-notes/conventions-not-ontologies.md` and
-`07-validation-model.md`.)
+`06-validation-model.md`.)
 
-## 7. The Layer A / Layer B boundary leaks in more than the one place you flagged
+## 7. The requirement/method boundary leaks in more than the one place you flagged
+
+> **Terminology note.** This document predates the requirements/methods
+> reorganization and the move of orchestration into the Memento repo. It uses
+> the earlier "Layer A / Layer B" framing throughout §7–§8: read **Layer A** as
+> **requirement (Symposium)** and **Layer B** as **method (Memento
+> orchestration)**.
 
 The layer separation is the project's best structural decision and the
 rewrite is organized around it. The layer-separation document already flags
@@ -257,9 +263,8 @@ stated, not left implicit.
 defines the standard; Layer B must be adequate to it; where orchestration
 cannot afford the standard, the result is VALID-WITH-GAPS, never silently
 "done."** This keeps the standard wholly in Layer A while making the
-dependency on Layer B explicit and honest. (Reflected in
-`spec/layer-b-orchestration/00-why-this-is-separate.md` and
-`07-validation-model.md`.)
+dependency on Layer B explicit and honest. (Reflected in the adequacy rule in
+`spec/00-overview.md` and `spec/requirements/06-validation-model.md §4.4`.)
 
 ## 8. The one-line test mis-sorts execution quality
 
@@ -280,7 +285,7 @@ the standard → orchestration. Only improves execution of a fixed standard →
 scientific (and the architecture's job is to record how well it was met)."
 This is the same test the author intends; it just guards against the
 mis-sort. (Reflected in `spec/00-overview.md` and
-`spec/layer-b-orchestration/00-why-this-is-separate.md`.)
+`design-notes/requirements-vs-methods.md`.)
 
 ---
 

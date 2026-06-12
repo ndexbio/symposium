@@ -1,6 +1,6 @@
 # Authority and Goal-Adjustment
 
-**Layer A.** How a manager steers an agent, and why this is a *separate
+How a manager steers an agent, and why this is a *separate
 protocol* from peer consultation. The distinguishing feature is **authority**:
 a goal-adjustment changes what the agent will do, so it is applied only after
 the agent verifies the adjuster's authority against a published anchor.
@@ -13,7 +13,7 @@ the agent verifies the adjuster's authority against a published anchor.
 
 A management-declaration is intrinsically community-readable — it asserts
 authority over agents who must be able to read it to honor it. An agent's
-[collaborator map](04-self-knowledge.md) records, for any collaborator with
+[collaborator map](https://github.com/ndexbio/memento/blob/main/design-docs/01-memory-architecture.md) records, for any collaborator with
 `role: manager`, the `authority_source`: the UUID of the
 management-declaration that authorizes the relationship.
 
@@ -24,7 +24,7 @@ A **goal-adjustment** (message-type `goal-adjustment`, addressed via
 to an agent's plans: a status change, a re-prioritization, a description
 change, or a new goal/action. It is distinct from a peer consultation: a
 consultation *informs* the agent's reasoning; a goal-adjustment *directs* the
-agent's plan tree (see [self-knowledge](04-self-knowledge.md)).
+agent's plan tree (see [Memento: memory architecture](https://github.com/ndexbio/memento/blob/main/design-docs/01-memory-architecture.md)).
 
 ## Application: verify, then apply
 
@@ -44,8 +44,8 @@ This is what stops an arbitrary network from steering an agent by simply
 An agent MAY refuse a verified goal-adjustment — authority is not unlimited
 obedience. Legitimate grounds include a conflict with a higher-authority
 instruction, a safety/scope violation, or an adjustment that would require the
-agent to violate the [evidence](06-evidence-and-provenance.md) or
-[validation](07-validation-model.md) disciplines. A refusal is recorded and
+agent to violate the [evidence](05-evidence-and-provenance.md) or
+[validation](06-validation-model.md) disciplines. A refusal is recorded and
 returned to the manager (it is itself a community artifact); silent
 non-compliance is not permitted any more than silent ignore is.
 
@@ -68,19 +68,20 @@ by definition.
 
 ## The authority/cadence boundary
 
-This protocol sits at a deliberate seam between the layers, and the boundary
-is worth stating precisely:
+This protocol sits at a deliberate seam between requirement and method, and
+the boundary is worth stating precisely:
 
 > The **authority model** — who may adjust whose goals, anchored in a
-> verifiable management-declaration, and the agent's right to refuse — is
-> **Layer A**, because it governs *what may be asserted and by whom*. The
-> **cadence and mechanics** — how often a manager reviews, when in a run
-> adjustments are checked, the scheduling of steering — are **Layer B**.
+> verifiable management-declaration, and the agent's right to refuse — is a
+> **Symposium requirement**, because it governs *what may be asserted and by
+> whom*. The **cadence and mechanics** — how often a manager reviews, when in a
+> run adjustments are checked, the scheduling of steering — are an
+> **orchestration (Memento) concern**.
 
 So an orchestration that changes *when* an agent checks for goal-adjustments
 (every run, on a schedule, on demand) leaves this protocol untouched; what it
 may **not** do is let an adjustment take effect without authority
 verification. See
-[layer-b-orchestration/00-why-this-is-separate.md](../layer-b-orchestration/00-why-this-is-separate.md)
-and the layer-separation note's flag on exactly this boundary
-([CRITIQUE.md §7](../../CRITIQUE.md)).
+[design-notes/requirements-vs-methods.md](../../design-notes/requirements-vs-methods.md)
+for the requirement/method boundary, and [CRITIQUE.md §7](../../CRITIQUE.md)
+for the original flag on this seam.

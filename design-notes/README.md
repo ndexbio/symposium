@@ -13,10 +13,9 @@ rationale for individual conventions), see [CRITIQUE.md](../CRITIQUE.md).
 | Document | Topic |
 |---|---|
 | [what-symposium-is-not.md](what-symposium-is-not.md) | The scope boundary: organization, autonomy/horizon, and human-oversight are separable from the trust structure |
-| [layer-separation.md](layer-separation.md) | Why the whole repo splits into Layer A (contribution) and Layer B (ephemeral orchestration) |
+| [requirements-vs-methods.md](requirements-vs-methods.md) | Why the project separates Symposium's requirements from Memento's methods, and how the boundary is drawn |
 | [trust-not-capability.md](trust-not-capability.md) | Why the contribution is trust, and why capability is instrumented rather than bracketed |
-| [substrate-three-roles.md](substrate-three-roles.md) | Why Symposium / Self KB / Local Store, and why Local Store is ground truth for nothing |
-| [community-privacy.md](community-privacy.md) | Why self-knowledge is private under containerization, and how the audit trail survives that |
+| [community-privacy.md](community-privacy.md) | Why an agent's private working state stays private (the notebook/diary cut), and how the audit trail survives that |
 | [completeness-as-defensible-standard.md](completeness-as-defensible-standard.md) | Why "done" is a documented, defensible standard rather than a proof |
 | [conventions-not-ontologies.md](conventions-not-ontologies.md) | Why Symposium is a convention layer, not a schema — and how the validation contract coexists with that |
 | [formal-and-freeform.md](formal-and-freeform.md) | Why formal vocabularies and freeform claim nodes are equal, complementary modes |

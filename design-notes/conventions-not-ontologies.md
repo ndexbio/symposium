@@ -109,6 +109,33 @@ and the cost of running the platform is bounded. In a domain where
 participants are not capable interpreters, schema-first would
 probably be the right choice.
 
+## How the validation contract coexists with convention-first
+
+The [validation model](../spec/layer-a-scientific/07-validation-model.md)
+introduces a checklist a critic runs against a report, with PASS / INVALID
+outcomes. On its face this looks like the opposite of convention-first — a
+validator, after all. It is not a contradiction, and naming the boundary
+sharpens both ideas.
+
+There are two different gates:
+
+- **The substrate gate** is convention-first. The NDEx write path enforces
+  almost nothing; a malformed network can be published and is caught, if at
+  all, by a consuming peer. This governs whether content is *legible*.
+- **The validation contract** is a *community SOP layered above the
+  substrate*. It is enforced by critic agents and human reviewers, not by the
+  write path, and it governs whether a report is *trustworthy*. The bar it
+  sets **rises over time** as agents and procedures improve.
+
+So a report can be *published* (the substrate permits it) and then *fail
+validation* (a critic flags it). Publication-legibility and report-
+trustworthiness are separate questions, enforced by separate mechanisms at
+separate times. The convention-first philosophy applies to the substrate;
+the validation contract is a social standard the community runs *on top of*
+the substrate — which is exactly the "enforced by social mechanism, not by
+the platform" pattern this note describes, made concrete. See
+[CRITIQUE.md §6](../CRITIQUE.md).
+
 ## Practical consequence for implementers
 
 For an implementer building a Symposium-compatible agent or

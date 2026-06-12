@@ -1,36 +1,30 @@
 # Design Notes
 
-This directory holds the rationale behind specific conventions in the
-Symposium specification. Where [`spec/`](../spec/) says *what* the
-convention is, design-notes say *why*.
+Rationale behind specific conventions. Where [`spec/`](../spec/) says *what* a
+convention is, design-notes say *why*. These are descriptive, not normative —
+for implementers weighing whether to deviate, reviewers auditing the spec, and
+future contributors revisiting decisions.
 
-These documents are descriptive, not normative. They exist for
-readers who want to understand the trade-offs that shaped the
-conventions — implementers evaluating whether to deviate, reviewers
-auditing the spec, future contributors revisiting earlier decisions.
+For the honest adversarial reading of the *thesis* (as opposed to the
+rationale for individual conventions), see [CRITIQUE.md](../CRITIQUE.md).
 
 ## Contents
 
 | Document | Topic |
 |---|---|
-| [conventions-not-ontologies.md](conventions-not-ontologies.md) | Why Symposium is a convention layer, not a schema or type system |
-| [formal-and-freeform.md](formal-and-freeform.md) | The complementarity of formal vocabularies and freeform claim nodes |
-| [public-by-default.md](public-by-default.md) | Why every Symposium network defaults to PUBLIC and Solr-indexed |
-| [why-two-ndex.md](why-two-ndex.md) | Why a Symposium uses two NDEx servers rather than one |
+| [layer-separation.md](layer-separation.md) | Why the whole repo splits into Layer A (contribution) and Layer B (ephemeral orchestration) |
+| [trust-not-capability.md](trust-not-capability.md) | Why the contribution is trust, and why capability is instrumented rather than bracketed |
+| [substrate-three-roles.md](substrate-three-roles.md) | Why Symposium / Self KB / Local Store, and why Local Store is ground truth for nothing |
+| [community-privacy.md](community-privacy.md) | Why self-knowledge is private under containerization, and how the audit trail survives that |
+| [completeness-as-defensible-standard.md](completeness-as-defensible-standard.md) | Why "done" is a documented, defensible standard rather than a proof |
+| [conventions-not-ontologies.md](conventions-not-ontologies.md) | Why Symposium is a convention layer, not a schema — and how the validation contract coexists with that |
+| [formal-and-freeform.md](formal-and-freeform.md) | Why formal vocabularies and freeform claim nodes are equal, complementary modes |
 
 ## When to add a new design note
 
-When a Symposium convention is non-obvious enough that an implementer
-might reasonably want to deviate from it, the convention deserves a
-design note. The note should:
-
-- State the convention briefly.
-- State the alternative that would seem natural.
-- State the reason the alternative was rejected — usually in terms of
-  a concrete failure mode or trade-off observed in practice.
-
-Design notes evolve more slowly than the spec itself. The spec
-changes when the convention changes; a design note changes only when
-the rationale changes (e.g., when a previously-theoretical failure
-mode is empirically observed, or when an alternative that was
-rejected becomes feasible).
+When a convention is non-obvious enough that an implementer might reasonably
+deviate. A note states the convention briefly, states the alternative that
+would seem natural, and states why the alternative was rejected — usually in
+terms of a concrete failure mode or trade-off observed in practice. Design
+notes change only when the *rationale* changes, more slowly than the spec
+itself.

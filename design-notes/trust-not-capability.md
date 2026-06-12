@@ -60,27 +60,33 @@ they reason, you can see it, audit it, and re-check it." See
 [spec/layer-a-scientific/00-trust-thesis.md](../spec/layer-a-scientific/00-trust-thesis.md)
 and [CRITIQUE.md §1](../CRITIQUE.md).
 
-## The self-driving-car analogy: keep the direction, drop the multiple
+## Not a safety multiple — auditable rigor
 
 A tempting framing: self-driving cars must be *much* safer than humans to earn
 adoption, so agent output must be *much* more rigorous than human output to be
-trusted. The *direction* is right — the bar is above human parity, not at it.
-
-But the analogy over-promises. "Much safer" is a measured multiple over a
-well-characterized baseline (human crash rates), enforced by a feature agent
+trusted. It is catchy and it is wrong. "Much safer" is a measured multiple over
+a well-characterized baseline (human crash rates), enforced by a feature agent
 science lacks: crashes are loud, countable, and immediate. Scientific
 extraction failures are quiet and compounding, and there is no agreed error
 rate for "a typical human scientist's literature extraction." So "much more
 rigorous than human output" has no denominator, and a project that *disclaims*
 quantitative evaluation in its first phase cannot lean on a quantitative
-analogy.
+analogy. The analogy is withdrawn.
 
-The defensible claim is not a multiple. It is:
+The right concept is **auditable rigor**, in three parts:
 
-> **Agent rigor is auditable claim-by-claim in a way human output rarely is.**
+> - **Auditable** — the agent wrote down *what it did*: every claim traces to a
+>   verbatim span, every judgment records its judge, every "done" cites its
+>   coverage procedure.
+> - **Rigor** — the agent wrote down *the important things*: the evidence,
+>   reasoning, judgment, and coverage that bear on whether the claim holds —
+>   not a raw transcript.
+> - **Evaluable structure** — it wrote them down in a form a critic can run a
+>   contract against.
 
-Every published claim traces to a verbatim span; every judgment carries its
-judge's provenance; every "done" cites the coverage procedure behind it. That
-asymmetry is real, it is what the architecture delivers, and it does not
-depend on a safety-rate comparison the methodology cannot supply. See
+Auditability without rigor is an unusable transcript; rigor without
+auditability is an uncheckable claim of diligence; either without an evaluable
+structure cannot be judged at scale. The defensible asymmetry with ordinary
+output is not a safety multiple — it is *work whose rigor you can audit
+claim-by-claim, structured so the audit can actually be run.* See
 [CRITIQUE.md §2](../CRITIQUE.md).

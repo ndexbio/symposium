@@ -109,12 +109,19 @@ resourced, and handed off. Documented so implementers have a worked example,
 explicitly marked as expected to be replaced.
 
 **Out of scope entirely.** The agent's mission, domain, model, or language;
-the specific formal vocabulary for mechanism claims (the reference
-implementation uses BEL); the design of management/inspection utilities; the
-public NDEx server (deliberately deferred — see
-[substrate](layer-a-scientific/01-substrate.md)); and the *policy* questions
-pinned as research goals (promotion thresholds, credentialing dynamics, the
-completeness frontier — see [trust-thesis §research goals](layer-a-scientific/00-trust-thesis.md#pinned-research-goals)).
+the agent's internal storage (Symposium requires only the surfaced *notebook*,
+not a memory architecture); **how agents are organized** (pipeline, hierarchy,
+or autonomous collective — Symposium is organization-agnostic); whether agents
+are **autonomous or long-lived** (any conforming agent participates); **human–
+agent interaction and oversight**; the specific formal vocabulary for mechanism
+claims (the reference implementation uses BEL); the design of
+management/inspection utilities; and the public NDEx server (deliberately
+deferred — see [substrate](layer-a-scientific/01-substrate.md)). The first
+three of these are separable ideas earlier drafts conflated into Symposium —
+see [design-notes/what-symposium-is-not.md](../design-notes/what-symposium-is-not.md).
+Also out of scope: the *policy* questions pinned as research goals (promotion
+thresholds, credentialing dynamics, the completeness frontier — see
+[trust-thesis §research goals](layer-a-scientific/00-trust-thesis.md#pinned-research-goals)).
 
 ## Versioning
 

@@ -12,6 +12,7 @@ rationale for individual conventions), see [CRITIQUE.md](../CRITIQUE.md).
 
 | Document | Topic |
 |---|---|
+| [what-symposium-is-not.md](what-symposium-is-not.md) | The scope boundary: organization, autonomy/horizon, and human-oversight are separable from the trust structure |
 | [layer-separation.md](layer-separation.md) | Why the whole repo splits into Layer A (contribution) and Layer B (ephemeral orchestration) |
 | [trust-not-capability.md](trust-not-capability.md) | Why the contribution is trust, and why capability is instrumented rather than bracketed |
 | [substrate-three-roles.md](substrate-three-roles.md) | Why Symposium / Self KB / Local Store, and why Local Store is ground truth for nothing |

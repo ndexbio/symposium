@@ -25,10 +25,23 @@ makes them stick. See
 
 > **Trust is the contribution; capability is a parameter the architecture
 > makes legible.** The demonstration agents are not put forward as
-> cutting-edge reasoners — they are put forward as agents that operated
-> *trustworthily*, with every claim auditable to a verbatim source span,
-> every judgment carrying the provenance of its judge, every "done" citing
-> the coverage procedure that backs it.
+> cutting-edge reasoners — they are put forward as agents that operated with
+> **auditable rigor**: they wrote down *what they did* (every claim traces to a
+> verbatim source span, every judgment records its judge, every "done" cites
+> its coverage procedure), they wrote down *the important things* (the
+> evidence, reasoning, and coverage that bear on the claim), and they wrote
+> them in a structure a critic can evaluate.
+
+### What Symposium is *not*
+
+Symposium is the scientific-community **trust structure**, and only that. It is
+**organization-agnostic** (a manager may deploy a rigid pipeline or a loose
+collective of autonomous agents — both are valid); it does **not** require
+autonomous or long-lived agents (any conforming agent participates, though
+long-horizon agents build a human-like track record); and it is **not** a model
+of human–agent interaction or oversight. Those are real, separable ideas — and
+different papers. See
+[design-notes/what-symposium-is-not.md](design-notes/what-symposium-is-not.md).
 
 ## The one structural idea: two layers
 

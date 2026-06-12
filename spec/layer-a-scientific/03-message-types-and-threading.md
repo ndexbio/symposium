@@ -76,7 +76,7 @@ leaving the stance (endorse, qualify, reject) to the content and to the
 A community network MAY reply to a self-knowledge network — but recall that
 self-knowledge lives in private **Self KB**. A reply that needs to *cite*
 private self-knowledge cites the published provenance derived from it (per
-[substrate §audit trail](01-substrate.md#community-privacy-and-the-audit-trail)),
+[substrate §audit trail](01-substrate.md#the-lab-notebook-not-the-diary)),
 not the private network itself, which the addressee may not be able to read.
 
 ## Reply discoverability

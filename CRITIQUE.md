@@ -17,6 +17,15 @@ follows is not "this is wrong" but "this claim is stronger than the evidence
 or the mechanism currently supports, and the project will be attacked
 exactly there." Tightening these is how the thesis survives review.
 
+> **Author response (resolved).** These critiques were discussed with the
+> project owner, who accepted §1, §2, §4, and §5 and refined the resolutions.
+> The headline correction: Symposium is the **scientific-community trust
+> structure, and only that** — agent organization, agent autonomy/horizon, and
+> human–agent interaction are separable ideas that earlier drafts conflated
+> into it. Each affected section below carries a **Resolved** note, and the
+> resolutions are now baked into the spec. See
+> [design-notes/what-symposium-is-not.md](design-notes/what-symposium-is-not.md).
+
 ---
 
 ## 1. "Trust, not capability" is a useful slogan and a slightly false dichotomy
@@ -52,6 +61,14 @@ than to pretend it is irrelevant. The slogan survives; the dichotomy is
 dropped. (Reflected in `spec/layer-a-scientific/00-trust-thesis.md`.)
 
 ## 2. The self-driving-car analogy promises a safety case the project disclaims
+
+> **Resolved.** The analogy is **withdrawn entirely** (not merely
+> de-quantified). It is replaced by **auditable rigor**: the agent wrote down
+> *what it did* (auditable), wrote down *the important things* — evidence,
+> reasoning, judgment, coverage — (rigor), in a structure a critic can
+> evaluate. Auditability without rigor is an unusable transcript; rigor without
+> auditability is an uncheckable claim; Symposium requires both, structured for
+> evaluation.
 
 The analogy: just as self-driving cars must be *much* safer than human
 drivers to earn adoption, agent output must be *much* more rigorous than
@@ -109,6 +126,16 @@ provenanced judgment surface" — is more defensible and loses nothing.
 
 ## 4. The privacy reversal is the weakest link in the audit story
 
+> **Resolved.** Reframed as a **technology-agnostic requirement on the agent**,
+> not a storage prescription: share the **lab notebook** (the reasoning and
+> evidence behind every published claim), keep the **diary** (internal state,
+> framework memory) private. Because Symposium requires no particular agent
+> technology, "publish your self-knowledge networks" was the wrong frame — a
+> stateless agent has none. The notebook is published per-claim to the commons;
+> the audit guarantee no longer depends on private state or any management
+> utility. Self KB / Local Store are demoted to *the reference
+> implementation's* way of holding the diary.
+
 This is the most serious critique.
 
 The old design made *all* self-knowledge PUBLIC and Solr-indexed, and the
@@ -151,6 +178,16 @@ undercuts the thesis. See `spec/layer-a-scientific/01-substrate.md` and
 decision from you.**
 
 ## 5. "A community is not a pipeline" — the architecture earns this; the prototype evidence is thin
+
+> **Resolved.** The point is **withdrawn**, and replaced by a stronger
+> principle: Symposium is **organization-agnostic**. It imposes no agent
+> organization — a manager may deploy a rigid pipeline/hierarchy *or* a loose
+> collective of autonomous agents; Symposium constrains only how agents
+> publish, evidence, and are judged. The prototype is, fairly, more of an
+> iterating pipeline of specialists than an emergent collective — which is
+> *allowed*, and is *not* evidence of emergent dynamics. The belief that
+> autonomous, emergent agents are especially interesting is a separate thesis.
+> (Original analysis below retained for the record.)
 
 The claim that a community is not a pipeline and not an org chart is
 architecturally well-supported: independent deployment, accumulated

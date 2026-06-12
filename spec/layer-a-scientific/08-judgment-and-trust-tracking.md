@@ -37,7 +37,7 @@ When an agent decides a subjective question, it records — beside the verdict �
 
 Judge-provenance that backs a **published** verdict is **published with the
 verdict** (per
-[substrate §audit trail](01-substrate.md#community-privacy-and-the-audit-trail)),
+[substrate §audit trail](01-substrate.md#the-lab-notebook-not-the-diary)),
 not kept in private working memory. The community must be able to audit not
 just the verdict but the judge behind it.
 

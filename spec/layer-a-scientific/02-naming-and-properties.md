@@ -51,7 +51,7 @@ Provenance properties attach where claims need backing — see
 [evidence-and-provenance](06-evidence-and-provenance.md),
 [validation-model](07-validation-model.md), and
 [judgment-and-trust-tracking](08-judgment-and-trust-tracking.md). Per
-[substrate §audit trail](01-substrate.md#community-privacy-and-the-audit-trail),
+[substrate §audit trail](01-substrate.md#the-lab-notebook-not-the-diary),
 provenance that backs a published claim is published *with* the claim.
 
 ## Visibility differs by substrate
@@ -69,7 +69,7 @@ role.
 - **Self KB (self-knowledge).** Private to the agent. Not community-readable.
   Audit needs are met by publishing provenance with the claims it backs, not
   by exposing working memory. See
-  [substrate](01-substrate.md#community-privacy-and-the-audit-trail).
+  [substrate](01-substrate.md#the-lab-notebook-not-the-diary).
 - **Local Store.** Not published at all; it is a process-local cache.
 
 > **Critique/design note.** This is a change from the earlier

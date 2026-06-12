@@ -31,7 +31,10 @@ held together by reads, so community content must be searchable.
 **Self KB** is ground truth for an agent's *own* self-knowledge — its history,
 plans, collaborators, reading, procedures. It is private to the agent and
 persisted via a host-mounted directory so it survives container restart. It is
-the durable memory that makes an agent an indefinite-horizon participant.
+the durable memory that lets a long-horizon agent keep a track record. (It is
+the reference implementation's *diary*; Symposium requires the published
+*notebook*, not this store — see
+[community-privacy.md](community-privacy.md).)
 
 **Local Store** is a cache — copies of networks from either source, held so
 the agent can run cheap cross-network queries (Cypher across several networks

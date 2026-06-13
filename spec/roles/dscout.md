@@ -62,8 +62,9 @@ contain:
 - one `reports_dataset` edge from the source node to each dataset node;
 - exactly one `coverage_attestation` node linked to the source by
   `attests_coverage_of`;
-- one `ran_procedure` edge from the coverage attestation to the cited,
-  versioned coverage-procedure artifact;
+- exactly one local `procedure_ref` node carrying the cited procedure ID,
+  version, and NDEx network UUID, linked from the coverage attestation by
+  `ran_procedure`;
 - zero or more `judgment` nodes linked to their target dataset by `judges`;
 - zero or more freeform claim nodes only where typed dataset properties would
   distort the paper's description.
@@ -79,6 +80,12 @@ nodes. Assessments or stances about a dataset are judgment nodes. Evidence
 spans are flat provenance properties on the claim-bearing dataset node by
 default; a span MAY be promoted to a shared node when multiple claims reuse it.
 These forms MUST NOT be collapsed into one trust class.
+
+Every node carries `node_type`; every edge carries `edge_type`. Inferential
+assembly is represented by a `judgment` node linked to the affected dataset by
+`grades_association`. If an evidence span is promoted to a node, it carries
+`node_type: evidence_span` and links to the dataset with `supports_component`;
+the edge's `component` property names the supported dataset property.
 
 ### 2a. Dataset-node properties — anchored and classified by derivation tier
 
@@ -108,8 +115,9 @@ The tier is the honesty mechanism: labelling an interpreted mapping
 | `fact.accession_format_valid` | D | boolean: matches the repository's regex | **dscout** computes |
 | `fact.accession_matches_repo` | D | boolean: prefix corresponds to named repository | **dscout** computes |
 | `fact.availability_state` | D | one of the five states below | derived (rules below) |
-| `fact.evidence_spans` | V | component→span map: each asserted field above to its source span(s) | verbatim copies (§4) |
-| `fact.assembly_grades` | D/I | association→`single-span` / `assembly` / `assembly-with-inference` | forced joins are deterministic; chosen joins carry `judge.*` (§4) |
+| `fact.evidence.<component>.<n>.quote` | V | repeatable flat properties mapping each asserted component to verbatim span(s) | verbatim copies (§4) |
+| `fact.evidence.<component>.<n>.locator` | V | source section/page/offset for the paired quote | verbatim locator |
+| `fact.assembly.<association>.grade` | D/I | flat property: `single-span` / `assembly` / `assembly-with-inference` | forced joins are deterministic; chosen joins have a linked judgment node (§4) |
 | `fact.evidence_tier` | D/I | maximum tier licensed by the source and assembly grade | role- and source-ceilinged; never silently upgraded |
 | `fact.faithfulness_verified` | D | boolean **invariant** for every published dataset record: every asserted component anchors (§4) | **dscout** computes |
 | `fact.last_validated` | D | ISO date the record was last checked against its source | **dscout** computes |
@@ -123,13 +131,13 @@ Rules:
   like `judge.quality_score` (§2b) — the interpretation is not free.
 - `fact.assay_type` and `fact.production_method` describe what the **paper**
   says the data are — **never** what the accession might generally imply.
-- `fact.evidence_spans` carries one or more source spans **per asserted
+- The `fact.evidence.<component>.<n>.*` family carries one or more source spans **per asserted
   component**, because a single sentence rarely anchors accession, access
   terms, assay, method, and size at once (Symposium 05). An empty/`unstated`
   field needs no span. `fact.provenance_quote` is retained as the human-facing
   **availability** span specifically — a display convenience, not the whole
   evidence object.
-- Every multi-span association is listed in `fact.assembly_grades`. A forced
+- Every multi-span association is listed in the `fact.assembly.*.grade` family. A forced
   association is `assembly`; a non-forced association or introduced connective
   fact is `assembly-with-inference` and carries the full `judge.*` bundle plus
   rationale. Descriptive fields resting only on author assertions **MUST NOT**
@@ -272,7 +280,7 @@ delegate extraction. If it does, it MUST NOT accept the delegate's
 faithfulness assertions; dscout runs these checks on the delegated output:
 
 1. **Per-component span existence.** *Every* asserted fact component has an
-   entry in `fact.evidence_spans`, and each span occurs verbatim in the
+   entry in the `fact.evidence.<component>.<n>.*` family, and each span occurs verbatim in the
    fulltext (permitted: ellipsis-trimming between clauses past a length bound;
    forbidden: synonym substitution or fabricated contiguity). The single
    `fact.provenance_quote` is the availability span and is checked the same

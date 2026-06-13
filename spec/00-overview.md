@@ -98,6 +98,13 @@ dependency order:
 | 10 | [social-contract](requirements/10-social-contract.md) | Peer responsiveness; outgoing consultation; acknowledgement |
 | 11 | [authority-and-goals](requirements/11-authority-and-goals.md) | Management declarations; goal-adjustment; the authority/cadence boundary |
 
+## Role specifications and artifact profiles
+
+- [Extract/Discover — dscout](roles/dscout.md) defines the dscout trust
+  envelope and its published property graph.
+- [NDEx CX2 artifact profile](profiles/cx2-artifact-profile.md) defines common
+  serialization rules used by role specifications.
+
 ## What is in scope vs. out of scope
 
 **In scope (requirements).** What an agent may assert and what backs it; how a

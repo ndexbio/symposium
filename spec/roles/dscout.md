@@ -71,9 +71,10 @@ contain:
 
 The network carries `report_version`, source identity, writing-agent identity,
 and the required Symposium network properties. A report with no dataset nodes
-is valid only when its coverage attestation records `none-found`, a known gap,
-or an extraction failure. Attribute values MUST be CX2-compatible flat scalars
-or lists of scalars; nested maps are not permitted.
+is valid only when its coverage attestation's `coverage.result` is `none-found`
+or `extraction-failure`, or its `coverage.verdict` records a known gap.
+Attribute values MUST be CX2-compatible flat scalars or lists of scalars;
+nested maps are not permitted.
 
 Intrinsic statements about what the paper reports are properties on dataset
 nodes. Assessments or stances about a dataset are judgment nodes. Evidence
@@ -151,14 +152,13 @@ Rules:
 | `deposited-malformed` | accession present but fails format check or prefix/repo mismatch. |
 | `stated-on-request` | "available on request", no accession. |
 | `claimed-no-locator` | data asserted to exist, no accession and no request route. |
-| `none-found` | no dataset or data-availability information located — **only publishable when the coverage procedure ran and recorded negatives (§3)**. |
 
 A deposited state **MUST** be backed by a `fact.provenance_quote` that
 contains the availability claim. If the quote cannot be produced, the
-state is `claimed-no-locator`, never a deposited state. If the coverage
-procedure did not run or has known gaps, dscout **MUST NOT** publish a
-`none-found` dataset record; it publishes the report-level coverage or
-extraction-failure artifact instead.
+state is `claimed-no-locator`, never a deposited state. Dataset-level absence
+is **not** an availability state: when no dataset is found, dscout publishes
+zero dataset nodes and records absence as `coverage.result` (§3), never as a
+dataset record.
 
 ### 2b. Judgment nodes — assessment with judge provenance
 
@@ -240,6 +240,7 @@ attestation at the **paper/report** level (not per dataset):
 | `coverage.locator_sweep_negatives` | recorded negatives, e.g. `"supplementary scanned; no further accessions"` |
 | `coverage.consistency_check` | assays named in prose vs. dataset records captured; discrepancies listed, e.g. `"RNA-seq and ATAC-seq named; ATAC dataset not located"` |
 | `coverage.verdict` | `coverage-procedure-complete` / `coverage-with-known-gaps` / `coverage-not-run` |
+| `coverage.result` | `datasets-present` / `none-found` / `extraction-failure` — the report outcome, orthogonal to `coverage.verdict` (procedure execution) |
 
 The verdict names the **execution of the sweep**, and is deliberately distinct
 from Symposium 06's `VALID` / `VALID-WITH-GAPS` / `INVALID`, which is an
@@ -265,10 +266,12 @@ Rules:
 - The internal-consistency check **MUST** run: every assay or dataset the
   paper's prose *names* but the report does not *capture* is listed in
   `coverage.consistency_check`, or explained.
-- `none-found` at the dataset level is legitimate **only** under
-  `coverage-procedure-complete`. Under any other verdict, dscout publishes no
-  absence claim; `coverage-with-known-gaps` or `coverage-not-run` on the report
-  disambiguates "no dataset found" from "dscout may have missed it."
+- Absence is recorded at the **report** level as `coverage.result: none-found`
+  (or `extraction-failure`), never as a dataset node. `coverage.result` (is
+  there data?) and `coverage.verdict` (did the sweep run completely?) are
+  orthogonal: an absence result still carries a verdict, so
+  `coverage-with-known-gaps` / `coverage-not-run` still disambiguate "no dataset
+  found" from "dscout may have missed it."
 
 ---
 

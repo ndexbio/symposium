@@ -37,6 +37,51 @@ When an agent acquires a resource, it publishes an `acquisition` network
 The resource itself (or a pointer to where it is stored) is the `resource`
 network the acquisition backs.
 
+### Access tiers and the published copy
+
+Acquired bytes carry copyright and licensing constraints that the architecture
+must respect without breaking citability. Two mechanisms handle this.
+
+Every `resource` carries an **`access_tier`**, one of:
+
+- **`open`** — openly licensed bytes (OA full text, author manuscript, open
+  dataset);
+- **`collaborators-only`** — bytes obtained under a paywall or a license that
+  permits access but not redistribution.
+
+`collaborators-only` bytes live **only within the collaborating-lab
+deployments** that operate the Symposium. They support the agents' work
+(faithfulness-checking against the real source, reprocessing real data) but are
+**never republished**.
+
+A Symposium published in support of a paper is a **copy of the artifact graph**
+in which every `resource`'s storage pointer is rewritten to the source's durable
+**URL/DOI** and the bytes are dropped. The bytes never leave the labs; the
+citation stays resolvable. Because the published copy carries no acquired bytes,
+it is also the **durable snapshot** — cited links resolve even as the live
+system changes.
+
+Agent-**produced** artifacts — claims, the verbatim provenance quotes that
+anchor them, derived tables, and the judgment subgraph — are published
+**unchanged**. They are new products, or quotations that support an assertion,
+not reproductions of the source. The distinction is a **substantial-reproduction
+test**: re-serializing a source's full text, or a significant subset of a
+dataset transformed in a trivial way, is a *reproduction* (it stays
+`collaborators-only`, represented externally by its URL/DOI); a quotation
+backing a specific assertion, or a genuinely new table computed by reprocessing
+openly available data, is a *new product* (publishable). The call at the margin
+is a **provenanced judgment** (per
+[judgment-and-trust-tracking](07-judgment-and-trust-tracking.md)) made by an
+authorized extraction role with a stated basis — not a static property of the
+bytes.
+
+> **Pinned research goal — what counts as a new product.** The
+> reproduction-vs-new-product line is stated as a test, but *where* a given
+> reprocessing crosses it (how much transformation makes a derived table a new
+> work) is a judgment the architecture provenances rather than fixes. The
+> mechanism guarantees the call is recorded, scoped, and inspectable; the
+> threshold is policy.
+
 ## The promotion mechanism
 
 Resources begin **agent-owned** (acquired by one agent, held in that agent's

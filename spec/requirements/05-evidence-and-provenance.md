@@ -15,6 +15,18 @@ A span is exact source text. Light trimming with ellipses between clauses is
 permitted past a length bound; **never** synonym substitution, never
 multi-sentence collapse that fabricates contiguity.
 
+### Source text vs. inter-artifact references
+
+The verbatim-span rule above governs claims anchored to **external source text**
+(the literature an agent extracts from). A reference from one artifact to **another
+artifact** in the commons is made **by reference** — at assertion/artifact
+granularity, not by span. Span-quoting agent-generated text in another artifact is
+permitted but **not required**: enforcing span-level internal cross-references would
+tangle the commons graph beyond human legibility. See
+[the inter-artifact standard](../inter-artifact-standard.md) for the full two-tier
+anchor rule (span-MUST for external text; by-reference between artifacts) and for the
+trust-bearing-vs-domain-content conformance boundary.
+
 ### A claim's anchor is a *set* of spans
 
 Authors routinely scatter the pieces of one fact across a document — an

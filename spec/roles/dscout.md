@@ -1,3 +1,14 @@
+> # ⚠️ RETIRED — DO NOT USE AS AUTHORITY
+>
+> **Retired 2026-06-24 (dlg D-0026).** This is an **old-frame** specification: it
+> leads with a CX2 property-graph contract and carries dissolved machinery
+> (`evidence_tier`, a baked numeric `quality_score` rubric, a hardcoded `dataset`
+> type). It is **superseded** by the revised semantic architecture
+> ([framework-precursor.md](../framework-precursor.md)) and the **Scout + Importer**
+> two-role cut (dlg **D-0027**). Replacement specs:
+> `symposium_dev:drafts/agents/scout.md` and `symposium_dev:drafts/agents/importer.md`
+> (pending promotion here). Audit: dlg **C-0209**. Kept for provenance only.
+
 # Extract/Discover — dscout Behavioral Specification
 
 **Scope of this document.** This is the *behavioral* contract for dscout —

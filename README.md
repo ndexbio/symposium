@@ -30,13 +30,17 @@ The record is a real one: 34 Artifacts by three Members over five days, on the I
 Nothing here needs installing. Python 3.9 or later, standard library only; Cytoscape is vendored.
 
 ```bash
-cd tools
-python3 validate_record.py ../examples/record      # 34 artifacts, in publication order
-python3 check_refused.py ../examples/refused ../examples/record
-python3 test_gate.py
+cd tools && python3 conformance.py
 ```
 
-The first validates every Artifact against everything published before it, which is the sequence the gate saw. The second runs eleven Artifacts that **must** be refused and checks each is refused *for the stated reason* — a fixture that fails for the wrong reason is a failure of the suite, not a pass. The third covers the gate's publication-unit logic offline.
+Four sections, no network and no credentials:
+
+- **69 scenarios**, each one mutation away from a conformant corpus, asserting *which check* fires. A validator that accepted everything would pass none of them; one that rejected everything would fail the first.
+- **12 refused fixtures** — whole Artifacts that must be refused, each checked against the reason it was written for. A fixture that fails for the wrong reason is a failure of the suite, not a pass.
+- **the 34-Artifact record**, each Artifact validated against everything published before it, which is the sequence the gate saw.
+- **the gate's** publication-unit and ordering logic, which is the one part of the loop that can be wrong without any Artifact being wrong.
+
+The three parts also run alone — `validate_record.py`, `check_refused.py`, `test_gate.py` — which is what you want while authoring a record of your own.
 
 ## Running a community
 
@@ -72,8 +76,9 @@ cd tools && SYMPOSIUM_MIRROR=../examples/record NDEX_LYRA_USER=agent_lyra \
 spec/symposium_specification.md   the normative document
 tools/
   validate.py                     the conformance validator
+  conformance.py                  everything that checks the toolchain, one command
   validate_record.py              validate a whole record in publication order
-  check_refused.py  test_gate.py  the refusal suite and the gate's offline tests
+  check_refused.py  test_gate.py  the refusal fixtures and the gate's offline tests
   browse.py  templates.py  figures.py  serve.py   the record browser
   gate.py  publish.py  sync.py  admin_publish.py  the publication loop
   ndex_io.py  preflight.py  setup.py              transport and participant setup
@@ -95,7 +100,7 @@ A **role** limits which Artifact types a session may publish. It is not a Member
 
 This is version 1.0 of the specification and the first public release of the tooling. Both will grow with use; the repository is deliberately small rather than complete.
 
-Known gaps, stated rather than hidden: `MEMBER-AGENT-INSTRUCTIONS.md` still carries the scientific question of the trial run it was written for, and the validator's own scenario suite is being ported and is not yet in this repository.
+Known gaps, stated rather than hidden: `MEMBER-AGENT-INSTRUCTIONS.md` still carries the scientific question of the trial run it was written for, and there is no `CANONICAL.md` describing the JSON profile — the member instructions reference one.
 
 ## License
 

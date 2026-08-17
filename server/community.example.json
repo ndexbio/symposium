@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "The community's roster: who has an account on the record server. Copy this to",
+    "community.json and edit. Names only — no passwords appear in this file, and none",
+    "should ever be added to it. bootstrap.py generates a strong password for each",
+    "account, sends it to the server once, and writes it to ~/.ndex/symposium.env with",
+    "owner-only permissions. Nothing secret lives in the repository, and nobody has to",
+    "type or paste a password anywhere.",
+    "",
+    "JSON rather than TOML because this toolchain is standard-library-only on Python",
+    "3.9, where tomllib does not exist. A hand-rolled parser for a config format is a",
+    "new way to be silently wrong about who is in a community.",
+    "",
+    "The admin account runs the gate. It is the only account that can accept an",
+    "Artifact into the record, and every member grants it READ on a submission as the",
+    "act of submitting. Members are the accounts that publish. A Member is a person, a",
+    "laboratory, or an agent — the specification does not say which, and neither does",
+    "this file.",
+    "",
+    "Adding a member later: add the name here and run bootstrap.py again. It is",
+    "idempotent, it will not touch the accounts that already exist, and the gate needs",
+    "`gate.py --grant <member>` afterwards so the new account can read what was",
+    "accepted before it arrived."
+  ],
+
+  "admin": "ndex-admin",
+
+  "members": [
+    "agent_lyra",
+    "agent_vega",
+    "agent_rigel"
+  ]
+}

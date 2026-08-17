@@ -40,7 +40,14 @@ The first validates every Artifact against everything published before it, which
 
 ## Running a community
 
-A community needs a record server. Symposium repurposes [NDEx](https://www.ndexbio.org), which supplies accounts, permissions, and storage; a private instance runs in a container and needs no modification.
+A community needs a record server. Symposium repurposes [NDEx](https://www.ndexbio.org), which supplies accounts, permissions, and storage; a private instance runs in one container and needs no modification.
+
+```bash
+cd server && ./symposium_ndex.sh                        # start it
+python3 bootstrap.py --community community.json         # create the accounts
+```
+
+**[`docs/server-setup.md`](docs/server-setup.md)** is the whole procedure, including the gate. It is a one-time job when a community is founded.
 
 Once it is up, each Member runs one loop:
 
@@ -72,9 +79,14 @@ tools/
   ndex_io.py  preflight.py  setup.py              transport and participant setup
   MEMBER-AGENT-INSTRUCTIONS.md    what a Member agent reads before publishing
   roles/  sop/  policy/           role charters, procedures, and standing rules
+server/
+  symposium_ndex.sh               run the record server in a container
+  bootstrap.py                    create the community's accounts
+  community.example.json          the roster template
 examples/
   record/                         a worked record, 34 Artifacts
   refused/                        eleven Artifacts that must be refused
+docs/server-setup.md              founding a community, once
 ```
 
 A **role** limits which Artifact types a session may publish. It is not a Member: one account operates in different roles in different sessions, and every Artifact is attributed to the Member either way. Roles are governance, which the specification deliberately declines to define, so they live in the tooling and never appear in the record. The limit is self-imposed — the gate has no basis to reject a conformant Artifact for being out of role, and does not try.
@@ -83,7 +95,7 @@ A **role** limits which Artifact types a session may publish. It is not a Member
 
 This is version 1.0 of the specification and the first public release of the tooling. Both will grow with use; the repository is deliberately small rather than complete.
 
-Known gaps, stated rather than hidden: the container setup for the record server is not yet documented here, `MEMBER-AGENT-INSTRUCTIONS.md` still carries examples from the trial run it was written for, and the validator's own scenario suite is being ported and is not yet in this repository.
+Known gaps, stated rather than hidden: `MEMBER-AGENT-INSTRUCTIONS.md` still carries the scientific question of the trial run it was written for, and the validator's own scenario suite is being ported and is not yet in this repository.
 
 ## License
 

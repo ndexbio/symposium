@@ -56,7 +56,7 @@ def _entries(text):
     """KEY -> value from a shell env file. Handles `export KEY=value` and quoted values.
 
     The `export` prefix is not decoration: the credentials file this reads is SOURCED by
-    env.sh, and the form Dexter distributes uses `export`. A parser that only understood
+    env.sh, and the form `server/bootstrap.py` writes uses `export`. A parser that only understood
     bare KEY=value silently reported a correctly-filled file as still holding placeholders.
     """
     out = {}

@@ -23,13 +23,24 @@ from validate import parse_instant, validate
 
 
 def load(record_dir: Path):
+    """Every canonical Artifact in a directory, oldest first.
+
+    Filtered on STRUCTURE, not on filename. A live mirror is not a curated directory of
+    Artifacts: it also holds the gate's and the member's state files and an index, and
+    `glob('*.json')` matches those too. Reporting `.gate_state.json` as an Artifact
+    missing its header is a validator failing to validate a record correctly, in the
+    output a reader is meant to trust.
+    """
     arts = []
     for p in sorted(record_dir.glob("*.json")):
         try:
-            arts.append((p, json.loads(p.read_text())))
+            doc = json.loads(p.read_text())
         except json.JSONDecodeError as e:
             print(f"{p.name}: NOT JSON — {e}")
             raise SystemExit(2)
+        h = doc.get("artifact") if isinstance(doc, dict) else None
+        if isinstance(h, dict) and h.get("name") and h.get("type"):
+            arts.append((p, doc))
     def key(item):
         t = parse_instant(item[1].get("artifact", {}).get("created"))
         return (t is None, t, item[0].name)

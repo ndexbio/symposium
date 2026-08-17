@@ -3,7 +3,8 @@
 
     python3 bootstrap.py --community community.json
     python3 bootstrap.py --community community.json --dry-run
-    python3 bootstrap.py --community community.json --show LYRA   # one member's credentials
+    python3 bootstrap.py --show LYRA                       # one member's credentials
+    python3 bootstrap.py --community c.json --credentials ~/.ndex/other-community.env
 
 A fresh NDEx instance accepts anonymous account creation on `POST /v2/user`, so the
 first account needs no account — there is no chicken-and-egg problem on a server you
@@ -16,6 +17,12 @@ account with `secrets`, sends it to the server once, and writes it to
 reads. The roster file holds names and nothing else, so it can be committed. Handing a
 member their credentials is `--show <PREFIX>`, which prints one account's two lines for
 them to copy into their own machine's file.
+
+That file is keyed by PREFIX and records nothing about which server an entry is for, so
+a member of two communities has one `NDEX_LYRA_PASSWORD` meaning two different things.
+An entry whose value would change is therefore refused, naming what it would have
+replaced: use `--credentials` and keep a file per community. `--force` overrides, and
+the password it overwrites cannot be read back off any server.
 
 Idempotent. An account that already exists is left alone: the server will not tell us
 its password and this will not guess. If credentials for it are already in the file and
@@ -41,14 +48,26 @@ import urllib.error
 import urllib.request
 
 BASE = os.environ.get("SYMPOSIUM_BASE", "http://localhost:8080").rstrip("/")
+# The default pairs with tools/setup.py, which reads the same path. It is a per-MACHINE
+# file keyed by prefix, and a prefix says nothing about which community it belongs to, so
+# a member of two communities needs --credentials and a file per community. Overwriting an
+# entry that already holds a different value is refused; see `write_env`.
 CRED = pathlib.Path.home() / ".ndex" / "symposium.env"
 ADMIN_PREFIX = "ADMIN"                       # gate.py authenticates as auth("ADMIN")
 ALPHABET = string.ascii_letters + string.digits
 
 
 def api(method, path, tok=None, body=None):
+    """-> (status, parsed-JSON | text | None).
+
+    `Accept: */*`, not `application/json`. POST /v2/user answers `text/plain` with the new
+    user's URL, and asking only for JSON makes RESTEasy refuse the request with a 500 and
+    `RESTEASY003635: No match for accept header` — a server error for a client mistake,
+    which reads like the server is broken. curl-based recipes never meet this because curl
+    sends `*/*` by default. The body is therefore parsed as JSON only if it looks like it.
+    """
     data = json.dumps(body).encode() if body is not None else None
-    h = {"Accept": "application/json"}
+    h = {"Accept": "*/*"}
     if tok:
         h["Authorization"] = f"Basic {tok}"
     if data:
@@ -56,8 +75,13 @@ def api(method, path, tok=None, body=None):
     req = urllib.request.Request(f"{BASE}{path}", data=data, headers=h, method=method)
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
-            text = r.read().decode(errors="replace")
-            return r.status, (json.loads(text) if text.strip() else None)
+            text = r.read().decode(errors="replace").strip()
+            if not text:
+                return r.status, None
+            try:
+                return r.status, json.loads(text)
+            except json.JSONDecodeError:
+                return r.status, text
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode(errors="replace")[:200]
     except Exception as e:                                            # noqa: BLE001
@@ -93,14 +117,23 @@ def read_env():
     return out
 
 
-def write_env(entries):
+def write_env(entries, force=False):
     """Merge `entries` into the credentials file, owner-readable only.
 
     Rewritten whole rather than appended to, so re-running does not accumulate a second
     entry for an account and leave the shell to decide which one wins.
+
+    An entry whose value would CHANGE is refused unless `force`. The file is keyed by
+    prefix and holds no record of which server an entry is for, so a member of two
+    communities has NDEX_LYRA_PASSWORD meaning two different things. Silently replacing
+    one with the other destroys access to a running community, and the password it
+    overwrote cannot be read back off the server to restore it.
     """
     CRED.parent.mkdir(parents=True, exist_ok=True)
     merged = read_env()
+    clash = {k: v for k, v in entries.items() if k in merged and merged[k] != v}
+    if clash and not force:
+        raise Clobber(sorted(clash))
     merged.update(entries)
     body = ["# Symposium credentials. Readable only by you; never commit this file.",
             "# Written by server/bootstrap.py. Source it, or let tools/setup.py do that.",
@@ -109,6 +142,10 @@ def write_env(entries):
         body.append(f"export {k}={merged[k]}")
     CRED.write_text("\n".join(body) + "\n")
     CRED.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+class Clobber(Exception):
+    """write_env would have replaced credentials that are already in the file."""
 
 
 def create(account, password):
@@ -130,6 +167,7 @@ def verify(account, password):
 
 
 def main(argv=None):
+    global CRED                       # --credentials repoints it before anything reads it
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--community", default="community.json",
                     help="roster file (default: community.json)")
@@ -137,7 +175,16 @@ def main(argv=None):
                     help="say what would be created; contact the server only to check it is up")
     ap.add_argument("--show", metavar="PREFIX",
                     help="print one account's two credential lines, for handing to its owner")
+    ap.add_argument("--credentials", metavar="PATH",
+                    help=f"where to write them (default: {CRED}). Use a file per community: "
+                         f"the default is shared, keyed by prefix, and says nothing about "
+                         f"which server an entry belongs to.")
+    ap.add_argument("--force", action="store_true",
+                    help="overwrite credentials already in the file. They cannot be read back "
+                         "off the server, so this is not recoverable.")
     a = ap.parse_args(argv)
+    if a.credentials:
+        CRED = pathlib.Path(a.credentials).expanduser()
 
     if a.show:
         env = read_env()
@@ -198,7 +245,16 @@ def main(argv=None):
         password = "".join(secrets.choice(ALPHABET) for _ in range(24))
         outcome = create(acct, password)
         if outcome == "created" and verify(acct, password):
-            write_env({uk: acct, pk: password})
+            try:
+                write_env({uk: acct, pk: password})
+            except Clobber as c:
+                print(f"  {acct:20} ! created on the server, but {CRED} already holds\n"
+                      f"  {'':20}   {', '.join(c.args[0])} with different values — probably\n"
+                      f"  {'':20}   another community's. Re-run with --credentials pointing at a\n"
+                      f"  {'':20}   file for THIS community, or --force to overwrite (the values\n"
+                      f"  {'':20}   you would lose cannot be recovered from a server).")
+                failed.append(acct)
+                continue
             env = read_env()
             print(f"  {acct:20} created, credentials written")
         elif outcome == "created":

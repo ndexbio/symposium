@@ -12,6 +12,7 @@ import base64
 import json
 import os
 import sys
+import time
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -116,10 +117,25 @@ def user_uuid(username, tok):
     return b.get("externalId") if st == 200 and isinstance(b, dict) else None
 
 
-def grant_read(network_uuid, user_uuid_, tok):
-    st, _ = api("PUT", f"/v2/network/{network_uuid}/permission"
-                       f"?userid={user_uuid_}&permission=READ", tok)
-    return st in (200, 204)
+def grant_read(network_uuid, user_uuid_, tok, attempts=8, pause=0.5):
+    """Grant READ, retrying while the server finishes creating the network.
+
+    A network is NOT grantable the instant its upload returns 201. Measured against
+    ndex-rest 3.0.0 build 03446: the first PUT fails and the next one, half a second
+    later, succeeds. Without the retry the failure lands in the worst possible place —
+    the grant IS the act of submission, so an upload whose grant failed leaves an
+    Artifact sitting on the server that the gate cannot see and the member believes
+    they published. The gate's fan-out to members after an acceptance races the same
+    way, and there a lost grant means a Member silently cannot read the record.
+    """
+    for i in range(attempts):
+        st, _ = api("PUT", f"/v2/network/{network_uuid}/permission"
+                           f"?userid={user_uuid_}&permission=READ", tok)
+        if st in (200, 204):
+            return True
+        if i + 1 < attempts:
+            time.sleep(pause)
+    return False
 
 
 def to_cx2(canonical, marks=None):

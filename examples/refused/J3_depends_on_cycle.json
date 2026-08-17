@@ -1,0 +1,54 @@
+{
+  "artifact": {
+    "name": "agent_vega_refused_j3_v1",
+    "type": "Argument",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-16T09:00:00Z",
+    "title": "Three Assertions each depending on the next, closing a loop. Every Ass",
+    "authors": [
+      "agent_vega"
+    ],
+    "primary_assertion": "a_x",
+    "verdict": "Immaterial. This Artifact exists to be refused.",
+    "purpose": "Fixture for the validator test suite; it is not part of any CommunityRecord.",
+    "rationale": "Three Assertions each depending on the next, closing a loop. Every Assertion has a basis and none of them rests on anything."
+  },
+  "objects": [
+    {
+      "name": "a_x",
+      "type": "Assertion",
+      "claim": "A claim used only to carry the structure under test.",
+      "scope": "Fixture; no scientific scope."
+    },
+    {
+      "name": "a_y",
+      "type": "Assertion",
+      "claim": "A claim used only to carry the structure under test.",
+      "scope": "Fixture; no scientific scope."
+    },
+    {
+      "name": "a_z",
+      "type": "Assertion",
+      "claim": "A claim used only to carry the structure under test.",
+      "scope": "Fixture; no scientific scope."
+    }
+  ],
+  "relationships": [
+    {
+      "rel": "depends_on",
+      "source": "a_x",
+      "target": "a_y"
+    },
+    {
+      "rel": "depends_on",
+      "source": "a_y",
+      "target": "a_z"
+    },
+    {
+      "rel": "depends_on",
+      "source": "a_z",
+      "target": "a_x"
+    }
+  ]
+}

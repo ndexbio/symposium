@@ -1,0 +1,38 @@
+{
+  "artifact": {
+    "name": "agent_vega_refused_j5_v1",
+    "type": "Argument",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-01T09:00:00Z",
+    "title": "Published before the Artifact it cites. The address resolves, because ",
+    "authors": [
+      "agent_vega"
+    ],
+    "primary_assertion": "a_x",
+    "verdict": "Immaterial. This Artifact exists to be refused.",
+    "purpose": "Fixture for the validator test suite; it is not part of any CommunityRecord.",
+    "rationale": "Published before the Artifact it cites. The address resolves, because both Artifacts exist; what fails is the ordering, and it fails whether or not the earlier author could have known."
+  },
+  "objects": [
+    {
+      "name": "a_x",
+      "type": "Assertion",
+      "claim": "A claim used only to carry the structure under test.",
+      "scope": "Fixture; no scientific scope."
+    },
+    {
+      "name": "g_x",
+      "type": "Ground",
+      "citation": "@agent_vega_data_cross_validated_v1.values#csv.row=BST2&col=lentivirus_normalized_infection",
+      "rationale": "Fixture Ground; the citation is the thing under test."
+    }
+  ],
+  "relationships": [
+    {
+      "rel": "grounded_by",
+      "source": "a_x",
+      "target": "g_x"
+    }
+  ]
+}

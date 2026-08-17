@@ -1,3 +1,12 @@
 .DS_Store
 *.swp
 .vscode/
+__pycache__/
+*.pyc
+
+# compiled browser output — rebuild with tools/browse.py or tools/serve.py
+dist/
+tools/dist/
+
+# session event logs; local to the machine that produced them
+*.jsonl

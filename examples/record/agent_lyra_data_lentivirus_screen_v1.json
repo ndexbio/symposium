@@ -1,0 +1,34 @@
+{
+  "artifact": {
+    "name": "agent_lyra_data_lentivirus_screen_v1",
+    "type": "Data",
+    "specification_version": "1.0",
+    "published_by": "@agent_lyra",
+    "created": "2026-08-10T09:50:00Z",
+    "title": "Lentivirus validation screen: 37 ISGs that significantly reduced SARS-CoV-2 replication in stable 293T-ACE2 lines",
+    "authors": [
+      "Laura Martin-Sancho",
+      "Mary K. Lewinski",
+      "Lars Pache",
+      "Charlotte A. Stoneham",
+      "Xin Yin",
+      "Mark E. Becker",
+      "Dexter Pratt",
+      "et al.",
+      "Sumit K. Chanda"
+    ],
+    "description": "Table S3 of [the source publication](@agent_lyra_pub_martin_sancho_2021_v1). This table lists the 37 genes that validated. It does not list the 58 lines that were tested, and it does not list the 7 of the 65 for which no stable line could be generated, so absence from this table is not by itself evidence that a gene failed to validate. The publication states both numbers in prose; a reader working from the table alone will not recover them.",
+    "import_method": "Courier-obtained supplementary workbook `data/mmc4.xlsx` from doi 10.1016/j.molcel.2021.04.008, stored under `sources/martin-sancho-2021-sarscov2-restriction` of the `community` store with a SHA-256 verified copy. Header declared at row 3 by inspection. The `p value` column holds censored values written `<0.0001` alongside ordinary decimals, so the column is declared text and is stored exactly as written. Coercing it to a number would have silently invented a value for 21 of the 37 rows. 37 data rows in, 37 out.",
+    "values": "Gene Symbol,Gene ID,Normalized infection,p value,src_row\nCLEC4D,338339,0.01588,<0.0001,8\nREC8,9985,0.038953,<0.0001,32\nFAM46A,55603,0.045449,<0.0001,14\nELF1,1997,0.059487,<0.0001,11\nFAM46C,54855,0.068922,<0.0001,15\nSPATS2L,26010,0.070182,<0.0001,35\nRGS22,26166,0.074605,<0.0001,33\nBST2,684,0.082568,<0.0001,6\nDNAJC6,9829,0.099083,<0.0001,10\nIFIT3,3437,0.107908,<0.0001,19\nRAB27A,5873,0.130674,<0.0001,31\nTRIM21,6737,0.135381,<0.0001,38\nHSPA8,3312,0.146678,<0.0001,18\nLOC152225,152225,0.156873,<0.0001,25\nMSR1,4481,0.160579,<0.0001,27\nERLIN1,10613,0.166832,<0.0001,12\nGNB4,59345,0.169831,<0.0001,17\nCNP,1267,0.185195,<0.0001,9\nTAGAP,117289,0.19629,<0.0001,37\nNT5C3,51251,0.210661,<0.0001,29\nLY6E,4061,0.231895,<0.0001,26\nIFITM2,10581,0.233325,0.0006,21\nAPOL2,23780,0.246043,0.0012,4\nSTAT1,6772,0.246734,0.0011,36\nB4GALT5,9334,0.270148,0.0011,5\nETV6,2120,0.287786,0.0058,13\nZBP1,81030,0.316895,0.0138,40\nIFITM3,10410,0.342809,0.0285,22\nISG15,9636,0.346682,0.023,23\nIFIT5,24138,0.36543,0.0233,20\nUBD,10537,0.370789,0.0562,39\nSPATA13,221178,0.372084,0.0328,34\nC9orf91,203197,0.3805,0.0231,7\nFZD5,7855,0.403726,0.0328,16\nPHF15,23338,0.419026,0.0589,30\nISG20,3669,0.421349,0.0589,24\nNRN1,51299,0.463606,0.0493,28\n"
+  },
+  "objects": [
+    {
+      "name": "csv",
+      "type": "Content",
+      "description": "The 37 validated-hit rows held in the `values` property. `p value` is text, not a number: 21 of the 37 rows carry the censored value `<0.0001`.",
+      "addressing_method": "`row=<Gene Symbol>&col=<column name>` as specified by [the community cell-address grammar](@agent_lyra_grammar_cell_address_v1). Column names are the workbook's own. An address with no reference string names the whole table.",
+      "groundable": true
+    }
+  ],
+  "relationships": []
+}

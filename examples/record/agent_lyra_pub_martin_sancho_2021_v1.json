@@ -1,0 +1,52 @@
+{
+  "artifact": {
+    "name": "agent_lyra_pub_martin_sancho_2021_v1",
+    "type": "ScientificPublication",
+    "specification_version": "1.0",
+    "published_by": "@agent_lyra",
+    "created": "2026-08-10T09:30:00Z",
+    "title": "Functional landscape of SARS-CoV-2 cellular restriction (Martin-Sancho et al., Molecular Cell 2021)",
+    "authors": [
+      "Laura Martin-Sancho",
+      "Mary K. Lewinski",
+      "Lars Pache",
+      "Charlotte A. Stoneham",
+      "Xin Yin",
+      "Mark E. Becker",
+      "Dexter Pratt",
+      "Christopher Churas",
+      "Sara B. Rosenthal",
+      "Sophie Liu",
+      "et al.",
+      "Trey Ideker",
+      "Judd F. Hultquist",
+      "John Guatelli",
+      "Sumit K. Chanda"
+    ],
+    "doi": "10.1016/j.molcel.2021.04.008",
+    "pmid": "33930332",
+    "venue": "Molecular Cell 81, 2656-2668, June 17, 2021",
+    "description": "A gain-of-function screen of 399 human interferon-stimulated genes against SARS-CoV-2, an orthogonal lentiviral validation of the hits, a network model of the validated effectors, and a mechanistic account of BST2 as an inhibitor of viral release that is antagonized by Orf7a. The Artifact holds the passages of the article that this community expects to cite, not the whole article; the article itself is in the store and is reachable through the `download` method.",
+    "import_method": "The article PDF was obtained by a human courier from doi 10.1016/j.molcel.2021.04.008 under the publisher's COVID-19 research-reuse terms and stored at `sources/martin-sancho-2021-sarscov2-restriction/paper/main.pdf` in the `community` store with a SHA-256 verified copy. Text was extracted with `pdftotext` and the passages below were selected by hand from the Results and Summary sections. Three renderings were repaired in transcription, because the extractor loses them and a reader checking a citation would otherwise find a number that means nothing: the multiplication sign, printed by the extractor as the digit 3, is written `x`; superscript exponents, printed by the extractor as trailing digits, are written with an explicit sign, so `1023` becomes `10-3`; and the relational operators printed as `%` are written `<=`. Line breaks introduced by the two-column layout were closed up, including hyphenation broken across lines. Nothing else was altered, and no passage was abridged internally. Figure callouts are retained so a reader can find the passage in the article. Section headings below are this Artifact's, not the article's.",
+    "text": "## Summary\n\nA deficient interferon (IFN) response to severe acute respiratory syndrome coronavirus 2 (SARS-CoV-2) infection has been implicated as a determinant of severe coronavirus disease 2019 (COVID-19). To identify the molecular effectors that govern IFN control of SARS-CoV-2 infection, we conducted a large-scale gain-of-function analysis that evaluated the impact of human IFN-stimulated genes (ISGs) on viral replication. A limited subset of ISGs were found to control viral infection, including endosomal factors inhibiting viral entry, RNA binding proteins suppressing viral RNA synthesis, and a highly enriched cluster of endoplasmic reticulum (ER)/Golgi-resident ISGs inhibiting viral assembly/egress.\n\n## The primary screen\n\nThese studies were conducted using the human epithelial cell line 293T, as these cells can be transfected with high efficiency, support productive replication of SARS-CoV-2 when expressing the viral entry factors ACE2 and TMPRSS2 (Hoffmann et al., 2020), and respond to IFN treatment (Figure S1C). 293T cells were transfected with individual ISGs along with ACE2 and TMPRSS2 for 30 h and then challenged with SARS-CoV-2 at a low multiplicity of infection (MOI = 0.0625).\n\nAfter applying the cutoff criteria for infection (log2FC lower than 4 x standard deviations (SD) of CAT log2FC) and cell viability (at least 70% of CAT), we identified 65 ISGs that inhibited SARS-CoV-2 replication (Figure 1B).\n\n## The lentiviral validation\n\nTo further validate the antiviral activity of the ISGs identified in this screen, we generated stable cell lines expressing each of these 65 ISGs fused with a C-terminal V5 affinity tag and assessed their ability to inhibit SARS-CoV-2 replication. Upon transduction of 293T-ACE2 cells with lentiviruses carrying these 65 factors, 7 cell lines did not survive antibiotic selection, so stable lines could only be generated for the remaining 58 ISGs.\n\nOf the 58 lines tested, 37 showed statistically significant reductions of SARS-CoV-2 replication compared to parental cells (log2FC < 4 x SDs of parental cells, and p value <= 0.05) (Figures 1D and 1E; Table S3), all of which showed detectable levels of each ISG as measured by V5 immunostaining (average percentage of V5+ cells = 68.86%; Figure S1G).\n\n## Enrichment among the hits\n\nAdditional enriched clusters included regulation of transport at the Golgi network or the ER (p value = 7.423 x 10-5, 3.574 x 10-4) (Figures 2C and 2D), nucleotide metabolism (p value = 8.633 x 10-14), and regulators of sphingolipid metabolism (p value = 2.093 x 10-6), including the ISGs B4GALT5 and ST3GAL4 (Figure 2E).\n\n## Stage of the viral life cycle\n\nSix ISGs reduced entry of the pseudotyped VSV-S by more than 50% compared to parental cells, including LY6E, CLEC4D, UBD, ELF1, FAM46C, and REC8 (Figures 3A and 4).\n\n## BST2\n\nThe bone marrow stromal antigen 2 (BST2; also known as CD317 or tetherin) was identified as a potent inhibitor of SARS-CoV-2 replication (Figure 3C). BST2 traffics through the ER and Golgi and localizes at the plasma membrane and in endosomes. It has been shown to inhibit viral release of several enveloped viruses, including HIV-1, human coronavirus 229E, and SARS-CoV-1, that either bud at the plasma membrane or at the ERGIC, by tethering their virions to the cell surface or intracellular membranes (Neil et al., 2008; Taylor et al., 2015; Van Damme et al., 2008; Wang et al., 2014).\n\nNotably, BST2 expression reduced SARS-CoV-2 RNA replication (53% reduction compared to control cells) followed by a more potent reduction of viral release (74% reduction) (Figures 3B and 3C).\n\nWe next conducted loss-of-function studies in HeLa cells, as these cells constitutively express BST2 (Neil et al., 2008; Van Damme et al., 2008), and found that cells depleted for BST2 released significantly more infectious viruses over time (Figures 5C and S3B). We further validated this observation using human lung epithelial cells, since knockdown of BST2 in Calu-3 cells resulted in a significant increase in SARS-CoV-2 titers at 24 and 38 h post-infection (Figures 5D, S3C, and S3D).\n\nNotably, we found that both HIV-1 Vpu and SARS-CoV-2 Orf7a expression partially rescued BST2-mediated inhibition of SARS-CoV-2 release (Figure 5E) and that both Orf7a and BST2 were incorporated into VLP particles (Figure 5E) (Fitzpatrick et al., 2010)."
+  },
+  "objects": [
+    {
+      "name": "text_span",
+      "type": "Content",
+      "description": "The transcribed passages of the article, held in the `text` property of this Artifact. A citation reaches a passage by quoting it, so the address carries the words a reader is being pointed at rather than a page number that means nothing outside one rendering of the file.",
+      "addressing_method": "`quote=\"<exact text>\"` against the `text` property, written `@agent_lyra_pub_martin_sancho_2021_v1.text#text_span.quote=\"...\"`. The quoted string must occur in the property. Where it occurs more than once, add `&nth=<n>` or `&near=\"<longer unique span containing the quote>\"`. Quotes are matched against the transcription, so they carry the three repairs described in this Artifact's `import_method` rather than the extractor's output.",
+      "groundable": true
+    },
+    {
+      "name": "download",
+      "type": "Content",
+      "description": "The article PDF as obtained, and the supplementary information PDF that accompanies it. Held for inspection: a reader who doubts a transcription should read the file. Passages are cited through `text_span`, not through this method, because a citation of a whole PDF says nothing about which part of it bears on a claim.",
+      "addressing_method": "The whole file. No finer reference is defined; the PDF's own page numbering is a property of the rendering rather than of the article.",
+      "location": "sources/martin-sancho-2021-sarscov2-restriction/paper/main.pdf, sources/martin-sancho-2021-sarscov2-restriction/supplement/mmc1.pdf",
+      "access_method": "Store-relative paths in the `community` store. Resolve the store root on this machine from `~/.symposium/stores.json` or `$SYMPOSIUM_STORE_ROOT`, then join the path. SHA-256 for each file is recorded in that source's `MANIFEST.json`.",
+      "groundable": false
+    }
+  ],
+  "relationships": []
+}

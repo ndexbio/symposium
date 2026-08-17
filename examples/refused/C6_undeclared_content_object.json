@@ -1,0 +1,38 @@
+{
+  "artifact": {
+    "name": "agent_vega_refused_c6_v1",
+    "type": "Argument",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-16T09:00:00Z",
+    "title": "The schema reference names a Content Object the cited Artifact does no",
+    "authors": [
+      "agent_vega"
+    ],
+    "primary_assertion": "a_x",
+    "verdict": "Immaterial. This Artifact exists to be refused.",
+    "purpose": "Fixture for the validator test suite; it is not part of any CommunityRecord.",
+    "rationale": "The schema reference names a Content Object the cited Artifact does not declare. The table exists and the row exists; what does not exist is a declaration of how to address them under that name."
+  },
+  "objects": [
+    {
+      "name": "a_x",
+      "type": "Assertion",
+      "claim": "A claim used only to carry the structure under test.",
+      "scope": "Fixture; no scientific scope."
+    },
+    {
+      "name": "g_x",
+      "type": "Ground",
+      "citation": "@agent_lyra_data_overexpression_screen_v1.values#table.row=BST2&col=Normalized infection",
+      "rationale": "Uses `table` where the Artifact declares `csv`."
+    }
+  ],
+  "relationships": [
+    {
+      "rel": "grounded_by",
+      "source": "a_x",
+      "target": "g_x"
+    }
+  ]
+}

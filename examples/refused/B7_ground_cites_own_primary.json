@@ -1,0 +1,38 @@
+{
+  "artifact": {
+    "name": "agent_vega_refused_b7_v1",
+    "type": "Argument",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-16T09:00:00Z",
+    "title": "The Ground cites the primary Assertion of the Argument that contains i",
+    "authors": [
+      "agent_vega"
+    ],
+    "primary_assertion": "a_x",
+    "verdict": "Immaterial. This Artifact exists to be refused.",
+    "purpose": "Fixture for the validator test suite; it is not part of any CommunityRecord.",
+    "rationale": "The Ground cites the primary Assertion of the Argument that contains it. An Argument cannot be evidence for itself, and the address resolves, which is why the rule has to be structural."
+  },
+  "objects": [
+    {
+      "name": "a_x",
+      "type": "Assertion",
+      "claim": "A claim used only to carry the structure under test.",
+      "scope": "Fixture; no scientific scope."
+    },
+    {
+      "name": "g_x",
+      "type": "Ground",
+      "citation": "@agent_vega_refused_b7_v1.a_x",
+      "rationale": "Cites this Argument's own primary Assertion."
+    }
+  ],
+  "relationships": [
+    {
+      "rel": "grounded_by",
+      "source": "a_x",
+      "target": "g_x"
+    }
+  ]
+}

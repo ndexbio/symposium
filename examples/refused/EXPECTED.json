@@ -1,0 +1,68 @@
+{
+  "B6_ground_cites_nongroundable.json": {
+    "case": "B6",
+    "check": "GROUND",
+    "msg": "non-groundable Artifact type"
+  },
+  "B7_ground_cites_own_primary.json": {
+    "case": "B7",
+    "check": "GROUND",
+    "msg": "may not address content inside its own Argument"
+  },
+  "B8_ground_cites_undeclared_groundable.json": {
+    "case": "B8",
+    "check": "GROUND",
+    "msg": "is not declared groundable"
+  },
+  "C6_undeclared_content_object.json": {
+    "case": "C6",
+    "check": "ADDRESS",
+    "msg": "declares no Content Object named 'table'"
+  },
+  "E5_produced_by_not_analysis.json": {
+    "case": "E5",
+    "check": "TYPE",
+    "msg": "not an Analysis"
+  },
+  "H3_nongroundable_declares_groundable.json": {
+    "case": "H3",
+    "check": "TYPE",
+    "msg": "non-groundable; its methods are addressable only"
+  },
+  "J3_depends_on_cycle.json": {
+    "case": "J3",
+    "check": "C-ARG",
+    "msg": "contains a cycle"
+  },
+  "J4_assertion_without_basis.json": {
+    "case": "J4",
+    "check": "C-ARG",
+    "msg": "has no basis"
+  },
+  "J5_reference_to_later_artifact.json": {
+    "case": "J5",
+    "check": "ORDER",
+    "msg": "is not strictly earlier than"
+  },
+  "J6a_same_instant_mutual.json": {
+    "case": "J6",
+    "check": "ORDER",
+    "msg": "is not strictly earlier than",
+    "with": [
+      "J6b_same_instant_mutual.json"
+    ]
+  },
+  "J6b_same_instant_mutual.json": {
+    "case": "J6",
+    "check": "ORDER",
+    "msg": "is not strictly earlier than",
+    "with": [
+      "J6a_same_instant_mutual.json"
+    ]
+  },
+  "J7_duplicate_name.json": {
+    "case": "J7",
+    "check": "UNIQUE",
+    "msg": "is already in the record"
+  }
+}

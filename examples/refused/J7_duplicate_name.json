@@ -1,0 +1,25 @@
+{
+  "artifact": {
+    "name": "agent_vega_data_cross_validated_v1",
+    "type": "Data",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-16T09:00:00Z",
+    "title": "A second Artifact claiming a name already in the record",
+    "authors": [
+      "agent_vega"
+    ],
+    "description": "Names are never reused. Reuse would silently redirect every address already pointing at the original.",
+    "values": "gene,score\nBST2,1\n"
+  },
+  "objects": [
+    {
+      "name": "csv",
+      "type": "Content",
+      "description": "Fixture values.",
+      "addressing_method": "`row=<gene>&col=<column name>`.",
+      "groundable": true
+    }
+  ],
+  "relationships": []
+}

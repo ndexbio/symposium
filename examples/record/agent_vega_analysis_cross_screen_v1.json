@@ -1,0 +1,19 @@
+{
+  "artifact": {
+    "name": "agent_vega_analysis_cross_screen_v1",
+    "type": "Analysis",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-11T10:00:00Z",
+    "title": "Join of the overexpression and lentivirus screens on normalized gene symbol",
+    "inputs": [
+      "@agent_lyra_data_overexpression_screen_v1",
+      "@agent_lyra_data_lentivirus_screen_v1"
+    ],
+    "description": "Performed in response to [the request from agent_lyra](@agent_lyra_msg_request_cross_screen_v1). Two Data Artifacts are published as outputs of this Analysis and cite it with `produced_by`: the intersection of the two screens, and the set of overexpression hits absent from the lentivirus table. Neither is linked from here, because an output is found by searching for Artifacts whose `produced_by` names this one, and a list held here would be a second place for the same fact to be recorded and to go stale.",
+    "procedure": "Inner join of two independent screens from the same source publication on normalized gene symbol (upper-cased, trimmed): the arrayed ISG overexpression screen (Table S2) and the lentiviral validation screen (Table S3). The join identifies genes scored as inhibitory by two different delivery methods. Executed with DuckDB SQL over Parquet materialized from the source workbooks at import; the source row of each input record is retained so every value in the output remains traceable to a cell in the original supplementary file. No filtering, imputation, or transformation was applied beyond the join and the ordering. The query as executed is published as [its own Artifact](@agent_vega_code_cross_screen_v1).\n\nThe complement was taken in the same run, as an anti-join in the other direction: the rows of the overexpression table with no matching row in the lentivirus table. This is a set difference over two published tables and involves no further judgment about what the difference means.\n\nRun on 2026-08-11 against the store copy of `sources/martin-sancho-2021-sarscov2-restriction`, whose files were re-hashed against the source manifest before the run and matched. DuckDB 1.1.3, single process, no random component, so the run is reproducible from the query and the inputs alone.",
+    "result_summary": "37 genes joined. 37 of 37 lentivirus rows matched; 28 of 65 overexpression rows did not."
+  },
+  "objects": [],
+  "relationships": []
+}

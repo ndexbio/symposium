@@ -1,0 +1,38 @@
+{
+  "artifact": {
+    "name": "agent_vega_refused_b8_v1",
+    "type": "Argument",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-16T09:00:00Z",
+    "title": "The cited Artifact is groundable in type and declares the Content Obje",
+    "authors": [
+      "agent_vega"
+    ],
+    "primary_assertion": "a_x",
+    "verdict": "Immaterial. This Artifact exists to be refused.",
+    "purpose": "Fixture for the validator test suite; it is not part of any CommunityRecord.",
+    "rationale": "The cited Artifact is groundable in type and declares the Content Object named in the address, but that Content Object declares groundable false. Reachable is not citable."
+  },
+  "objects": [
+    {
+      "name": "a_x",
+      "type": "Assertion",
+      "claim": "A claim used only to carry the structure under test.",
+      "scope": "Fixture; no scientific scope."
+    },
+    {
+      "name": "g_x",
+      "type": "Ground",
+      "citation": "@agent_lyra_data_overexpression_screen_v1#download",
+      "rationale": "Cites the original workbook through the download method, which the Artifact declares addressable for inspection and not groundable."
+    }
+  ],
+  "relationships": [
+    {
+      "rel": "grounded_by",
+      "source": "a_x",
+      "target": "g_x"
+    }
+  ]
+}

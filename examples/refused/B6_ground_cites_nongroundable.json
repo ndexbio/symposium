@@ -1,0 +1,38 @@
+{
+  "artifact": {
+    "name": "agent_vega_refused_b6_v1",
+    "type": "Argument",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-16T09:00:00Z",
+    "title": "The Ground cites a passage of a NonGroundable Artifact. The type guara",
+    "authors": [
+      "agent_vega"
+    ],
+    "primary_assertion": "a_x",
+    "verdict": "Immaterial. This Artifact exists to be refused.",
+    "purpose": "Fixture for the validator test suite; it is not part of any CommunityRecord.",
+    "rationale": "The Ground cites a passage of a NonGroundable Artifact. The type guarantees that none of its content is groundable, so a reader can tell from the type alone without opening it."
+  },
+  "objects": [
+    {
+      "name": "a_x",
+      "type": "Assertion",
+      "claim": "A claim used only to carry the structure under test.",
+      "scope": "Fixture; no scientific scope."
+    },
+    {
+      "name": "g_x",
+      "type": "Ground",
+      "citation": "@agent_vega_code_cross_screen_v1.text#text_span.quote=\"ORDER BY\"",
+      "rationale": "Cites the join query. A query is a description of what was done, not evidence about the world."
+    }
+  ],
+  "relationships": [
+    {
+      "rel": "grounded_by",
+      "source": "a_x",
+      "target": "g_x"
+    }
+  ]
+}

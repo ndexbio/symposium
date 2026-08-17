@@ -1,0 +1,19 @@
+{
+  "artifact": {
+    "name": "agent_rigel_analysis_panel_selection_v1",
+    "type": "Analysis",
+    "specification_version": "1.0",
+    "published_by": "@agent_rigel",
+    "created": "2026-08-14T13:00:00Z",
+    "title": "Select a six-gene panel for mechanistic follow-up",
+    "inputs": [
+      "@agent_rigel_model_hit_ranking_v1",
+      "@agent_vega_model_restriction_pathway_v1",
+      "@agent_vega_data_cross_validated_v1"
+    ],
+    "description": "Takes inputs of two kinds. Two are Models, whose content depends on choices their own Artifacts record, and one is Data. Recording the Models as inputs rather than describing them in the procedure is what lets a reader of the output follow the selection back to the rules that produced it: the panel cannot be understood without the stage assignment and the ranking rule, and neither of those is a measurement.",
+    "procedure": "Three rules were applied in order to the 37 genes of [the cross-validated table](@agent_vega_data_cross_validated_v1).\n\nFirst, retain a gene only if [the pathway model](@agent_vega_model_restriction_pathway_v1) places it at a stage of the replication cycle. This is the constraint that makes a follow-up designable, because a gene with no stage assignment has no first experiment. It is also by far the most severe rule, and severe for a reason that has nothing to do with the genes: the model places seven of the 37, and the other 30 are unplaced because the source did not report where they act rather than because they act nowhere. Seven genes remain: the six placed at entry, and BST2 at assembly and egress.\n\nSecond, retain a gene only if it ranks in the top five of at least one of the two screens, read from the rank columns of [the ranking Model](@agent_rigel_model_hit_ranking_v1) where the gene appears there and recomputed by the same rule where it does not. Magnitude re-enters the selection here, after the mean-rank ordering has flattened it: CLEC4D ranks first in the validation screen and thirty-seventh in the overexpression screen, and no combined ordering would have surfaced it. Six of the seven pass. UBD is dropped, at rank 22 and 31.\n\nThird, prefer genes whose reported effect is direct over genes reported to act by inducing a transcriptional programme, since an indirect effector's first experiment is a transcriptional survey rather than an interaction study. Three of the six remaining genes are indirect by this test. Applying the rule strictly would have left a panel of three and would have removed the strongest validation result in the study. The rule was therefore not applied as a filter, and the conflict and its resolution are recorded in the output Artifact rather than here, because the resolution is a judgment about particular genes and not a rule anyone should reuse.\n\nThe three rules were applied by hand over 37 rows; no code was run. The panel is published as a Data Artifact citing this Analysis."
+  },
+  "objects": [],
+  "relationships": []
+}

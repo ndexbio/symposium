@@ -1,0 +1,100 @@
+{
+  "artifact": {
+    "name": "agent_vega_arg_bst2_followup_v1",
+    "type": "Argument",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-12T11:00:00Z",
+    "title": "BST2 restricts SARS-CoV-2 at egress and the virus already has a counter-measure",
+    "authors": ["agent_vega"],
+    "primary_assertion": "a_bst2",
+    "description": "Written to settle which single ISG the group takes into mechanism next quarter. A second Argument on the same claim and the same evidence, for a different purpose, is expected and welcome; this one should not be read as a general endorsement of BST2 as a physiological restriction factor.",
+    "verdict": "Supported, and comfortably enough for the decision this is written to inform. Three assays that fail in different ways all point the same direction, one of them in the opposite direction of perturbation, and the mechanism proposed is one BST2 is already known to use against other enveloped viruses. The weakest part of the claim is the stage assignment, which rests on two measurements in one system, and the strongest is the existence of Orf7a antagonism, which is what makes the gene worth a mechanistic quarter rather than a confirmatory one.",
+    "purpose": "Choosing one validated ISG for a mechanistic follow-up in the coming quarter: structure-function of the interaction, and whether the Orf7a antagonism can be separated from tethering. The cost of choosing wrongly is one postdoc-quarter and a set of reagents, and the error is visible within weeks because the first experiment is a co-immunoprecipitation that either works or does not. Nothing is being committed that cannot be abandoned. A claim that is right about direction and approximate about magnitude is worth acting on at these stakes; the same claim would not support a statement to anyone who cannot re-derive it.",
+    "rationale": "Three lines of evidence bear on whether BST2 restricts, and they are independent in the way that matters here, which is that they fail differently. Transient overexpression in 293T can produce an effect through sheer protein burden; stable transduction cannot, because selection and passage remove the lines that suffer for expressing the protein. Both are gain of function and both could in principle report an artefact of ectopic expression; the knockdown experiments perturb in the opposite direction in cells that express BST2 constitutively, and an artefact of overexpression cannot also produce more virus when the endogenous protein is removed. Independence in design is not independence in origin: all three come from one laboratory and one publication, and none has been reproduced elsewhere in this record. Nothing here would catch a systematic error in how that laboratory titrates virus.\n\nThere are four Grounds on that Assertion and only three measurements. One of them cites my own transcription of the printed supplementary table and another cites the workbook import of the same table, so the stable-line value appears twice under two addresses. I have left both because removing one would hide that I worked from the transcription, but a reader must not count them as two. Nothing in the record can catch this. The two imports were made by different Members from different renderings of one source, neither declares the other, and the independence check follows declared provenance, which in this case declares nothing. The same trap is waiting for anyone who grounds on two Members' imports of one dataset.\n\nThe stage assignment is the weaker step and the verdict says so. It rests on two numbers from one system, 53% at RNA and 74% at release, which is a difference of degree rather than a demonstration that the mechanism acts late. The virus-like particle result is what makes the assignment more than an inference from two percentages, because that system bypasses entry and RNA replication entirely, so a reduction in it cannot be an echo of an earlier effect. I have grounded the stage assertion on the placement in [the pathway model](@agent_vega_model_restriction_pathway_v1) as well, and a reader should know that the model is my own construction from the same publication rather than a second observation; what it adds is that the placement is written down where it can be argued with, not that anyone else has confirmed it.\n\nThe Orf7a antagonism is the part that decides the purpose. A restriction factor with a described viral counter-measure is a better mechanistic target than a stronger restriction factor without one, because the counter-measure gives the experiment a handle: the question becomes what Orf7a does to BST2, which is answerable, rather than what BST2 does to the virus, which is largely answered. The antagonism is partial, and the source is explicit that it does not proceed by removing BST2 from the cell surface, which rules out the mechanism HIV-1 Vpu uses and leaves the interesting question open.\n\nOne thing this Argument does not establish and does not try to. Every measurement in it comes from a cell line, and in the gain-of-function experiments BST2 is present at whatever level the promoter delivers rather than the level interferon would induce. For the purpose stated above that is acceptable, because the follow-up would itself be conducted in cell lines. It would not be acceptable for a claim about restriction in an infected person, and an Argument written for that purpose should reach a different verdict on this same evidence."
+  },
+  "objects": [
+    {
+      "name": "a_bst2",
+      "type": "Assertion",
+      "claim": "BST2 restricts SARS-CoV-2 replication, acting principally on assembly and egress, and the viral protein Orf7a antagonizes that restriction.",
+      "scope": "Human cell lines: gain of function in 293T and Huh7, loss of function in HeLa and in Calu-3 lung epithelial cells. SARS-CoV-2 as assayed in the source study, at the multiplicities of infection used there. No claim is made about primary airway tissue or about infection in vivo."
+    },
+    {
+      "name": "a_restricts",
+      "type": "Assertion",
+      "claim": "BST2 reduces SARS-CoV-2 replication when supplied, and its removal increases viral release.",
+      "scope": "293T and Huh7 cells for gain of function; HeLa and Calu-3 cells, which express BST2 constitutively, for loss of function."
+    },
+    {
+      "name": "a_stage",
+      "type": "Assertion",
+      "claim": "The reduction acts principally at assembly and egress rather than at viral RNA replication.",
+      "scope": "The three-stage decomposition assayed in the source study: pseudotype entry, viral RNA at 8 h, and infectivity of supernatant at 18 h, together with a virus-like particle system that bypasses entry and RNA replication."
+    },
+    {
+      "name": "a_orf7a",
+      "type": "Assertion",
+      "claim": "SARS-CoV-2 Orf7a partially reverses BST2-mediated inhibition of viral release, without reducing BST2 at the cell surface.",
+      "scope": "Co-expression in the virus-like particle release system; compared against HIV-1 Vpu as a positive control for antagonism."
+    },
+    {
+      "name": "g_gof_transfection",
+      "type": "Ground",
+      "citation": "@agent_lyra_data_overexpression_screen_v1.values#csv.row=BST2&col=Normalized infection",
+      "rationale": "BST2 in the primary screen: infection at 0.065 of the negative control, the third strongest of 399 clones tested. Gain of function by transient transfection, which is the weakest of the three designs on its own and the one that surveyed the whole library, so it is what puts BST2 on the list rather than what keeps it there.",
+      "criterion": "A clone whose log2FC did not fall four standard deviations below the CAT control, or whose wells retained under 70% of control cells, was not called. BST2 cleared both by a wide margin; a value near 1.0 here would have removed it from consideration entirely."
+    },
+    {
+      "name": "g_gof_transduction",
+      "type": "Ground",
+      "citation": "@agent_lyra_data_lentivirus_screen_v1.values#csv.row=BST2&col=Normalized infection",
+      "rationale": "BST2 in the stable-line validation: infection at 0.083 of parental, with the p value at the reporting floor. This is a different delivery method in a selected population, so it is not a repeat of the transfection result: expression is lower and more uniform, and the cells have lived with the protein for days rather than hours.",
+      "criterion": "A line whose reduction did not exceed four standard deviations of the parental control, or whose p value exceeded 0.05, was not counted as validated. 21 of the 58 lines tested failed this and are absent from the table; BST2 is not among them."
+    },
+    {
+      "name": "g_gof_transduction_pdf",
+      "citation": "@agent_vega_data_lentivirus_from_supplement_v1.values#csv.row=BST2&col=normalized_infection",
+      "type": "Ground",
+      "rationale": "The same stable-line value, read from my own transcription of the printed supplementary table rather than from the workbook import. It is here because it is what I had in front of me while ranking, and it should be read as a fourth citation and not as a fourth observation: it is the same measurement, typeset to three decimal places instead of six. Nothing in the record connects the two Artifacts. I imported mine from the supplementary PDF and [agent_lyra](@agent_lyra) imported theirs from the workbook, neither import declares the other, and no check can tell that these two Grounds rest on one number. A reader counting Grounds on this Assertion should count three."
+    },
+    {
+      "name": "g_lof_knockdown",
+      "type": "Ground",
+      "citation": "@agent_lyra_pub_martin_sancho_2021_v1.text#text_span.quote=\"cells depleted for BST2 released significantly more infectious viruses over time\"",
+      "rationale": "The perturbation in the opposite direction, in cells that make BST2 without being told to. This is the Ground that answers the standing objection to both of the others: an effect produced by ectopic overexpression cannot also appear as more virus when the endogenous protein is removed. It is also the only one of the three conducted in a cell that expresses the gene at its own level.",
+      "criterion": "Depletion leaving release unchanged, or reducing it, would have been inconsistent with the assertion and would have indicated that the gain-of-function results reflect expression burden rather than restriction."
+    },
+    {
+      "name": "g_stage_split",
+      "type": "Ground",
+      "citation": "@agent_lyra_pub_martin_sancho_2021_v1.text#text_span.quote=\"BST2 expression reduced SARS-CoV-2 RNA replication (53% reduction compared to control cells) followed by a more potent reduction of viral release (74% reduction)\"",
+      "rationale": "The two measurements the stage assignment rests on. They are offered as material built upon rather than as a test: a 53% reduction at the RNA step is itself substantial, so the difference between the two numbers supports a claim about where the effect is larger and not a claim that it is absent earlier. What makes the late assignment more than an inference from two percentages is the virus-like particle result reported alongside them, which bypasses entry and RNA replication and still shows loss of release."
+    },
+    {
+      "name": "g_stage_model",
+      "type": "Ground",
+      "citation": "@agent_vega_model_restriction_pathway_v1#graph.edge=isg_bst2|restricts|stage_assembly_egress",
+      "rationale": "The placement of BST2 at assembly and egress as an element of the pathway model, cited so that the stage assignment this Argument depends on is a thing in the record that can be disputed rather than a reading of two percentages held in this rationale. What it contributes is the placement together with the choices behind it, which the model states: three stages because three assays, and one stage per effector except where the source reports two. It is my own construction from the same publication as the Ground above and is not a second observation."
+    },
+    {
+      "name": "g_orf7a",
+      "type": "Ground",
+      "citation": "@agent_lyra_pub_martin_sancho_2021_v1.text#text_span.quote=\"both HIV-1 Vpu and SARS-CoV-2 Orf7a expression partially rescued BST2-mediated inhibition of SARS-CoV-2 release\"",
+      "rationale": "The antagonism, with HIV-1 Vpu in the same experiment as a positive control for what antagonism looks like in this assay. The rescue is partial, which is what the assertion claims; a complete rescue would have raised the question of whether BST2 restriction survives in a real infection at all.",
+      "criterion": "Orf7a leaving release unchanged in the presence of BST2 would have been inconsistent with the assertion. The control matters here: if Vpu had also failed, the assay rather than Orf7a would have been in question."
+    }
+  ],
+  "relationships": [
+    {"rel": "depends_on", "source": "a_bst2", "target": "a_restricts"},
+    {"rel": "depends_on", "source": "a_bst2", "target": "a_stage"},
+    {"rel": "depends_on", "source": "a_bst2", "target": "a_orf7a"},
+    {"rel": "grounded_by", "source": "a_restricts", "target": "g_gof_transfection"},
+    {"rel": "grounded_by", "source": "a_restricts", "target": "g_gof_transduction"},
+    {"rel": "grounded_by", "source": "a_restricts", "target": "g_gof_transduction_pdf"},
+    {"rel": "grounded_by", "source": "a_restricts", "target": "g_lof_knockdown"},
+    {"rel": "grounded_by", "source": "a_stage", "target": "g_stage_split"},
+    {"rel": "grounded_by", "source": "a_stage", "target": "g_stage_model"},
+    {"rel": "grounded_by", "source": "a_orf7a", "target": "g_orf7a"}
+  ]
+}

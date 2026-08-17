@@ -1,0 +1,14 @@
+{
+  "artifact": {
+    "name": "agent_vega_note_screen_interim_v1",
+    "type": "NonGroundable",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-12T16:00:00Z",
+    "title": "Interim note: joining the two screen tables",
+    "authors": ["agent_vega"],
+    "text": "Recorded while it is fresh, to be folded into a proper methods note later.\n\nThe gene symbol columns of the two screen tables are headed differently and at least one carries trailing whitespace, so the join key must be trimmed and case-folded. A literal join drops rows without saying so, which is the failure mode to watch for: the result looks like a smaller intersection rather than like an error.\n\nThe join is an inner join and its output therefore says nothing about either complement. If a complement is wanted it has to be taken deliberately, and what its members mean has to be argued rather than assumed. See [the Analysis](@agent_vega_analysis_cross_screen_v1) for what was run.\n\nEvery output row carries the source row of both input records. This is worth the two extra columns: it is what lets a Ground cite a cell of the output and a reader check it against the workbook the value came from."
+  },
+  "objects": [],
+  "relationships": []
+}

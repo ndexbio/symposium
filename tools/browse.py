@@ -128,7 +128,7 @@ def pretty_address(addr, index):
         return addr
     root = p["root"]
     title = (index.get(root, {}).get("header", {}) or {}).get("title") or root
-    short = title if len(title) <= 34 else title[:31].rstrip() + "…"
+    short = title
     segs, method, ref = p["segs"], p["method"], p["ref"] or ""
 
     if method == "csv":
@@ -140,7 +140,7 @@ def pretty_address(addr, index):
         q = re.search(r'quote="([^"]*)"', ref)
         if q:
             t = q.group(1)
-            return f'{short} · "{t if len(t) <= 44 else t[:41].rstrip() + "…"}"'
+            return f'{short} · "{t}"'
         return f"{short} · passage"
     if method in ("rest", "download"):
         return f"{short} · {method}"
@@ -266,7 +266,7 @@ def build_claim_graph(doc, index, findings, colors, pages):
     for an, a in assertions.items():
         my = out.get(an, [])
         claim = a.get("claim", "")
-        label = claim if len(claim) <= 90 else claim[:87].rstrip() + "…"
+        label = claim
         gs = []
         for rel, t in my:
             if rel != "grounded_by" or t not in grounds:
@@ -332,7 +332,7 @@ def build_claim_graph(doc, index, findings, colors, pages):
     for un, u in assumptions.items():
         r = u.get("rationale", "")
         d = {"id": un, "ntype": "Assumption", "owner": owner, "owner_color": color,
-             "label": r if len(r) <= 70 else r[:67].rstrip() + "…",
+             "label": r,
              "full": {"rationale": r}, "tooltip": "assumed: " + r}
         nodes.append({"data": dict(d)})
         full_nodes.append({"data": dict(d)})
@@ -357,8 +357,7 @@ def build_claim_graph(doc, index, findings, colors, pages):
             title = (index.get(p["root"], {}).get("header", {}) or {}).get("title") or p["root"]
             tgt_owner = (index.get(p["root"], {}).get("header", {}) or {}).get(
                 "published_by", "").lstrip("@")
-            d = {"id": cid, "ntype": "Source", "label": "cited: " + (
-                    title if len(title) <= 34 else title[:31].rstrip() + "…"),
+            d = {"id": cid, "ntype": "Source", "label": "cited: " + title,
                  "name": title, "owner": tgt_owner,
                  "owner_color": colors.get(tgt_owner, "#9ca3af"),
                  "nav_file": pages[p["root"]], "navigable": True,
@@ -596,7 +595,7 @@ def build_overview(artifacts, index, colors, pages, findings_by):
         title = h.get("title") or name
         fs = findings_by.get(name, [])
         nodes.append({"data": {
-            "id": name, "ntype": typ, "label": title if len(title) <= 40 else title[:37] + "…",
+            "id": name, "ntype": typ, "label": title,
             "member": owner, "owner_color": colors.get(owner, "#9ca3af"),
             "shape": _SHAPE.get(typ, "ellipse"),
             "nav_file": pages.get(name),
@@ -633,7 +632,7 @@ def build_overview(artifacts, index, colors, pages, findings_by):
                 link(v, k)
         for o in a.get("objects", []):
             if o.get("type") == "Ground":
-                addr = o.get("address", "")
+                addr = o.get("citation", "")
                 p = parse_address(addr)
                 tgt = index.get(p["root"]) if p else None
                 is_testimony = False
@@ -755,7 +754,7 @@ def grounded_spans(artifacts):
         for o in a.get("objects", []):
             if o.get("type") != "Ground":
                 continue
-            p = parse_address(o.get("address", ""))
+            p = parse_address(o.get("citation", ""))
             if not p or p["method"] != "text_span" or not p["segs"]:
                 continue
             q = re.search(r'quote="([^"]*)"', p["ref"] or "")

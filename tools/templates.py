@@ -142,6 +142,9 @@ HTML_TEMPLATE = r"""<!doctype html>
   <div id="graphwrap">
     <div class="toolbar">
       <button id="btn-fit">Fit</button>
+      <button id="btn-export">Export PNG</button>
+      <button id="btn-hide">Hide node</button>
+      <button id="btn-showall">Show all</button>
       <button id="btn-claim" class="active">Claim map</button>
       <button id="btn-full">Full graph</button>
       <button id="btn-force">Force (cose)</button>
@@ -598,11 +601,48 @@ HTML_TEMPLATE = r"""<!doctype html>
     ele.addClass('hi');
   }}
 
-  cy.on('tap', 'node', function (e) {{ renderDetail('node', e.target.data()); highlight(e.target); }});
+  // ---- figure mode: hide nodes so a subset can be exported -----------------
+  var figHidden = [], lastTapped = null;
+  function updateHideUI() {{
+    var b = document.getElementById('btn-showall');
+    if (!b) return;
+    b.textContent = figHidden.length ? ('Show all (' + figHidden.length + ')') : 'Show all';
+    b.disabled = !figHidden.length;
+  }}
+  function figHide(n) {{
+    if (!n) return;
+    n.style('display', 'none');
+    figHidden.push(n);
+    if (lastTapped && lastTapped.id() === n.id()) lastTapped = null;
+    cy.elements().removeClass('hi faded');
+    updateHideUI();
+  }}
+  function figShowAll() {{
+    figHidden.forEach(function (n) {{
+      try {{ if (!n.removed()) n.removeStyle('display'); }} catch (err) {{}}
+    }});
+    figHidden = []; updateHideUI();
+  }}
+  cy.on('tap', 'node', function (e) {{
+    var oe = e.originalEvent || {{}};
+    if (oe.altKey) {{ figHide(e.target); return; }}
+    lastTapped = e.target; renderDetail('node', e.target.data()); highlight(e.target); }});
   cy.on('tap', 'edge', function (e) {{ renderDetail('edge', e.target.data()); highlight(e.target); }});
   cy.on('tap', function (e) {{ if (e.target === cy) {{ cy.elements().removeClass('hi faded'); }} }});
 
   document.getElementById('btn-fit').onclick = function () {{ cy.fit(undefined, 30); }};
+  document.getElementById('btn-export').onclick = function () {{
+    var uri = cy.png({{ full: true, bg: '#ffffff', maxWidth: 2400 }});
+    var a = document.createElement('a');
+    a.href = uri;
+    a.download = (document.title || 'symposium').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.png';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }};
+  document.getElementById('btn-hide').onclick = function () {{ if (lastTapped) figHide(lastTapped); }};
+  document.getElementById('btn-showall').onclick = figShowAll;
+  updateHideUI();
   var btnClaim = document.getElementById('btn-claim');
   var btnFull = document.getElementById('btn-full');
   var btnForce = document.getElementById('btn-force');
@@ -632,6 +672,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   function runLayout(mode) {{
     _layoutMode = mode;
+    figShowAll();                            // mode switch rebuilds elements; drop stale hides
     ensureElements(mode);
     cy.elements().removeClass('hi faded');   // clear any prior click-highlight
     btnClaim.classList.toggle('active', mode === 'claim');
@@ -849,7 +890,7 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 </header>
 <div id="app">
   <div id="graphwrap">
-    <div class="toolbar"><button id="btn-fit">Fit</button></div>
+    <div class="toolbar"><button id="btn-fit">Fit</button><button id="btn-export">Export PNG</button><button id="btn-hide">Hide node</button><button id="btn-showall">Show all</button><span style="font-size:11px;color:var(--muted);align-self:center;user-select:none">alt-click a node to hide it &middot; hidden nodes are left out of the export</span></div>
     <div id="cy"></div>
     <div id="tip" class="tip"></div>
   </div>
@@ -942,13 +983,47 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
       +'<dt>to</dt><dd>'+esc(d.target)+'</dd><dt>edges of this kind</dt><dd>'+esc(d.count)+'</dd></dl>'
       +'<p class="hint">Every relationship is internal to one artifact, so this edge is not a relationship — it is derived from an <b>address</b> held in a property value.</p>';
   }}
-  cy.on('tap','node',function(e){{ if(e.target.data('ntype')==='TimeTick') return; renderNode(e.target.data()); highlight(e.target); }});
+  // ---- figure mode: hide nodes so a subset can be exported -----------------
+  // Inline `display` (not the `hidden` class) so this never fights the member filter.
+  var figHidden=[], lastTapped=null;
+  function updateHideUI(){{
+    var b=document.getElementById('btn-showall');
+    if(!b) return;
+    b.textContent = figHidden.length ? ('Show all ('+figHidden.length+')') : 'Show all';
+    b.disabled = !figHidden.length;
+  }}
+  function figHide(n){{
+    if(!n) return;
+    n.style('display','none');
+    figHidden.push(n);
+    if(lastTapped && lastTapped.id()===n.id()) lastTapped=null;
+    cy.elements().removeClass('hi faded');
+    updateHideUI();
+  }}
+  cy.on('tap','node',function(e){{ if(e.target.data('ntype')==='TimeTick') return;
+    var oe=e.originalEvent||{{}};
+    if(oe.altKey){{ figHide(e.target); return; }}
+    lastTapped=e.target; renderNode(e.target.data()); highlight(e.target); }});
   cy.on('tap','edge',function(e){{ renderEdge(e.target.data()); highlight(e.target); }});
   cy.on('tap',function(e){{ if(e.target===cy) cy.elements().removeClass('hi faded'); }});
   cy.on('dbltap','node',function(e){{ var f=e.target.data('nav_file'); if(f) window.location.href=f; }});
   detail.addEventListener('click',function(e){{ var b=e.target.closest?e.target.closest('.navbtn'):null;
     if(b){{ var f=b.getAttribute('data-file'); if(f) window.location.href=f; }} }});
   document.getElementById('btn-fit').onclick=function(){{ cy.fit(undefined,40); }};
+  document.getElementById('btn-export').onclick=function(){{
+    var uri = cy.png({{ full: true, bg: '#ffffff', maxWidth: 2400 }});
+    var a = document.createElement('a');
+    a.href = uri;
+    a.download = (document.title || 'symposium').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.png';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }};
+  document.getElementById('btn-hide').onclick=function(){{ if(lastTapped) figHide(lastTapped); }};
+  document.getElementById('btn-showall').onclick=function(){{
+    figHidden.forEach(function(n){{ n.removeStyle('display'); }});
+    figHidden=[]; updateHideUI(); }};
+  updateHideUI();
 
   // ---- legend + member filter ----
   var mem=DATA.meta.members||{{}}, c=DATA.meta.counts;

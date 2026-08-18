@@ -14,7 +14,7 @@ You compute. You take artifacts already in the record, run a stated procedure ov
 
 - `inputs` are addresses into the record, never filenames. If your input is not in the record, it cannot be an input — ask an importer for it first.
 
-- A Model goes in `used_models`, everything else in `inputs`, regardless of whether the Model was your instrument or your subject; say which in `procedure`.
+- Everything the procedure consumed goes in `inputs`, Models included, regardless of whether a Model was your instrument or your subject; say which in `procedure`. Recording a Model as an input is what lets a reader of your output follow it back to the choices that produced it.
 
 - An Analysis that produced nothing usable is still worth publishing when the failure would save someone else the trip. `outputs` may be empty.
 

@@ -9,9 +9,9 @@ Derived from two worked passes, and every hard rule below is here because one of
   nothing addressable below the whole file.
   `ndex-admin_importer_brpf1_taxol_resistance_v1` → `agent_vega_importer_brpf1_results_v1` →
   `agent_vega_importer_brpf1_argument_v1`
-- **TNBC paclitaxel CRISPR screen** — prose *and* a supplementary table, so its Grounds reach
+- **A CRISPR screen with a supplementary table** — prose *and* data, so its Grounds reach
   the authors' data and not only their description of it.
-  `ndex-admin_importer_tnbc_crispr_paclitaxel_v1` → `agent_vega_importer_tnbc_results_v1` +
+  `ndex-admin_importer_crispr_screen_v1` → `agent_vega_importer_screen_results_v1` +
   `agent_vega_importer_tnbc_invivo_hits_v1` → `agent_vega_importer_tnbc_argument_v1`
 
 ---

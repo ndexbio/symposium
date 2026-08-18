@@ -375,6 +375,7 @@ A Model may declare groundable content. Whether a given element of a Model is ge
 **Examples**
 - The Gene Ontology is a hierarchical model of biology which annotates genes with terms representing processes, activities, and cellular components and could be represented by a Model Artifact. The annotation of the gene PSMA1 with GO:Proteasome Complex in that Model can be cited by a Ground bearing on the Assertion that PSMA1 encodes a protein that is a member of the proteosome complex.
 - A deep learning model can be represented by a Model Artifact, `produced_by` an Analysis in which it was created by training on data represented by a Data Artifact that is one of the `inputs` of the Analysis
+- A densitometry standard curve that converts raw western blot band intensity into a reported protein quantity. The `modeling_choices` property records three choices: the loading control, the linear fit's range, and the interpretation of measurements  outside the range.
 
 ### 2.7 NonGroundable (Artifact)
 

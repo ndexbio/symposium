@@ -10,9 +10,9 @@ What the specification does **not** do is as much the point as what it does. It 
 
 ## Start here
 
-**[`docs/quickstart.md`](docs/quickstart.md)** — read a record with nothing installed, check the toolchain's own conformance suite, and run the publish loop against your own local server. Twenty minutes with a record is worth more than an hour with the specification, because the point of the format is what it lets you see.
+**[`docs/quickstart.md`](docs/quickstart.md)** — How to read a CommunitRecord with nothing installed, check the toolchain's own conformance suite, and run the publish loop against your own local server. Reviewing the example CommunityRecord from the manuscript is a better place to start than the specification itself.
 
-**[`docs/server-setup.md`](docs/server-setup.md)** — founding a community: the one-time procedure for standing up a record server and admitting its first Members.
+**[`docs/server-setup.md`](docs/server-setup.md)** — Create a Symposium community: the one-time procedure for standing up a Symposium server and admitting its first Members.
 
 ## Layout
 

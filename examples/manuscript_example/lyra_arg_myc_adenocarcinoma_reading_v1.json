@@ -1,0 +1,56 @@
+{
+  "artifact": {
+    "name": "lyra_arg_myc_adenocarcinoma_reading_v1",
+    "label": "Reading of the source study: what it supports, independent of any particular use (cited as testimony by G3)",
+    "type": "Argument",
+    "specification_version": "1.0",
+    "published_by": "@lyra",
+    "created": null,
+    "authors": [
+      "lyra"
+    ],
+    "primary_assertion": "A0",
+    "title": "What the four-line MYC withdrawal study supports",
+    "extracted_from": "@lyra_pub_myc_adenocarcinoma_v1",
+    "extraction_method": "Results and Methods read in full. The claim is the authors' own stated conclusion, taken from their summary sentence rather than reconstructed from the four individual results; the four-line data is cited separately as what that sentence rests on.",
+    "purpose": "Judging what the study supports, independent of any particular use. Written to be cited by other Arguments rather than to settle a use directly; a reader taking this as testimony inherits this verdict rather than the raw results.",
+    "verdict": "Supported as a claim about the tumour type at the scope the authors give it. Four lines, spanning distinct KRAS and TP53 backgrounds, all arrested on MYC suppression and all recovered on withdrawal, which is a reasonable basis for extending the finding to the tumour type rather than confining it to the four lines named. The arrest is not death: viability was unaffected in all four lines, so this establishes a proliferative dependency and nothing about sensitivity to MYC loss being lethal. Sufficient to expect MYC dependence in an untested lung adenocarcinoma line and act on that expectation. Not sufficient to state that any particular untested line has been shown to depend on MYC, and not sufficient to say anything about magnitude in a line not among the four.",
+    "rationale": "The claim has two parts that rest on different kinds of support. That MYC suppression arrests these four specific lines is a result: four independent experiments, a consistent direction, and a recovery-on-withdrawal control that rules out a shRNA off-target or selection artefact as the explanation. That the effect generalises to the tumour type is the authors' own interpretive step, stated once, in their own words, at the end of the Results. This Argument grounds the two separately rather than treating the summary sentence as though it were itself a fifth data point.\n\nBoth Grounds address the same publication, and that is disclosed here rather than left for a reader to notice: they are not two studies converging on one conclusion, they are one study's data and that study's own reading of its data, cited separately because a claim map that folded them together would let the interpretive step pass as though it were itself a measurement.\n\nThe generalisation is not unreasonable. Four lines with different driver mutations converging on the same result is a stronger basis for a tumour-type claim than four lines that happened to share a background. But it remains a claim the authors made about lines they did not test, and nothing here converts it into a result."
+  },
+  "objects": [
+    {
+      "name": "A0",
+      "label": "Primary claim: lung adenocarcinoma lines require MYC (tumour-type generalisation)",
+      "type": "Assertion",
+      "claim": "Lung adenocarcinoma cell lines require MYC for sustained proliferation, and withdrawing MYC arrests them.",
+      "scope": "Established lung adenocarcinoma lines in 2D culture. Stated as a property of the tumour type, as the source states it, and not as an enumeration of the four lines assayed. Arrest, not death: viability is not addressed by this claim beyond the four tested lines, where it was unaffected."
+    },
+    {
+      "name": "g_arrest_data",
+      "label": "Ground: the four-line result the generalisation rests on",
+      "type": "Ground",
+      "citation": "@lyra_pub_myc_adenocarcinoma_v1.text#text_span.quote=\"MYC was suppressed by doxycycline-inducible shRNA in NCI-H1299, NCI-H358, Calu-6, and NCI-H2009 cells\"",
+      "rationale": "The four-line result the generalisation rests on. Different driver backgrounds, a consistent magnitude of arrest, and a withdrawal control, which together are why this reads as a property of the lines' shared lineage rather than of any one genotype.",
+      "criterion": "One of the four lines failing to arrest, or arresting only in one genetic background, would have weakened the tumour-type reading to a background-specific one and would not have supported the claim as stated."
+    },
+    {
+      "name": "g_generalization",
+      "label": "Ground: the authors' own statement of scope, taken as testimony",
+      "type": "Ground",
+      "citation": "@lyra_pub_myc_adenocarcinoma_v1.text#text_span.quote=\"lung adenocarcinoma cells are broadly dependent on MYC for continued growth, independent of the specific driver mutations examined here\"",
+      "rationale": "The authors' own statement of scope, taken as testimony rather than re-derived. This is the sentence A0's claim reproduces, and it is what carries the claim beyond the four lines; g_arrest_data is what the sentence itself rests on."
+    }
+  ],
+  "relationships": [
+    {
+      "rel": "grounded_by",
+      "source": "A0",
+      "target": "g_arrest_data"
+    },
+    {
+      "rel": "grounded_by",
+      "source": "A0",
+      "target": "g_generalization"
+    }
+  ]
+}

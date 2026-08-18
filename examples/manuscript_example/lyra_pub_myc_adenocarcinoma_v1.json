@@ -1,0 +1,29 @@
+{
+  "artifact": {
+    "name": "lyra_pub_myc_adenocarcinoma_v1",
+    "label": "Source study: MYC withdrawal arrests four lung adenocarcinoma lines",
+    "type": "ScientificPublication",
+    "specification_version": "1.0",
+    "published_by": "@lyra",
+    "created": null,
+    "authors": [
+      "Okafor, C.",
+      "et al."
+    ],
+    "title": "MYC dependency is common across lung adenocarcinoma cell lines with differing KRAS and TP53 status",
+    "import_method": "PDF of the published article, sections Results and Methods transcribed in full; Introduction and Discussion summarised and not transcribed. Four passages relevant to the withdrawal experiment are held verbatim in `text`; figure panels are not reproduced.",
+    "description": "Reports MYC suppression by doxycycline-inducible shRNA in four lung adenocarcinoma lines and its effect on proliferation and viability. Synthetic example; the study, its authors, and its results are invented.",
+    "text": "MYC was suppressed by doxycycline-inducible shRNA in NCI-H1299, NCI-H358, Calu-6, and NCI-H2009 cells, four lines spanning distinct KRAS and TP53 mutational backgrounds. In all four, suppression reduced proliferation by 70-85% over 10 days relative to the uninduced condition, measured by confluence imaging.\n\nAnnexin V staining at day 10 showed no significant increase over the uninduced condition in any of the four lines, indicating that the reduced proliferation reflects arrest rather than cell death.\n\nAcross the four lines tested, MYC suppression consistently and reversibly arrested proliferation. We conclude that lung adenocarcinoma cells are broadly dependent on MYC for continued growth, independent of the specific driver mutations examined here.\n\nWithdrawal of doxycycline restored proliferation to within 90% of the uninduced rate by day 7 in all four lines, confirming the effect is a function of MYC suppression rather than of shRNA expression or selection."
+  },
+  "objects": [
+    {
+      "name": "text_span",
+      "label": "Addressing method for quoted passages",
+      "type": "Content",
+      "groundable": true,
+      "description": "The four passages above, held in the `text` property.",
+      "addressing_method": "quote=<exact passage>, disambiguated by &nth= where a passage recurs."
+    }
+  ],
+  "relationships": []
+}

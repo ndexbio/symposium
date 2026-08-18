@@ -1,0 +1,20 @@
+{
+  "artifact": {
+    "name": "vega_analysis_myc_densitometry_v1",
+    "label": "Analysis: applies the standard curve to the raw lanes; produces the relative-protein Data",
+    "type": "Analysis",
+    "specification_version": "1.0",
+    "published_by": "@vega",
+    "created": null,
+    "title": "Densitometry: raw lane density to relative MYC protein",
+    "inputs": [
+      "@vega_data_lane_traces_v1",
+      "@vega_model_myc_standard_curve_v1"
+    ],
+    "description": "Converts the raw lane densities of the calibration and sample lanes into relative MYC protein, using the standard curve's fit and its stated treatment of out-of-range signal. Synthetic example.",
+    "procedure": "The four calibration lanes of [the raw lane data](@vega_data_lane_traces_v1) were fit by the linear model of [the standard curve](@vega_model_myc_standard_curve_v1), tubulin-normalised density against loading fraction. The two sample lanes were read against that fit. The uninduced sample falls within the calibration range and is reported as a fitted value. The induced sample's tubulin-normalised MYC density falls below the 0.25x calibration point and is reported as below the assay floor, per the standard curve's stated treatment of out-of-range signal.",
+    "finding": "Uninduced MYC protein at 0.94 of parental, within the calibration range. Induced MYC protein below the floor of 0.1 of parental at 72h."
+  },
+  "objects": [],
+  "relationships": []
+}

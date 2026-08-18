@@ -1,0 +1,27 @@
+{
+  "artifact": {
+    "name": "vega_data_lane_traces_v1",
+    "label": "Raw blot data: calibration ladder + samples (input to the standard curve)",
+    "type": "Data",
+    "specification_version": "1.0",
+    "published_by": "@vega",
+    "created": null,
+    "authors": [
+      "vega"
+    ],
+    "title": "Anti-MYC and anti-tubulin western blot, raw lane densities",
+    "description": "Integrated band density (arbitrary units, LI-COR Image Studio) from one anti-MYC and one anti-tubulin blot run on the same membrane, one row per lane. Four lanes are a loading series of pooled parental A549 lysate at 0.25x, 0.5x, 1x and 2x relative to a fixed reference loading, used to build the standard curve. Two lanes are the assay samples, uninduced and 72h doxycycline-induced. Synthetic example: values are invented.",
+    "values": "lane,condition,MYC_density,tubulin_density\ncal_0.25x,parental lysate 0.25x loading,2840,9120\ncal_0.5x,parental lysate 0.5x loading,5510,18340\ncal_1x,parental lysate 1x loading,11200,36900\ncal_2x,parental lysate 2x loading,19800,73100\nsample_uninduced,72h vehicle,10640,35200\nsample_induced,72h 1ug/mL doxycycline,190,34800\n"
+  },
+  "objects": [
+    {
+      "name": "csv",
+      "label": "Addressing method for the lane table",
+      "type": "Content",
+      "groundable": true,
+      "description": "The six lanes (four calibration, two sample), held in the `values` property.",
+      "addressing_method": "row=<lane>&col=<column name>."
+    }
+  ],
+  "relationships": []
+}

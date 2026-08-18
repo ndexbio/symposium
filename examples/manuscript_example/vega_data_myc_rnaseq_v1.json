@@ -1,0 +1,28 @@
+{
+  "artifact": {
+    "name": "vega_data_myc_rnaseq_v1",
+    "label": "RNA-seq (transcript-level check on the cut, held at a store location, not embedded)",
+    "type": "Data",
+    "specification_version": "1.0",
+    "published_by": "@vega",
+    "created": null,
+    "authors": [
+      "vega"
+    ],
+    "title": "RNA-seq expression, A549 MYC-inducible line, 72h timepoint",
+    "description": "RNA-seq expression (TPM), induced (72h, 1ug/mL doxycycline) and uninduced samples, same passage as the western blot. 19,046 genes quantified, MYC among them. Synthetic example."
+  },
+  "objects": [
+    {
+      "name": "rest",
+      "label": "Addressing method: query by gene symbol",
+      "type": "Content",
+      "groundable": true,
+      "description": "TPM for the induced and uninduced samples, one value pair per gene.",
+      "addressing_method": "gene=<HGNC symbol>&col=<TPM_relative|TPM_raw>. TPM_relative is induced-sample TPM divided by uninduced-sample TPM; TPM_raw is the induced-sample value alone.",
+      "location": "community-store://vega_rnaseq_a549_myc_2026 (example locator only, does not resolve to a file)",
+      "access_method": "REST query against the community file store's dataset endpoint, by gene symbol."
+    }
+  ],
+  "relationships": []
+}

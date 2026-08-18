@@ -1,0 +1,126 @@
+{
+  "artifact": {
+    "name": "vega_arg_a549_pilot_v1",
+    "label": "Whether A549 goes into the pilot: same evidence, deferred question, verdict sufficient",
+    "type": "Argument",
+    "specification_version": "1.0",
+    "published_by": "@vega",
+    "created": null,
+    "authors": [
+      "vega"
+    ],
+    "primary_assertion": "A0",
+    "title": "A549 for the MYC-loss modifier screen, taken into the pilot",
+    "description": "MYC is among the most frequently activated drivers in human carcinoma and is not directly druggable, so the laboratory is pursuing its dependencies genetically. The planned screen removes MYC from a cancer line, knocks out each of the remaining ~19,000 genes in a pooled library, and compares guide abundance between MYC-intact and MYC-depleted arms. Guides lost only from the depleted arm mark genes required to tolerate MYC loss; guides enriched only there mark genes through which the arrest is executed.\n\nThe screen is informative only in a line that depends on MYC, and resolves hits only if MYC removal slows proliferation without arresting it, since dropout is driven by population doublings and a non-dividing arm cannot be held at library coverage. The line is therefore chosen before any measurement exists in it.\n\nOne Argument is prepared per candidate line. This one covers A549, a lung adenocarcinoma line.\n\nSynthetic example: the measurements and the cited study are invented.",
+    "purpose": "Whether A549 is taken into the pilot. The pilot is a 14-day proliferation assay run under screen conditions, with the library transduced and puromycin selection complete, comparing doubling rate between MYC-intact and MYC-depleted arms. It returns the ratio of the two rates, which sets cell numbers, screen duration and dropout threshold for the full screen.\n\nAn incorrect choice costs the pilot: two weeks of one person's time and one plate of cells. The pilot is also where the error becomes apparent, and no further commitment is made until it reports.\n\nThe decision to run the screen is separate and is not addressed here. It commits a genome-wide library, a sequencing run and approximately three months of one person's work, and it is made on the pilot's ratio.",
+    "verdict": "Sufficient for the stated purpose. A549 should be taken into the pilot.\n\nThe two in-house measurements establish that the inducible cut depletes MYC protein in this line, so the pilot would assay a perturbation that works rather than one that failed.\n\nMYC dependence in A549 itself has not been tested. The support is a published result in four other lung adenocarcinoma lines, accepted as reported, together with no known exception for this line. That is an expectation derived from the tumour type rather than a measurement in A549, and it remains to be established directly.\n\nThe verdict does not extend to running the screen. The screen's design requires the ratio of MYC-depleted to MYC-intact proliferation rate, and that ratio has not been measured in A549 or in any other candidate. The claim should also not be restated as though a proliferation defect had been observed in A549.",
+    "rationale": "Two conditions must hold before the pilot is warranted: A549 must depend on MYC, and the inducible cut must remove MYC in this line.\n\nThe second is supported locally. At 72h after induction, MYC protein is below the floor of the blot and below the lowest point of the standard curve, and MYC transcript is at 0.11 of parental. These two readouts are not independent. A frameshift at the cut site introduces a premature termination codon, nonsense-mediated decay degrades the transcript, and protein falls with it, so any successful cut lowers both and their concordance carries little information. The blot is the measurement relied on here. RNA-seq does not report reading frame, and a monoallelic in-frame indel would yield the same transcript value with protein retained. The transcript value is cited as a consistency check and should be read as one.\n\nThe first is not supported locally. The source study reports proliferative arrest on MYC withdrawal in four lung adenocarcinoma lines and states the result for the tumour type rather than for those four lines, and it is taken here at the scope its authors gave it. Extending it to A549 requires that no exception be known for this line, which is declared as an assumption rather than argued, since it is a negative claim about both the literature and this line and neither has been searched systematically.\n\nIf that assumption is not granted, nothing in this Argument bears on A549 and the verdict does not stand. The appropriate response would be to pilot two candidate lines in parallel, at roughly twice the cost stated above.\n\nThe magnitude of the proliferation defect is not addressed in this Argument. It is the parameter the screen design consumes and the quantity the pilot is intended to produce."
+  },
+  "objects": [
+    {
+      "name": "A0",
+      "label": "Primary claim: two prerequisites for a MYC-loss modifier screen in A549",
+      "type": "Assertion",
+      "claim": "A549 depends on MYC for proliferation, and the inducible cut depletes MYC protein in this line.",
+      "scope": "Conditions of a MYC-loss modifier screen: A549 in 2D culture, carrying constitutive Cas9 and a doxycycline-inducible MYC sgRNA cassette. Depletion is asserted at 72h in 1ug/mL doxycycline, measured in the parental inducible line before library transduction, and only to the sensitivity of the quantitative blot, whose floor is 0.1 of parental signal: MYC is asserted to be below that floor, not absent. MYC dependence is asserted for proliferation in 2D culture and not for spheroid, soft agar or xenograft growth. No claim is made about the magnitude of the proliferation defect."
+    },
+    {
+      "name": "A1",
+      "label": "Sub-claim: MYC removal slows A549 proliferation (no magnitude)",
+      "type": "Assertion",
+      "claim": "Removing MYC from A549 reduces its proliferation rate.",
+      "scope": "A549 in 2D culture. Qualitative: a reduction is asserted, no magnitude."
+    },
+    {
+      "name": "A2",
+      "label": "Sub-claim: the inducible cut depletes MYC protein",
+      "type": "Assertion",
+      "claim": "Inducing the MYC sgRNA in A549 reduces MYC protein below the detection floor of the quantitative blot.",
+      "scope": "A549 carrying constitutive Cas9 and the inducible MYC sgRNA cassette, 72h in 1ug/mL doxycycline, parental line before library transduction. Asserted for the bulk population; per-cell editing efficiency is not assessed."
+    },
+    {
+      "name": "A3",
+      "label": "Sub-claim: lung adenocarcinoma lines require MYC (tumour-type generic)",
+      "type": "Assertion",
+      "claim": "Lung adenocarcinoma cell lines require MYC for sustained proliferation, and withdrawing MYC arrests them.",
+      "scope": "Established lung adenocarcinoma lines in 2D culture. Stated as a property of the tumour type, as the source study states it, and not as an enumeration of the lines tested. Individual lines may be exceptions."
+    },
+    {
+      "name": "A4",
+      "label": "Sub-claim: A549 is not a known exception to that generic",
+      "type": "Assertion",
+      "claim": "A549 is not an exception to MYC dependence among lung adenocarcinoma lines.",
+      "scope": "A549 as held in this laboratory, within the passage range in use."
+    },
+    {
+      "name": "Z1",
+      "label": "Assumption: no known exception for A549, in the literature or in-house",
+      "type": "Assumption",
+      "rationale": "The premise is that no published or in-house result identifies A549 as MYC-independent.\n\nNo evidence is offered because the claim is a negative. No systematic search of the literature has been made for MYC dependence in A549, and no in-house measurement of proliferation after MYC withdrawal in this line exists. What can be stated is that nothing in this laboratory's records reports A549 as an exception.\n\nThe premise should be granted as a statement about current coverage rather than about the field. A fitness measurement for MYC in A549 would bear on it directly, and a Member who imports one should expect this Argument to be revised rather than defended."
+    },
+    {
+      "name": "G1",
+      "label": "Ground: western blot, MYC below assay floor",
+      "type": "Ground",
+      "citation": "@vega_data_myc_relative_protein_v1.values#csv.row=induced_72h&col=below_floor",
+      "rationale": "Quantitative blot of MYC protein at 72h after induction, densitometry normalised to the tubulin loading control and converted to relative protein by the standard curve. The value falls below the floor of 0.1 of parental signal and below the lowest calibration point of the curve, at 0.25 of the loading range. The measurement establishes that MYC protein was reduced; it does not quantify what remains, and any value between zero and 0.1 of parental is consistent with it. Five percent of parental MYC is not assumed to be functionally inert.",
+      "criterion": "A band at or near parental intensity at 72h would have shown that the cut had not worked, and would have refuted the assertion. The converse is weaker. The antibody is raised against the N-terminal transactivation domain, and MYC has a shorter form initiated at internal codons that lacks that domain while retaining the bHLHZip region for DNA binding and MAX dimerisation. A frameshift followed by reinitiation downstream would produce such a product, which is not inert and would not be detected on this blot. Absence of signal establishes absence of the N-terminal epitope, not absence of MYC protein."
+    },
+    {
+      "name": "G2",
+      "label": "Ground: RNA-seq, mechanistically coupled to the blot, weak on its own",
+      "type": "Ground",
+      "citation": "@vega_data_myc_rnaseq_v1#rest.gene=MYC&col=TPM_relative",
+      "rationale": "MYC transcript at 0.11 of parental by RNA-seq, from the same passage as the blot. Transcript reduction is the expected consequence of a frameshift: the premature termination codon triggers nonsense-mediated decay, which degrades the message. The value is consistent with disruption of the locus.\n\nIt is weak support for the assertion. Read counts do not report reading frame. The residual 11% is a mixture of unedited alleles, in-frame indels and edited transcripts whose premature stop escaped decay, and RNA-seq does not separate them. A monoallelic in-frame indel, or reinitiation downstream of the premature stop, would give this same transcript value with functional protein retained.\n\nIt is also not independent of the blot. Nonsense-mediated decay is the mechanism coupling the two readouts, so any successful cut lowers both, and their concordance adds nothing beyond what the blot already provides. It is cited as a consistency check rather than as evidence of protein loss."
+    },
+    {
+      "name": "G3",
+      "label": "Ground: testimony, lyra's reading of the source study",
+      "type": "Ground",
+      "citation": "@lyra_arg_myc_adenocarcinoma_reading_v1.A0",
+      "rationale": "The primary Assertion of lyra's reading of the source study, taken as it stands. What is taken is that author's assessment of the study rather than the study's abstract: they read the withdrawal timecourses line by line and judged that the arrest is reported for the tumour type and not only for the four lines assayed. That reading is accepted here and is not re-derived.\n\nTheir verdict comes with the claim. They judged the evidence adequate for nominating a MYC dependency to investigate and inadequate for any statement about MYC inhibition in patients. The present purpose falls inside the first and outside the second, so the verdict is taken as given rather than contested.\n\nThis is testimony and it is the only support A3 has. The four lines assayed are cited within that Argument and are not counted again here."
+    }
+  ],
+  "relationships": [
+    {
+      "rel": "depends_on",
+      "source": "A0",
+      "target": "A1"
+    },
+    {
+      "rel": "depends_on",
+      "source": "A0",
+      "target": "A2"
+    },
+    {
+      "rel": "depends_on",
+      "source": "A1",
+      "target": "A3"
+    },
+    {
+      "rel": "depends_on",
+      "source": "A1",
+      "target": "A4"
+    },
+    {
+      "rel": "grounded_by",
+      "source": "A2",
+      "target": "G1"
+    },
+    {
+      "rel": "grounded_by",
+      "source": "A2",
+      "target": "G2"
+    },
+    {
+      "rel": "grounded_by",
+      "source": "A3",
+      "target": "G3"
+    },
+    {
+      "rel": "assumes",
+      "source": "A4",
+      "target": "Z1"
+    }
+  ]
+}

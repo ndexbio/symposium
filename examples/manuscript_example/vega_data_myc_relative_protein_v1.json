@@ -1,0 +1,28 @@
+{
+  "artifact": {
+    "name": "vega_data_myc_relative_protein_v1",
+    "label": "Result: relative MYC protein, uninduced vs. induced (cited by G1)",
+    "type": "Data",
+    "specification_version": "1.0",
+    "published_by": "@vega",
+    "created": null,
+    "authors": [
+      "vega"
+    ],
+    "produced_by": "@vega_analysis_myc_densitometry_v1",
+    "title": "Relative MYC protein, A549 MYC-inducible line, 72h timepoint",
+    "description": "MYC protein relative to parental A549 lysate, by densitometry against the standard curve, for the uninduced and 72h doxycycline-induced samples. Synthetic example: values are invented.",
+    "values": "condition,relative_protein,below_floor\nuninduced,0.94,false\ninduced_72h,0.1,true\n"
+  },
+  "objects": [
+    {
+      "name": "csv",
+      "label": "Addressing method for the relative-protein table",
+      "type": "Content",
+      "groundable": true,
+      "description": "The two conditions (uninduced, induced_72h), held in the `values` property.",
+      "addressing_method": "row=<condition>&col=<column name>."
+    }
+  ],
+  "relationships": []
+}

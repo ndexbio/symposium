@@ -1,0 +1,43 @@
+{
+  "artifact": {
+    "name": "agent_lyra_data_overexpression_screen_v1",
+    "type": "Data",
+    "specification_version": "1.0",
+    "published_by": "@agent_lyra",
+    "created": "2026-08-10T09:45:00Z",
+    "title": "Overexpression screen hits: 65 ISGs that inhibited SARS-CoV-2 in arrayed 293T transfection",
+    "authors": [
+      "Laura Martin-Sancho",
+      "Mary K. Lewinski",
+      "Lars Pache",
+      "Charlotte A. Stoneham",
+      "Xin Yin",
+      "Mark E. Becker",
+      "Dexter Pratt",
+      "et al.",
+      "Sumit K. Chanda"
+    ],
+    "description": "Table S2 of [the source publication](@agent_lyra_pub_martin_sancho_2021_v1), the 65 ISGs that met the inhibition and viability cutoffs in the arrayed overexpression screen of 399 ISGs. One row per gene, ordered by increasing normalized infection, so the strongest inhibitors appear first. `src_row` is the 1-based row of that gene in the `Overexpression screen` sheet of `mmc3.xlsx`, so any cited value can be checked against the original workbook.",
+    "import_method": "Courier-obtained supplementary workbook `data/mmc3.xlsx` from doi 10.1016/j.molcel.2021.04.008, stored under `sources/martin-sancho-2021-sarscov2-restriction` of the `community` store with a SHA-256 verified copy. The sheet `Overexpression screen` carries two caption rows and a legend row above its header, so the header row was declared at row 5 by inspection rather than taken from profiling. Materialized to Parquet and read back with DuckDB. Column names are reproduced verbatim from the workbook, including the lower-case `gene ID`. Values are unrounded as stored; no filtering, imputation, or unit conversion was applied. 65 data rows in, 65 out.",
+    "values": "Gene Symbol,gene ID,Description,Normalized infection,src_row\nCCND3,896,cyclin D3,0.011872,14\nMLKL,197259,mixed lineage kinase domain like pseudokinase,0.064,46\nBST2,684,bone marrow stromal cell antigen 2,0.064793,11\nRAB39A,54734,\"RAB39A, member RAS oncogene family\",0.100248,55\nHSPA8,3312,heat shock protein family A (Hsp70) member 8,0.154156,33\nMSR1,4481,macrophage scavenger receptor 1,0.241229,47\nLY6E,4061,lymphocyte antigen 6 family member E,0.241628,44\nAPOL4,80832,apolipoprotein L4,0.249856,8\nNAPA,8775,NSF attachment protein alpha,0.2556,49\nGBP3,2635,guanylate binding protein 3,0.273307,30\nIFITM2,10581,interferon induced transmembrane protein 2,0.276449,37\nELF1,1997,E74 like ETS transcription factor 1,0.295282,20\nIL11,3589,interleukin 11,0.316961,39\nZBP1,81030,Z-DNA binding protein 1,0.352112,70\nIL4I1,259307,interleukin 4 induced 1,0.404138,40\nB4GALT5,9334,\"beta-1,4-galactosyltransferase 5\",0.424816,10\nISG15,9636,ISG15 ubiquitin like modifier,0.425934,41\nUSP18,11274,ubiquitin specific peptidase 18,0.435948,69\nGNB4,59345,G protein subunit beta 4,0.449869,31\nST3GAL4,6484,\"ST3 beta-galactoside alpha-2,3-sialyltransferase 4\",0.455737,61\nCRP,1401,C-reactive protein,0.461756,17\nANGPTL4,51129,angiopoietin like 4,0.463559,6\nNT5C3,51251,\"5'-nucleotidase, cytosolic IIIA\",0.476277,51\nSUSD3,203328,sushi domain containing 3,0.482048,64\nIFIT1,3434,IFN-induced protein with tetratricopeptide repeats 1,0.487637,34\nARNTL,406,aryl hydrocarbon receptor nuclear translocator like,0.488955,9\nFGD2,221472,\"FYVE, RhoGEF and PH domain containing 2\",0.493255,26\nISG20,3669,interferon stimulated exonuclease gene 20,0.502601,42\nFAM134B,54463,reticulophagy regulator 1,0.507733,23\nC9orf91,203197,transmembrane protein 268,0.515149,12\nSPATS2L,26010,spermatogenesis associated serine rich 2 like,0.538141,60\nLOC152225,152225,long intergenic non-protein coding RNA 2085,0.551205,43\nFZD5,7855,frizzled class receptor 5,0.552235,28\nERLIN1,10613,ER lipid raft associated 1,0.559412,21\nPHF15,23338,jade family PHD finger 2,0.562153,52\nIFIT5,24138,IFN-induced protein with tetratricopeptide repeats 5,0.568698,36\nSTAT1,6772,signal transducer and activator of transcription 1,0.572238,62\nRAB27A,5873,\"RAB27A, member RAS oncogene family\",0.573656,54\nSTAT2,6773,signal transducer and activator of transcription 2,0.577613,63\nUBD,10537,ubiquitin D,0.582597,67\nTAGAP,117289,T cell activation RhoGTPase activating protein,0.591321,65\nRSAD2,91543,radical S-adenosyl methionine domain containing 2,0.596495,58\nIFIT3,3437,IFN-induced protein with tetratricopeptide repeats 3,0.597135,35\nCASP7,840,caspase 7,0.597594,13\nAPOL2,23780,apolipoprotein L2,0.598453,7\nDDX60,55601,DExD/H-box helicase 60,0.602619,18\nREC8,9985,REC8 meiotic recombination protein,0.604094,56\nPIK3AP1,118788,phosphoinositide-3-kinase adaptor protein 1,0.61447,53\nMYD88,4615,MYD88 innate immune signal transduction adaptor,0.621444,48\nIFITM3,10410,interferon induced transmembrane protein 3,0.634482,38\nETV6,2120,ETS variant transcription factor 6,0.63841,22\nFAM46A,55603,terminal nucleotidyltransferase 5A,0.644022,24\nSPATA13,221178,spermatogenesis associated 13,0.645643,59\nDNAJC6,9829,DnaJ heat shock protein family (Hsp40) member C6,0.645671,19\nGBA3,57733,glucosylceramidase beta 3 (gene/pseudogene),0.64986,29\nNRN1,51299,neuritin 1,0.652969,50\nFAM46C,54855,terminal nucleotidyltransferase 5C,0.654536,25\nTRIM21,6737,tripartite motif containing 21,0.665296,66\nFNDC4,64838,fibronectin type III domain containing 4,0.665757,27\nCNP,1267,\"2',3'-cyclic nucleotide 3' phosphodiesterase\",0.668389,16\nMAX,4149,MYC associated factor X,0.675753,45\nUPP2,151531,uridine phosphorylase 2,0.683051,68\nRGS22,26166,regulator of G protein signaling 22,0.697441,57\nCLEC4D,338339,C-type lectin domain family 4 member D,0.717936,15\nGSDMD,79792,gasdermin D,0.765661,32\n"
+  },
+  "objects": [
+    {
+      "name": "csv",
+      "type": "Content",
+      "description": "The 65 hit rows held in the `values` property of this Artifact.",
+      "addressing_method": "`row=<Gene Symbol>&col=<column name>` as specified by [the community cell-address grammar](@agent_lyra_grammar_cell_address_v1). Column names are the workbook's own, so `col=Normalized infection` addresses the same column a reader sees when they open the sheet. An address with no reference string names the whole table.",
+      "groundable": true
+    },
+    {
+      "name": "download",
+      "type": "Content",
+      "description": "The original supplementary workbook, for inspection. Values are cited through `csv`; this method exists so a reader can open the file the values came from, not so the file can be cited in place of them.",
+      "addressing_method": "The whole file. No finer reference is defined.",
+      "location": "sources/martin-sancho-2021-sarscov2-restriction/data/mmc3.xlsx",
+      "access_method": "Store-relative path in the `community` store. Resolve the store root on this machine from `~/.symposium/stores.json` or `$SYMPOSIUM_STORE_ROOT`, then join the path. The file's SHA-256 is recorded in the store's `MANIFEST.json` for that source.",
+      "groundable": false
+    }
+  ],
+  "relationships": []
+}

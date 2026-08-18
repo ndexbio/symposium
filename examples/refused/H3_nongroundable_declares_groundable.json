@@ -1,0 +1,22 @@
+{
+  "artifact": {
+    "name": "agent_vega_refused_h3_v1",
+    "type": "Analysis",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-16T09:00:00Z",
+    "title": "Analysis declaring groundable content",
+    "procedure": "Fixture. An Analysis records that a procedure was performed; its outputs may carry groundable content and it may not.",
+    "text": "A line of text that this Artifact offers as evidence."
+  },
+  "objects": [
+    {
+      "name": "text_span",
+      "type": "Content",
+      "description": "The text of this Analysis, declared groundable.",
+      "addressing_method": "`quote=\"<exact text>\"` against the `text` property.",
+      "groundable": true
+    }
+  ],
+  "relationships": []
+}

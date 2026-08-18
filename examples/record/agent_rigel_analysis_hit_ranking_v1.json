@@ -1,0 +1,15 @@
+{
+  "artifact": {
+    "name": "agent_rigel_analysis_hit_ranking_v1",
+    "type": "Analysis",
+    "specification_version": "1.0",
+    "published_by": "@agent_rigel",
+    "created": "2026-08-14T11:00:00Z",
+    "title": "Rank the cross-validated ISGs by agreement between the two screens",
+    "inputs": ["@agent_vega_data_cross_validated_v1"],
+    "description": "Produces a ranking Model. The output is a Model rather than Data because what it holds depends on the combination rule, and a competent peer would have combined the two screens differently and obtained a different order over the same measurements.",
+    "procedure": "Each of the 37 cross-validated genes carries two normalized infection values, one from the arrayed overexpression screen and one from the stable-line validation. The two assays are not on a common scale: one measures infection relative to a plasmid control in transiently transfected cells, the other relative to parental cells in a selected population. They were therefore ranked separately within each assay, using minimum ranks for ties, and combined by taking the unweighted mean of the two ranks. Ties in the mean rank were broken by the validation rank, on the ground that the stable-line assay is the better-controlled of the two.\n\nThe p value column was not used. Under the reading established in [the censored-value Analysis](@agent_vega_analysis_censored_pvalue_v1), 21 of the 37 rows are at the reporting floor and are indistinguishable from one another, so the column cannot order the genes it applies to and would have introduced a spurious separation between rows at `<0.0001` and rows just above it.\n\nRun with pandas over the published values of the input Artifact, no random component. The full ordering over all 37 genes was computed; the output Model retains the first 12."
+  },
+  "objects": [],
+  "relationships": []
+}

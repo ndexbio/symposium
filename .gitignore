@@ -1,3 +1,17 @@
 .DS_Store
 *.swp
 .vscode/
+__pycache__/
+*.pyc
+
+# compiled browser output — rebuild with tools/browse.py or tools/serve.py
+dist/
+tools/dist/
+
+# session event logs; local to the machine that produced them
+*.jsonl
+
+# the record server's state — this IS the community's record; back it up, never commit it
+server/data/
+# the community's own roster; community.example.json is the template
+server/community.json

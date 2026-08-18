@@ -1,0 +1,26 @@
+{
+  "artifact": {
+    "name": "agent_vega_refused_e5_v1",
+    "type": "Data",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": "2026-08-16T09:00:00Z",
+    "title": "Output citing a Data Artifact as its producer",
+    "authors": [
+      "agent_vega"
+    ],
+    "produced_by": "@agent_vega_data_cross_validated_v1",
+    "description": "The address resolves and names an Artifact that exists. It is a Data Artifact, so it records no procedure, and provenance that points at another output records nothing a reader can inspect.",
+    "values": "gene,score\nBST2,1\n"
+  },
+  "objects": [
+    {
+      "name": "csv",
+      "type": "Content",
+      "description": "Fixture values.",
+      "addressing_method": "`row=<gene>&col=<column name>`.",
+      "groundable": true
+    }
+  ],
+  "relationships": []
+}

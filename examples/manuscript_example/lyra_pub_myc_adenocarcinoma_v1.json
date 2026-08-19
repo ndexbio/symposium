@@ -21,7 +21,7 @@
       "label": "Addressing method for quoted passages",
       "type": "Content",
       "groundable": true,
-      "description": "The four passages above, held in the `text` property.",
+      "description": "The four passages held in the `text` property.",
       "addressing_method": "quote=<exact passage>, disambiguated by &nth= where a passage recurs."
     }
   ],

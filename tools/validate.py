@@ -576,7 +576,7 @@ def check_corpus(a, index, members, record_names):
     if name in record_names:
         f.append(finding("UNIQUE", "FAIL", f"name '{name}' is already in the record; names are never reused"))
 
-    def check_addr(addr, ctx, evidential, ordered=True):
+    def check_addr(addr, ctx, evidential):
         ok, info, why = resolve(addr, index, members)
         if not ok:
             f.append(finding("ADDRESS", "FAIL", f"{ctx}: {why}"))
@@ -588,13 +588,16 @@ def check_corpus(a, index, members, record_names):
             return
         theirs = parse_instant(info["rec"]["created"])
         if info["artifact"] == name:
-            pass                          # intra-Artifact reference: created in one act (spec 1.8)
-        elif not ordered:
-            pass                          # Analysis <-> its outputs: one act, mutual (spec 1.8, 2.5)
+            # The ONLY exception to temporal ordering: an Artifact addressing content within
+            # itself, the content and the reference to it being created in one act (spec 1.9).
+            # "One act" is a statement about a single Artifact and nothing larger. There is no
+            # exception for artifacts published close together, because publication is serial
+            # and no two of them ever share a `created`.
+            pass
         elif mine and theirs and theirs >= mine:
             f.append(finding("ORDER", "FAIL",
                              f"{ctx}: '{info['artifact']}' ({info['rec']['created']}) is not strictly "
-                             f"earlier than '{name}' ({h.get('created')}) — spec 1.8"))
+                             f"earlier than '{name}' ({h.get('created')}) — spec 1.9"))
         if evidential:
             g_ok, lvl, reason = groundable(info, name)
             if not g_ok:
@@ -604,9 +607,13 @@ def check_corpus(a, index, members, record_names):
                 f.append(finding("GROUND", "REVIEW", f"{ctx}: {reason}"))
         f.extend(finding(x["check"], x["level"], f"{ctx}: {x['msg']}") for x in verify_content(info))
 
-    # `outputs` and `produced_by` are the single-act exception to temporal ordering (spec 1.8)
+    # `produced_by` is ordered like every other address. It used to carry an exemption, which
+    # existed only because the gate published an Analysis and its outputs as one act under one
+    # timestamp; the exemption then suppressed the ordering check on the property that most
+    # needs it. Publication is serial and the Analysis is strictly earlier (spec 2.5), so the
+    # ordinary check is both correct and sufficient.
     if h.get("produced_by"):
-        check_addr(h["produced_by"], "header produced_by", False, ordered=False)
+        check_addr(h["produced_by"], "header produced_by", False)
         # spec 2.5: a produced_by citation must resolve to an existing ANALYSIS. Resolving to
         # some other Artifact is the failure the rule exists to catch, because the point of the
         # property is that the procedure is on the record and inspectable, and a Data Artifact
@@ -618,7 +625,7 @@ def check_corpus(a, index, members, record_names):
                              f"not an Analysis (spec 2.5)"))
     if h.get("extracted_from"):
         check_addr(h["extracted_from"], "header extracted_from", False)
-    def each_address(hk, ordered=True):
+    def each_address(hk):
         """Walk a header field that holds a LIST of addresses.
 
         A string is iterable, so `for v in h[hk]` walked it CHARACTER BY CHARACTER and reported
@@ -640,9 +647,14 @@ def check_corpus(a, index, members, record_names):
                              f"header {hk} must be a list of addresses, got {type(v).__name__}"))
             return
         for a in v:
-            check_addr(a, f"header {hk}", False, ordered=ordered)
+            check_addr(a, f"header {hk}", False)
 
-    each_address("outputs", ordered=False)
+    # `outputs` was walked here with an ordering exemption. There is no `outputs` property:
+    # an Analysis is complete on its own and its outputs are found by searching for
+    # `produced_by` (spec 2.5, profile §2). The exemption existed so an Analysis and its
+    # outputs could be published as one act under one timestamp, which serial publication no
+    # longer does. The property is unused in every corpus, so the walk is gone rather than
+    # re-pointed: an Analysis cannot name artifacts that do not exist yet.
     for hk in ("supersedes", "inputs", "used_models", "recipients"):
         each_address(hk)
 

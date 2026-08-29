@@ -451,77 +451,71 @@ def _root(addr):
     return str(addr).lstrip("@").split("#")[0].split(".")[0]
 
 
-def form_bundles(subs, record_names):
-    """Group submissions into publication units.
+def order_submissions(subs, record_names):
+    """Order the pending submissions for serial acceptance.
 
-    An Artifact produced by an Analysis names it with `produced_by`, and that address must
-    resolve, so an output cannot be validated before its Analysis. The bundle is declared by
-    the artifacts themselves; no folder or external grouping is needed.
+    Publication is strictly serial (spec 1.9, 2.5). Every artifact receives its own
+    `created` and is validated against the record as it stands at that moment. There are no
+    publication units, no shared timestamps and no all-or-nothing groups: this function
+    decides only the ORDER in which a pass considers what is pending, so that an artifact is
+    stamped after anything it addresses.
 
-    An Analysis names no outputs — they are found by searching for `produced_by` (spec 2.5) —
-    so an Analysis is complete on its own and is accepted the moment it validates. Only an
-    output can be too early, and it waits for exactly one thing.
+    Bundling used to live here. It is gone because it created the one thing spec 1.9 says
+    cannot happen — two artifacts with an identical `created`, which are therefore not
+    earlier than one another and cannot refer to each other. Making that publishable at all
+    required an ordering exemption on `produced_by`, and the exemption then suppressed the
+    ordering check on the very property most in need of it.
 
-    -> (bundles, deferred) where deferred are units still missing a member."""
+    An output names its Analysis with `produced_by` and that address must resolve (spec 2.5).
+    An output whose Analysis is neither in the record nor pending in this pass is DEFERRED
+    rather than rejected: the member may not have published it yet, and the correct order is
+    the Analysis first.
+
+    -> (ordered, deferred) where deferred is [(submission, [missing names])]"""
     by_name = {s["canonical"]["artifact"]["name"]: s for s in subs}
 
-    def leader_of(c):
+    def refs(sub):
+        c = sub["canonical"]
         h = c["artifact"]
-        if h.get("produced_by"):
-            return _root(h["produced_by"])          # the Analysis leads the unit
-        return h["name"]
-
-    groups = {}
-    for s in subs:
-        groups.setdefault(leader_of(s["canonical"]), []).append(s)
-
-    bundles, deferred = [], []
-    for leader, members in groups.items():
-        required = {m["canonical"]["artifact"]["name"] for m in members}
-        if leader in by_name:
-            required.add(leader)                     # the Analysis is in this batch: one act
-        elif leader not in record_names:
-            deferred.append((members, [leader]))     # produced_by names an Analysis we cannot see
-            continue
-        # else: the Analysis is already in the record, so its outputs stand alone.
-        bundles.append([by_name[n] for n in sorted(required) if n in by_name])
-
-    # Order bundles so one is accepted before any bundle that addresses it. Without this the
-    # acceptance order follows the permission map, which is unordered, and `created` could be
-    # stamped so that an Argument precedes the Data it grounds on.
-    def refs(bundle):
         out = set()
-        for m in bundle:
-            c = m["canonical"]
-            h = c["artifact"]
-            for k in ("produced_by", "extracted_from"):
-                if h.get(k):
-                    out.add(_root(h[k]))
-            for k in ("supersedes", "inputs", "recipients"):
-                for v in (h.get(k) or []):
-                    out.add(_root(v))
-            for o in c.get("objects", []):
-                if o.get("type") == "Ground":
-                    # A Ground's evidence address. Reading the wrong key here does not fail —
-                    # it returns "" for every Ground — and the ordering below then ignores
-                    # every evidential reference in the batch, silently stamping an Argument
-                    # `created` before the Data it grounds on. Covered by test_gate.py case E.
-                    out.add(_root(o.get("citation", "")))
-        return out - {m["canonical"]["artifact"]["name"] for m in bundle}
+        for k in ("produced_by", "extracted_from"):
+            if h.get(k):
+                out.add(_root(h[k]))
+        for k in ("supersedes", "inputs", "recipients"):
+            for v in (h.get(k) or []):
+                out.add(_root(v))
+        for o in c.get("objects", []):
+            if o.get("type") == "Ground":
+                # A Ground's evidence address. Reading the wrong key here does not fail --
+                # it returns "" for every Ground -- and the ordering below then ignores
+                # every evidential reference in the pass, silently stamping an Argument
+                # `created` before the Data it grounds on. Covered by test_gate.py case E.
+                out.add(_root(o.get("citation", "")))
+        return out - {h["name"]}
 
-    ordered, placed, pending = [], set(record_names), list(bundles)
+    pending, deferred = [], []
+    for sub in subs:
+        pb = sub["canonical"]["artifact"].get("produced_by")
+        if pb:
+            lead = _root(pb)
+            if lead not in record_names and lead not in by_name:
+                deferred.append((sub, [lead]))
+                continue
+        pending.append(sub)
+
+    # Ready = nothing this submission references is still sitting unplaced. References to
+    # artifacts already in the record, or to names not submitted at all, do not block: the
+    # validator decides whether those resolve, not the ordering.
+    ordered, placed = [], set(record_names)
     while pending:
-        # Ready = nothing this bundle references is still sitting unplaced in `pending`.
-        # References to artifacts already in the record, or to names not submitted at all, do
-        # not block: the validator decides whether those resolve, not the ordering.
-        unplaced = {m["canonical"]["artifact"]["name"] for bb in pending for m in bb} - placed
-        ready = [b for b in pending if not (refs(b) & unplaced)]
-        if not ready:                      # a cycle among submissions; fall back to given order
+        unplaced = {x["canonical"]["artifact"]["name"] for x in pending} - placed
+        ready = [x for x in pending if not (refs(x) & unplaced)]
+        if not ready:                  # a cycle among submissions; fall back to given order
             ready = pending[:1]
-        for b in ready:
-            ordered.append(b)
-            placed |= {m["canonical"]["artifact"]["name"] for m in b}
-            pending.remove(b)
+        for x in ready:
+            ordered.append(x)
+            placed.add(x["canonical"]["artifact"]["name"])
+            pending.remove(x)
     return ordered, deferred
 
 
@@ -627,93 +621,68 @@ def run_once():
         s["canonical"] = canonical
         subs.append(s)
 
-    bundles, deferred = form_bundles(subs, names)
+    ordered, deferred = order_submissions(subs, names)
     # NOT `members`: that name holds the member-name set built above, and rebinding it here to a
     # list of submissions made every later validate() call raise `unhashable type: 'dict'`. The
     # gate then exited 1 on every pass and published nothing. It stayed hidden all day because it
-    # needs a pass that has BOTH a deferral and a bundle to validate.
+    # needs a pass that has BOTH a deferral and something to validate.
     for waiting, missing in deferred:
-        who = ", ".join(m["name"] for m in waiting)
-        print(f"  DEFERRED {who}\n    waiting for: {', '.join(missing)} (single act, spec 1.8)")
-        for m in waiting:
-            telemetry.emit("gate", "gate_defer", "deferred", artifact=m["name"],
-                           atype=m["canonical"]["artifact"].get("type"),
-                           submitter=m["owner"], waiting_for=sorted(missing))
+        print(f"  DEFERRED {waiting['name']}\n    waiting for: {', '.join(missing)} "
+              f"(an Analysis is published before its outputs, spec 2.5)")
+        telemetry.emit("gate", "gate_defer", "deferred", artifact=waiting["name"],
+                       atype=waiting["canonical"]["artifact"].get("type"),
+                       submitter=waiting["owner"], waiting_for=sorted(missing))
 
-    # Stamps must strictly increase from one bundle to the next. `form_bundles` already orders
-    # bundles so one is accepted before any bundle addressing it, but ordering the ACCEPTS is not
-    # enough: the ORDER check requires a Ground's target to be strictly EARLIER than the artifact
-    # grounding on it, and at `timespec="seconds"` two bundles processed in the same wall-clock
-    # second get the same stamp. On 2026-08-07 that rejected the first participant-built Argument
-    # in the record — it grounded on Data the gate had stamped in the same second, in the same
-    # pass. A member cannot avoid this, because the gate owns `created`; the gate was rejecting a
-    # correctly ordered submission for its own clock resolution. Seeded from the record so the
-    # guarantee survives a restart.
+    # Stamps must strictly increase from one artifact to the next. `order_submissions` already
+    # orders them so one is accepted before anything addressing it, but ordering the ACCEPTS is
+    # not enough: the ORDER check requires a Ground's target to be strictly EARLIER than the
+    # artifact grounding on it, and at `timespec="seconds"` two artifacts processed in the same
+    # wall-clock second get the same stamp. On 2026-08-07 that rejected the first
+    # participant-built Argument in the record — it grounded on Data the gate had stamped in the
+    # same second, in the same pass. A member cannot avoid this, because the gate owns `created`;
+    # the gate was rejecting a correctly ordered submission for its own clock resolution. Seeded
+    # from the record so the guarantee survives a restart.
     seen = [parse_instant(c.get("artifact", {}).get("created")) for c in record]
     prev = max([d for d in seen if d], default=None)
 
-    for bundle in bundles:
-        # one act -> one timestamp, so the record shows the single-act property directly
-        # rather than requiring a reader to apply the ordering exception
+    for m in ordered:
+        # One artifact, one stamp, one verdict. Nothing in this loop may make two artifacts
+        # share a `created`: spec 1.9 says artifacts with an identical stamp are not earlier
+        # than one another and cannot refer to each other, so a tie is not a convenience, it
+        # is a pair of artifacts that can never cite each other for the life of the record.
         now = datetime.now(timezone.utc).replace(microsecond=0)
         if prev is not None and now <= prev:
             now = prev + timedelta(seconds=1)
         prev = now
         stamp = now.isoformat(timespec="seconds")
-        label = " + ".join(m["canonical"]["artifact"]["name"] for m in bundle)
-        print(f"  {label}" + ("   [bundle]" if len(bundle) > 1 else ""))
-        for m in bundle:
-            m["canonical"]["artifact"]["created"] = stamp
+        canonical = m["canonical"]
+        canonical["artifact"]["created"] = stamp
+        print(f"  {canonical['artifact']['name']}")
 
-        # each member is validated against the record PLUS its siblings, so the mutual
-        # outputs/produced_by addresses resolve
-        results = []
-        for m in bundle:
-            sibs = [x["canonical"] for x in bundle if x is not m]
-            results.append((m, validate(m["canonical"], record + sibs, members)))
-
-        if all(passed(f) for _, f in results):
-            for m, f in results:
-                for x in f:
-                    print(f"    [REVIEW {x['check']}] {x['msg'][:110]}")
-            ok = all(accept(m["canonical"], record, muuids, state, stamp=stamp,
-                            submission_uuid=m["uuid"]) for m, _ in results)
-            if ok:
-                for m, f in results:
-                    record.append(m["canonical"])
-                    names.add(m["canonical"]["artifact"]["name"])
-                    # REVIEW findings are logged at the moment of acceptance because they
-                    # are the validator signal that SURVIVES into the record — the same
-                    # findings can be recomputed tomorrow, but not the fact that the gate
-                    # saw them and accepted anyway.
-                    telemetry.emit("gate", "gate_accept", "accepted",
-                                   artifact=m["canonical"]["artifact"]["name"],
-                                   atype=m["canonical"]["artifact"].get("type"),
-                                   submitter=m["owner"], findings=f,
-                                   bundle=len(bundle) if len(bundle) > 1 else None)
+        f = validate(canonical, record, members)
+        if passed(f):
+            for x in f:
+                print(f"    [REVIEW {x['check']}] {x['msg'][:110]}")
+            if accept(canonical, record, muuids, state, stamp=stamp, submission_uuid=m["uuid"]):
+                record.append(canonical)
+                names.add(canonical["artifact"]["name"])
+                # REVIEW findings are logged at the moment of acceptance because they are the
+                # validator signal that SURVIVES into the record — the same findings can be
+                # recomputed tomorrow, but not the fact that the gate saw them and accepted.
+                telemetry.emit("gate", "gate_accept", "accepted",
+                               artifact=canonical["artifact"]["name"],
+                               atype=canonical["artifact"].get("type"),
+                               submitter=m["owner"], findings=f)
         else:
-            # all-or-nothing: a bundle is one act, so a failure anywhere rejects the unit
-            if len(bundle) > 1:
-                print("    bundle rejected as a unit — an Analysis and its outputs are one act")
-            for m, f in results:
-                if not passed(f):
-                    reject(m["canonical"], m["name"], f, m["owner"], muuids)
-                    # Final: this network will never become acceptable, and a member fixing it
-                    # uploads a NEW one. Without this the same submission is re-rejected every
-                    # pass and a fresh reply network is posted each time.
-                    if not DRY:
-                        state["granted"][m["uuid"]] = "rejected"
-                    telemetry.emit("gate", "gate_reject", "rejected", artifact=m["name"],
-                                   atype=m["canonical"]["artifact"].get("type"),
-                                   submitter=m["owner"], findings=f, refusal=["spec"],
-                                   bundle=len(bundle) if len(bundle) > 1 else None)
-                else:
-                    print(f"    {m['name']}: conformant, but withheld with its bundle")
-                    # Conformant and still not in the record: an outcome with no equivalent
-                    # on the member side, and invisible unless it is logged here.
-                    telemetry.emit("gate", "gate_withhold", "withheld", artifact=m["name"],
-                                   atype=m["canonical"]["artifact"].get("type"),
-                                   submitter=m["owner"], findings=f, bundle=len(bundle))
+            reject(canonical, m["name"], f, m["owner"], muuids)
+            # Final: this network will never become acceptable, and a member fixing it uploads
+            # a NEW one. Without this the same submission is re-rejected every pass and a fresh
+            # reply network is posted each time.
+            if not DRY:
+                state["granted"][m["uuid"]] = "rejected"
+            telemetry.emit("gate", "gate_reject", "rejected", artifact=m["name"],
+                           atype=canonical["artifact"].get("type"),
+                           submitter=m["owner"], findings=f, refusal=["spec"])
     # A dry run reports; it must not write. `gate_loop.py` holds this file and §4 of the handoff
     # tells the operator to run `--dry-run` while the loop is live: if a dry run's stale copy of
     # `state` lands between the loop's read and write, the loop's newest grants are lost and an

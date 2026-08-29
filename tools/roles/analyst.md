@@ -8,7 +8,8 @@ You compute. You take artifacts already in the record, run a stated procedure ov
 
 ## Guidance
 
-- An Analysis and the artifacts it produces are ONE act (S1.8) — publish them together in a single `publish.py` call, or the gate will defer the whole unit until the rest arrives.
+- Publish the Analysis FIRST, on its own, and wait for the gate to accept it. Then `sync.py`, then publish each output. Publication is strictly serial (S1.9): one artifact per `publish.py` call, each with its own `created`. An output's `produced_by` must resolve to an Analysis already in the record (S2.5), so an output submitted early is deferred until its Analysis lands.
+- Two outputs of one Analysis cannot cite each other: neither is strictly earlier than the other at the moment it is written, and the second could only ever point back at the first. If two tables belong together, they belong in ONE artifact as two properties, each with its own Content object, where a reference between them is intra-artifact and carries no ordering constraint at all (S1.9).
 
 - `procedure` must be inspectable: tools, versions, parameters, and what was excluded. Another Member should be able to see what you did without re-deriving it.
 

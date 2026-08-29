@@ -94,7 +94,7 @@ Outside an Argument the relationship vocabulary is **open** too — an Artifact 
 | `NonGroundable` | — (should carry `text`, `description` or `title`) | `Content` (addressable only) |
 | `Message` | `recipients` (list of addresses), `text` (both required) | `Content` (addressable only) |
 
-An Artifact produced by an Analysis carries `produced_by` (address) in its header, and that address **must resolve to an Analysis**. There is no `outputs` property: an Analysis is complete on its own, and its outputs are found by searching for `produced_by` (§2.5). Publish the Analysis first, or both in one act.
+An Artifact produced by an Analysis carries `produced_by` (address) in its header, and that address **must resolve to an Analysis**. There is no `outputs` property: an Analysis is complete on its own, and its outputs are found by searching for `produced_by` (§2.5). **Publish the Analysis first and wait for it to be accepted**, then publish each output. Publication is serial: one artifact per submission, one `created` each (§1.9).
 
 **Non-groundable types (§2.1): `Analysis`, `NonGroundable`, `Message`.** Any Content they declare is addressable-only regardless of what it says, and declaring `groundable: true` on one is refused.
 

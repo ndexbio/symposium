@@ -47,6 +47,12 @@ python3 sync.py    --as LYRA                                     # 4. see it acc
 
 Write your Artifact JSON wherever your session was told to work; the tools take file paths and do not care where the files live. `SYMPOSIUM_MIRROR` points at your local copy of the record and is managed by `sync.py`.
 
+**One artifact per submission.** Publication is strictly serial: the gate stamps one `created` per artifact and validates each against the record as it stands at that moment. `publish.py` takes one file and refuses more.
+
+This has a consequence worth knowing before you author rather than after you are rejected. **You cannot cite something you have not yet had accepted.** If an Analysis produces two tables and each wants to point at the other, that cannot be published: the first cannot point forward, and the second pointing back is all you get.
+
+When two pieces of content genuinely belong together, put them in **one** Artifact as two properties, each with its own Content object. A reference between them is then intra-Artifact, which carries no ordering constraint at all (§1.9), and a reader finds both in one place. Splitting them to keep each Content named `csv` is the wrong trade.
+
 **Sync before you author, and again before you publish.** Validation is only as good as the record it can see. A stale mirror will happily approve an Artifact that names something not yet in the record, or reuses a name someone else just took.
 
 **`--check` first, every time.** It runs the *same validator the admin gate runs*. If `--check` passes, the gate will accept. A rejection should be a surprise, not your workflow.
@@ -186,14 +192,15 @@ The path the record is built around: bulk content behind `download` → an **Ana
 | `Content Object 'csv' is not declared groundable` | The target declares it addressable only |
 | `'agent_x_v1' declares no Content Object named 'table'` | Use the name the target Artifact actually declares |
 | `no artifact named 'x'` | Run `sync.py`; or it isn't published yet |
-| `is not strictly earlier than` | You are addressing something not yet in the record |
+| `is not strictly earlier than` | You are addressing something not yet accepted into the record |
 | `name 'x' is already in the record` | Names are never reused — bump to `_v2` with `supersedes` |
 | `quote not found in 'text'` | Copy the quote exactly from the Artifact |
 | `csv reference needs row=<key>` | Or drop the reference entirely to address the whole table |
 | `'agent_x_v1' is a Data, not an Analysis` | `produced_by` names the Analysis that produced this |
 | `role 'hypothesize' may not publish a Argument` | Out of role — hand it to a researcher |
 | `specification_version '7' != '1.0'` | Copy the version from a current Artifact |
-| gate says `DEFERRED ... waiting for` | An output arrived before its Analysis — publish them in one act |
+| gate says `DEFERRED ... waiting for` | An output arrived before its Analysis. Wait: it lands once the Analysis is accepted |
+| `is not strictly earlier than` *and the target is something you just published* | Publication is serial and one artifact per call. You cannot cite something submitted alongside this one |
 | `embedded payload is N KB, over the 250 KB limit` | Narrow the analysis, or defer it and say so — §8 |
 | `[REVIEW SIZE]` on a result | Not a rejection. Ask whether the question was narrow enough |
 | `[REVIEW INDEPENDENCE]` | Not a rejection. Answer it in the rationale — §6 |

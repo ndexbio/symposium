@@ -10,7 +10,8 @@ ACCEPT means the gate will accept too. A rejection should be a surprise, not the
 
   python publish.py --as LYRA --role researcher --check  argument.json   # validate only
   python publish.py --as LYRA --role researcher          argument.json
-  python publish.py --as LYRA --role analyst  run.json data.json         # one act, together
+  python publish.py --as LYRA --role analyst          run.json           # then, once accepted:
+  python publish.py --as LYRA --role analyst          data.json          # ...its output
   python publish.py --roles                    # list the roles
   python publish.py --roles importer           # print one in full
 
@@ -125,6 +126,21 @@ def main(argv):
     if not paths:
         print("no artifact .json files given")
         return 2
+    # ONE ARTIFACT PER SUBMISSION. Publication is strictly serial: the gate stamps one
+    # `created` per artifact and validates each against the record as it stands at that
+    # moment (spec 1.9). Submitting several at once used to be allowed and is not, because
+    # it made the member's local ordering and the gate's stamped ordering two different
+    # things — a citation between two artifacts in the same call passed `--check`, which
+    # stamped them a second apart in argument order, and was then refused by the gate,
+    # which stamped them as one act. An Analysis and its outputs are published one at a
+    # time, the Analysis first, each waiting for acceptance (spec 2.5).
+    if len(paths) > 1:
+        print(f"! {len(paths)} artifacts given; publication is strictly serial and takes one.\n"
+              f"  Publish them one at a time, in the order their addresses require, waiting for\n"
+              f"  the gate to accept each before submitting the next. An Analysis goes before\n"
+              f"  the artifacts it produced (spec 2.5).\n"
+              f"  Given: {', '.join(Path(p).name for p in paths)}")
+        return 2
 
     # `--check` uploads nothing and needs no network. It still needs to know WHO you are,
     # because the naming rule is checked against the account — but the username alone
@@ -178,15 +194,18 @@ def main(argv):
     #
     # It must be strictly LATER than everything in the record — the gate stamps at accept
     # time, which is always after this — or an artifact published in the same second as its
-    # own dependency fails locally for something the gate would allow. And it increments
-    # across the files given, so `publish.py data.json argument.json` models the order the
-    # gate will accept them in.
+    # own dependency fails locally for something the gate would allow.
+    #
+    # There is exactly one artifact, so there is exactly one stamp, and this reproduces what
+    # the gate will do: validate this artifact against the record as it stands. That identity
+    # is what makes the guarantee in MEMBER-AGENT-INSTRUCTIONS §3 true — a `--check` pass
+    # means the gate will accept. It stopped being true when a call could carry several
+    # artifacts, because only the gate knew what `created` each would get.
     stamps = [t for t in (parse_instant(r["artifact"].get("created")) for r in record) if t]
     base = datetime.now(timezone.utc)
     if stamps:
         base = max(base, max(stamps))
-    for i, a in enumerate(arts, start=1):
-        a["artifact"]["created"] = (base + timedelta(seconds=i)).isoformat(timespec="seconds")
+    arts[0]["artifact"]["created"] = (base + timedelta(seconds=1)).isoformat(timespec="seconds")
 
     # Three refusals that must not be pooled: the naming rule and the role limit are this
     # tool declining, the validator is the SPECIFICATION declining. Only the last says
@@ -251,10 +270,10 @@ def main(argv):
         h = a["artifact"]
         producer = root(h["produced_by"]) if h.get("produced_by") else None
         if producer and producer not in here and producer not in record_names:
-            print(f"\n  note: {h['name']} cites Analysis '{producer}', which is not in this "
-                  f"submission\n        and not in the record. An Analysis is published before "
-                  f"its outputs (spec 2.5) —\n        publish them in one act: "
-                  f"`publish.py --as … {producer}.json {h['name']}.json`")
+            print(f"\n  note: {h['name']} cites Analysis '{producer}', which is not in the "
+                  f"record.\n        An Analysis is published before its outputs (spec 2.5), and "
+                  f"publication is serial —\n        publish `{producer}.json` first, wait for the "
+                  f"gate to accept it, then\n        run `sync.py` and publish this one.")
 
     # Every attempt is logged, passing ones included: the question this answers is how many
     # rounds an artifact took to become publishable, and that is uncountable if only the

@@ -35,6 +35,32 @@ BASIS_RELS = {"depends_on", "grounded_by", "assumes"}
 STD_METHODS = {"text_span", "csv", "rest", "download", "graph"}
 VERIFIABLE_METHODS = {"text_span", "csv", "graph"}                         # gate can check content
 
+
+def method_of(name):
+    """`class_a_csv` -> `csv`. -> None if the name declares no known method.
+
+    A Content Object's name IS the method token in every address that reaches through it, and
+    the profile fixes five methods. A name may carry a LABEL in front of the method, so that
+    an Artifact declaring more than one Content of the same kind can say which is which:
+    `funnel_csv` and `class_a_csv`, not `csv` and `csv_2`. The label is for the reader, the
+    suffix is for the machine, and an address reads as prose rather than as an index.
+
+    Labelling rather than numbering matters because the name appears in every citation of that
+    content, permanently. `…#class_a_csv.row=TP53` says what is being cited; `…#csv_2` does
+    not, and a reader has to open the target to find out.
+
+    The method must still be derivable, because the three verifiable methods are checked
+    against the embedded content and a name whose method cannot be read would be waved
+    through unverified.
+    """
+    n = str(name or "")
+    if n in STD_METHODS:
+        return n
+    for m in sorted(STD_METHODS, key=len, reverse=True):
+        if n.endswith("_" + m) and len(n) > len(m) + 1:
+            return m
+    return None
+
 # ---------------------------------------------------------------- embedded payload size
 # The server ceiling is between 814 KB and 1.5 MB (measured; above it the upload is a 413),
 # but that is not the limit that matters. In this profile embedded content lives in a string
@@ -200,7 +226,7 @@ def _verify_graph(rec, ref):
 
 def verify_content(info):
     """Machine-verify text_span / csv / graph references against embedded content. -> [findings]"""
-    out, m, ref = [], info.get("method"), info.get("ref")
+    out, m, ref = [], method_of(info.get("method")), info.get("ref")
     if m not in VERIFIABLE_METHODS:
         return out
     if not ref:
@@ -279,7 +305,7 @@ def groundable(info, citing_artifact):
                                "method the Artifact declares (spec 2.2.4)")
     if m.get("groundable") is not True:
         return False, "FAIL", f"Content Object '{info['method']}' is not declared groundable"
-    if info["method"] in ("rest", "download"):
+    if method_of(info["method"]) in ("rest", "download"):
         return True, "REVIEW", (f"grounds via '{info['method']}' — content is outside the record and "
                                 f"cannot be machine-verified; verifiability is trust-based")
     return True, None, ""
@@ -398,11 +424,14 @@ def check_type_specific(a):
                 f.append(finding("TYPE", "FAIL",
                                  f"Content Object '{o.get('name')}' groundable must be a boolean, "
                                  f"got {o.get('groundable')!r} (spec 1.8.1)"))
-            if o.get("name") not in STD_METHODS:
+            meth = method_of(o.get("name"))
+            if meth is None:
                 f.append(finding("TYPE", "REVIEW",
-                                 f"Content Object '{o.get('name')}' is outside the profile's standard set"))
-            if o.get("name") in ("rest", "download") and not o.get("access_method"):
-                f.append(finding("TYPE", "FAIL", f"method '{o.get('name')}' requires access_method"))
+                                 f"Content Object '{o.get('name')}' declares no method the profile "
+                                 f"knows: name it for one of {', '.join(sorted(STD_METHODS))}, "
+                                 f"optionally with a label in front (e.g. 'class_a_csv')"))
+            if meth in ("rest", "download") and not o.get("access_method"):
+                f.append(finding("TYPE", "FAIL", f"method '{meth}' requires access_method"))
         if ot == "Content" and h.get("type") in NON_GROUNDABLE_TYPES and o.get("groundable") is True:
             f.append(finding("TYPE", "FAIL",
                              f"{h['type']} is non-groundable; its methods are addressable only (spec 2.1)"))

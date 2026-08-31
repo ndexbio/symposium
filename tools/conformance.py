@@ -483,7 +483,7 @@ def main(argv=None):
     print("\nTHE RECORD — every Artifact against everything published before it\n")
     rc_rec = validate_record.main([str(HERE.parent / "examples" / "record")])
 
-    print("\nTHE GATE — publication units and acceptance order, offline\n")
+    print("\nTHE GATE — serial acceptance order, offline\n")
     import test_gate
     rc_gate = test_gate.run()
 

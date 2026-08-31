@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Publish an artifact as the admin, straight into the record.
 
-    python admin_publish.py --check  metrics.json data.json     # validate only
-    python admin_publish.py          metrics.json data.json     # publish, one act
+    python admin_publish.py --check  metrics.json     # validate only
+    python admin_publish.py          metrics.json     # publish
 
 The admin cannot use `publish.py`. A Member submits by uploading and granting the admin READ,
 and the gate discovers submissions from its own permission map — where it deliberately skips
@@ -14,9 +14,10 @@ the accepted record, exactly as the gate validates a Member's submission, and re
 same terms. Nothing enters this record without passing what everything else passed; an admin
 who could exempt themselves would make the whole record worth less.
 
-Files given together are ONE ACT and share a single `created` stamp — the case this exists
-for is an Analysis and the Data it produces, which name each other and so cannot validate
-apart (spec 1.8, 2.5). If any of them fails, none is published.
+ONE ARTIFACT PER RUN. Publication is strictly serial: every artifact gets its own `created`
+and is validated against the record as it stands (spec 1.9). An Analysis and the Data it
+produces go in separate runs, the Analysis first, because an output's `produced_by` must
+resolve to something already in the record (spec 2.5).
 
 Intended for the end of the day: the metrics Analysis and its Data, and the summary NonGroundable
 that cites them. Publishing measurements while the work is still running hands Members a
@@ -36,7 +37,8 @@ from validate import EMBED_REFUSE, embedded_size, passed, report, validate
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("paths", nargs="+", help="canonical JSON file(s); together = one act")
+    ap.add_argument("paths", nargs=1, metavar="path",
+                    help="one canonical JSON file; publication is serial (spec 1.9)")
     ap.add_argument("--check", action="store_true", help="validate only; publish nothing")
     args = ap.parse_args(argv)
 
@@ -64,11 +66,10 @@ def main(argv=None):
     members = set(gate.MEMBERS) | {gate.ADMIN_USER}
     print(f"admin publish as {gate.ADMIN_USER} — record holds {len(record)} artifact(s)\n")
 
-    # One act, one stamp. Provisional here so the ordering checks run against something
+    # One artifact, one stamp. Provisional here so the ordering checks run against something
     # realistic; `accept()` sets the same value again when it writes.
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    for a in arts:
-        a["artifact"]["created"] = stamp
+    arts[0]["artifact"]["created"] = stamp
 
     fatal = False
     for a in arts:
@@ -84,8 +85,7 @@ def main(argv=None):
                   + (f" (largest: '{props[0][1]}' on {props[0][0]})" if props else ""))
             fatal = True
             continue
-        sibs = [x for x in arts if x is not a]
-        findings = validate(a, record + sibs, members)
+        findings = validate(a, record, members)
         ok = passed(findings)
         print(f"  {name}: spec {'ok' if ok else 'FAIL'}")
         for f in findings:
@@ -103,8 +103,7 @@ def main(argv=None):
     print()
     for a in arts:
         if not gate.accept(a, record, muuids, state, stamp=stamp):
-            print("\n! publication failed part-way through. The record may hold some of this "
-                  "act but not all of it — check the mirror before retrying.")
+            print("\n! publication failed — check the mirror before retrying.")
             return 1
         record.append(a)
 

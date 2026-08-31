@@ -94,7 +94,7 @@ Outside an Argument the relationship vocabulary is **open** too — an Artifact 
 | `NonGroundable` | — (should carry `text`, `description` or `title`) | `Content` (addressable only) |
 | `Message` | `recipients` (list of addresses), `text` (both required) | `Content` (addressable only) |
 
-An Artifact produced by an Analysis carries `produced_by` (address) in its header, and that address **must resolve to an Analysis**. There is no `outputs` property: an Analysis is complete on its own, and its outputs are found by searching for `produced_by` (§2.5). Publish the Analysis first, or both in one act.
+An Artifact produced by an Analysis carries `produced_by` (address) in its header, and that address **must resolve to an Analysis**. There is no `outputs` property: an Analysis is complete on its own, and its outputs are found by searching for `produced_by` (§2.5). **Publish the Analysis first and wait for it to be accepted**, then publish each output. Publication is serial: one artifact per submission, one `created` each (§1.9).
 
 **Non-groundable types (§2.1): `Analysis`, `NonGroundable`, `Message`.** Any Content they declare is addressable-only regardless of what it says, and declaring `groundable: true` on one is refused.
 
@@ -125,7 +125,11 @@ Content is declared as an Object of type `Content`. **Its `name` is the method t
   "addressing_method": "row=<value of the first column>&col=<column name>. Line 1 is the header." }
 ```
 
-Five standard names. A Content Object named anything else is accepted with a REVIEW finding — the specification does not constrain the name, this profile does.
+Five standard methods. A Content Object named for none of them is accepted with a REVIEW finding — the specification does not constrain the name, this profile does.
+
+**More than one Content of the same method: label it, do not number it.** Write `<label>_<method>` — `funnel_csv` and `class_a_csv`, never `csv` and `csv_2`. The suffix is the method and the machine reads it; the label is for the reader. This matters because the name appears inside every citation of that content, permanently and in every browser page: `…#class_a_csv.row=TP53` says what is being cited, where `…#csv_2` forces the reader to open the target to find out. A bare method name stays correct when an Artifact declares only one Content of that kind.
+
+The method must remain derivable from the suffix. `csv_2` declares no method, draws the REVIEW, and — worse — loses machine verification, because the gate checks `text_span`, `csv` and `graph` references against the embedded content and cannot check a method it cannot read.
 
 | method | reaches | what the gate verifies |
 |---|---|---|

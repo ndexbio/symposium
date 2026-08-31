@@ -35,6 +35,32 @@ BASIS_RELS = {"depends_on", "grounded_by", "assumes"}
 STD_METHODS = {"text_span", "csv", "rest", "download", "graph"}
 VERIFIABLE_METHODS = {"text_span", "csv", "graph"}                         # gate can check content
 
+
+def method_of(name):
+    """`class_a_csv` -> `csv`. -> None if the name declares no known method.
+
+    A Content Object's name IS the method token in every address that reaches through it, and
+    the profile fixes five methods. A name may carry a LABEL in front of the method, so that
+    an Artifact declaring more than one Content of the same kind can say which is which:
+    `funnel_csv` and `class_a_csv`, not `csv` and `csv_2`. The label is for the reader, the
+    suffix is for the machine, and an address reads as prose rather than as an index.
+
+    Labelling rather than numbering matters because the name appears in every citation of that
+    content, permanently. `…#class_a_csv.row=TP53` says what is being cited; `…#csv_2` does
+    not, and a reader has to open the target to find out.
+
+    The method must still be derivable, because the three verifiable methods are checked
+    against the embedded content and a name whose method cannot be read would be waved
+    through unverified.
+    """
+    n = str(name or "")
+    if n in STD_METHODS:
+        return n
+    for m in sorted(STD_METHODS, key=len, reverse=True):
+        if n.endswith("_" + m) and len(n) > len(m) + 1:
+            return m
+    return None
+
 # ---------------------------------------------------------------- embedded payload size
 # The server ceiling is between 814 KB and 1.5 MB (measured; above it the upload is a 413),
 # but that is not the limit that matters. In this profile embedded content lives in a string
@@ -200,7 +226,7 @@ def _verify_graph(rec, ref):
 
 def verify_content(info):
     """Machine-verify text_span / csv / graph references against embedded content. -> [findings]"""
-    out, m, ref = [], info.get("method"), info.get("ref")
+    out, m, ref = [], method_of(info.get("method")), info.get("ref")
     if m not in VERIFIABLE_METHODS:
         return out
     if not ref:
@@ -279,7 +305,7 @@ def groundable(info, citing_artifact):
                                "method the Artifact declares (spec 2.2.4)")
     if m.get("groundable") is not True:
         return False, "FAIL", f"Content Object '{info['method']}' is not declared groundable"
-    if info["method"] in ("rest", "download"):
+    if method_of(info["method"]) in ("rest", "download"):
         return True, "REVIEW", (f"grounds via '{info['method']}' — content is outside the record and "
                                 f"cannot be machine-verified; verifiability is trust-based")
     return True, None, ""
@@ -398,11 +424,14 @@ def check_type_specific(a):
                 f.append(finding("TYPE", "FAIL",
                                  f"Content Object '{o.get('name')}' groundable must be a boolean, "
                                  f"got {o.get('groundable')!r} (spec 1.8.1)"))
-            if o.get("name") not in STD_METHODS:
+            meth = method_of(o.get("name"))
+            if meth is None:
                 f.append(finding("TYPE", "REVIEW",
-                                 f"Content Object '{o.get('name')}' is outside the profile's standard set"))
-            if o.get("name") in ("rest", "download") and not o.get("access_method"):
-                f.append(finding("TYPE", "FAIL", f"method '{o.get('name')}' requires access_method"))
+                                 f"Content Object '{o.get('name')}' declares no method the profile "
+                                 f"knows: name it for one of {', '.join(sorted(STD_METHODS))}, "
+                                 f"optionally with a label in front (e.g. 'class_a_csv')"))
+            if meth in ("rest", "download") and not o.get("access_method"):
+                f.append(finding("TYPE", "FAIL", f"method '{meth}' requires access_method"))
         if ot == "Content" and h.get("type") in NON_GROUNDABLE_TYPES and o.get("groundable") is True:
             f.append(finding("TYPE", "FAIL",
                              f"{h['type']} is non-groundable; its methods are addressable only (spec 2.1)"))
@@ -576,7 +605,7 @@ def check_corpus(a, index, members, record_names):
     if name in record_names:
         f.append(finding("UNIQUE", "FAIL", f"name '{name}' is already in the record; names are never reused"))
 
-    def check_addr(addr, ctx, evidential, ordered=True):
+    def check_addr(addr, ctx, evidential):
         ok, info, why = resolve(addr, index, members)
         if not ok:
             f.append(finding("ADDRESS", "FAIL", f"{ctx}: {why}"))
@@ -588,13 +617,16 @@ def check_corpus(a, index, members, record_names):
             return
         theirs = parse_instant(info["rec"]["created"])
         if info["artifact"] == name:
-            pass                          # intra-Artifact reference: created in one act (spec 1.8)
-        elif not ordered:
-            pass                          # Analysis <-> its outputs: one act, mutual (spec 1.8, 2.5)
+            # The ONLY exception to temporal ordering: an Artifact addressing content within
+            # itself, the content and the reference to it being created in one act (spec 1.9).
+            # "One act" is a statement about a single Artifact and nothing larger. There is no
+            # exception for artifacts published close together, because publication is serial
+            # and no two of them ever share a `created`.
+            pass
         elif mine and theirs and theirs >= mine:
             f.append(finding("ORDER", "FAIL",
                              f"{ctx}: '{info['artifact']}' ({info['rec']['created']}) is not strictly "
-                             f"earlier than '{name}' ({h.get('created')}) — spec 1.8"))
+                             f"earlier than '{name}' ({h.get('created')}) — spec 1.9"))
         if evidential:
             g_ok, lvl, reason = groundable(info, name)
             if not g_ok:
@@ -604,9 +636,13 @@ def check_corpus(a, index, members, record_names):
                 f.append(finding("GROUND", "REVIEW", f"{ctx}: {reason}"))
         f.extend(finding(x["check"], x["level"], f"{ctx}: {x['msg']}") for x in verify_content(info))
 
-    # `outputs` and `produced_by` are the single-act exception to temporal ordering (spec 1.8)
+    # `produced_by` is ordered like every other address. It used to carry an exemption, which
+    # existed only because the gate published an Analysis and its outputs as one act under one
+    # timestamp; the exemption then suppressed the ordering check on the property that most
+    # needs it. Publication is serial and the Analysis is strictly earlier (spec 2.5), so the
+    # ordinary check is both correct and sufficient.
     if h.get("produced_by"):
-        check_addr(h["produced_by"], "header produced_by", False, ordered=False)
+        check_addr(h["produced_by"], "header produced_by", False)
         # spec 2.5: a produced_by citation must resolve to an existing ANALYSIS. Resolving to
         # some other Artifact is the failure the rule exists to catch, because the point of the
         # property is that the procedure is on the record and inspectable, and a Data Artifact
@@ -618,7 +654,7 @@ def check_corpus(a, index, members, record_names):
                              f"not an Analysis (spec 2.5)"))
     if h.get("extracted_from"):
         check_addr(h["extracted_from"], "header extracted_from", False)
-    def each_address(hk, ordered=True):
+    def each_address(hk):
         """Walk a header field that holds a LIST of addresses.
 
         A string is iterable, so `for v in h[hk]` walked it CHARACTER BY CHARACTER and reported
@@ -640,9 +676,14 @@ def check_corpus(a, index, members, record_names):
                              f"header {hk} must be a list of addresses, got {type(v).__name__}"))
             return
         for a in v:
-            check_addr(a, f"header {hk}", False, ordered=ordered)
+            check_addr(a, f"header {hk}", False)
 
-    each_address("outputs", ordered=False)
+    # `outputs` was walked here with an ordering exemption. There is no `outputs` property:
+    # an Analysis is complete on its own and its outputs are found by searching for
+    # `produced_by` (spec 2.5, profile §2). The exemption existed so an Analysis and its
+    # outputs could be published as one act under one timestamp, which serial publication no
+    # longer does. The property is unused in every corpus, so the walk is gone rather than
+    # re-pointed: an Analysis cannot name artifacts that do not exist yet.
     for hk in ("supersedes", "inputs", "used_models", "recipients"):
         each_address(hk)
 

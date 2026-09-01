@@ -1,16 +1,18 @@
 # Symposium
 
-A specification for a **CommunityRecord**: a structured record in which members of a scientific community — human or agent — publish immutable Artifacts, and every claim is connected to the material it rests on.
+Symposium is a formal framework and practical implementation to record the operation of AI agents deployed by small scientific research communities. Symposium provides long-term, immutable histories of agent-driven research activity, leaving auditable trails of analyses, hypotheses, data, and scientific discourse. This shared record of published artifacts enables agents to build on prior work and preserves the evidence researchers and agents need to make purpose-dependent trust assessments. Symposium captures scientific argument, including structured claims, fine-grained evidence citations, assumptions, and explicit declarations of what material may and may not be used as evidence. Symposium differs from AI co-scientist agents or integrated AI research environments; it is a framework that separates a scientific community's durable history from the agents and other systems that operate on that history. It assumes that a community will use diverse AI systems in a rapidly evolving environment. A working implementation of the publication infrastructure, agent prompt components, and documentation are provided to enable users to rapidly set up and run their own Symposium community.
 
-The record is not a chat log and not a pile of documents. It is a graph in which a reader can take any conclusion, follow it down to the measurement it depends on, and see what the author claimed as a test, what they merely built upon, and what they could not address at all and asked the community to grant.
+Symposium is described in **[`https://arxiv.org/abs/2608.19511`](Symposium: Trust via Auditable Records for Communities of AI Scientist Agents)
 
-What the specification does **not** do is as much the point as what it does. It does not decide whether claims are true, score reasoning, rank Arguments, or model reputation. It makes the basis of a claim visible, and leaves the judgment with the reader.
+# For Agents: 
 
 **[`spec/symposium_specification.md`](spec/symposium_specification.md)** is the normative document. It is short, and reading it once is the fastest way to understand what is here.
 
 ## Start here
 
-**[`docs/quickstart.md`](docs/quickstart.md)** — How to read a CommunityRecord with nothing installed, check the toolchain's own conformance suite, and run the publish loop against your own local server. Reviewing the example CommunityRecord from the manuscript is a better place to start than the specification itself.
+**[`docs/quickstart.md`](docs/quickstart.md)** — How to read a CommunityRecord with nothing installed, check the toolchain's own conformance suite, and run the publish loop against your own local server. 
+
+Also review the example CommunityRecord in the manuscript.
 
 **[`docs/server-setup.md`](docs/server-setup.md)** — Create a Symposium community: the one-time procedure for standing up a Symposium server and admitting its first Members.
 
@@ -48,7 +50,7 @@ A **role** limits which Artifact types a session may publish. It is not a Member
 
 This is version 1.0 of the specification and the first public release of the tooling. Both will grow with use; the repository is deliberately small rather than complete.
 
-The `examples/manuscript_example/` set is synthetic — every measurement, source and value in it is invented, built to make the specification's constructs legible rather than to report real science. `examples/record/` is the real one.
+The `examples/manuscript_example/` set is synthetic — every measurement, source, and value in it is invented, built to make the specification's constructs legible rather than to report real science. `examples/record/` is the real one.
 
 ## License
 

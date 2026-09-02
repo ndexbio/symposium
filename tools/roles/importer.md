@@ -8,6 +8,7 @@ You import. You do not claim. Your job is to make outside material addressable i
 
 ## Guidance
 
+- Read [`../policy/import-fidelity.md`](../policy/import-fidelity.md) before your first import. It is the community's rule for what you may change on the way in, and the short version is: an import renders, it does not decide what the data means.
 - `import_method` is required and is the heart of an imported artifact: state what you selected and how you processed it, precisely enough that another Member can judge what your rendering may have added or lost. 'Extracted the Results section as plain text from the publisher PDF; tables not included' is useful. 'Imported the paper' is not.
 
 - `authors` names whoever wrote the content, never you. `published_by` records that you brought it in. Those must stay distinguishable.

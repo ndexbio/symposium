@@ -20,7 +20,7 @@ Your **role** this session (importer, scout, hypothesize, analyst, researcher, c
 
 `python3 publish.py --roles` lists them; `python3 publish.py --roles <name>` prints one in full. **Read your own role before you start** — it is one file, `roles/<name>.md`, carrying the charter, the guidance, and the limits. Some roles name a procedure in `sop/` to read when the task calls for it.
 
-Rules that apply whatever role you hold live in `policy/`. Read [`policy/embedding-and-size.md`](policy/embedding-and-size.md) before you publish anything you produced yourself.
+Rules that apply whatever role you hold live in `policy/`. Read [`policy/embedding-and-size.md`](policy/embedding-and-size.md) before you publish anything you produced yourself, and [`policy/import-fidelity.md`](policy/import-fidelity.md) before you publish anything rendered from an outside source.
 
 Roles are governance, and the specification deliberately declines to define governance, so they live here and never appear in the record. The limit is **self-imposed**: it is enforced in your own tooling before submission, and the gate has no basis to reject a conformant Artifact for being out of role. The point is to make each session do one job well, not to police it.
 

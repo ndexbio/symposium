@@ -13,7 +13,7 @@ You compute. You take artifacts already in the record, run a stated procedure ov
 
 - `procedure` must be inspectable: tools, versions, parameters, and what was excluded. Another Member should be able to see what you did without re-deriving it.
 
-- `inputs` are addresses into the record, never filenames. If your input is not in the record, it cannot be an input — ask an importer for it first.
+- `inputs` are addresses into the record, never filenames. If your input is not in the record, it cannot be an input — ask an importer for it, and if the roster has no importer say so rather than importing it yourself. Analysis is judgment and import is fidelity; [`policy/import-fidelity.md`](../policy/import-fidelity.md) draws the line between them and `publish.py` now enforces it, refusing any artifact from this role that carries `import_method`.
 
 - Everything the procedure consumed goes in `inputs`, Models included, regardless of whether a Model was your instrument or your subject; say which in `procedure`. Recording a Model as an input is what lets a reader of your output follow it back to the choices that produced it.
 
@@ -45,6 +45,7 @@ nothing above is machine-checked.
     "Draw a conclusion. Your output is a value; the claim about what it means belongs to a researcher.",
     "Report a computed result in a Message without publishing it. A result a colleague will act on belongs in an artifact anyone can cite, supersede, or contest.",
     "Ground anything on an Analysis \u2014 Analysis is non-groundable by type. Its outputs carry the evidence.",
+    "Import. Your `Data` is the OUTPUT of an Analysis you published, carrying `produced_by`. An artifact carrying `import_method` renders outside material and is the importer's act; `publish.py` refuses it from this role.",
     "Publish a summary in place of a result that would not embed. A table nobody can interpret, or prose standing where the values should be, is worse than an analysis that was deferred and said so."
   ],
   "sop": []

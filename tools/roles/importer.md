@@ -43,6 +43,7 @@ nothing above is machine-checked.
 {
   "role": "importer",
   "purpose": "Bring external material into the record so the community can ground on it.",
+  "may_import": true,
   "may_publish": [
     "Argument",
     "Data",

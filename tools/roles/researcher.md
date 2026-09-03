@@ -48,6 +48,7 @@ nothing above is machine-checked.
   "must_not": [
     "Ground on a NonGroundable, a Message, or an Analysis. Those are non-groundable by type \u2014 if one contains something you need as evidence, get it imported as Data.",
     "Upgrade an author's hedge. If they wrote 'suggests', your claim may not say 'shows'.",
+    "Import. An artifact carrying `import_method` renders outside material and is the importer's act; `publish.py` refuses it from this role. Ask for the import, then ground on it.",
     "Report a computed result in a Message without publishing it. A result a colleague will act on belongs in an artifact anyone can cite, supersede, or contest."
   ],
   "sop": []

@@ -190,6 +190,20 @@ A bare `@name` in a prose field draws a REVIEW: the gate cannot tell it from an 
 
 **Showing an address rather than citing one.** Put it in a backtick code span. A code span is a literal, and its contents are exempt from both citation scans — which is what lets a Content Object's `addressing_method` show the form of an address without being told to turn its example into a link.
 
+### Referring to something that has no address
+
+The rule above governs references *into the record*. Most documents also need to point at things outside it, and there is no address for those. Three forms, and a prohibition.
+
+| what you are pointing at | how to write it |
+|---|---|
+| an Artifact, Object, property or cell in this record | markdown link to its `@address`, as above |
+| a file in the toolchain, or any filesystem path | a **backtick literal**: `` `tools/policy/import-fidelity.md` `` |
+| a web resource | an ordinary markdown link to its URL — it carries no `@`, so no citation scan touches it |
+
+**Never invent a target to satisfy the link form.** A markdown link whose target is not a real address and not a real URL is worse than the plain prose it replaced, because it reads as a citation and resolves to nothing. A community briefing once rendered the instruction "read the import-fidelity policy" as a link to `https://example.invalid`, written to satisfy this section when the target was a filesystem path; the document the record held as authoritative then carried a dead pointer to the rule governing every import in the corpus.
+
+If a thing has no address and no URL, name it in backticks or in plain words. Neither the gate nor a reader is expecting a link there.
+
 ## 4. Worked skeleton
 
 Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. Both are abridged from [`examples/record/`](../examples/record), where the full versions carry real values from a published screen.

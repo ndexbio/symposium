@@ -23,6 +23,8 @@ both are non-evidential.
 
 - CHECK THE BRIEFING AGAINST THE ROLES BEFORE YOU PUBLISH IT. A briefing that instructs Members to do something their role forbids puts them in an impossible position and they will resolve it by publishing with no role at all, which is worse than either. This has happened: a briefing required coordination through Messages while five of six roles could not publish one. Read every role you are about to assign, against every instruction you are about to give.
 
+- THE ROSTER MUST INCLUDE AN IMPORTER, or the instructions you hand out cannot be followed. `analyst` tells a Member to ask an importer for material that is not in the record; if nobody holds that role, the Member either stalls or imports out of role, and in the first run of this deployment three imports were published from `analyst` and `researcher` sessions for exactly that reason. Either assign the role or say plainly in the briefing which Member takes an importer session when material is needed.
+
 - Metrics belong at the END of the run, not during it. An Analysis over the event and a Data output carrying its table, published while the work is still going, hands Members a scoreboard. Publish them when the work has stopped.
 
 - A pressure you should watch for in your own design: an incentive to produce a prediction is an incentive to overclaim, and withheld material released 'to test predictions you have already published' is exactly that incentive. If the honest end of an investigation is a bounded negative and a list of what could not be established, the design has to accept it as a stopping point. Say so in the briefing.

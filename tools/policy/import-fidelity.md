@@ -89,6 +89,11 @@ flattened, dropped or added is recoverable by a Member who disagrees with your j
 | Filtering, normalising, joining, recomputing | | yes |
 | Stating what a packed value means | only if the file says | yes, with a procedure |
 
+The table is enforced, not merely advised: `publish.py` refuses an artifact carrying
+`import_method` from any role that does not declare `may_import`, which today is every role but
+`importer`. If you need material that is not in the record, ask for it, or take an importer
+session and bring it in under this policy.
+
 **Intent** The importer's contribution is fidelity, and fidelity is checkable. The analyst's
 contribution is judgment, and judgment needs a procedure on the record. Putting judgment into an
 import hides it in a place the record has no way to question.

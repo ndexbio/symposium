@@ -53,6 +53,23 @@ This has a consequence worth knowing before you author rather than after you are
 
 When two pieces of content genuinely belong together, put them in **one** Artifact as two properties, each with its own Content object. A reference between them is then intra-Artifact, which carries no ordering constraint at all (§1.9), and a reader finds both in one place. Splitting them to keep each Content named `csv` is the wrong trade.
 
+### Plan the order backwards from the last artifact
+
+Serial publication plus "you cannot cite what is not yet accepted" fixes the order in which a piece of work can be published, and the order is longer than it looks. An Argument standing on a number you computed from a source that is not yet in the record is **five** artifacts and at least four gate cycles:
+
+```
+1. the import          Data, `import_method`      ← an importer's act, not yours
+2. the Analysis        `inputs` naming (1)
+3. its output          Data, `produced_by` → (2)
+4. YOUR Argument       Ground → a cell of (3)
+```
+
+Each waits for the one before it to be accepted. Anything your community adds on top — a rule that nothing is built on until the critic has contested it, for instance — adds cycles again, and across Members rather than within your own session.
+
+**So decide the last artifact you intend to publish, then count backwards.** Work out what it must ground on, what that must be produced by, and what must be imported first, before you compute anything. The common way to lose a session is to do the science, then discover the write-up needs four artifacts published in order and there is time for two.
+
+Two consequences worth holding on to. **An output you cannot get to is worse than an analysis you did not start**, because the record keeps the procedure and loses the result (see [`policy/results-and-correspondence.md`](policy/results-and-correspondence.md)). And **if you will not reach the end, publish the earlier links anyway**: an import and an Analysis with its output are useful to whoever comes next, where an Argument with nothing under it is not publishable at all.
+
 **Sync before you author, and again before you publish.** Validation is only as good as the record it can see. A stale mirror will happily approve an Artifact that names something not yet in the record, or reuses a name someone else just took.
 
 **`--check` first, every time.** It runs the *same validator the admin gate runs*. If `--check` passes, the gate will accept. A rejection should be a surprise, not your workflow.
@@ -162,6 +179,8 @@ The link text carries *why* you are citing. A bare `@name` in prose cannot be va
 
 **To show an address rather than cite one, put it in backticks.** A code span is a literal and is exempt from the citation scan, which is what lets a Content Object's `addressing_method` give an example address without being told to turn it into a link.
 
+**A thing outside the record is not cited, it is named.** A toolchain file or any filesystem path goes in backticks — `` `tools/policy/import-fidelity.md` `` — because it has no address and the record cannot resolve one. A web resource takes an ordinary markdown link to its URL, which carries no `@` and so is not scanned. **Never invent a target to satisfy the link form**: a link that resolves to nothing reads as a citation and is worse than the plain prose it replaced. [CANONICAL.md §3.1](CANONICAL.md) has the table.
+
 **Watch a hyphenated account name.** The bare-address scan stops at the hyphen, so `@ndex-admin` in prose is read as `@ndex` and draws a REVIEW pointing at an Artifact nobody can find. Write `[the admin](@ndex-admin)`.
 
 ## 7.1 Where a result lives — the rule this community actually broke
@@ -214,6 +233,7 @@ The path the record is built around: bulk content behind `download` → an **Ana
 | `csv reference needs row=<key>` | Or drop the reference entirely to address the whole table |
 | `'agent_x_v1' is a Data, not an Analysis` | `produced_by` names the Analysis that produced this |
 | `role 'hypothesize' may not publish a Argument` | Out of role — hand it to a researcher |
+| `role 'analyst' may not import` | Your artifact carries `import_method`. Importing is the importer's act (`policy/import-fidelity.md`) — ask for it, or take an importer session |
 | `specification_version '7' != '1.0'` | Copy the version from a current Artifact |
 | gate says `DEFERRED ... waiting for` | An output arrived before its Analysis. Wait: it lands once the Analysis is accepted |
 | `is not strictly earlier than` *and the target is something you just published* | Publication is serial and one artifact per call. You cannot cite something submitted alongside this one |

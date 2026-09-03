@@ -527,6 +527,19 @@ def _ancestry(name, index, seen=None):
     return seen
 
 
+def _nearest(common, index):
+    """The join point of two provenance chains: the common ancestors nearest the Grounds.
+
+    A shared pipeline four imports deep makes every artifact in it a common ancestor, and
+    naming all nine says only that the chains are long. What a reader needs is WHERE they
+    meet, because that is what has to be argued about. An ancestor that another common
+    ancestor itself descends from is behind the join and is dropped."""
+    behind = set()
+    for x in common:
+        behind |= (_ancestry(x, index) - {x})
+    return (common - behind) or common
+
+
 def check_independence(a, index):
     """Grounds on one Assertion that rest on a common source are not independent evidence.
 
@@ -563,8 +576,9 @@ def check_independence(a, index):
             for root, gs in sorted(shared_carrier.items()):
                 f.append(finding("INDEPENDENCE", "REVIEW",
                                  f"Assertion '{assertion}': Grounds {', '.join(sorted(gs))} all address "
-                                 f"'{root}'. Their agreement is not independent corroboration unless the "
-                                 f"evaluation says why (spec 2.2.4)"))
+                                 f"'{root}'. Say in the rationale what the sharing does here — "
+                                 f"corroboration, contrast, or a chain — because a reader who is not "
+                                 f"told reads several Grounds as agreement (spec 2.2.4)"))
             continue                                        # same carrier subsumes shared ancestry
         anc = {gname: _ancestry(root, idx) for gname, root in grounds}
         reported = set()
@@ -574,10 +588,15 @@ def check_independence(a, index):
                 key = tuple(sorted((gi, gj)))
                 if common and key not in reported:
                     reported.add(key)
+                    join = _nearest(common, idx)
+                    more = len(common) - len(join)
                     f.append(finding("INDEPENDENCE", "REVIEW",
                                      f"Assertion '{assertion}': Grounds {gi} and {gj} address different "
-                                     f"Artifacts that both descend from {', '.join(sorted(common))}; their "
-                                     f"agreement is not independent corroboration (spec 2.2.4)"))
+                                     f"Artifacts whose provenance meets at {', '.join(sorted(join))}"
+                                     + (f" (and {more} further shared ancestor(s) behind it)"
+                                        if more else "")
+                                     + ". Say in the rationale what the sharing does here — "
+                                       "corroboration, contrast, or a chain (spec 2.2.4)"))
     return f
 
 

@@ -68,6 +68,21 @@ reported five results nobody could contest.
 
 The critic's charter is unchanged. Computing is in service of contesting, not a licence to claim.
 
+## Importing is a separate permission from publishing a type
+
+A contract may carry `"may_import": true`. Only `importer` does, and absent means no.
+
+`may_publish` cannot express this. An import is a `Data` artifact, and `Data` is exactly what
+an analyst is meant to publish; what distinguishes an import is `import_method`, which the
+specification requires on anything rendered from outside the record (S1.10). Without a separate
+key the line that [`policy/import-fidelity.md`](../policy/import-fidelity.md) draws between the
+importer's job and the analyst's was invisible at the moment it was crossed, and across two runs
+three imports were published from `analyst` and `researcher` sessions — one of them by a Member
+whose own role file told her to ask an importer first, when the roster had no importer to ask.
+
+`publish.py` refuses an artifact carrying `import_method` from a role that does not claim it.
+Like every role limit it is self-imposed and the gate does not enforce it.
+
 ## The admin holds a role too, and it is the narrowest one
 
 `operator` (`operator.md`) is the default role of `admin_publish.py`. The party that runs the gate

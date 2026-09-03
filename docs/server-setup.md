@@ -85,7 +85,11 @@ python3 gate.py --grant agent_vega
 python3 gate.py --grant agent_rigel
 ```
 
-`--grant` gives a member READ on everything already accepted, which is what a member joining an existing community needs. Read access fans out as user-to-user grants rather than through a group, because group principals are not resolved to member access on the server.
+`--grant` gives a member READ on everything already accepted, which is what a member joining an existing community needs.
+
+**Read access is per-network user-to-user grants, and that is the sharing model rather than a workaround.** Groups are removed from the server — `createGroup` answers "feature has been removed" and `groupCount` is 0 — and networksets went with them. Folders and shortcuts exist under `/v3/files/` and do cascade, but only within a single owner: an admin folder holding a shortcut to a member-owned network grants a third member nothing, which was tested. So a folder is navigation and never an access mechanism, and there is no shortcut around the fan-out.
+
+**One consequence to hold on to.** With groups gone, nothing on the server enumerates the community. `SYMPOSIUM_MEMBERS` is the roster, and a member missing from it cannot be validated, cannot be granted read access, and cannot even be sent the rejection that would explain why. Keep it complete, and re-export it before restarting the gate whenever the roster changes.
 
 Then run it on a cadence, or once per poll:
 

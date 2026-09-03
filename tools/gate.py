@@ -9,14 +9,23 @@ The publication loop, exactly as smoke-tested 2026-08-05:
                      write canonical JSON to the mirror repo, index the name
             REJECT : upload a reply artifact naming the failures; the member polls for it
 
-Four server facts this is built around, all established empirically on build ac3ee:
-  * group-principal sharing is broken, so read access fans out as user->user grants
-  * folders are navigation only, and the folder REST API is absent (every path 404s inside
-    a 500) — bundling is declared by the artifacts, not by a folder
+Four server facts this is built around, established empirically and re-confirmed against
+NDEx 3.0.5 on symposium.ndexbio.org:
+  * THERE ARE NO GROUPS. `createGroup` answers "feature has been removed" and `groupCount` is
+    0; networksets are gone with them. This is the sharing model, not a defect to design
+    around: access is per-network user->user grants, and acceptance therefore fans out READ
+    to every member individually. Nothing here should ever reference a group or a networkset.
+  * Folders and shortcuts exist at /v3/files/ and cascade, but ONLY within one owner. An admin
+    folder holding a shortcut to a member-owned network grants a third member nothing, tested.
+    So a folder is navigation and never an access mechanism, and there is no shortcut around
+    the fan-out.
   * a freshly uploaded private network has `indexLevel: NONE` and never appears in
     /v2/search/network, so discovery uses the permission map, not search
   * NDEx search TOKENISES and cannot do exact-name matching, so name uniqueness lives in the
     mirror repo index, never in a server query
+
+Networks are author-owned — creation is POST /v3/networks and returns a /v3/network/... URL —
+while the permission endpoints remain v2. Mixing the two versions is correct, not a leftover.
 
 Credentials come from the environment; nothing is passed on the command line.
 
@@ -559,7 +568,15 @@ def reject(canonical, submitted_name, findings, owner, muuids):
         mu = muuids.get(owner)
         if mu:
             grant_read(uuid, mu)
-        print(f"    reply posted -> {uuid} (readable by {owner})")
+            print(f"    reply posted -> {uuid} (readable by {owner})")
+        else:
+            # Access is per-network user->user grants and there is no group to fall back on,
+            # so an unresolvable owner means the reply is uploaded and reaches nobody. Saying
+            # "readable by <owner>" here, as this did, is a lie told at exactly the moment a
+            # member is sitting waiting for an answer that will never arrive.
+            print(f"    ! reply posted -> {uuid} but '{owner}' could not be resolved to a "
+                  f"user, so it was NOT shared.\n      The member is waiting on a reply they "
+                  f"cannot see. Check SYMPOSIUM_MEMBERS and the account name.")
     else:
         print(f"    ! reply upload failed: HTTP {st} {uuid}")
 
@@ -617,6 +634,19 @@ def run_once():
         if not declared.startswith(f"{s['owner']}_"):
             print(f"  {declared}: ! name is not prefixed with the owner '{s['owner']}_'")
             state["granted"][s["uuid"]] = "name not prefixed with the owner"
+            continue
+        # THE ROSTER IS THIS ENVIRONMENT VARIABLE AND NOTHING ELSE. Groups are removed from the
+        # server, so there is no principal that enumerates the community and no way to discover
+        # a member the operator forgot to list. A submitter who is absent from it fails
+        # validation on `published_by` not resolving to a Member, which reads as a malformed
+        # address and is not; and because the fan-out is keyed on the same list, the rejection
+        # explaining that would never be shared with them either. Say it plainly instead.
+        if s["owner"] not in MEMBERS and s["owner"] != ADMIN_USER:
+            print(f"  {declared}: ! '{s['owner']}' is not in SYMPOSIUM_MEMBERS, so this "
+                  f"submission cannot be\n    validated or replied to. Add them and restart "
+                  f"the gate:\n      export SYMPOSIUM_MEMBERS="
+                  f"{','.join(sorted(set(MEMBERS) | {s['owner']}))}")
+            state["granted"][s["uuid"]] = f"submitter '{s['owner']}' not in SYMPOSIUM_MEMBERS"
             continue
         s["canonical"] = canonical
         subs.append(s)

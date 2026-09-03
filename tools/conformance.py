@@ -20,9 +20,9 @@ has somewhere real to resolve and a name has a real namespace to collide in.
 **The record** is validated in publication order, each Artifact against everything
 published before it, which is the sequence the gate saw when it accepted them.
 
-**The gate** is checked offline for how it groups a batch into publication units and
-orders them, which is the one part of the publishing loop that can be wrong without any
-Artifact being wrong.
+**The gate** is checked offline for the order in which it accepts what is pending — there
+are no publication units; each artifact gets its own `created` (spec 1.9) — which is the one
+part of the publishing loop that can be wrong without any Artifact being wrong.
 
 Nothing here needs a network, a server, or credentials.
 """

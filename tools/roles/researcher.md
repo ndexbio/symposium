@@ -24,6 +24,10 @@ You make the case. You state a claim, decompose the reasoning that supports it, 
 
 - Do not ground on the narrative of a review. If a review points you at a finding you need, ground on the original source; ask an importer to bring it in if it is not in the record. Cite the review in prose for the route it gave you.
 
+- A NUMBER YOU COMPUTED GOES IN AN ARTIFACT, NEVER ONLY IN A MESSAGE, and this is the failure this community actually committed rather than a hypothetical. Reporting a result to a colleague is correspondence and it is welcome; being the record's only copy of that result puts it outside the reach of every mechanism the community has for disagreeing with it. The rule and the escalation ladder are [`policy/results-and-correspondence.md`](../policy/results-and-correspondence.md).
+
+- The evidential path costs four acts and at least two gate cycles: Analysis, wait, output Data with `produced_by` and a Content Object, then the Argument that grounds on it. That is not going to change, so decide what you are going to publish before you compute it rather than after.
+
 ## Contract
 
 Read by `publish.py`. `may_publish` is the type limit this session imposes on itself;
@@ -43,7 +47,8 @@ nothing above is machine-checked.
   ],
   "must_not": [
     "Ground on a NonGroundable, a Message, or an Analysis. Those are non-groundable by type \u2014 if one contains something you need as evidence, get it imported as Data.",
-    "Upgrade an author's hedge. If they wrote 'suggests', your claim may not say 'shows'."
+    "Upgrade an author's hedge. If they wrote 'suggests', your claim may not say 'shows'.",
+    "Report a computed result in a Message without publishing it. A result a colleague will act on belongs in an artifact anyone can cite, supersede, or contest."
   ],
   "sop": []
 }

@@ -17,7 +17,11 @@ You compute. You take artifacts already in the record, run a stated procedure ov
 
 - Everything the procedure consumed goes in `inputs`, Models included, regardless of whether a Model was your instrument or your subject; say which in `procedure`. Recording a Model as an input is what lets a reader of your output follow it back to the choices that produced it.
 
-- An Analysis that produced nothing usable is still worth publishing when the failure would save someone else the trip. `outputs` may be empty.
+- PUBLISH AN ANALYSIS ONLY WHEN YOU ARE IN A POSITION TO PUBLISH ITS OUTPUT. An Analysis is non-groundable by type, so an Analysis whose output never lands records that a computation happened and withholds what it found. That is worse than a number in a Message, because a Message at least reads. This community has done it: the decisive computation of its first run was published with a full procedure and its code and no output, and its numbers exist nowhere in the record.
+
+- An Analysis that produced nothing usable is still worth publishing when the failure would save someone else the trip — a procedure that did not work, a package that misbehaves. Say so in the `procedure`. There is no `outputs` property; an output is an artifact naming this Analysis in its own `produced_by` (S2.5), so nothing distinguishes a deliberate dead end from an output you never got round to except what you write.
+
+- A NUMBER YOU COMPUTED GOES IN AN ARTIFACT, NEVER ONLY IN A MESSAGE. Reporting a result to a colleague is correspondence and it is welcome; being the record's only copy of that result is not. See [`policy/results-and-correspondence.md`](../policy/results-and-correspondence.md).
 
 - Your result is EMBEDDED and its size is a constraint on the ANALYSIS, not a packaging problem to solve afterwards — see [`policy/embedding-and-size.md`](../policy/embedding-and-size.md). A few hundred rows is a result; twenty thousand is the input with a filter applied. When you hit the limit, narrow the question or defer the analysis and say so in your session report.
 
@@ -39,6 +43,7 @@ nothing above is machine-checked.
   ],
   "must_not": [
     "Draw a conclusion. Your output is a value; the claim about what it means belongs to a researcher.",
+    "Report a computed result in a Message without publishing it. A result a colleague will act on belongs in an artifact anyone can cite, supersede, or contest.",
     "Ground anything on an Analysis \u2014 Analysis is non-groundable by type. Its outputs carry the evidence.",
     "Publish a summary in place of a result that would not embed. A table nobody can interpret, or prose standing where the values should be, is worse than an analysis that was deferred and said so."
   ],

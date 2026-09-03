@@ -3,6 +3,7 @@
 
     python admin_publish.py --check  metrics.json     # validate only
     python admin_publish.py          metrics.json     # publish
+    python admin_publish.py --role none  replay.json  # no type limit (record replay, migration)
 
 The admin cannot use `publish.py`. A Member submits by uploading and granting the admin READ,
 and the gate discovers submissions from its own permission map — where it deliberately skips
@@ -22,6 +23,14 @@ resolve to something already in the record (spec 2.5).
 Intended for the end of the day: the metrics Analysis and its Data, and the summary NonGroundable
 that cites them. Publishing measurements while the work is still running hands Members a
 scoreboard.
+
+THE ADMIN HOLDS A ROLE LIKE ANYONE ELSE, and it is `operator` (roles/operator.md) unless you say
+otherwise. It is the narrowest role in the set on purpose: the party that runs the gate must not
+also publish the material the community reasons over, because a contest against it is accepted or
+refused by the publisher of the thing being contested. The corpus goes in through a Member session
+holding `importer`. Like every role limit this is SELF-IMPOSED — the gate has no basis to reject a
+conformant artifact for being out of role and does not try — and `--role none` lifts it for work
+that is not publication in the ordinary sense, such as replaying a record onto a new server.
 """
 from __future__ import annotations
 
@@ -32,6 +41,7 @@ import sys
 from datetime import datetime, timezone
 
 import gate                                                            # admin auth, accept()
+from publish import load_roles                                         # roles/*.md contracts
 from validate import EMBED_REFUSE, embedded_size, passed, report, validate
 
 
@@ -40,7 +50,21 @@ def main(argv=None):
     ap.add_argument("paths", nargs=1, metavar="path",
                     help="one canonical JSON file; publication is serial (spec 1.9)")
     ap.add_argument("--check", action="store_true", help="validate only; publish nothing")
+    ap.add_argument("--role", default="operator",
+                    help="role limit to impose on this run; 'none' lifts it (default: operator)")
     args = ap.parse_args(argv)
+
+    # The role limit is self-imposed, exactly as it is in publish.py: the gate has no basis to
+    # reject a conformant artifact for being out of role. It is here because the admin is the one
+    # Member whose out-of-role publication nobody else can contest on equal terms — a critic's
+    # Argument against an admin import is accepted or refused by the party that published it.
+    roles = load_roles()
+    allowed = None
+    if args.role != "none":
+        if args.role not in roles:
+            print(f"! unknown role '{args.role}'. Known: {', '.join(roles)}, none")
+            return 2
+        allowed = set(roles[args.role]["may_publish"])
 
     arts = []
     for p in args.paths:
@@ -64,7 +88,10 @@ def main(argv=None):
         return 1
     names = {r["artifact"]["name"] for r in record if r.get("artifact", {}).get("name")}
     members = set(gate.MEMBERS) | {gate.ADMIN_USER}
-    print(f"admin publish as {gate.ADMIN_USER} — record holds {len(record)} artifact(s)\n")
+    print(f"admin publish as {gate.ADMIN_USER}"
+          + (f", role {args.role} ({', '.join(sorted(allowed))})" if allowed
+             else ", NO ROLE LIMIT (--role none)")
+          + f" — record holds {len(record)} artifact(s)\n")
 
     # One artifact, one stamp. Provisional here so the ordering checks run against something
     # realistic; `accept()` sets the same value again when it writes.
@@ -76,6 +103,17 @@ def main(argv=None):
         name = a["artifact"].get("name", "<unnamed>")
         if name in names:
             print(f"  {name}: FAIL  already in the record; names are never reused")
+            fatal = True
+            continue
+        # Kept apart from the spec verdict below: this tool declining is not the specification
+        # declining, and only the second says anything about whether the spec is workable.
+        atype = a["artifact"].get("type")
+        if allowed is not None and atype not in allowed:
+            print(f"  {name}: OUT OF ROLE  role '{args.role}' may not publish a {atype}"
+                  f" ({', '.join(sorted(allowed))})")
+            for m in roles[args.role].get("must_not", []):
+                print(f"      must not: {m}")
+            print("      --role none lifts this if the run is a replay rather than a publication")
             fatal = True
             continue
         total, props = embedded_size(a)

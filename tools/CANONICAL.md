@@ -311,7 +311,7 @@ Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. B
 
 **Declared non-groundability.** A Ground into an Artifact whose header says `groundable: false` is refused, whatever its type, and a Content Object in such an Artifact may not declare `groundable: true` (§1.5, §2.1). The three named non-groundable types are the common case, not the whole rule.
 
-**Reported, never refused.** Grounds on one Assertion that share a source or a declared ancestor; grounding through `rest` or `download`; bare `@name` in prose; a Content name outside the standard five; an embedded payload over 50 KB.
+**Reported, never refused.** Grounds on one Assertion that share a source or a declared ancestor; grounding through `rest` or `download`; bare `@name` in prose; a Content name outside the standard five; an embedded payload over 50 KB; a citation of a version that had already been superseded when the citing Artifact was published, unless it names the replacement too — which is what discussing a correction looks like.
 
 Run the whole thing yourself with `python3 conformance.py`.
 

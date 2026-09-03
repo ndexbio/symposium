@@ -641,6 +641,25 @@ def check_corpus(a, index, members, record_names):
     if name in record_names:
         f.append(finding("UNIQUE", "FAIL", f"name '{name}' is already in the record; names are never reused"))
 
+    # What supersedes what, across the whole record. Built here rather than in the index so
+    # that `index` stays a plain description of the artifacts and this stays a judgment about
+    # the record as a whole.
+    # Naming BOTH versions is how an artifact discussing a correction looks, and it is correct:
+    # "the first version said X, and the correction is Y" has to cite the first version. So the
+    # check below fires only where the replacement is never mentioned anywhere in this artifact,
+    # which is what reaching for stale content looks like. Without this the reference examples
+    # in examples/record -- which exist to demonstrate supersession -- were two of three
+    # findings, and a check that flags the worked example teaches agents to ignore it.
+    _mentions = json.dumps(a)
+
+    replaced_by = {}
+    for other in index.values():
+        oh = other.get("header") or {}
+        for s in (oh.get("supersedes") or []):
+            p_ = parse_address(s)
+            if p_:
+                replaced_by[p_["root"]] = oh
+
     def check_addr(addr, ctx, evidential):
         ok, info, why = resolve(addr, index, members)
         if not ok:
@@ -663,6 +682,22 @@ def check_corpus(a, index, members, record_names):
             f.append(finding("ORDER", "FAIL",
                              f"{ctx}: '{info['artifact']}' ({info['rec']['created']}) is not strictly "
                              f"earlier than '{name}' ({h.get('created')}) — spec 1.9"))
+        # CITING SOMETHING THAT HAD ALREADY BEEN REPLACED. Never a FAIL: spec 1.9 is explicit
+        # that a Ground on superseded content stays valid, because the record of what was
+        # published and relied upon at the time is not erased. But an artifact that names an
+        # older version when the newer one was already in the record is usually reaching for
+        # stale content, and it is invisible to a reader who does not follow the chain. Guarded
+        # on the replacement's own `created`: an artifact published BEFORE its target was
+        # superseded did nothing wrong and must not start emitting findings when a v2 appears.
+        repl = replaced_by.get(info["artifact"])
+        if repl and repl.get("name") != name and repl.get("name") not in _mentions:
+            r_when = parse_instant(repl.get("created"))
+            if mine and r_when and r_when < mine:
+                f.append(finding("SUPERSEDED", "REVIEW",
+                                 f"{ctx}: '{info['artifact']}' was already superseded by "
+                                 f"'{repl.get('name')}' when this was published. Cite the "
+                                 f"later version, or say why the earlier one is the one you "
+                                 f"mean (spec 1.9)"))
         if evidential:
             g_ok, lvl, reason = groundable(info, name)
             if not g_ok:

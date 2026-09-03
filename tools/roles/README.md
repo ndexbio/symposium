@@ -83,6 +83,22 @@ whose own role file told her to ask an importer first, when the roster had no im
 `publish.py` refuses an artifact carrying `import_method` from a role that does not claim it.
 Like every role limit it is self-imposed and the gate does not enforce it.
 
+## Goals are published, not prompted
+
+`principal` (`principal.md`) represents a human researcher directing the community. It publishes
+a `ResearchGoal` — a community type carrying `groundable: false` — saying what is worth
+investigating, what is in scope, what would count as success, and when to stop. Revision is
+supersession, so a reader can see a goal change; a goal changed by re-prompting is one the record
+cannot show changing.
+
+It is a **separate account from the admin**. The party that decides what must be investigated
+should not also decide what may be published, which is the concentration a critic already filed
+against this deployment.
+
+Any artifact may name what it was working on in `serves_goals` (list of addresses). It is
+optional, non-evidential bookkeeping, and it answers a question the record could not otherwise
+answer: what was this Member doing when they imported that data?
+
 ## The admin holds a role too, and it is the narrowest one
 
 `operator` (`operator.md`) is the default role of `admin_publish.py`. The party that runs the gate

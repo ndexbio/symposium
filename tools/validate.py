@@ -295,6 +295,14 @@ def groundable(info, citing_artifact):
     rec = info["rec"]
     if rec["type"] in NON_GROUNDABLE_TYPES:
         return False, "FAIL", f"{rec['type']} is a non-groundable Artifact type (spec 2.1)"
+    # Spec 1.5: `groundable: false` on the header means NO content in that Artifact may be
+    # cited in a Ground. The type check above only covers the three types the specification
+    # names, and 2.7 explicitly invites communities to declare non-groundable Artifacts under
+    # their own type names — so without this, the documented extensibility path published a
+    # guarantee the checker did not keep.
+    if (rec.get("header") or {}).get("groundable") is False:
+        return False, "FAIL", (f"'{info['artifact']}' declares groundable:false; no content in it "
+                               f"may be cited in a Ground (spec 1.5)")
     if info.get("node_type") == "Content":
         return False, "FAIL", "Content Objects are not themselves groundable (spec 2.2.4)"
     if info.get("node_type") == "Assertion":
@@ -432,9 +440,18 @@ def check_type_specific(a):
                                  f"optionally with a label in front (e.g. 'class_a_csv')"))
             if meth in ("rest", "download") and not o.get("access_method"):
                 f.append(finding("TYPE", "FAIL", f"method '{meth}' requires access_method"))
-        if ot == "Content" and h.get("type") in NON_GROUNDABLE_TYPES and o.get("groundable") is True:
-            f.append(finding("TYPE", "FAIL",
-                             f"{h['type']} is non-groundable; its methods are addressable only (spec 2.1)"))
+        if ot == "Content" and o.get("groundable") is True:
+            if h.get("type") in NON_GROUNDABLE_TYPES:
+                f.append(finding("TYPE", "FAIL",
+                                 f"{h['type']} is non-groundable; its methods are addressable only "
+                                 f"(spec 2.1)"))
+            elif h.get("groundable") is False:
+                # Spec 2.1: a non-groundable Artifact may hold Content Objects, but none of them
+                # may declare `groundable: true`. Caught here as well as at the Ground, so the
+                # contradiction is refused when it is WRITTEN rather than when someone relies on it.
+                f.append(finding("TYPE", "FAIL",
+                                 f"artifact declares groundable:false, so Content Object "
+                                 f"'{o.get('name')}' may not declare groundable:true (spec 2.1)"))
     return f
 
 
@@ -703,8 +720,21 @@ def check_corpus(a, index, members, record_names):
     # outputs could be published as one act under one timestamp, which serial publication no
     # longer does. The property is unused in every corpus, so the walk is gone rather than
     # re-pointed: an Analysis cannot name artifacts that do not exist yet.
-    for hk in ("supersedes", "inputs", "used_models", "recipients"):
+    for hk in ("supersedes", "inputs", "used_models", "recipients", "serves_goals"):
         each_address(hk)
+
+    # `serves_goals` is a COMMUNITY property, not a specification one (CANONICAL.md 2.1). It
+    # records what the publisher took themselves to be working on, so a reader can ask "what
+    # was this Member doing when they imported that?". It is bookkeeping and never evidential:
+    # it is walked here only so a dead goal address is caught and so the temporal rule applies.
+    # An artifact is immutable, so this states intent AT PUBLICATION and can never be extended
+    # afterwards; a goal declared later is connected by the later artifact, not by this one.
+    for a_ in (h.get("serves_goals") or []):
+        ok_, info_, _ = resolve(a_, index, members)
+        if ok_ and info_.get("kind") != "member" and info_["rec"]["type"] != "ResearchGoal":
+            f.append(finding("GOAL", "REVIEW",
+                             f"serves_goals names '{info_['artifact']}', which is a "
+                             f"{info_['rec']['type']} rather than a ResearchGoal"))
 
     for n, o in objs.items():
         if o["type"] == "Ground":

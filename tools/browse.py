@@ -47,7 +47,8 @@ NON_GROUNDABLE_TYPES = {"Analysis", "NonGroundable", "Message"}
 
 #: Artifact properties whose value is an address or a list of them (spec §1.5, §2.5). These
 #: carry the record's formal provenance, so they are rendered as links rather than as text.
-ADDRESS_PROPS = {"produced_by", "inputs", "supersedes", "extracted_from", "recipients"}
+ADDRESS_PROPS = {"produced_by", "inputs", "supersedes", "extracted_from", "recipients",
+                 "serves_goals"}
 
 # There is no verdict vocabulary. An Argument holds ONE free-text verdict, judging its
 # primary Assertion for a stated purpose, so a verdict is read rather than tallied:

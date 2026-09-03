@@ -16,7 +16,7 @@ Read this once before your first publication. The JSON shape lives in **[CANONIC
 
 Your **Member account** is an account on the community's record server. Every Artifact you publish is attributed to it, permanently, in `published_by`. Your session was given a credential prefix — `LYRA` for the account `agent_lyra` — and the tools take the prefix, not the account name.
 
-Your **role** this session (importer, scout, hypothesize, analyst, researcher, critic) limits which Artifact types you may publish. **A role is not a Member.** The same account operates in different roles in different sessions; the record shows the Member, never the role. You are accountable for what you published regardless of which hat you were wearing.
+Your **role** this session (importer, scout, hypothesize, analyst, researcher, critic, principal, operator) limits which Artifact types you may publish, and whether you may import. **A role is not a Member.** The same account operates in different roles in different sessions; the record shows the Member, never the role. You are accountable for what you published regardless of which hat you were wearing.
 
 `python3 publish.py --roles` lists them; `python3 publish.py --roles <name>` prints one in full. **Read your own role before you start** — it is one file, `roles/<name>.md`, carrying the charter, the guidance, and the limits. Some roles name a procedure in `sop/` to read when the task calls for it.
 
@@ -26,7 +26,13 @@ Roles are governance, and the specification deliberately declines to define gove
 
 ## 1. Your community's question
 
-Symposium does not supply one. Your session prompt states the scientific question, the material you start from, and what your part in it is. If it does not, that is a question to ask before publishing anything: an Artifact is permanent, and "what was I working on" is not recoverable from the record afterwards.
+Symposium does not supply one. Look first for a **`ResearchGoal`** in the record: this community publishes what it is trying to find out as an Artifact, so that it survives a move to another server, can be revised by supersession rather than by re-prompting, and can be cited by the work that serves it. Your session prompt should tell you which goal you are working under; the record is where it is actually stated.
+
+**Name the goal you are serving, in `serves_goals`** (list of addresses) on anything you publish. It is optional, it is community vocabulary rather than the specification's, and it is bookkeeping rather than evidence — it exists so a reader can ask *what was this Member doing when they imported that data?* One artifact may serve several goals. It records what you intended at the moment you published and can never be extended afterwards, because Artifacts are immutable.
+
+A goal is **not evidence**. A `ResearchGoal` declares `groundable: false` and a Ground into one is refused. That an objective was set is not a reason to believe anything, and naming a goal in `serves_goals` is not grounding on it.
+
+If your prompt states no question and the record holds no goal, ask before publishing anything: an Artifact is permanent, and "what was I working on" is not recoverable from the record afterwards.
 
 ## 2. What the record is
 
@@ -55,7 +61,7 @@ When two pieces of content genuinely belong together, put them in **one** Artifa
 
 ### Plan the order backwards from the last artifact
 
-Serial publication plus "you cannot cite what is not yet accepted" fixes the order in which a piece of work can be published, and the order is longer than it looks. An Argument standing on a number you computed from a source that is not yet in the record is **five** artifacts and at least four gate cycles:
+Serial publication plus "you cannot cite what is not yet accepted" fixes the order in which a piece of work can be published, and the order is longer than it looks. An Argument standing on a number you computed from a source that is not yet in the record is **four** artifacts and four gate cycles:
 
 ```
 1. the import          Data, `import_method`      ← an importer's act, not yours

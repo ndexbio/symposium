@@ -1,0 +1,28 @@
+{
+  "_case": "H4",
+  "_why": "Spec 1.5: `groundable: false` on the header means no content in that Artifact may be cited in a Ground. Spec 2.7 invites communities to declare non-groundable Artifacts under their own type names, so the guarantee cannot rest on the three type names the specification happens to list. Before this fixture the checker enforced the type and ignored the property, and the documented extensibility path published a promise it did not keep.",
+  "artifact": {
+    "name": "agent_vega_researcher_goal_ground_v1",
+    "type": "Argument",
+    "specification_version": "1.0",
+    "published_by": "@agent_vega",
+    "created": null,
+    "authors": ["agent_vega"],
+    "title": "Grounding on an Artifact that declares itself non-groundable",
+    "primary_assertion": "a_primary",
+    "verdict": "Refused before it is rendered.",
+    "rationale": "The Ground addresses a `text` property of an Artifact whose header declares `groundable: false`. Its type is not one of the three the specification names, which is exactly the case this fixture exists for.",
+    "purpose": "Fixture: to be refused."
+  },
+  "objects": [
+    { "name": "a_primary", "type": "Assertion",
+      "claim": "Host factors shared across viruses are worth investigating.",
+      "scope": "The fixture record." },
+    { "name": "g_goal", "type": "Ground",
+      "citation": "@ndex-admin_principal_goal_shared_host_factors_v1.text#text_span.quote=\"Find host mechanisms that are shared across viruses.\"",
+      "rationale": "Offers the community's stated goal as evidence that the claim is worth making, which is precisely the laundering `groundable: false` exists to prevent." }
+  ],
+  "relationships": [
+    { "rel": "grounded_by", "source": "a_primary", "target": "g_goal" }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "artifact": {
+    "name": "ndex-admin_principal_goal_shared_host_factors_v1",
+    "type": "ResearchGoal",
+    "specification_version": "1.0",
+    "published_by": "@ndex-admin",
+    "created": "2026-01-01T00:00:00+00:00",
+    "groundable": false,
+    "title": "Find host mechanisms shared across viruses",
+    "description": "The community's standing goal, published so that it migrates with the record and can be revised by supersession rather than by re-prompting. A goal states what to investigate and never what is true, which is why it declares itself non-groundable.",
+    "text": "Find host mechanisms that are shared across viruses.\n\nIN SCOPE. The assembled virus-host corpus, and any external source an importer brings in under the fidelity policy.\n\nSUCCESS. A principled investigation a virologist can audit. A well-instrumented negative is a complete result.\n\nSTOPPING. Reaching 'the record does not settle this at these stakes' is a stopping point, not a failure."
+  },
+  "objects": [
+    { "name": "text_span", "type": "Content", "groundable": false,
+      "description": "The goal statement. Addressable so that an artifact may point at the clause it serves; never groundable, because a goal is not evidence for anything.",
+      "addressing_method": "`#text_span.quote=\"<exact passage>\"`, disambiguated with `&nth=` where a phrase recurs." }
+  ],
+  "relationships": []
+}

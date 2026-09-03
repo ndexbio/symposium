@@ -26,7 +26,9 @@ gate — which is the one thing a record's reader must be able to rely on.
 from __future__ import annotations
 
 import argparse
+import csv
 import html
+import io
 import json
 import os
 import pathlib
@@ -42,6 +44,10 @@ import figures as F                                              # noqa: E402
 
 ARGUMENT = "Argument"
 NON_GROUNDABLE_TYPES = {"Analysis", "NonGroundable", "Message"}
+
+#: Artifact properties whose value is an address or a list of them (spec §1.5, §2.5). These
+#: carry the record's formal provenance, so they are rendered as links rather than as text.
+ADDRESS_PROPS = {"produced_by", "inputs", "supersedes", "extracted_from", "recipients"}
 
 # There is no verdict vocabulary. An Argument holds ONE free-text verdict, judging its
 # primary Assertion for a stated purpose, so a verdict is read rather than tallied:
@@ -675,6 +681,43 @@ def build_overview(artifacts, index, colors, pages, findings_by):
 # Artifact pages (everything that is not an Argument)
 # --------------------------------------------------------------------------- #
 
+def is_table_method(content):
+    """Does this Content Object describe row/column addressing?
+
+    The five standard method names are a convention, not a rule, and a Member may name a
+    Content anything; what makes it tabular is that its `addressing_method` composes a
+    reference out of a row key and a column name."""
+    am = content.get("addressing_method") or ""
+    n = content.get("name", "")
+    return n == "csv" or n.endswith("_csv") or ("row=" in am and "col=" in am)
+
+
+def looks_tabular(value, declares_table, max_header=60):
+    """Is this property value an embedded table, rather than prose that has commas in it?
+
+    This used to be `"\\n" in v and "," in v.split("\\n")[0]`, which is true of almost every
+    long prose property anyone writes. It rendered every `import_method` in the record as a
+    table, and that is not a cosmetic fault: splitting prose on commas broke `4,364,823
+    bytes` into three cells and `19,113 data rows` into two, so the page displayed numbers
+    the artifact does not contain.
+
+    Three conditions, all necessary. The artifact must DECLARE a row/column Content, because
+    a table nobody can address is not what this section is for. The value must parse as
+    rectangular CSV, which prose never does. And the header cells must be short, because a
+    two-line description whose lines happen to carry equal numbers of commas is not a table
+    with a 490-character column name."""
+    if not declares_table or not isinstance(value, str) or "\n" not in value:
+        return False
+    try:
+        rows = [r for r in csv.reader(io.StringIO(value)) if any(c.strip() for c in r)]
+    except (csv.Error, ValueError):
+        return False
+    if len(rows) < 2 or len(rows[0]) < 2:
+        return False
+    if any(len(r) != len(rows[0]) for r in rows):
+        return False
+    return not any(len(c) > max_header for c in rows[0])
+
 def render_artifact_page(doc, index, colors, pages, findings, cyto, spans=None):
     h = doc["artifact"]
     name, typ = h["name"], h["type"]
@@ -691,7 +734,11 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, spans=None):
         parts.append('<div class="banner">Non-groundable by type (spec §2.1). Everything here '
                      'may be cited in prose and none of it may be used as a Ground.</div>')
 
-    methods = [o for o in doc.get("objects", []) if o.get("type") == "AddressingMethod"]
+    # Spec §1.8.1 calls this Object type `Content`. It was `AddressingMethod` in an earlier
+    # draft, and reading the old name here meant this table matched nothing and never
+    # rendered — so every artifact page in the record silently omitted the one section that
+    # says what may be cited and how to write the address.
+    methods = [o for o in doc.get("objects", []) if o.get("type") == "Content"]
     if methods:
         rows = "".join(
             '<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>'.format(
@@ -707,10 +754,35 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, spans=None):
                      f'<table class="methods"><tr><th>method</th><th></th><th>reference form</th></tr>'
                      f'{rows}</table>')
 
+    # Properties whose value IS an address (spec §1.5, §2.5). They are the record's formal
+    # provenance and its only machine-readable links between artifacts, and until this was
+    # here they printed as literal `@name` text: a reader could see that a table was
+    # produced by an Analysis and had no way to open it.
+    def addr_link(a):
+        a = str(a)
+        root = a.lstrip("@").split("#")[0].split(".")[0]
+        title = (index.get(root, {}).get("header", {}) or {}).get("title")
+        if root not in pages:
+            return f"<code>{esc(a)}</code>"          # a Member, or something unresolved
+        label = esc(title) if title else f"<code>{esc(a)}</code>"
+        return (f'<a href="{esc(pages[root])}">{label}</a> '
+                f'<span class="hint"><code>{esc(a)}</code></span>')
+
+    declares_table = any(is_table_method(m) for m in methods)
     for k, v in h.items():
         if k in ("name", "type", "specification_version", "published_by", "created", "title"):
             continue
-        if isinstance(v, str) and "\n" in v and "," in v.split("\n")[0]:
+        if k in ADDRESS_PROPS:
+            vs = v if isinstance(v, list) else [v]
+            parts.append(f"<h2>{esc(k)}</h2><ul>"
+                         + "".join(f"<li>{addr_link(x)}</li>" for x in vs) + "</ul>")
+        elif k == "code" and isinstance(v, str):
+            # An Analysis carries its procedure's code verbatim. Run through the prose
+            # renderer it lost every indent and every `#` comment line became a heading,
+            # which is the one property where whitespace is the meaning.
+            parts.append(f"<h2>{esc(k)}</h2>"
+                         f"<pre class='code'><code>{esc(v)}</code></pre>")
+        elif isinstance(v, str) and looks_tabular(v, declares_table):
             parts.append(f"<h2>{esc(k)}</h2>" + T.csv_table(v))
         elif isinstance(v, list):
             parts.append(f"<h2>{esc(k)}</h2><ul>"

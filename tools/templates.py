@@ -1087,7 +1087,9 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 # Rendering
 # --------------------------------------------------------------------------- #
 
+import csv as _csv            # noqa: E402
 import html as _html          # noqa: E402
+import io as _io              # noqa: E402
 import json as _json          # noqa: E402
 import re as _re              # noqa: E402
 
@@ -1222,6 +1224,10 @@ def _mark_grounded(escaped, spans):
 
 
 def md_to_html(md, pages=None, spans=None):
+    """Members write long prose in markdown and the record holds it verbatim, so a heading
+    line has to be rendered as a heading or it shows the reader its `##`. Levels map to h3
+    and h4 because the page's own property labels are h2: an artifact's internal structure
+    sits inside its property, never beside it."""
     out = []
     for block in _re.split(r"\n\s*\n", (md or "").replace("\r\n", "\n").strip()):
         lines = [ln for ln in block.split("\n") if ln.strip()]
@@ -1232,24 +1238,50 @@ def md_to_html(md, pages=None, spans=None):
                             + "</li>" for ln in lines)
             out.append("<ul>" + items + "</ul>")
         else:
-            out.append("<p>" + "<br>".join(
-                _md_inline(_mark_grounded(_html.escape(ln), spans), pages) for ln in lines)
-                + "</p>")
+            # A heading may open a block without a blank line after it, so headings are
+            # split out line by line rather than by testing the block as a whole.
+            para = []
+
+            def flush():
+                if para:
+                    out.append("<p>" + "<br>".join(para) + "</p>")
+                    para.clear()
+
+            for ln in lines:
+                m = _re.match(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$", ln)
+                if m:
+                    flush()
+                    tag = "h3" if len(m.group(1)) <= 2 else "h4"
+                    out.append(f"<{tag} class='mdh'>"
+                               + _md_inline(_html.escape(m.group(2)), pages) + f"</{tag}>")
+                else:
+                    para.append(_md_inline(_mark_grounded(_html.escape(ln), spans), pages))
+            flush()
     return "".join(out)
 
 
 def csv_table(text, max_rows=200):
     """Render an embedded CSV property as a table, with each cell carrying the id a
     `csv` address resolves to — so a Ground's reference deep-links straight to the cell
-    it names, and a reader can check the quote against the number."""
-    rows = [r for r in (text or "").replace("\r\n", "\n").split("\n") if r.strip()]
+    it names, and a reader can check the quote against the number.
+
+    Parsed with `csv.reader` rather than `split(",")`. A quoted field holding a comma is
+    ordinary in these imports — `"19113 genes per arm, identifier sets identical bar one"`
+    is one cell of one survey — and splitting it in two shifts every cell to its right by a
+    column, so the anchors this function writes would deep-link a Ground to the wrong
+    value while looking perfectly correct."""
+    src = (text or "").replace("\r\n", "\n")
+    try:
+        rows = [r for r in _csv.reader(_io.StringIO(src)) if any(c.strip() for c in r)]
+    except (_csv.Error, ValueError):
+        rows = [r.split(",") for r in src.split("\n") if r.strip()]
     if not rows:
         return "<p class='hint'>(empty)</p>"
-    hdr = [c.strip() for c in rows[0].split(",")]
+    hdr = [c.strip() for c in rows[0]]
     key = hdr[0] if hdr else "row"
     body = []
     for r in rows[1:max_rows + 1]:
-        cells = [c.strip() for c in r.split(",")]
+        cells = [c.strip() for c in r]
         rk = cells[0] if cells else ""
         tds = "".join(
             '<td id="{}">{}</td>'.format(
@@ -1288,6 +1320,11 @@ ARTIFACT_TEMPLATE = """<!doctype html>
   .prose {{ background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; line-height:1.5; font-size:14px; }}
   .prose p {{ margin:0 0 10px; }} .prose p:last-child {{ margin-bottom:0; }}
   .prose a, main a {{ color:var(--accent); }}
+  .prose h3.mdh {{ font-size:14px; font-weight:650; margin:16px 0 6px; }}
+  .prose h3.mdh:first-child {{ margin-top:0; }}
+  .prose h4.mdh {{ font-size:13px; font-weight:650; color:var(--muted); margin:12px 0 5px; }}
+  pre.code {{ background:var(--panel); border:1px solid var(--line); border-radius:8px;
+              padding:12px 14px; overflow-x:auto; font-size:12px; line-height:1.45; margin:0; }}
   .cite-dead {{ border-bottom:1px dotted var(--muted); color:var(--muted); cursor:help; }}
   code {{ background:#eef1f5; padding:1px 4px; border-radius:4px; font-size:12px; }}
   .tablewrap {{ overflow-x:auto; background:var(--panel); border:1px solid var(--line); border-radius:8px; }}

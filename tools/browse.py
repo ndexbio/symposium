@@ -835,6 +835,42 @@ def grounded_spans(artifacts):
     return out
 
 
+def contents_entries(artifacts, colors, pages, findings_by):
+    """Rows for the reading list: what a reader needs to decide whether to open a page.
+
+    An Argument carries the first two sentences of its `verdict`, because a verdict is a
+    judgment for a stated purpose and its opening clause is the thing a reader is looking
+    for. Nothing else on this page is prose from the artifact: a title is the author's own
+    summary and standing in for it here would be editorialising."""
+    rows = []
+    for a in artifacts:
+        h = a["artifact"]
+        name, typ = h["name"], h["type"]
+        verdict = ""
+        if typ == ARGUMENT and h.get("verdict"):
+            parts = re.split(r"(?<=[.!?])\s+", h["verdict"].strip())
+            verdict = " ".join(parts[:2])
+        extra = []
+        if typ == ARGUMENT:
+            n = sum(1 for o in a.get("objects", []) if o.get("type") == "Ground")
+            crit = sum(1 for o in a.get("objects", [])
+                       if o.get("type") == "Ground" and o.get("criterion"))
+            extra.append(f"{n} Ground(s), {crit} offered as a test")
+        if h.get("supersedes"):
+            extra.append(f"supersedes {len(h['supersedes'])}")
+        if findings_by.get(name):
+            extra.append(f"{len(findings_by[name])} checker finding(s)")
+        rows.append({
+            "name": name, "type": typ, "href": pages[name],
+            "title": h.get("title") or name,
+            "member": h.get("published_by", "").lstrip("@"),
+            "color": colors.get(h.get("published_by", "").lstrip("@"), "#9ca3af"),
+            "created": h.get("created") or "", "verdict": verdict,
+            "extra": " · ".join(extra),
+        })
+    return rows
+
+
 def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=None, quiet=False,
                    figures_dir=None):
     artifacts = load_record(record_dir)
@@ -898,6 +934,9 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
     meta["counts"]["findings"] = sum(len(v) for v in findings_by.values())
     (out / "index.html").write_text(
         T.render_overview_html(elements, meta, cyto,
+                               corpus_title=title or "community record"), encoding="utf-8")
+    (out / "contents.html").write_text(
+        T.render_contents_html(contents_entries(artifacts, colors, pages, findings_by),
                                corpus_title=title or "community record"), encoding="utf-8")
 
     manifest = {

@@ -1159,9 +1159,93 @@ def render_overview_html(elements, meta, cytoscape_rel_path, corpus_title="commu
     return OVERVIEW_TEMPLATE.format(
         cyto_src=_html.escape(cytoscape_rel_path),
         corpus_title=_html.escape(corpus_title),
-        uplink="", exlink="",
+        uplink='<a class="uplink" href="contents.html">contents &rarr;</a> &middot; ',
+        exlink="",
         graph_json=_json.dumps({"elements": elements, "meta": meta}, ensure_ascii=False),
     )
+
+
+CONTENTS_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symposium community — contents</title>
+<style>
+  :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
+  * {{ box-sizing:border-box; }}
+  html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+               color:var(--ink); background:var(--bg); font-size:14px; }}
+  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
+  header .sub {{ font-size:12px; color:var(--muted); }}
+  a.uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
+  main {{ max-width:1000px; margin:0 auto; padding:18px 16px 60px; }}
+  h2 {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+        margin:26px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px; }}
+  h2:first-of-type {{ margin-top:6px; }}
+  .item {{ background:var(--panel); border:1px solid var(--line); border-radius:8px;
+           padding:10px 13px; margin-bottom:7px; }}
+  .item a {{ color:var(--accent); text-decoration:none; font-weight:600; line-height:1.35; }}
+  .item a:hover {{ text-decoration:underline; }}
+  .meta {{ font-size:11px; color:var(--muted); margin-top:4px; }}
+  .mbadge {{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px;
+             vertical-align:middle; border:1px solid rgba(0,0,0,.15); }}
+  .verdict {{ font-size:13px; line-height:1.45; margin-top:6px; padding-left:10px;
+              border-left:3px solid var(--line); color:#374151; }}
+  .note {{ font-size:12px; color:var(--muted); line-height:1.5; margin:0 0 4px; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>Symposium community &middot; {corpus_title}</h1>
+  <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
+  Everything in the record, newest first within each type. An <b>Argument</b> is where a claim is
+  made and judged; its verdict opens below it. <b>Data</b> and <b>Model</b> hold what an Argument
+  can stand on. <b>Analysis</b>, <b>Message</b> and <b>NonGroundable</b> are non-groundable by
+  type: they may be read and cited in prose and may never be used as evidence.</div>
+</header>
+<main>{sections}</main>
+</body>
+</html>
+"""
+
+
+def render_contents_html(entries, corpus_title="community record"):
+    """A plain reading list of the record.
+
+    The overview is a reference graph, which answers "how does this record hang together"
+    and not "what has this community claimed". A reader who does not want to interrogate a
+    force-directed layout had no way to enumerate 46 artifacts and no way to see a verdict
+    without first finding the Argument in the picture. Arguments come first because the
+    verdict is what a reader came for; everything else follows in the order the type is
+    likely to be wanted."""
+    order = ["Argument", "Data", "Model", "ScientificPublication",
+             "Analysis", "Message", "NonGroundable"]
+    seen, out = set(), []
+    types = order + sorted({e["type"] for e in entries} - set(order))
+    for t in types:
+        rows = [e for e in entries if e["type"] == t]
+        if not rows:
+            continue
+        seen.add(t)
+        items = []
+        for e in sorted(rows, key=lambda x: x["created"], reverse=True):
+            verdict = (f'<div class="verdict">{_html.escape(e["verdict"])}</div>'
+                       if e.get("verdict") else "")
+            extra = f' &middot; {_html.escape(e["extra"])}' if e.get("extra") else ""
+            items.append(
+                '<div class="item"><a href="{href}">{title}</a>'
+                '<div class="meta"><span class="mbadge" style="background:{color}"></span>'
+                '{member} &middot; {created}{extra} &middot; <code>{name}</code></div>'
+                '{verdict}</div>'.format(
+                    href=_html.escape(e["href"]), title=_html.escape(e["title"]),
+                    color=_html.escape(e.get("color", "#9ca3af")),
+                    member=_html.escape(e["member"]), created=_html.escape(e["created"][:16]),
+                    extra=extra, name=_html.escape(e["name"]), verdict=verdict))
+        out.append(f"<h2>{_html.escape(t)} ({len(rows)})</h2>" + "".join(items))
+    return CONTENTS_TEMPLATE.format(corpus_title=_html.escape(corpus_title),
+                                    sections="".join(out))
 
 
 # --------------------------------------------------------------------------- #

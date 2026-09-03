@@ -138,6 +138,31 @@ def grant_read(network_uuid, user_uuid_, tok, attempts=8, pause=0.5):
     return False
 
 
+def add_shortcut(folder_id, network_uuid, tok):
+    """Place a shortcut to a network inside a folder. -> (status, body).
+
+    This is what gives a record copy its read access. The folder is shared READ to each
+    member once; a shortcut dropped into it inherits that sharing, because the admin owns
+    both the folder and the network the shortcut targets and the cascade only delegates
+    within one owner. A member's own submission could not be shared this way — the admin
+    does not own it — which is exactly why the record is the ADMIN's copy and authorship
+    lives in `published_by` rather than in who owns the network.
+    """
+    return api("POST", "/v3/files/shortcuts", tok,
+               body={"target": network_uuid, "targetType": "NETWORK", "parent": folder_id})
+
+
+def share_folder(folder_id, user_uuid_, tok, permission="READ"):
+    """Give one member READ on a folder, and so on everything shortcut into it. -> status.
+
+    Called once per member, not once per artifact. `permission=None` revokes.
+    """
+    st, _ = api("POST", "/v3/files/sharing/members", tok,
+                body={"files": {folder_id: "FOLDER"},
+                      "members": {user_uuid_: permission}})
+    return st
+
+
 def to_cx2(canonical, marks=None):
     """Canonical JSON -> CX2. `marks` are role attributes (see SUBMIT_MARK/RECORD_MARK/REPLY_MARK).
 

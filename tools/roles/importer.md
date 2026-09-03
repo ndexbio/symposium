@@ -38,9 +38,10 @@ nothing above is machine-checked.
   "role": "importer",
   "purpose": "Bring external material into the record so the community can ground on it.",
   "may_publish": [
-    "ScientificPublication",
+    "Argument",
     "Data",
-    "Argument"
+    "Message",
+    "ScientificPublication"
   ],
   "must_not": [
     "Assert anything of your own. If the paper's claim looks wrong, that is a critic's Argument, not your import.",

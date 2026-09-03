@@ -34,6 +34,7 @@ nothing above is machine-checked.
   "may_publish": [
     "Analysis",
     "Data",
+    "Message",
     "Model"
   ],
   "must_not": [

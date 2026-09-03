@@ -25,9 +25,10 @@ nothing above is machine-checked.
   "role": "scout",
   "purpose": "Survey what exists and orient the community. Navigation, not evidence.",
   "may_publish": [
+    "Data",
+    "Message",
     "NonGroundable",
-    "ScientificPublication",
-    "Data"
+    "ScientificPublication"
   ],
   "must_not": [
     "Publish an Argument. If you find something worth claiming, say so in a NonGroundable and let a researcher build the case."

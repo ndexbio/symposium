@@ -44,3 +44,13 @@ should never be treated as one.
 - **Community policy** that applies whatever role you hold — what may be embedded, how large a
   result may be — that is `policy/`, so it is stated once and can change without editing six
   roles.
+
+
+## Message is available to every role
+
+`Message` is non-groundable by type (spec S2.8), so letting any role publish one creates no
+evidential risk, and coordination is a general need rather than a critic's privilege. It was
+granted only to `critic` until 2026-09-02, when a scout following the community briefing's
+instruction to coordinate through published Messages found the two in contradiction and had to
+publish with no role at all to comply with both. The briefing was right and the contracts were
+wrong.

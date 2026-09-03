@@ -35,9 +35,10 @@ nothing above is machine-checked.
   "role": "researcher",
   "purpose": "Build evidential Arguments about the scientific question.",
   "may_publish": [
-    "Argument",
     "Analysis",
+    "Argument",
     "Data",
+    "Message",
     "Model"
   ],
   "must_not": [

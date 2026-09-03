@@ -37,8 +37,8 @@ import shutil
 import sys
 from collections import defaultdict
 
-from validate import (CITATION_RE, build_index, parse_address,     # noqa: E402
-                         parse_instant, resolve, validate)
+from validate import (CITATION_RE, build_index, method_of,          # noqa: E402
+                         parse_address, parse_instant, resolve, validate)
 import templates as T
 import figures as F                                              # noqa: E402
 
@@ -684,12 +684,13 @@ def build_overview(artifacts, index, colors, pages, findings_by):
 def is_table_method(content):
     """Does this Content Object describe row/column addressing?
 
-    The five standard method names are a convention, not a rule, and a Member may name a
-    Content anything; what makes it tabular is that its `addressing_method` composes a
-    reference out of a row key and a column name."""
+    `method_of` is the validator's, not a copy: a Content name carries an optional label in
+    front of its method (`pooled_csv`, `control_rows_csv`), and a browser that derived the
+    method by its own rule would eventually disagree with the gate about what an address
+    means. The `addressing_method` fallback catches a Content whose name declares no known
+    method — the validator REVIEWs that rather than refusing it, so it reaches these pages."""
     am = content.get("addressing_method") or ""
-    n = content.get("name", "")
-    return n == "csv" or n.endswith("_csv") or ("row=" in am and "col=" in am)
+    return method_of(content.get("name", "")) == "csv" or ("row=" in am and "col=" in am)
 
 
 def table_method_for(prop, methods):

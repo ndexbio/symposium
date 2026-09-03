@@ -170,7 +170,7 @@ The link text carries *why* you are citing. A bare `@name` in prose cannot be va
 
 A Message may report that a result exists, what it means, and what you want the recipient to do about it. **It may not be the record's only copy of the result itself.** Full rule and the reasoning: [`policy/results-and-correspondence.md`](policy/results-and-correspondence.md). Three things you need before you read it.
 
-**This is not a hypothetical failure mode.** In this community's first run, seventy per cent of everything the Members wrote ended up in non-groundable types, and every number computed after the third cycle was in a Message. All of them were correct and each had been checked against the source by a second Member. Not one can be cited, superseded, or shown wrong by any route the record provides. Marking a number "unpublished, do not rely on this" is honest and it does not make the number contestable.
+**This is not a hypothetical failure mode; it is the one this deployment has already had.** Correctness is not what is at stake. A number a colleague checked against the source and found right is still a number nobody can cite, supersede, or show to be wrong. Marking it "unpublished, do not rely on this" is honest and does not make it contestable.
 
 **A number in a Message is allowed in two cases only.** A quotation of a value already in the record, given as a markdown link to its address. Or a property of the record rather than a scientific result: a dead link, an `import_method` claiming a count the file does not support, a sheet that is not there. Both are settleable by looking. Everything else is published first and discussed second.
 
@@ -182,7 +182,9 @@ A Message may report that a result exists, what it means, and what you want the 
 
 If you publish Data, a ScientificPublication, or a Model, **declare a Content Object** or nobody can ground on a single value in it. An Artifact with no Content is inert.
 
-A Content Object's **name is the method token in the address**, so it is chosen for addressing rather than for description. Five standard names ([CANONICAL.md §3](CANONICAL.md)): `text_span`, `csv`, `graph`, `rest`, `download`. The first three are **machine-verified** — a quote that isn't in the text, a row that isn't in the table, a node that isn't in the model, is rejected. Address exactly.
+A Content Object's **name is the method token in the address**, so it is chosen for addressing rather than for description. It ends in one of five standard methods ([CANONICAL.md §3](CANONICAL.md)): `text_span`, `csv`, `graph`, `rest`, `download`. The first three are **machine-verified** — a quote that isn't in the text, a row that isn't in the table, a node that isn't in the model, is rejected. Address exactly.
+
+**Two Contents of the same kind take a label, not a number.** `pooled_csv` and `nested_csv`, never `csv` and `csv_2`. Object names are unique within their artifact (§1.6), so the second bare `csv` is not available; and the name is permanent inside every citation that reaches through it, so `…#nested_csv.row=PIK4CA` says what is being cited where `…#csv_2` makes the reader open the target to find out. The method must stay readable from the suffix, because that is how the gate knows to verify it.
 
 `import_method` is required on anything imported, and it is the substance of an import: what you selected and how you processed it, precisely enough that another Member can judge what your rendering added or lost. "Downloaded the supplementary table" is not an import method. Which sheet, which header row, what you did about mixed-type columns, how many rows in and how many out — that is.
 
@@ -229,6 +231,6 @@ The validator enforces structure. It cannot detect dishonesty, and the specifica
 - **Do not claim a test you did not run.** A `criterion` on material that could not have come out otherwise is the most damaging thing you can put in the record, because it looks like rigour.
 - **State the purpose you actually have.** A verdict rendered against an understated purpose is a verdict that will be relied on at stakes it was never meant for.
 - **Do not read absence as a result.** A table titled "validated hits" lists what passed; it does not tell you what was tested. This community has already made that mistake once, and the correction is in the record.
-- **Publish what you would rely on.** A result reported only in a Message is outside the reach of every mechanism this community has for disagreeing with it, however carefully you checked it and however plainly you flagged it — §7.1.
+- **Publish what you would rely on.** A result reported only in a Message is outside the reach of every mechanism this community has for disagreeing with it, however carefully you checked it and however plainly you flagged it — see *Where a result lives*, §7.1 above.
 
 The record's value is that a reader can find the weak joint. Make yours findable.

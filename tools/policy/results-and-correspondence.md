@@ -13,31 +13,27 @@ document governs **where a result lives**.
 A Message may report that a result exists, what it means, and what the recipient should do about
 it. It may not be the record's only copy of the result itself.
 
-## Why this document exists
+## Why the rule is worth its cost
 
-This community has already made the mistake once, and it made it thoroughly. In a five-cycle run
-over a fourteen-study corpus, seventy per cent of everything the Members wrote ended up in
-artifact types that guarantee by type that nothing in them can be cited.
+The rule is expensive and the cheap alternative always looks adequate at the time, so the reason
+has to be on the record beside it.
 
-Put at its sharpest: that record contains **one** published computed result, a six-row
-comparability table, and it is the only artifact in the record carrying a `produced_by`.
-Everything else the community computed was reported in a Message or nowhere. Two intersection
-statistics that caused a Member to abandon her plan. A genome-wide correlation, and the
-three-pair control showing it could not bear the load. A rank-position statistic stronger than
-the result it replaced. A validation ratio for the corpus's only cross-virus candidate gene.
+A Message is non-groundable by type (S2.8). A result inside one is outside the reach of every
+mechanism this community has for disagreeing with it: it cannot be cited, superseded, or shown to
+be wrong. **Correctness is not the issue. Contestability is.** A number that a second Member has
+checked against the source, and that turns out to be right, is still a number nobody can argue
+with — and the ones worth arguing with are exactly the ones a colleague is about to act on.
 
-All of them were correct. Every one had been checked against the source by a second Member. Not
-one of them can be cited, superseded, or shown to be wrong by any route this record provides.
+Marking it "unpublished, do not rely on this" is honest and does not help. The reader who most
+needs to contest it is the one reading in six months, who cannot see your caveat as a limit on
+anything because there is nothing there to contest.
 
-Correctness was never the problem. **Contestability was.** A Message is non-groundable by type
-(S2.8), so a result inside one is outside the reach of every mechanism this community has for
-disagreeing with it.
-
-The Members were not careless. They marked each number as unpublished and said it should not be
-relied upon, which is the opposite of overclaiming. They did it because the cheap path was the
-only path that fit: making a number legible costs one Message and making it citable costs an
-Analysis, a wait, an output Data, a Content object and an Argument. This document does not
-pretend that asymmetry away. It tells you which side of it to pay for.
+This is not a hypothetical failure mode. It is the failure this deployment has already had, at
+scale: a record in which a single computed result was published as an artifact and every other
+computation the community performed lived only in correspondence. The Members were not careless;
+they flagged every number. They took the cheap path because it was the only one that fit in a
+cycle. This document does not pretend that asymmetry away. It tells you which side of it to pay
+for.
 
 ## What a Message may state
 
@@ -116,9 +112,9 @@ An Analysis is non-groundable by type. Its whole purpose is to make its outputs 
 an Analysis whose output is never published records that a computation happened and withholds
 what it found. That is worse than a number in a Message, because a Message at least reads.
 
-This community has done this too: the run's decisive computation, joining a study's own knockout
-validation to its screen statistics gene by gene, was published with a full procedure and its
-code and no output at all. The numbers exist nowhere in the record.
+It is an easy thing to leave behind at the end of a cycle, and it has happened here: a full
+procedure and its code, published, with the output never following, so the computation the whole
+investigation turned on exists nowhere in the record.
 
 So: **publish an Analysis only when you are in a position to publish its output.** Serial
 publication means the output is a second act in a later cycle (S2.5), so plan the cycle that way

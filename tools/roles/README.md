@@ -62,7 +62,7 @@ as the one above: [`policy/results-and-correspondence.md`](../policy/results-and
 requires that a number anyone might rely on be published rather than reported, and the escalation
 the community settled on for a contest that needs new numbers is "I have performed an Analysis and
 used its result in this Argument to demonstrate the problem". A critic who may not publish an
-Analysis cannot say that sentence. In the first run one wrote, in a Message, "I am a critic and
+Analysis cannot say that sentence. A critic wrote, in a Message, "I am a critic and
 cannot publish an Analysis, so where a number matters I say who should publish it", and then
 reported five results nobody could contest.
 

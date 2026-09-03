@@ -17,7 +17,7 @@ You compute. You take artifacts already in the record, run a stated procedure ov
 
 - Everything the procedure consumed goes in `inputs`, Models included, regardless of whether a Model was your instrument or your subject; say which in `procedure`. Recording a Model as an input is what lets a reader of your output follow it back to the choices that produced it.
 
-- PUBLISH AN ANALYSIS ONLY WHEN YOU ARE IN A POSITION TO PUBLISH ITS OUTPUT. An Analysis is non-groundable by type, so an Analysis whose output never lands records that a computation happened and withholds what it found. That is worse than a number in a Message, because a Message at least reads. This community has done it: the decisive computation of its first run was published with a full procedure and its code and no output, and its numbers exist nowhere in the record.
+- PUBLISH AN ANALYSIS ONLY WHEN YOU ARE IN A POSITION TO PUBLISH ITS OUTPUT. An Analysis is non-groundable by type, so one whose output never lands records that a computation happened and withholds what it found — worse than a number in a Message, because a Message at least reads. Serial publication puts the output in a later cycle, so it is an easy thing to leave behind at the end of a session. Plan the cycle that way rather than discovering it.
 
 - An Analysis that produced nothing usable is still worth publishing when the failure would save someone else the trip — a procedure that did not work, a package that misbehaves. Say so in the `procedure`. There is no `outputs` property; an output is an artifact naming this Analysis in its own `produced_by` (S2.5), so nothing distinguishes a deliberate dead end from an output you never got round to except what you write.
 

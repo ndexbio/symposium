@@ -692,6 +692,36 @@ def is_table_method(content):
     return n == "csv" or n.endswith("_csv") or ("row=" in am and "col=" in am)
 
 
+def table_method_for(prop, methods):
+    """Which declared Content addresses this property's table?
+
+    The specification does not bind a Content Object to the property it describes: the
+    binding lives in the address, `@artifact.<property>#<content>.row=...`, so the browser
+    has to recover it. Members name the pair by a common stem — `pooled_effects` with
+    `pooled_csv`, `control_rows` with `control_rows_csv`, `inventory` with `inventory_csv`
+    — so the stem is what is matched, longest first, and a single table Content on the
+    artifact needs no matching at all.
+
+    Getting this wrong is not cosmetic. The cell ids written from it are what a Ground's
+    address resolves to, and until this existed every table emitted ids under the literal
+    name `csv`, so following a Ground into any artifact whose Content is named anything
+    else landed the reader at the top of the page instead of on the value."""
+    tables = [m for m in methods if is_table_method(m)]
+    if not tables:
+        return "csv"
+    if len(tables) == 1:
+        return tables[0]["name"]
+    best, best_len = None, -1
+    for m in tables:
+        stem = m["name"][:-4] if m["name"].endswith("_csv") else m["name"]
+        if not stem:
+            continue
+        if prop.startswith(stem) or stem.startswith(prop):
+            if len(stem) > best_len:
+                best, best_len = m["name"], len(stem)
+    return best or tables[0]["name"]
+
+
 def looks_tabular(value, declares_table, max_header=60):
     """Is this property value an embedded table, rather than prose that has commas in it?
 
@@ -783,7 +813,8 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, spans=None):
             parts.append(f"<h2>{esc(k)}</h2>"
                          f"<pre class='code'><code>{esc(v)}</code></pre>")
         elif isinstance(v, str) and looks_tabular(v, declares_table):
-            parts.append(f"<h2>{esc(k)}</h2>" + T.csv_table(v))
+            parts.append(f"<h2>{esc(k)}</h2>"
+                         + T.csv_table(v, method=table_method_for(k, methods)))
         elif isinstance(v, list):
             parts.append(f"<h2>{esc(k)}</h2><ul>"
                          + "".join(f"<li>{prose(x)}</li>" for x in v) + "</ul>")
@@ -833,6 +864,68 @@ def grounded_spans(artifacts):
             if q:
                 out[p["root"]][p["segs"][0]].append((q.group(1), a["artifact"]["name"]))
     return out
+
+
+def evidence_table(doc, index, pages):
+    """Every Ground of an Argument in one table, under the Assertion it bears on.
+
+    The claim map folds nine Grounds into nine edges, so reading what an Argument
+    actually stands on meant opening nine of them one at a time. A critic's first question
+    of any Argument is what its Grounds reach and whether a criterion could have come out
+    the other way; that question deserves a page, not a sequence of clicks.
+
+    The columns are the ones the specification says carry the judgment: what was addressed,
+    how it bears on the claim, and whether the author offered it as a test (§2.2.4)."""
+    objs = {o["name"]: o for o in doc.get("objects", [])}
+    rels = doc.get("relationships", [])
+    esc = html.escape
+    by_assertion = defaultdict(list)
+    for r in rels:
+        if (r.get("rel") or r.get("type")) == "grounded_by":
+            g = objs.get(r.get("target"))
+            if g:
+                by_assertion[r.get("source")].append(g)
+    if not by_assertion:
+        return ""
+
+    primary = doc["artifact"].get("primary_assertion", "")
+    order = [primary] + [a for a in by_assertion if a != primary]
+    rows = []
+    for aname in order:
+        grounds = by_assertion.get(aname)
+        if not grounds:
+            continue
+        a = objs.get(aname, {})
+        rows.append(
+            '<tr class="assertion"><td colspan="3"><b>{}</b>{}<div class="hint">{}</div></td></tr>'
+            .format(esc(a.get("claim", aname)),
+                    ' <span class="pill-primary">primary</span>' if aname == primary else "",
+                    "scope — " + esc(a.get("scope", "")) if a.get("scope") else ""))
+        for g in grounds:
+            addr = g.get("citation", "")
+            root = addr.lstrip("@").split("#")[0].split(".")[0]
+            frag = address_fragment(addr)
+            if root in pages:
+                href = pages[root] + (f"#{frag}" if frag else "")
+                target = (f'<a href="{esc(href)}">{esc(pretty_address(addr, index))}</a>'
+                          f'<div class="hint"><code>{esc(addr)}</code></div>')
+            else:
+                target = f"<code>{esc(addr)}</code>"
+            crit = (f'<div class="crit"><b>Criterion.</b> {esc(g["criterion"])}</div>'
+                    if g.get("criterion")
+                    else '<div class="hint">No criterion: material built on, '
+                         'not a test the claim survived.</div>')
+            rows.append('<tr><td class="gname"><code>{}</code></td><td>{}</td>'
+                        '<td>{}{}</td></tr>'.format(
+                            esc(g["name"]), target, esc(g.get("rationale", "")), crit))
+    return ('<h3 class="evh">What this Argument stands on</h3>'
+            '<p class="hint">Every Ground, under the Assertion it bears on. A Ground with a '
+            '<b>criterion</b> asserts the material was used as a test that could have counted '
+            'against the claim; one without offers the material as something built upon '
+            '(spec §2.2.4). Follow a target to land on the value itself.</p>'
+            '<table class="evidence"><tr><th>Ground</th><th>addresses</th>'
+            '<th>how it bears, and whether it was a test</th></tr>'
+            + "".join(rows) + "</table>")
 
 
 def contents_entries(artifacts, colors, pages, findings_by):
@@ -902,6 +995,7 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
             # be invisible on the page that most needs it.
             intro = "".join(T.md_to_html(a["artifact"][k], pages)
                             for k in ("description", "text") if a["artifact"].get(k))
+            intro += evidence_table(a, index, pages)
             (out / pages[name]).write_text(
                 T.render_claim_html(collapsed, meta, cyto, intro_html=intro), encoding="utf-8")
             if figures_dir:

@@ -130,6 +130,17 @@ HTML_TEMPLATE = r"""<!doctype html>
   #intro p {{ margin:0 0 6px; }} #intro p:last-child {{ margin-bottom:0; }}
   #intro a {{ color:var(--accent); }}
   #intro .cite-dead {{ border-bottom:1px dotted var(--muted); color:var(--muted); cursor:help; }}
+  #intro h3.evh {{ font-size:13px; margin:16px 0 4px; font-weight:650; }}
+  table.evidence {{ border-collapse:collapse; width:100%; margin:6px 0 4px; font-size:12px; }}
+  table.evidence th {{ text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+                       color:var(--muted); border-bottom:1px solid var(--line); padding:4px 8px 4px 0; }}
+  table.evidence td {{ vertical-align:top; padding:6px 8px 6px 0; border-bottom:1px solid var(--line);
+                       line-height:1.4; }}
+  table.evidence tr.assertion td {{ background:#f2f5f9; padding:8px; border-bottom:none; }}
+  table.evidence td.gname {{ white-space:nowrap; }}
+  table.evidence .crit {{ margin-top:4px; color:#166534; }}
+  .pill-primary {{ font-size:10px; text-transform:uppercase; letter-spacing:.04em; background:var(--accent);
+                   color:#fff; border-radius:9px; padding:1px 7px; margin-left:6px; vertical-align:middle; }}
 </style>
 </head>
 <body>
@@ -1344,7 +1355,7 @@ def md_to_html(md, pages=None, spans=None):
     return "".join(out)
 
 
-def csv_table(text, max_rows=200):
+def csv_table(text, max_rows=None, method="csv"):
     """Render an embedded CSV property as a table, with each cell carrying the id a
     `csv` address resolves to — so a Ground's reference deep-links straight to the cell
     it names, and a reader can check the quote against the number.
@@ -1364,19 +1375,26 @@ def csv_table(text, max_rows=200):
     hdr = [c.strip() for c in rows[0]]
     key = hdr[0] if hdr else "row"
     body = []
-    for r in rows[1:max_rows + 1]:
+    limit = len(rows) - 1 if max_rows is None else max_rows
+    for r in rows[1:limit + 1]:
         cells = [c.strip() for c in r]
         rk = cells[0] if cells else ""
         tds = "".join(
             '<td id="{}">{}</td>'.format(
-                _html.escape(f"csv.row={rk}&col={hdr[i]}" if i < len(hdr) else ""),
+                _html.escape(f"{method}.row={rk}&col={hdr[i]}" if i < len(hdr) else ""),
                 _html.escape(c))
             for i, c in enumerate(cells))
         body.append(f"<tr>{tds}</tr>")
-    more = ("<tr><td colspan='%d' class='hint'>… %d further row(s) not shown</td></tr>"
-            % (len(hdr), len(rows) - 1 - max_rows)) if len(rows) - 1 > max_rows else ""
+    # Every row is rendered by default. A truncated table silently breaks the one thing
+    # these ids exist for: a Ground addressing row 400 of a 714-row table would resolve in
+    # the validator and land the reader at the top of the page. What bounds the size here
+    # is policy/embedding-and-size.md, which bounds the artifact.
+    more = ("<tr><td colspan='%d' class='hint'>… %d further row(s) not shown; an address "
+            "into them will not resolve on this page</td></tr>"
+            % (len(hdr), len(rows) - 1 - limit)) if len(rows) - 1 > limit else ""
     head = "".join(f"<th>{_html.escape(c)}</th>" for c in hdr)
-    return (f"<p class='hint'>Addressed as <code>#csv.row=&lt;{_html.escape(key)}&gt;"
+    return (f"<p class='hint'>Addressed as <code>#{_html.escape(method)}"
+            f".row=&lt;{_html.escape(key)}&gt;"
             f"&amp;col=&lt;column&gt;</code></p>"
             f"<div class='tablewrap'><table class='data'><tr>{head}</tr>"
             + "".join(body) + more + "</table></div>")

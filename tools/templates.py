@@ -130,17 +130,6 @@ HTML_TEMPLATE = r"""<!doctype html>
   #intro p {{ margin:0 0 6px; }} #intro p:last-child {{ margin-bottom:0; }}
   #intro a {{ color:var(--accent); }}
   #intro .cite-dead {{ border-bottom:1px dotted var(--muted); color:var(--muted); cursor:help; }}
-  #intro h3.evh {{ font-size:13px; margin:16px 0 4px; font-weight:650; }}
-  table.evidence {{ border-collapse:collapse; width:100%; margin:6px 0 4px; font-size:12px; }}
-  table.evidence th {{ text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.04em;
-                       color:var(--muted); border-bottom:1px solid var(--line); padding:4px 8px 4px 0; }}
-  table.evidence td {{ vertical-align:top; padding:6px 8px 6px 0; border-bottom:1px solid var(--line);
-                       line-height:1.4; }}
-  table.evidence tr.assertion td {{ background:#f2f5f9; padding:8px; border-bottom:none; }}
-  table.evidence td.gname {{ white-space:nowrap; }}
-  table.evidence .crit {{ margin-top:4px; color:#166534; }}
-  .pill-primary {{ font-size:10px; text-transform:uppercase; letter-spacing:.04em; background:var(--accent);
-                   color:#fff; border-radius:9px; padding:1px 7px; margin-left:6px; vertical-align:middle; }}
 </style>
 </head>
 <body>
@@ -1222,6 +1211,90 @@ CONTENTS_TEMPLATE = """<!doctype html>
 """
 
 
+READING_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+  :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
+  * {{ box-sizing:border-box; }}
+  html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+               color:var(--ink); background:var(--bg); font-size:15px; }}
+  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  header h1 {{ font-size:16px; margin:0 0 3px; font-weight:650; line-height:1.35; }}
+  header .sub {{ font-size:12px; color:var(--muted); }}
+  a.uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
+  main {{ max-width:820px; margin:0 auto; padding:20px 16px 80px; line-height:1.6; }}
+  h2.sec {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+            margin:28px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px; }}
+  h2.sec:first-of-type {{ margin-top:0; }}
+  .verdict-lead {{ font-size:16px; line-height:1.6; background:var(--panel);
+                   border:1px solid var(--line); border-left:4px solid var(--accent);
+                   border-radius:8px; padding:14px 16px; }}
+  .prose {{ background:var(--panel); border:1px solid var(--line); border-radius:8px;
+            padding:14px 16px; }}
+  .prose p {{ margin:0 0 11px; }} .prose p:last-child {{ margin-bottom:0; }}
+  .prose a, main a {{ color:var(--accent); }}
+  .prose h3.mdh {{ font-size:15px; font-weight:650; margin:18px 0 7px; }}
+  .prose h3.mdh:first-child {{ margin-top:0; }}
+  .prose h4.mdh {{ font-size:14px; font-weight:650; color:var(--muted); margin:14px 0 6px; }}
+  .hint {{ font-size:12px; color:var(--muted); line-height:1.5; }}
+  mark {{ background:#fff3bf; }}
+  /* `table-layout:fixed` and a break-anywhere rule, because a Ground's address is one
+     long unbreakable token: left to size itself the table came out 1037px inside an 820px
+     column and the whole page scrolled sideways. */
+  table.evidence {{ border-collapse:collapse; width:100%; table-layout:fixed;
+                    margin:8px 0; font-size:13px; background:var(--panel); }}
+  table.evidence th {{ text-align:left; font-size:10px; text-transform:uppercase;
+                       letter-spacing:.04em; color:var(--muted);
+                       border-bottom:1px solid var(--line); padding:6px 10px 6px 0; }}
+  table.evidence td {{ vertical-align:top; padding:9px 10px 9px 0;
+                       border-bottom:1px solid var(--line); line-height:1.5;
+                       overflow-wrap:anywhere; }}
+  table.evidence th:nth-child(1) {{ width:14%; }}
+  table.evidence th:nth-child(2) {{ width:31%; }}
+  table.evidence tr.assertion td {{ background:#f2f5f9; padding:10px; border-bottom:none;
+                                    font-size:14px; }}
+  table.evidence td.gname {{ overflow-wrap:anywhere; }}
+  table.evidence code {{ font-size:11px; overflow-wrap:anywhere; }}
+  table.evidence .crit {{ margin-top:6px; color:#166534; }}
+  .pill-primary {{ font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+                   background:var(--accent); color:#fff; border-radius:9px; padding:1px 7px;
+                   margin-left:6px; vertical-align:middle; }}
+  h3.evh {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+            margin:28px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px;
+            font-weight:650; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>{title}</h1>
+  <div class="sub"><a class="uplink" href="{map_href}">claim map &rarr;</a> &middot;
+  <a class="uplink" href="contents.html">contents</a> &middot;
+  <a class="uplink" href="index.html">reference graph</a> &middot;
+  {byline}</div>
+</header>
+<main>{body}</main>
+</body>
+</html>
+"""
+
+
+def render_reading_html(title, byline, map_href, body):
+    """An Argument as a document rather than as an application.
+
+    The claim map is a fixed-viewport graph with the prose in a 96-pixel scrolling strip
+    beside it. Measured on this record's one Argument, that strip showed 95 pixels of 26,019
+    — four tenths of one per cent of the verdict, purpose, rationale and evidence at a time.
+    The structure is the specialist view and deserves the viewport it has; the prose is what
+    a scientist came to read and needs a page that simply scrolls."""
+    return READING_TEMPLATE.format(
+        title=_html.escape(title), byline=_html.escape(byline),
+        map_href=_html.escape(map_href), body=body)
+
+
 def render_contents_html(entries, corpus_title="community record"):
     """A plain reading list of the record.
 
@@ -1318,19 +1391,36 @@ def _mark_grounded(escaped, spans):
     return escaped
 
 
+def preformatted(text, spans=None):
+    """A property whose whitespace is its meaning, chiefly an Analysis's `code`.
+
+    Still passed through `_mark_grounded`, because a Content Object may declare a
+    `text_span` method over code and a Ground through it has to land on the line it
+    quotes — the same reason every other rendering path marks."""
+    return (f"<pre class='code'><code>"
+            + _mark_grounded(_html.escape(text or ""), spans) + "</code></pre>")
+
+
 def md_to_html(md, pages=None, spans=None):
     """Members write long prose in markdown and the record holds it verbatim, so a heading
     line has to be rendered as a heading or it shows the reader its `##`. Levels map to h3
     and h4 because the page's own property labels are h2: an artifact's internal structure
-    sits inside its property, never beside it."""
+    sits inside its property, never beside it.
+
+    Every path here escapes, then marks grounded passages, then renders inline markdown, in
+    that order. A path that skips the marking silently breaks the Ground that quotes it: the
+    address still resolves in the validator and the reader still lands at the top of the
+    page. Headings and list items were two such paths."""
     out = []
     for block in _re.split(r"\n\s*\n", (md or "").replace("\r\n", "\n").strip()):
         lines = [ln for ln in block.split("\n") if ln.strip()]
         if not lines:
             continue
         if all(_re.match(r"^\s*[-*]\s+", ln) for ln in lines):
-            items = "".join("<li>" + _md_inline(_html.escape(_re.sub(r"^\s*[-*]\s+", "", ln)), pages)
-                            + "</li>" for ln in lines)
+            items = "".join(
+                "<li>" + _md_inline(
+                    _mark_grounded(_html.escape(_re.sub(r"^\s*[-*]\s+", "", ln)), spans), pages)
+                + "</li>" for ln in lines)
             out.append("<ul>" + items + "</ul>")
         else:
             # A heading may open a block without a blank line after it, so headings are
@@ -1347,8 +1437,8 @@ def md_to_html(md, pages=None, spans=None):
                 if m:
                     flush()
                     tag = "h3" if len(m.group(1)) <= 2 else "h4"
-                    out.append(f"<{tag} class='mdh'>"
-                               + _md_inline(_html.escape(m.group(2)), pages) + f"</{tag}>")
+                    out.append(f"<{tag} class='mdh'>" + _md_inline(
+                        _mark_grounded(_html.escape(m.group(2)), spans), pages) + f"</{tag}>")
                 else:
                     para.append(_md_inline(_mark_grounded(_html.escape(ln), spans), pages))
             flush()

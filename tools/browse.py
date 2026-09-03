@@ -809,9 +809,9 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, spans=None):
         elif k == "code" and isinstance(v, str):
             # An Analysis carries its procedure's code verbatim. Run through the prose
             # renderer it lost every indent and every `#` comment line became a heading,
-            # which is the one property where whitespace is the meaning.
-            parts.append(f"<h2>{esc(k)}</h2>"
-                         f"<pre class='code'><code>{esc(v)}</code></pre>")
+            # which is the one property where whitespace is the meaning. Grounded passages
+            # are still marked: a Content may declare a `text_span` method over code.
+            parts.append(f"<h2>{esc(k)}</h2>" + T.preformatted(v, spans.get(k)))
         elif isinstance(v, str) and looks_tabular(v, declares_table):
             parts.append(f"<h2>{esc(k)}</h2>"
                          + T.csv_table(v, method=table_method_for(k, methods)))
@@ -928,6 +928,36 @@ def evidence_table(doc, index, pages):
             + "".join(rows) + "</table>")
 
 
+def render_reading_page(doc, index, pages, reading_name):
+    """The Argument's prose and evidence, as a page that scrolls.
+
+    Everything an author is required to write for a reader — `verdict`, `purpose`,
+    `rationale` — plus every Ground under the Assertion it bears on. The claim map keeps the
+    structure; this keeps the argument."""
+    h = doc["artifact"]
+    esc = html.escape
+    parts = []
+    if h.get("verdict"):
+        parts.append('<h2 class="sec">Verdict</h2>'
+                     f'<div class="verdict-lead">{esc(h["verdict"])}</div>')
+    for label, key in (("Purpose and stakes", "purpose"), ("Rationale", "rationale"),
+                       ("Description", "description"), ("Text", "text")):
+        if h.get(key):
+            parts.append(f'<h2 class="sec">{label}</h2>'
+                         f'<div class="prose">{T.md_to_html(h[key], pages)}</div>')
+    if h.get("supersedes"):
+        parts.append('<h2 class="sec">Supersedes</h2><div class="prose">'
+                     + ", ".join(f"<code>{esc(str(x))}</code>" for x in h["supersedes"])
+                     + (f'<p>{esc(h.get("supersedes_rationale", ""))}</p>'
+                        if h.get("supersedes_rationale") else "") + "</div>")
+    parts.append(evidence_table(doc, index, pages))
+    byline = "{} · {} · {}".format(
+        (h.get("published_by") or "").lstrip("@"), (h.get("created") or "")[:16],
+        ", ".join(h.get("authors") or []))
+    return T.render_reading_html(h.get("title") or h["name"], byline,
+                                 pages[h["name"]], "".join(parts))
+
+
 def contents_entries(artifacts, colors, pages, findings_by):
     """Rows for the reading list: what a reader needs to decide whether to open a page.
 
@@ -953,8 +983,13 @@ def contents_entries(artifacts, colors, pages, findings_by):
             extra.append(f"supersedes {len(h['supersedes'])}")
         if findings_by.get(name):
             extra.append(f"{len(findings_by[name])} checker finding(s)")
+        # An Argument's entry here goes to the document, not to the graph. Someone arriving
+        # from a contents page has come to read; the claim map is one click further on and
+        # is linked from it. Arriving from the reference graph still lands on the map.
+        href = (pages[name].replace(".html", "_reading.html") if typ == ARGUMENT
+                else pages[name])
         rows.append({
-            "name": name, "type": typ, "href": pages[name],
+            "name": name, "type": typ, "href": href,
             "title": h.get("title") or name,
             "member": h.get("published_by", "").lstrip("@"),
             "color": colors.get(h.get("published_by", "").lstrip("@"), "#9ca3af"),
@@ -993,11 +1028,16 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
             # The header's own prose is where the author says what the argument is doing
             # and cites the work it answers. It is not in the graph and would otherwise
             # be invisible on the page that most needs it.
-            intro = "".join(T.md_to_html(a["artifact"][k], pages)
-                            for k in ("description", "text") if a["artifact"].get(k))
-            intro += evidence_table(a, index, pages)
+            reading = page_name(name).replace(".html", "_reading.html")
+            intro = ('<p><a href="{}"><b>Read this Argument as a document &rarr;</b></a> '
+                     '<span class="hint">verdict, purpose, rationale and every Ground in '
+                     'one place</span></p>'.format(html.escape(reading)))
+            intro += "".join(T.md_to_html(a["artifact"][k], pages)
+                             for k in ("description", "text") if a["artifact"].get(k))
             (out / pages[name]).write_text(
                 T.render_claim_html(collapsed, meta, cyto, intro_html=intro), encoding="utf-8")
+            (out / reading).write_text(
+                render_reading_page(a, index, pages, reading), encoding="utf-8")
             if figures_dir:
                 # Same precomputed positions as the page, so the figure IS the
                 # picture the reader saw — only unelided and print-scaled.

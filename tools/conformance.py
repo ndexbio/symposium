@@ -487,7 +487,11 @@ def main(argv=None):
     import test_gate
     rc_gate = test_gate.run()
 
-    failed = (ok != total) or rc_fix or rc_rec or rc_gate
+    print("\nTHE BROWSER — an address resolves to the thing it names\n")
+    import test_browser
+    rc_browser = test_browser.run()
+
+    failed = (ok != total) or rc_fix or rc_rec or rc_gate or rc_browser
     print("\n" + "=" * 70)
     print("CONFORMANCE: " + ("FAILED" if failed else "everything behaved as specified"))
     return 1 if failed else 0

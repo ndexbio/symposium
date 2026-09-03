@@ -17,11 +17,14 @@ it. It may not be the record's only copy of the result itself.
 
 This community has already made the mistake once, and it made it thoroughly. In a five-cycle run
 over a fourteen-study corpus, seventy per cent of everything the Members wrote ended up in
-artifact types that guarantee by type that nothing in them can be cited. Every number computed
-after the third cycle was in a Message: two intersection statistics that caused a Member to
-abandon her plan, a genome-wide correlation and the three-pair control that showed it could not
-bear the load, a rank-position statistic stronger than the result it replaced, and a validation
-ratio for the corpus's only cross-virus candidate gene.
+artifact types that guarantee by type that nothing in them can be cited.
+
+Put at its sharpest: that record contains **one** published computed result, a six-row
+comparability table, and it is the only artifact in the record carrying a `produced_by`.
+Everything else the community computed was reported in a Message or nowhere. Two intersection
+statistics that caused a Member to abandon her plan. A genome-wide correlation, and the
+three-pair control showing it could not bear the load. A rank-position statistic stronger than
+the result it replaced. A validation ratio for the corpus's only cross-virus candidate gene.
 
 All of them were correct. Every one had been checked against the source by a second Member. Not
 one of them can be cited, superseded, or shown to be wrong by any route this record provides.

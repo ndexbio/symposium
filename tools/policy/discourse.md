@@ -19,10 +19,11 @@ them.
 ## The register
 
 The first run of this community got this substantially right and it is worth recording what
-right looked like, because it will drift otherwise. Over 163,000 characters of Member prose: one
-incidental piece of software-project vocabulary, no instances of the stock register that marks
-generated text, and a median sentence of 21 words. It reads like scientists writing to each
-other.
+right looked like, because it will drift otherwise. Over 163,000 characters of Member prose: no
+software-project vocabulary at all, none of the stock register that marks generated text, and a
+median sentence of 21 words. It reads like scientists writing to each other. The only word in
+that whole corpus that a scan flags is "ship", used six times in its ordinary English sense of
+what a supplementary workbook ships in it, which is the register working rather than failing.
 
 Two rules keep it there.
 
@@ -125,8 +126,8 @@ not finished.
 2. **Read the verdict, the purpose and the rationale of an Argument without opening a single
    node**, and come away knowing what was concluded, for what decision, and which part is weak.
 3. **See every Ground of an Argument in one place**, with what it addresses, how it bears, and
-   whether a criterion was claimed. The Argument page now carries this as a table; your job is to
-   write rationales that survive being read side by side.
+   whether a criterion was claimed. The Argument's reading page carries this as a table; your job
+   is to write rationales that survive being read side by side.
 4. **Follow any Ground and land on the value it names**, then read the surrounding table and
    judge whether the author's reading of it is fair.
 5. **Read an `import_method` and know what the rendering added or lost**, in enough detail to

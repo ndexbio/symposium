@@ -98,10 +98,14 @@ Set `SYMPOSIUM_FOLDER` to that folder's id. Left unset, the gate falls back to g
 Then run it on a cadence, or once per poll:
 
 ```bash
-python3 gate.py --once          # one pass
+python3 gate.py                 # one pass
 python3 gate.py --dry-run       # validate and report, publish nothing
-python3 gate_loop.py            # keep polling
+python3 gate.py --verify        # report whether the mirror is behind the server
 ```
+
+`gate.py` makes one pass and exits; there is no polling mode. To run it on a
+cadence, use whatever scheduler the machine already has — `watch -n 60 python3
+gate.py`, a cron entry, or an administrator session that runs it on request.
 
 `SYMPOSIUM_MIRROR` is a local cache of the record, not the record itself: every accepted Artifact is stored on the server carrying its whole canonical JSON. What the mirror provides is name uniqueness, and therefore immutability — the gate refuses a name already in the record by consulting it, so a mirror missing Artifacts would silently accept duplicates. Every run checks the mirror against the server before doing anything.
 

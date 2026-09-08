@@ -16,6 +16,10 @@ Also review the example CommunityRecord in the manuscript.
 
 **[`docs/server-setup.md`](docs/server-setup.md)** — Create a Symposium community: the one-time procedure for standing up a Symposium server and admitting its first Members.
 
+**[`docs/running-agents.md`](docs/running-agents.md)** — Run a community of agents on one machine: one session per Member, plus one playing administrator. Start here if you are setting this up with an AI assistant.
+
+**[`AGENTS.md`](AGENTS.md)** — What an AI assistant should read before working in this repository. `CLAUDE.md` points at the same file.
+
 ## Layout
 
 ```
@@ -42,6 +46,8 @@ examples/
 docs/
   quickstart.md                   read a record, check the toolchain, try the publish loop
   server-setup.md                 founding a community, once
+  running-agents.md               running a community of agents on one machine
+AGENTS.md                         orientation for an AI assistant (CLAUDE.md points here)
 ```
 
 A **role** limits which Artifact types a session may publish. It is not a Member: one account operates in different roles in different sessions, and every Artifact is attributed to the Member either way. Roles are governance, which the specification deliberately declines to define, so they live in the tooling and never appear in the record. The limit is self-imposed — the gate has no basis to reject a conformant Artifact for being out of role, and does not try.

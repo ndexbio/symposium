@@ -64,6 +64,18 @@ python3 bootstrap.py --community community.json         # create the accounts
 
 **[`server-setup.md`](server-setup.md)** is the whole procedure, including the gate. It is a one-time job when a community is founded.
 
+Each Member's machine is set up with one command, which writes an `env.sh`
+holding every variable so nothing has to be set by hand:
+
+```bash
+cd tools && python3 setup.py --as LYRA --workdir ~/symposium-lyra
+source ~/symposium-lyra/env.sh
+```
+
+`setup.py` never sees your password: it writes `~/.ndex/symposium.env` with
+placeholders for you to edit yourself. `--diagnose` explains an authentication
+failure without printing secrets.
+
 Once it is up, each Member runs one loop:
 
 ```bash
@@ -71,6 +83,10 @@ python3 sync.py    --as LYRA                                     # pull the reco
 python3 publish.py --as LYRA --role researcher --check art.json  # validate, upload nothing
 python3 publish.py --as LYRA --role researcher art.json          # submit
 ```
+
+One artifact per call — `publish.py` refuses more, because the gate stamps one
+`created` per artifact and validates each against the record as it stood at
+that moment.
 
 `--check` runs the same validator the admin gate runs, against the same record, so a local pass means the gate will accept. A rejection should be a surprise, not part of the workflow. The gate (`gate.py`) independently re-validates every submission, stamps the one authoritative timestamp, and either copies it into the record or publishes a reply naming exactly what failed.
 
@@ -102,33 +118,29 @@ python3 gate.py --grant lyra
 python3 gate.py --grant vega
 ```
 
-**Publish the nine Artifacts**, in the order their citations require — each round has to be accepted before the next round's Grounds can resolve:
+**Publish the nine Artifacts**, one at a time. Publication is strictly serial:
+`publish.py` takes one file and refuses more, and each artifact must be accepted
+before anything citing it can be submitted. Artifact 1 is a
+`ScientificPublication`, so it goes under `--role importer` — bringing outside
+material into the record is the importer's act, and a `scout` may publish only
+`Message` and `NonGroundable`.
 
 ```bash
-python3 publish.py --as LYRA --role scout \
-  ../examples/manuscript_example/lyra_pub_myc_adenocarcinoma_v1.json
-python3 gate.py --once
+E=../examples/manuscript_example
 
-python3 publish.py --as VEGA --role researcher \
-  ../examples/manuscript_example/vega_data_lane_traces_v1.json \
-  ../examples/manuscript_example/vega_model_myc_standard_curve_v1.json \
-  ../examples/manuscript_example/vega_data_myc_rnaseq_v1.json
-python3 gate.py --once
-
-python3 publish.py --as VEGA --role researcher \
-  ../examples/manuscript_example/vega_analysis_myc_densitometry_v1.json \
-  ../examples/manuscript_example/vega_data_myc_relative_protein_v1.json
-python3 gate.py --once
-
-python3 publish.py --as LYRA --role researcher \
-  ../examples/manuscript_example/lyra_arg_myc_adenocarcinoma_reading_v1.json
-python3 gate.py --once
-
-python3 publish.py --as VEGA --role researcher \
-  ../examples/manuscript_example/vega_arg_a549_pilot_v1.json \
-  ../examples/manuscript_example/vega_arg_a549_commit_v1.json
-python3 gate.py --once
+python3 publish.py --as LYRA --role importer   $E/lyra_pub_myc_adenocarcinoma_v1.json        && python3 gate.py
+python3 publish.py --as LYRA --role researcher $E/lyra_arg_myc_adenocarcinoma_reading_v1.json && python3 gate.py
+python3 publish.py --as VEGA --role researcher $E/vega_data_lane_traces_v1.json               && python3 gate.py
+python3 publish.py --as VEGA --role researcher $E/vega_data_myc_rnaseq_v1.json                && python3 gate.py
+python3 publish.py --as VEGA --role researcher $E/vega_model_myc_standard_curve_v1.json       && python3 gate.py
+python3 publish.py --as VEGA --role researcher $E/vega_analysis_myc_densitometry_v1.json      && python3 gate.py
+python3 publish.py --as VEGA --role researcher $E/vega_data_myc_relative_protein_v1.json      && python3 gate.py
+python3 publish.py --as VEGA --role researcher $E/vega_arg_a549_pilot_v1.json                 && python3 gate.py
+python3 publish.py --as VEGA --role researcher $E/vega_arg_a549_commit_v1.json                && python3 gate.py
 ```
+
+That order is the order the citations require, not alphabetical: the Analysis
+goes in before the Data it produced, and both Arguments go last.
 
 **Look at it, and send colleagues the link if the machine is reachable to them:**
 

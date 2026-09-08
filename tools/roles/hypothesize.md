@@ -25,6 +25,7 @@ nothing above is machine-checked.
   "role": "hypothesize",
   "purpose": "Propose mechanisms worth testing.",
   "may_publish": [
+    "Message",
     "NonGroundable"
   ],
   "must_not": [

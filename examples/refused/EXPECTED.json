@@ -29,6 +29,11 @@
     "check": "TYPE",
     "msg": "non-groundable; its methods are addressable only"
   },
+  "H4_groundable_false_header.json": {
+    "case": "H4",
+    "check": "GROUND",
+    "msg": "declares groundable:false; no content in it may be cited"
+  },
   "J3_depends_on_cycle.json": {
     "case": "J3",
     "check": "C-ARG",

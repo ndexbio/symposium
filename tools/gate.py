@@ -9,14 +9,38 @@ The publication loop, exactly as smoke-tested 2026-08-05:
                      write canonical JSON to the mirror repo, index the name
             REJECT : upload a reply artifact naming the failures; the member polls for it
 
-Four server facts this is built around, all established empirically on build ac3ee:
-  * group-principal sharing is broken, so read access fans out as user->user grants
-  * folders are navigation only, and the folder REST API is absent (every path 404s inside
-    a 500) — bundling is declared by the artifacts, not by a folder
+Four server facts this is built around, established empirically and re-confirmed against
+NDEx 3.0.5 on symposium.ndexbio.org:
+  * THERE ARE NO GROUPS. `createGroup` answers "feature has been removed" and `groupCount` is
+    0; networksets are gone with them. Nothing here should reference either.
+  * Folders and shortcuts at /v3/files/ cascade READ, but only where the folder's owner also
+    owns the target. That is not a limitation here, because THE ADMIN OWNS THE RECORD: a
+    member's upload is a submission, and what enters the record is the admin's own copy of it.
+    Authorship is carried by `published_by` and `authors` in the artifact, never by who owns
+    the network. So one admin-owned community folder, shared READ once per member, covers
+    every artifact the gate ever accepts, and a new record copy inherits that sharing the
+    moment its shortcut lands in the folder.
+
+    Set SYMPOSIUM_FOLDER to that folder's id and acceptance places a shortcut instead of
+    granting each member individually; onboarding a member becomes one folder share rather
+    than one grant per accepted artifact. Leave it unset and the gate falls back to the
+    per-network fan-out, which is slower and equivalent.
   * a freshly uploaded private network has `indexLevel: NONE` and never appears in
     /v2/search/network, so discovery uses the permission map, not search
   * NDEx search TOKENISES and cannot do exact-name matching, so name uniqueness lives in the
     mirror repo index, never in a server query
+
+Networks are author-owned — creation is POST /v3/networks and returns a /v3/network/... URL —
+while the permission endpoints remain v2. Mixing the two versions is correct, not a leftover.
+
+Not yet used, and worth testing before it is: POST /v3/files/copy would make the admin-owned
+record copy server-side, instead of extracting the canonical, re-serialising it to CX2 and
+uploading it. The catch is that the gate OWNS `created` and stamps it into the canonical before
+upload, and it marks the copy as a record copy. A server-side copy reproduces the member's
+submission as submitted — unstamped, unmarked — so it needs a follow-up attribute write, and
+between the two calls an artifact with `created: null` exists where members are looking. Today's
+single upload has no such window. Adopt it only if the copy can carry the attributes, or after
+establishing that the gap is not observable.
 
 Credentials come from the environment; nothing is passed on the command line.
 
@@ -70,6 +94,7 @@ from pathlib import Path
 
 import telemetry
 from ndex_io import (BASE, CANONICAL_ATTR, NON_ARTIFACT_MARKS, NON_ARTIFACT_SEGMENTS,
+                     add_shortcut, share_folder,
                      RECORD_MARK, REPLY_MARK, auth, api as _api, extract_artifact,
                      extract_canonical, grant_read as _grant, permission_map, to_cx2,
                      upload_cx2 as _upload, user_uuid, load_canonical_dir)
@@ -80,6 +105,11 @@ DRY = "--dry-run" in sys.argv
 
 ADMIN_USER, ADMIN_TOK = auth("ADMIN")
 MEMBERS = [m.strip() for m in os.environ.get("SYMPOSIUM_MEMBERS", "").split(",") if m.strip()]
+# The admin-owned community folder, shared READ once per member. Set it and acceptance drops a
+# shortcut in; leave it unset and acceptance grants each member READ on each artifact instead.
+# Deliberately an id rather than a name the gate creates: creating it is a one-time operator act
+# that should be seen to succeed, not a path this guesses at on a live record.
+FOLDER = os.environ.get("SYMPOSIUM_FOLDER", "").strip()
 
 
 def api(method, path, body=None, raw=False, tok=None):
@@ -377,6 +407,11 @@ def grant_backfill(member):
     error. It looks exactly like a broken install.
 
     So adding a Member is two steps: create the account, then run this. It is idempotent.
+
+    With SYMPOSIUM_FOLDER set this is one call and covers the future as well as the past: the
+    member is shared the admin-owned community folder, and every record copy shortcut into it
+    — including ones accepted later — is readable through that share. Without a folder it walks
+    the record and grants each artifact separately, which works and is O(artifacts).
     """
     # A newly created account is NOT immediately visible to /v2/user?username=. Observed
     # 2026-08-06: an account created and reported as isVerified:true still resolved as absent
@@ -402,6 +437,20 @@ def grant_backfill(member):
               f"  If it persists, the account does not exist. Self-signup is disabled on this\n"
               f"  deployment, so an administrator has to create it.")
         return 1
+    # ONE CALL IF THERE IS A FOLDER. The community folder is admin-owned and so is every
+    # record copy inside it, so sharing the folder gives this member READ on the whole record
+    # at once — and on everything accepted afterwards, without anyone running this again.
+    if FOLDER:
+        st_ = share_folder(FOLDER, uuid, ADMIN_TOK)
+        if st_ not in (200, 201, 204):
+            print(f"! sharing folder {FOLDER} with {member} failed: HTTP {st_}")
+            return 1
+        print(f"shared the community folder with {member} — they can read the whole record, "
+              f"and will inherit\nwhatever is accepted from now on.")
+        print(f"\nAdd them to the gate's environment so their submissions can be validated:\n"
+              f"    export SYMPOSIUM_MEMBERS={','.join(sorted(set(MEMBERS) | {member}))}")
+        return 0
+
     server, err = server_record()
     if server is None:
         print(f"! {err}")
@@ -529,14 +578,34 @@ def accept(canonical, record, muuids, state, stamp=None, submission_uuid=None):
     if st not in (200, 201):
         print(f"    ! record copy failed: HTTP {st} {uuid}")
         return False
-    for m, mu in muuids.items():
-        if mu and not grant_read(uuid, mu):
-            print(f"    ! could not grant READ to {m}")
+    # One shortcut, or one grant per member. Both end with every member able to read the
+    # record copy; the folder does it in a single call and covers members added later, because
+    # a shortcut inherits whatever the folder is shared to.
+    if FOLDER:
+        st_, body = add_shortcut(FOLDER, uuid, ADMIN_TOK)
+        if st_ not in (200, 201):
+            print(f"    ! shortcut into folder {FOLDER} failed: HTTP {st_} {body}")
+            print(f"      falling back to per-member grants for this artifact")
+            reach = _fan_out(uuid, muuids)
+        else:
+            reach = f"shortcut -> folder {FOLDER[:8]}"
+    else:
+        reach = _fan_out(uuid, muuids)
     write_record(canonical, uuid, state)
     if submission_uuid:
         state["granted"][submission_uuid] = f"accepted as {name}"
-    print(f"    ACCEPTED -> record {uuid}, {len(muuids)} read grants, mirrored")
+    print(f"    ACCEPTED -> record {uuid}, {reach}, mirrored")
     return True
+
+
+def _fan_out(uuid, muuids):
+    ok = 0
+    for m, mu in muuids.items():
+        if mu and grant_read(uuid, mu):
+            ok += 1
+        elif mu:
+            print(f"    ! could not grant READ to {m}")
+    return f"{ok}/{len(muuids)} read grants"
 
 
 def reject(canonical, submitted_name, findings, owner, muuids):
@@ -559,7 +628,15 @@ def reject(canonical, submitted_name, findings, owner, muuids):
         mu = muuids.get(owner)
         if mu:
             grant_read(uuid, mu)
-        print(f"    reply posted -> {uuid} (readable by {owner})")
+            print(f"    reply posted -> {uuid} (readable by {owner})")
+        else:
+            # Access is per-network user->user grants and there is no group to fall back on,
+            # so an unresolvable owner means the reply is uploaded and reaches nobody. Saying
+            # "readable by <owner>" here, as this did, is a lie told at exactly the moment a
+            # member is sitting waiting for an answer that will never arrive.
+            print(f"    ! reply posted -> {uuid} but '{owner}' could not be resolved to a "
+                  f"user, so it was NOT shared.\n      The member is waiting on a reply they "
+                  f"cannot see. Check SYMPOSIUM_MEMBERS and the account name.")
     else:
         print(f"    ! reply upload failed: HTTP {st} {uuid}")
 
@@ -617,6 +694,19 @@ def run_once():
         if not declared.startswith(f"{s['owner']}_"):
             print(f"  {declared}: ! name is not prefixed with the owner '{s['owner']}_'")
             state["granted"][s["uuid"]] = "name not prefixed with the owner"
+            continue
+        # THE ROSTER IS THIS ENVIRONMENT VARIABLE AND NOTHING ELSE. Groups are removed from the
+        # server, so there is no principal that enumerates the community and no way to discover
+        # a member the operator forgot to list. A submitter who is absent from it fails
+        # validation on `published_by` not resolving to a Member, which reads as a malformed
+        # address and is not; and because the fan-out is keyed on the same list, the rejection
+        # explaining that would never be shared with them either. Say it plainly instead.
+        if s["owner"] not in MEMBERS and s["owner"] != ADMIN_USER:
+            print(f"  {declared}: ! '{s['owner']}' is not in SYMPOSIUM_MEMBERS, so this "
+                  f"submission cannot be\n    validated or replied to. Add them and restart "
+                  f"the gate:\n      export SYMPOSIUM_MEMBERS="
+                  f"{','.join(sorted(set(MEMBERS) | {s['owner']}))}")
+            state["granted"][s["uuid"]] = f"submitter '{s['owner']}' not in SYMPOSIUM_MEMBERS"
             continue
         s["canonical"] = canonical
         subs.append(s)

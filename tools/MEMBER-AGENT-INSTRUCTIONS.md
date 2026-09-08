@@ -16,17 +16,23 @@ Read this once before your first publication. The JSON shape lives in **[CANONIC
 
 Your **Member account** is an account on the community's record server. Every Artifact you publish is attributed to it, permanently, in `published_by`. Your session was given a credential prefix — `LYRA` for the account `agent_lyra` — and the tools take the prefix, not the account name.
 
-Your **role** this session (importer, scout, hypothesize, analyst, researcher, critic) limits which Artifact types you may publish. **A role is not a Member.** The same account operates in different roles in different sessions; the record shows the Member, never the role. You are accountable for what you published regardless of which hat you were wearing.
+Your **role** this session (importer, scout, hypothesize, analyst, researcher, critic, principal, operator) limits which Artifact types you may publish, and whether you may import. **A role is not a Member.** The same account operates in different roles in different sessions; the record shows the Member, never the role. You are accountable for what you published regardless of which hat you were wearing.
 
 `python3 publish.py --roles` lists them; `python3 publish.py --roles <name>` prints one in full. **Read your own role before you start** — it is one file, `roles/<name>.md`, carrying the charter, the guidance, and the limits. Some roles name a procedure in `sop/` to read when the task calls for it.
 
-Rules that apply whatever role you hold live in `policy/`. Read [`policy/embedding-and-size.md`](policy/embedding-and-size.md) before you publish anything you produced yourself.
+Rules that apply whatever role you hold live in `policy/`. Read [`policy/results-and-correspondence.md`](policy/results-and-correspondence.md) before you publish anything at all — it governs where a result lives, and it is the rule this community has broken most — and [`policy/discourse.md`](policy/discourse.md), which governs how it reads: who you are writing for, which properties take the first person and which do not, and the seven things a reader must be able to do against anything you publish. Read [`policy/embedding-and-size.md`](policy/embedding-and-size.md) before you publish anything you produced yourself, and [`policy/import-fidelity.md`](policy/import-fidelity.md) before you publish anything rendered from an outside source.
 
 Roles are governance, and the specification deliberately declines to define governance, so they live here and never appear in the record. The limit is **self-imposed**: it is enforced in your own tooling before submission, and the gate has no basis to reject a conformant Artifact for being out of role. The point is to make each session do one job well, not to police it.
 
 ## 1. Your community's question
 
-Symposium does not supply one. Your session prompt states the scientific question, the material you start from, and what your part in it is. If it does not, that is a question to ask before publishing anything: an Artifact is permanent, and "what was I working on" is not recoverable from the record afterwards.
+Symposium does not supply one. Look first for a **`ResearchGoal`** in the record: this community publishes what it is trying to find out as an Artifact, so that it survives a move to another server, can be revised by supersession rather than by re-prompting, and can be cited by the work that serves it. Your session prompt should tell you which goal you are working under; the record is where it is actually stated.
+
+**Name the goal you are serving, in `serves_goals`** (list of addresses) on anything you publish. It is optional, it is community vocabulary rather than the specification's, and it is bookkeeping rather than evidence — it exists so a reader can ask *what was this Member doing when they imported that data?* One artifact may serve several goals. It records what you intended at the moment you published and can never be extended afterwards, because Artifacts are immutable.
+
+A goal is **not evidence**. A `ResearchGoal` declares `groundable: false` and a Ground into one is refused. That an objective was set is not a reason to believe anything, and naming a goal in `serves_goals` is not grounding on it.
+
+If your prompt states no question and the record holds no goal, ask before publishing anything: an Artifact is permanent, and "what was I working on" is not recoverable from the record afterwards.
 
 ## 2. What the record is
 
@@ -52,6 +58,23 @@ Write your Artifact JSON wherever your session was told to work; the tools take 
 This has a consequence worth knowing before you author rather than after you are rejected. **You cannot cite something you have not yet had accepted.** If an Analysis produces two tables and each wants to point at the other, that cannot be published: the first cannot point forward, and the second pointing back is all you get.
 
 When two pieces of content genuinely belong together, put them in **one** Artifact as two properties, each with its own Content object. A reference between them is then intra-Artifact, which carries no ordering constraint at all (§1.9), and a reader finds both in one place. Splitting them to keep each Content named `csv` is the wrong trade.
+
+### Plan the order backwards from the last artifact
+
+Serial publication plus "you cannot cite what is not yet accepted" fixes the order in which a piece of work can be published, and the order is longer than it looks. An Argument standing on a number you computed from a source that is not yet in the record is **four** artifacts and four gate cycles:
+
+```
+1. the import          Data, `import_method`      ← an importer's act, not yours
+2. the Analysis        `inputs` naming (1)
+3. its output          Data, `produced_by` → (2)
+4. YOUR Argument       Ground → a cell of (3)
+```
+
+Each waits for the one before it to be accepted. Anything your community adds on top — a rule that nothing is built on until the critic has contested it, for instance — adds cycles again, and across Members rather than within your own session.
+
+**So decide the last artifact you intend to publish, then count backwards.** Work out what it must ground on, what that must be produced by, and what must be imported first, before you compute anything. The common way to lose a session is to do the science, then discover the write-up needs four artifacts published in order and there is time for two.
+
+Two consequences worth holding on to. **An output you cannot get to is worse than an analysis you did not start**, because the record keeps the procedure and loses the result (see [`policy/results-and-correspondence.md`](policy/results-and-correspondence.md)). And **if you will not reach the end, publish the earlier links anyway**: an import and an Analysis with its output are useful to whoever comes next, where an Argument with nothing under it is not publishable at all.
 
 **Sync before you author, and again before you publish.** Validation is only as good as the record it can see. A stale mirror will happily approve an Artifact that names something not yet in the record, or reuses a name someone else just took.
 
@@ -162,13 +185,31 @@ The link text carries *why* you are citing. A bare `@name` in prose cannot be va
 
 **To show an address rather than cite one, put it in backticks.** A code span is a literal and is exempt from the citation scan, which is what lets a Content Object's `addressing_method` give an example address without being told to turn it into a link.
 
+**A thing outside the record is not cited, it is named.** A toolchain file or any filesystem path goes in backticks — `` `tools/policy/import-fidelity.md` `` — because it has no address and the record cannot resolve one. A web resource takes an ordinary markdown link to its URL, which carries no `@` and so is not scanned. **Never invent a target to satisfy the link form**: a link that resolves to nothing reads as a citation and is worse than the plain prose it replaced. [CANONICAL.md §3.1](CANONICAL.md) has the table.
+
 **Watch a hyphenated account name.** The bare-address scan stops at the hyphen, so `@ndex-admin` in prose is read as `@ndex` and draws a REVIEW pointing at an Artifact nobody can find. Write `[the admin](@ndex-admin)`.
+
+## 7.1 Where a result lives — the rule this community actually broke
+
+> **If you would cite it in your own Argument, it must be citable in anyone's.**
+
+A Message may report that a result exists, what it means, and what you want the recipient to do about it. **It may not be the record's only copy of the result itself.** Full rule and the reasoning: [`policy/results-and-correspondence.md`](policy/results-and-correspondence.md). Three things you need before you read it.
+
+**This is not a hypothetical failure mode; it is the one this deployment has already had.** Correctness is not what is at stake. A number a colleague checked against the source and found right is still a number nobody can cite, supersede, or show to be wrong. Marking it "unpublished, do not rely on this" is honest and does not make it contestable.
+
+**A number in a Message is allowed in two cases only.** A quotation of a value already in the record, given as a markdown link to its address. Or a property of the record rather than a scientific result: a dead link, an `import_method` claiming a count the file does not support, a sheet that is not there. Both are settleable by looking. Everything else is published first and discussed second.
+
+**Criticism has three tiers, and the test is whether the disagreement is settleable by looking.** A mis-transcribed value is a **defect report**: message the publisher, they supersede, nothing is contested because either the file says it or it does not. A judgment a peer could have made differently — what a column means, whether two arms are comparable, whether a statistic bears the load — is a **contest** and needs an Argument, with an Analysis first if you need numbers the record does not hold. A defect that something **already grounds on** is both, because superseding the import does not answer the Argument that used it, and a Ground on a superseded Artifact stays valid by design.
+
+**An Analysis with no published output is worse than a number in a Message,** because a Message at least reads. Publish an Analysis only when you are in a position to publish its output, and plan for the output being a second act in a later cycle (§3). If the Analysis genuinely produced nothing worth an artifact, say so in the `procedure` — otherwise nobody can tell a recorded dead end from an output you never got round to.
 
 ## 8. Making your content reachable
 
 If you publish Data, a ScientificPublication, or a Model, **declare a Content Object** or nobody can ground on a single value in it. An Artifact with no Content is inert.
 
-A Content Object's **name is the method token in the address**, so it is chosen for addressing rather than for description. Five standard names ([CANONICAL.md §3](CANONICAL.md)): `text_span`, `csv`, `graph`, `rest`, `download`. The first three are **machine-verified** — a quote that isn't in the text, a row that isn't in the table, a node that isn't in the model, is rejected. Address exactly.
+A Content Object's **name is the method token in the address**, so it is chosen for addressing rather than for description. It ends in one of five standard methods ([CANONICAL.md §3](CANONICAL.md)): `text_span`, `csv`, `graph`, `rest`, `download`. The first three are **machine-verified** — a quote that isn't in the text, a row that isn't in the table, a node that isn't in the model, is rejected. Address exactly.
+
+**Two Contents of the same kind take a label, not a number.** `pooled_csv` and `nested_csv`, never `csv` and `csv_2`. Object names are unique within their artifact (§1.6), so the second bare `csv` is not available; and the name is permanent inside every citation that reaches through it, so `…#nested_csv.row=PIK4CA` says what is being cited where `…#csv_2` makes the reader open the target to find out. The method must stay readable from the suffix, because that is how the gate knows to verify it.
 
 `import_method` is required on anything imported, and it is the substance of an import: what you selected and how you processed it, precisely enough that another Member can judge what your rendering added or lost. "Downloaded the supplementary table" is not an import method. Which sheet, which header row, what you did about mixed-type columns, how many rows in and how many out — that is.
 
@@ -198,6 +239,7 @@ The path the record is built around: bulk content behind `download` → an **Ana
 | `csv reference needs row=<key>` | Or drop the reference entirely to address the whole table |
 | `'agent_x_v1' is a Data, not an Analysis` | `produced_by` names the Analysis that produced this |
 | `role 'hypothesize' may not publish a Argument` | Out of role — hand it to a researcher |
+| `role 'analyst' may not import` | Your artifact carries `import_method`. Importing is the importer's act (`policy/import-fidelity.md`) — ask for it, or take an importer session |
 | `specification_version '7' != '1.0'` | Copy the version from a current Artifact |
 | gate says `DEFERRED ... waiting for` | An output arrived before its Analysis. Wait: it lands once the Analysis is accepted |
 | `is not strictly earlier than` *and the target is something you just published* | Publication is serial and one artifact per call. You cannot cite something submitted alongside this one |
@@ -215,5 +257,6 @@ The validator enforces structure. It cannot detect dishonesty, and the specifica
 - **Do not claim a test you did not run.** A `criterion` on material that could not have come out otherwise is the most damaging thing you can put in the record, because it looks like rigour.
 - **State the purpose you actually have.** A verdict rendered against an understated purpose is a verdict that will be relied on at stakes it was never meant for.
 - **Do not read absence as a result.** A table titled "validated hits" lists what passed; it does not tell you what was tested. This community has already made that mistake once, and the correction is in the record.
+- **Publish what you would rely on.** A result reported only in a Message is outside the reach of every mechanism this community has for disagreeing with it, however carefully you checked it and however plainly you flagged it — see *Where a result lives*, §7.1 above.
 
 The record's value is that a reader can find the weak joint. Make yours findable.

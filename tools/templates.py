@@ -1087,7 +1087,9 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 # Rendering
 # --------------------------------------------------------------------------- #
 
+import csv as _csv            # noqa: E402
 import html as _html          # noqa: E402
+import io as _io              # noqa: E402
 import json as _json          # noqa: E402
 import re as _re              # noqa: E402
 
@@ -1157,9 +1159,177 @@ def render_overview_html(elements, meta, cytoscape_rel_path, corpus_title="commu
     return OVERVIEW_TEMPLATE.format(
         cyto_src=_html.escape(cytoscape_rel_path),
         corpus_title=_html.escape(corpus_title),
-        uplink="", exlink="",
+        uplink='<a class="uplink" href="contents.html">contents &rarr;</a> &middot; ',
+        exlink="",
         graph_json=_json.dumps({"elements": elements, "meta": meta}, ensure_ascii=False),
     )
+
+
+CONTENTS_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symposium community — contents</title>
+<style>
+  :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
+  * {{ box-sizing:border-box; }}
+  html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+               color:var(--ink); background:var(--bg); font-size:14px; }}
+  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
+  header .sub {{ font-size:12px; color:var(--muted); }}
+  a.uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
+  main {{ max-width:1000px; margin:0 auto; padding:18px 16px 60px; }}
+  h2 {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+        margin:26px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px; }}
+  h2:first-of-type {{ margin-top:6px; }}
+  .item {{ background:var(--panel); border:1px solid var(--line); border-radius:8px;
+           padding:10px 13px; margin-bottom:7px; }}
+  .item a {{ color:var(--accent); text-decoration:none; font-weight:600; line-height:1.35; }}
+  .item a:hover {{ text-decoration:underline; }}
+  .meta {{ font-size:11px; color:var(--muted); margin-top:4px; }}
+  .mbadge {{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px;
+             vertical-align:middle; border:1px solid rgba(0,0,0,.15); }}
+  .verdict {{ font-size:13px; line-height:1.45; margin-top:6px; padding-left:10px;
+              border-left:3px solid var(--line); color:#374151; }}
+  .note {{ font-size:12px; color:var(--muted); line-height:1.5; margin:0 0 4px; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>Symposium community &middot; {corpus_title}</h1>
+  <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
+  Everything in the record, newest first within each type. An <b>Argument</b> is where a claim is
+  made and judged; its verdict opens below it. <b>Data</b> and <b>Model</b> hold what an Argument
+  can stand on. <b>Analysis</b>, <b>Message</b> and <b>NonGroundable</b> are non-groundable by
+  type: they may be read and cited in prose and may never be used as evidence.</div>
+</header>
+<main>{sections}</main>
+</body>
+</html>
+"""
+
+
+READING_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+  :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
+  * {{ box-sizing:border-box; }}
+  html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+               color:var(--ink); background:var(--bg); font-size:15px; }}
+  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  header h1 {{ font-size:16px; margin:0 0 3px; font-weight:650; line-height:1.35; }}
+  header .sub {{ font-size:12px; color:var(--muted); }}
+  a.uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
+  main {{ max-width:820px; margin:0 auto; padding:20px 16px 80px; line-height:1.6; }}
+  h2.sec {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+            margin:28px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px; }}
+  h2.sec:first-of-type {{ margin-top:0; }}
+  .verdict-lead {{ font-size:16px; line-height:1.6; background:var(--panel);
+                   border:1px solid var(--line); border-left:4px solid var(--accent);
+                   border-radius:8px; padding:14px 16px; }}
+  .prose {{ background:var(--panel); border:1px solid var(--line); border-radius:8px;
+            padding:14px 16px; }}
+  .prose p {{ margin:0 0 11px; }} .prose p:last-child {{ margin-bottom:0; }}
+  .prose a, main a {{ color:var(--accent); }}
+  .prose h3.mdh {{ font-size:15px; font-weight:650; margin:18px 0 7px; }}
+  .prose h3.mdh:first-child {{ margin-top:0; }}
+  .prose h4.mdh {{ font-size:14px; font-weight:650; color:var(--muted); margin:14px 0 6px; }}
+  .hint {{ font-size:12px; color:var(--muted); line-height:1.5; }}
+  mark {{ background:#fff3bf; }}
+  /* `table-layout:fixed` and a break-anywhere rule, because a Ground's address is one
+     long unbreakable token: left to size itself the table came out 1037px inside an 820px
+     column and the whole page scrolled sideways. */
+  table.evidence {{ border-collapse:collapse; width:100%; table-layout:fixed;
+                    margin:8px 0; font-size:13px; background:var(--panel); }}
+  table.evidence th {{ text-align:left; font-size:10px; text-transform:uppercase;
+                       letter-spacing:.04em; color:var(--muted);
+                       border-bottom:1px solid var(--line); padding:6px 10px 6px 0; }}
+  table.evidence td {{ vertical-align:top; padding:9px 10px 9px 0;
+                       border-bottom:1px solid var(--line); line-height:1.5;
+                       overflow-wrap:anywhere; }}
+  table.evidence th:nth-child(1) {{ width:14%; }}
+  table.evidence th:nth-child(2) {{ width:31%; }}
+  table.evidence tr.assertion td {{ background:#f2f5f9; padding:10px; border-bottom:none;
+                                    font-size:14px; }}
+  table.evidence td.gname {{ overflow-wrap:anywhere; }}
+  table.evidence code {{ font-size:11px; overflow-wrap:anywhere; }}
+  table.evidence .crit {{ margin-top:6px; color:#166534; }}
+  .pill-primary {{ font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+                   background:var(--accent); color:#fff; border-radius:9px; padding:1px 7px;
+                   margin-left:6px; vertical-align:middle; }}
+  h3.evh {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+            margin:28px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px;
+            font-weight:650; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>{title}</h1>
+  <div class="sub"><a class="uplink" href="{map_href}">claim map &rarr;</a> &middot;
+  <a class="uplink" href="contents.html">contents</a> &middot;
+  <a class="uplink" href="index.html">reference graph</a> &middot;
+  {byline}</div>
+</header>
+<main>{body}</main>
+</body>
+</html>
+"""
+
+
+def render_reading_html(title, byline, map_href, body):
+    """An Argument as a document rather than as an application.
+
+    The claim map is a fixed-viewport graph with the prose in a 96-pixel scrolling strip
+    beside it. Measured on this record's one Argument, that strip showed 95 pixels of 26,019
+    — four tenths of one per cent of the verdict, purpose, rationale and evidence at a time.
+    The structure is the specialist view and deserves the viewport it has; the prose is what
+    a scientist came to read and needs a page that simply scrolls."""
+    return READING_TEMPLATE.format(
+        title=_html.escape(title), byline=_html.escape(byline),
+        map_href=_html.escape(map_href), body=body)
+
+
+def render_contents_html(entries, corpus_title="community record"):
+    """A plain reading list of the record.
+
+    The overview is a reference graph, which answers "how does this record hang together"
+    and not "what has this community claimed". A reader who does not want to interrogate a
+    force-directed layout had no way to enumerate 46 artifacts and no way to see a verdict
+    without first finding the Argument in the picture. Arguments come first because the
+    verdict is what a reader came for; everything else follows in the order the type is
+    likely to be wanted."""
+    order = ["Argument", "Data", "Model", "ScientificPublication",
+             "Analysis", "Message", "NonGroundable"]
+    seen, out = set(), []
+    types = order + sorted({e["type"] for e in entries} - set(order))
+    for t in types:
+        rows = [e for e in entries if e["type"] == t]
+        if not rows:
+            continue
+        seen.add(t)
+        items = []
+        for e in sorted(rows, key=lambda x: x["created"], reverse=True):
+            verdict = (f'<div class="verdict">{_html.escape(e["verdict"])}</div>'
+                       if e.get("verdict") else "")
+            extra = f' &middot; {_html.escape(e["extra"])}' if e.get("extra") else ""
+            items.append(
+                '<div class="item"><a href="{href}">{title}</a>'
+                '<div class="meta"><span class="mbadge" style="background:{color}"></span>'
+                '{member} &middot; {created}{extra} &middot; <code>{name}</code></div>'
+                '{verdict}</div>'.format(
+                    href=_html.escape(e["href"]), title=_html.escape(e["title"]),
+                    color=_html.escape(e.get("color", "#9ca3af")),
+                    member=_html.escape(e["member"]), created=_html.escape(e["created"][:16]),
+                    extra=extra, name=_html.escape(e["name"]), verdict=verdict))
+        out.append(f"<h2>{_html.escape(t)} ({len(rows)})</h2>" + "".join(items))
+    return CONTENTS_TEMPLATE.format(corpus_title=_html.escape(corpus_title),
+                                    sections="".join(out))
 
 
 # --------------------------------------------------------------------------- #
@@ -1221,46 +1391,100 @@ def _mark_grounded(escaped, spans):
     return escaped
 
 
+def preformatted(text, spans=None):
+    """A property whose whitespace is its meaning, chiefly an Analysis's `code`.
+
+    Still passed through `_mark_grounded`, because a Content Object may declare a
+    `text_span` method over code and a Ground through it has to land on the line it
+    quotes — the same reason every other rendering path marks."""
+    return (f"<pre class='code'><code>"
+            + _mark_grounded(_html.escape(text or ""), spans) + "</code></pre>")
+
+
 def md_to_html(md, pages=None, spans=None):
+    """Members write long prose in markdown and the record holds it verbatim, so a heading
+    line has to be rendered as a heading or it shows the reader its `##`. Levels map to h3
+    and h4 because the page's own property labels are h2: an artifact's internal structure
+    sits inside its property, never beside it.
+
+    Every path here escapes, then marks grounded passages, then renders inline markdown, in
+    that order. A path that skips the marking silently breaks the Ground that quotes it: the
+    address still resolves in the validator and the reader still lands at the top of the
+    page. Headings and list items were two such paths."""
     out = []
     for block in _re.split(r"\n\s*\n", (md or "").replace("\r\n", "\n").strip()):
         lines = [ln for ln in block.split("\n") if ln.strip()]
         if not lines:
             continue
         if all(_re.match(r"^\s*[-*]\s+", ln) for ln in lines):
-            items = "".join("<li>" + _md_inline(_html.escape(_re.sub(r"^\s*[-*]\s+", "", ln)), pages)
-                            + "</li>" for ln in lines)
+            items = "".join(
+                "<li>" + _md_inline(
+                    _mark_grounded(_html.escape(_re.sub(r"^\s*[-*]\s+", "", ln)), spans), pages)
+                + "</li>" for ln in lines)
             out.append("<ul>" + items + "</ul>")
         else:
-            out.append("<p>" + "<br>".join(
-                _md_inline(_mark_grounded(_html.escape(ln), spans), pages) for ln in lines)
-                + "</p>")
+            # A heading may open a block without a blank line after it, so headings are
+            # split out line by line rather than by testing the block as a whole.
+            para = []
+
+            def flush():
+                if para:
+                    out.append("<p>" + "<br>".join(para) + "</p>")
+                    para.clear()
+
+            for ln in lines:
+                m = _re.match(r"^\s{0,3}(#{1,6})\s+(.*?)\s*#*\s*$", ln)
+                if m:
+                    flush()
+                    tag = "h3" if len(m.group(1)) <= 2 else "h4"
+                    out.append(f"<{tag} class='mdh'>" + _md_inline(
+                        _mark_grounded(_html.escape(m.group(2)), spans), pages) + f"</{tag}>")
+                else:
+                    para.append(_md_inline(_mark_grounded(_html.escape(ln), spans), pages))
+            flush()
     return "".join(out)
 
 
-def csv_table(text, max_rows=200):
+def csv_table(text, max_rows=None, method="csv"):
     """Render an embedded CSV property as a table, with each cell carrying the id a
     `csv` address resolves to — so a Ground's reference deep-links straight to the cell
-    it names, and a reader can check the quote against the number."""
-    rows = [r for r in (text or "").replace("\r\n", "\n").split("\n") if r.strip()]
+    it names, and a reader can check the quote against the number.
+
+    Parsed with `csv.reader` rather than `split(",")`. A quoted field holding a comma is
+    ordinary in these imports — `"19113 genes per arm, identifier sets identical bar one"`
+    is one cell of one survey — and splitting it in two shifts every cell to its right by a
+    column, so the anchors this function writes would deep-link a Ground to the wrong
+    value while looking perfectly correct."""
+    src = (text or "").replace("\r\n", "\n")
+    try:
+        rows = [r for r in _csv.reader(_io.StringIO(src)) if any(c.strip() for c in r)]
+    except (_csv.Error, ValueError):
+        rows = [r.split(",") for r in src.split("\n") if r.strip()]
     if not rows:
         return "<p class='hint'>(empty)</p>"
-    hdr = [c.strip() for c in rows[0].split(",")]
+    hdr = [c.strip() for c in rows[0]]
     key = hdr[0] if hdr else "row"
     body = []
-    for r in rows[1:max_rows + 1]:
-        cells = [c.strip() for c in r.split(",")]
+    limit = len(rows) - 1 if max_rows is None else max_rows
+    for r in rows[1:limit + 1]:
+        cells = [c.strip() for c in r]
         rk = cells[0] if cells else ""
         tds = "".join(
             '<td id="{}">{}</td>'.format(
-                _html.escape(f"csv.row={rk}&col={hdr[i]}" if i < len(hdr) else ""),
+                _html.escape(f"{method}.row={rk}&col={hdr[i]}" if i < len(hdr) else ""),
                 _html.escape(c))
             for i, c in enumerate(cells))
         body.append(f"<tr>{tds}</tr>")
-    more = ("<tr><td colspan='%d' class='hint'>… %d further row(s) not shown</td></tr>"
-            % (len(hdr), len(rows) - 1 - max_rows)) if len(rows) - 1 > max_rows else ""
+    # Every row is rendered by default. A truncated table silently breaks the one thing
+    # these ids exist for: a Ground addressing row 400 of a 714-row table would resolve in
+    # the validator and land the reader at the top of the page. What bounds the size here
+    # is policy/embedding-and-size.md, which bounds the artifact.
+    more = ("<tr><td colspan='%d' class='hint'>… %d further row(s) not shown; an address "
+            "into them will not resolve on this page</td></tr>"
+            % (len(hdr), len(rows) - 1 - limit)) if len(rows) - 1 > limit else ""
     head = "".join(f"<th>{_html.escape(c)}</th>" for c in hdr)
-    return (f"<p class='hint'>Addressed as <code>#csv.row=&lt;{_html.escape(key)}&gt;"
+    return (f"<p class='hint'>Addressed as <code>#{_html.escape(method)}"
+            f".row=&lt;{_html.escape(key)}&gt;"
             f"&amp;col=&lt;column&gt;</code></p>"
             f"<div class='tablewrap'><table class='data'><tr>{head}</tr>"
             + "".join(body) + more + "</table></div>")
@@ -1288,6 +1512,11 @@ ARTIFACT_TEMPLATE = """<!doctype html>
   .prose {{ background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 14px; line-height:1.5; font-size:14px; }}
   .prose p {{ margin:0 0 10px; }} .prose p:last-child {{ margin-bottom:0; }}
   .prose a, main a {{ color:var(--accent); }}
+  .prose h3.mdh {{ font-size:14px; font-weight:650; margin:16px 0 6px; }}
+  .prose h3.mdh:first-child {{ margin-top:0; }}
+  .prose h4.mdh {{ font-size:13px; font-weight:650; color:var(--muted); margin:12px 0 5px; }}
+  pre.code {{ background:var(--panel); border:1px solid var(--line); border-radius:8px;
+              padding:12px 14px; overflow-x:auto; font-size:12px; line-height:1.45; margin:0; }}
   .cite-dead {{ border-bottom:1px dotted var(--muted); color:var(--muted); cursor:help; }}
   code {{ background:#eef1f5; padding:1px 4px; border-radius:4px; font-size:12px; }}
   .tablewrap {{ overflow-x:auto; background:var(--panel); border:1px solid var(--line); border-radius:8px; }}

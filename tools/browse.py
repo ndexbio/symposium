@@ -26,7 +26,9 @@ gate — which is the one thing a record's reader must be able to rely on.
 from __future__ import annotations
 
 import argparse
+import csv
 import html
+import io
 import json
 import os
 import pathlib
@@ -35,13 +37,18 @@ import shutil
 import sys
 from collections import defaultdict
 
-from validate import (CITATION_RE, build_index, parse_address,     # noqa: E402
-                         parse_instant, resolve, validate)
+from validate import (CITATION_RE, build_index, method_of,          # noqa: E402
+                         parse_address, parse_instant, resolve, validate)
 import templates as T
 import figures as F                                              # noqa: E402
 
 ARGUMENT = "Argument"
 NON_GROUNDABLE_TYPES = {"Analysis", "NonGroundable", "Message"}
+
+#: Artifact properties whose value is an address or a list of them (spec §1.5, §2.5). These
+#: carry the record's formal provenance, so they are rendered as links rather than as text.
+ADDRESS_PROPS = {"produced_by", "inputs", "supersedes", "extracted_from", "recipients",
+                 "serves_goals"}
 
 # There is no verdict vocabulary. An Argument holds ONE free-text verdict, judging its
 # primary Assertion for a stated purpose, so a verdict is read rather than tallied:
@@ -675,6 +682,74 @@ def build_overview(artifacts, index, colors, pages, findings_by):
 # Artifact pages (everything that is not an Argument)
 # --------------------------------------------------------------------------- #
 
+def is_table_method(content):
+    """Does this Content Object describe row/column addressing?
+
+    `method_of` is the validator's, not a copy: a Content name carries an optional label in
+    front of its method (`pooled_csv`, `control_rows_csv`), and a browser that derived the
+    method by its own rule would eventually disagree with the gate about what an address
+    means. The `addressing_method` fallback catches a Content whose name declares no known
+    method — the validator REVIEWs that rather than refusing it, so it reaches these pages."""
+    am = content.get("addressing_method") or ""
+    return method_of(content.get("name", "")) == "csv" or ("row=" in am and "col=" in am)
+
+
+def table_method_for(prop, methods):
+    """Which declared Content addresses this property's table?
+
+    The specification does not bind a Content Object to the property it describes: the
+    binding lives in the address, `@artifact.<property>#<content>.row=...`, so the browser
+    has to recover it. Members name the pair by a common stem — `pooled_effects` with
+    `pooled_csv`, `control_rows` with `control_rows_csv`, `inventory` with `inventory_csv`
+    — so the stem is what is matched, longest first, and a single table Content on the
+    artifact needs no matching at all.
+
+    Getting this wrong is not cosmetic. The cell ids written from it are what a Ground's
+    address resolves to, and until this existed every table emitted ids under the literal
+    name `csv`, so following a Ground into any artifact whose Content is named anything
+    else landed the reader at the top of the page instead of on the value."""
+    tables = [m for m in methods if is_table_method(m)]
+    if not tables:
+        return "csv"
+    if len(tables) == 1:
+        return tables[0]["name"]
+    best, best_len = None, -1
+    for m in tables:
+        stem = m["name"][:-4] if m["name"].endswith("_csv") else m["name"]
+        if not stem:
+            continue
+        if prop.startswith(stem) or stem.startswith(prop):
+            if len(stem) > best_len:
+                best, best_len = m["name"], len(stem)
+    return best or tables[0]["name"]
+
+
+def looks_tabular(value, declares_table, max_header=60):
+    """Is this property value an embedded table, rather than prose that has commas in it?
+
+    This used to be `"\\n" in v and "," in v.split("\\n")[0]`, which is true of almost every
+    long prose property anyone writes. It rendered every `import_method` in the record as a
+    table, and that is not a cosmetic fault: splitting prose on commas broke `4,364,823
+    bytes` into three cells and `19,113 data rows` into two, so the page displayed numbers
+    the artifact does not contain.
+
+    Three conditions, all necessary. The artifact must DECLARE a row/column Content, because
+    a table nobody can address is not what this section is for. The value must parse as
+    rectangular CSV, which prose never does. And the header cells must be short, because a
+    two-line description whose lines happen to carry equal numbers of commas is not a table
+    with a 490-character column name."""
+    if not declares_table or not isinstance(value, str) or "\n" not in value:
+        return False
+    try:
+        rows = [r for r in csv.reader(io.StringIO(value)) if any(c.strip() for c in r)]
+    except (csv.Error, ValueError):
+        return False
+    if len(rows) < 2 or len(rows[0]) < 2:
+        return False
+    if any(len(r) != len(rows[0]) for r in rows):
+        return False
+    return not any(len(c) > max_header for c in rows[0])
+
 def render_artifact_page(doc, index, colors, pages, findings, cyto, spans=None):
     h = doc["artifact"]
     name, typ = h["name"], h["type"]
@@ -691,7 +766,11 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, spans=None):
         parts.append('<div class="banner">Non-groundable by type (spec §2.1). Everything here '
                      'may be cited in prose and none of it may be used as a Ground.</div>')
 
-    methods = [o for o in doc.get("objects", []) if o.get("type") == "AddressingMethod"]
+    # Spec §1.8.1 calls this Object type `Content`. It was `AddressingMethod` in an earlier
+    # draft, and reading the old name here meant this table matched nothing and never
+    # rendered — so every artifact page in the record silently omitted the one section that
+    # says what may be cited and how to write the address.
+    methods = [o for o in doc.get("objects", []) if o.get("type") == "Content"]
     if methods:
         rows = "".join(
             '<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>'.format(
@@ -707,11 +786,37 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, spans=None):
                      f'<table class="methods"><tr><th>method</th><th></th><th>reference form</th></tr>'
                      f'{rows}</table>')
 
+    # Properties whose value IS an address (spec §1.5, §2.5). They are the record's formal
+    # provenance and its only machine-readable links between artifacts, and until this was
+    # here they printed as literal `@name` text: a reader could see that a table was
+    # produced by an Analysis and had no way to open it.
+    def addr_link(a):
+        a = str(a)
+        root = a.lstrip("@").split("#")[0].split(".")[0]
+        title = (index.get(root, {}).get("header", {}) or {}).get("title")
+        if root not in pages:
+            return f"<code>{esc(a)}</code>"          # a Member, or something unresolved
+        label = esc(title) if title else f"<code>{esc(a)}</code>"
+        return (f'<a href="{esc(pages[root])}">{label}</a> '
+                f'<span class="hint"><code>{esc(a)}</code></span>')
+
+    declares_table = any(is_table_method(m) for m in methods)
     for k, v in h.items():
         if k in ("name", "type", "specification_version", "published_by", "created", "title"):
             continue
-        if isinstance(v, str) and "\n" in v and "," in v.split("\n")[0]:
-            parts.append(f"<h2>{esc(k)}</h2>" + T.csv_table(v))
+        if k in ADDRESS_PROPS:
+            vs = v if isinstance(v, list) else [v]
+            parts.append(f"<h2>{esc(k)}</h2><ul>"
+                         + "".join(f"<li>{addr_link(x)}</li>" for x in vs) + "</ul>")
+        elif k == "code" and isinstance(v, str):
+            # An Analysis carries its procedure's code verbatim. Run through the prose
+            # renderer it lost every indent and every `#` comment line became a heading,
+            # which is the one property where whitespace is the meaning. Grounded passages
+            # are still marked: a Content may declare a `text_span` method over code.
+            parts.append(f"<h2>{esc(k)}</h2>" + T.preformatted(v, spans.get(k)))
+        elif isinstance(v, str) and looks_tabular(v, declares_table):
+            parts.append(f"<h2>{esc(k)}</h2>"
+                         + T.csv_table(v, method=table_method_for(k, methods)))
         elif isinstance(v, list):
             parts.append(f"<h2>{esc(k)}</h2><ul>"
                          + "".join(f"<li>{prose(x)}</li>" for x in v) + "</ul>")
@@ -763,6 +868,139 @@ def grounded_spans(artifacts):
     return out
 
 
+def evidence_table(doc, index, pages):
+    """Every Ground of an Argument in one table, under the Assertion it bears on.
+
+    The claim map folds nine Grounds into nine edges, so reading what an Argument
+    actually stands on meant opening nine of them one at a time. A critic's first question
+    of any Argument is what its Grounds reach and whether a criterion could have come out
+    the other way; that question deserves a page, not a sequence of clicks.
+
+    The columns are the ones the specification says carry the judgment: what was addressed,
+    how it bears on the claim, and whether the author offered it as a test (§2.2.4)."""
+    objs = {o["name"]: o for o in doc.get("objects", [])}
+    rels = doc.get("relationships", [])
+    esc = html.escape
+    by_assertion = defaultdict(list)
+    for r in rels:
+        if (r.get("rel") or r.get("type")) == "grounded_by":
+            g = objs.get(r.get("target"))
+            if g:
+                by_assertion[r.get("source")].append(g)
+    if not by_assertion:
+        return ""
+
+    primary = doc["artifact"].get("primary_assertion", "")
+    order = [primary] + [a for a in by_assertion if a != primary]
+    rows = []
+    for aname in order:
+        grounds = by_assertion.get(aname)
+        if not grounds:
+            continue
+        a = objs.get(aname, {})
+        rows.append(
+            '<tr class="assertion"><td colspan="3"><b>{}</b>{}<div class="hint">{}</div></td></tr>'
+            .format(esc(a.get("claim", aname)),
+                    ' <span class="pill-primary">primary</span>' if aname == primary else "",
+                    "scope — " + esc(a.get("scope", "")) if a.get("scope") else ""))
+        for g in grounds:
+            addr = g.get("citation", "")
+            root = addr.lstrip("@").split("#")[0].split(".")[0]
+            frag = address_fragment(addr)
+            if root in pages:
+                href = pages[root] + (f"#{frag}" if frag else "")
+                target = (f'<a href="{esc(href)}">{esc(pretty_address(addr, index))}</a>'
+                          f'<div class="hint"><code>{esc(addr)}</code></div>')
+            else:
+                target = f"<code>{esc(addr)}</code>"
+            crit = (f'<div class="crit"><b>Criterion.</b> {esc(g["criterion"])}</div>'
+                    if g.get("criterion")
+                    else '<div class="hint">No criterion: material built on, '
+                         'not a test the claim survived.</div>')
+            rows.append('<tr><td class="gname"><code>{}</code></td><td>{}</td>'
+                        '<td>{}{}</td></tr>'.format(
+                            esc(g["name"]), target, esc(g.get("rationale", "")), crit))
+    return ('<h3 class="evh">What this Argument stands on</h3>'
+            '<p class="hint">Every Ground, under the Assertion it bears on. A Ground with a '
+            '<b>criterion</b> asserts the material was used as a test that could have counted '
+            'against the claim; one without offers the material as something built upon '
+            '(spec §2.2.4). Follow a target to land on the value itself.</p>'
+            '<table class="evidence"><tr><th>Ground</th><th>addresses</th>'
+            '<th>how it bears, and whether it was a test</th></tr>'
+            + "".join(rows) + "</table>")
+
+
+def render_reading_page(doc, index, pages, reading_name):
+    """The Argument's prose and evidence, as a page that scrolls.
+
+    Everything an author is required to write for a reader — `verdict`, `purpose`,
+    `rationale` — plus every Ground under the Assertion it bears on. The claim map keeps the
+    structure; this keeps the argument."""
+    h = doc["artifact"]
+    esc = html.escape
+    parts = []
+    if h.get("verdict"):
+        parts.append('<h2 class="sec">Verdict</h2>'
+                     f'<div class="verdict-lead">{esc(h["verdict"])}</div>')
+    for label, key in (("Purpose and stakes", "purpose"), ("Rationale", "rationale"),
+                       ("Description", "description"), ("Text", "text")):
+        if h.get(key):
+            parts.append(f'<h2 class="sec">{label}</h2>'
+                         f'<div class="prose">{T.md_to_html(h[key], pages)}</div>')
+    if h.get("supersedes"):
+        parts.append('<h2 class="sec">Supersedes</h2><div class="prose">'
+                     + ", ".join(f"<code>{esc(str(x))}</code>" for x in h["supersedes"])
+                     + (f'<p>{esc(h.get("supersedes_rationale", ""))}</p>'
+                        if h.get("supersedes_rationale") else "") + "</div>")
+    parts.append(evidence_table(doc, index, pages))
+    byline = "{} · {} · {}".format(
+        (h.get("published_by") or "").lstrip("@"), (h.get("created") or "")[:16],
+        ", ".join(h.get("authors") or []))
+    return T.render_reading_html(h.get("title") or h["name"], byline,
+                                 pages[h["name"]], "".join(parts))
+
+
+def contents_entries(artifacts, colors, pages, findings_by):
+    """Rows for the reading list: what a reader needs to decide whether to open a page.
+
+    An Argument carries the first two sentences of its `verdict`, because a verdict is a
+    judgment for a stated purpose and its opening clause is the thing a reader is looking
+    for. Nothing else on this page is prose from the artifact: a title is the author's own
+    summary and standing in for it here would be editorialising."""
+    rows = []
+    for a in artifacts:
+        h = a["artifact"]
+        name, typ = h["name"], h["type"]
+        verdict = ""
+        if typ == ARGUMENT and h.get("verdict"):
+            parts = re.split(r"(?<=[.!?])\s+", h["verdict"].strip())
+            verdict = " ".join(parts[:2])
+        extra = []
+        if typ == ARGUMENT:
+            n = sum(1 for o in a.get("objects", []) if o.get("type") == "Ground")
+            crit = sum(1 for o in a.get("objects", [])
+                       if o.get("type") == "Ground" and o.get("criterion"))
+            extra.append(f"{n} Ground(s), {crit} offered as a test")
+        if h.get("supersedes"):
+            extra.append(f"supersedes {len(h['supersedes'])}")
+        if findings_by.get(name):
+            extra.append(f"{len(findings_by[name])} checker finding(s)")
+        # An Argument's entry here goes to the document, not to the graph. Someone arriving
+        # from a contents page has come to read; the claim map is one click further on and
+        # is linked from it. Arriving from the reference graph still lands on the map.
+        href = (pages[name].replace(".html", "_reading.html") if typ == ARGUMENT
+                else pages[name])
+        rows.append({
+            "name": name, "type": typ, "href": href,
+            "title": h.get("title") or name,
+            "member": h.get("published_by", "").lstrip("@"),
+            "color": colors.get(h.get("published_by", "").lstrip("@"), "#9ca3af"),
+            "created": h.get("created") or "", "verdict": verdict,
+            "extra": " · ".join(extra),
+        })
+    return rows
+
+
 def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=None, quiet=False,
                    figures_dir=None):
     artifacts = load_record(record_dir)
@@ -792,10 +1030,16 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
             # The header's own prose is where the author says what the argument is doing
             # and cites the work it answers. It is not in the graph and would otherwise
             # be invisible on the page that most needs it.
-            intro = "".join(T.md_to_html(a["artifact"][k], pages)
-                            for k in ("description", "text") if a["artifact"].get(k))
+            reading = page_name(name).replace(".html", "_reading.html")
+            intro = ('<p><a href="{}"><b>Read this Argument as a document &rarr;</b></a> '
+                     '<span class="hint">verdict, purpose, rationale and every Ground in '
+                     'one place</span></p>'.format(html.escape(reading)))
+            intro += "".join(T.md_to_html(a["artifact"][k], pages)
+                             for k in ("description", "text") if a["artifact"].get(k))
             (out / pages[name]).write_text(
                 T.render_claim_html(collapsed, meta, cyto, intro_html=intro), encoding="utf-8")
+            (out / reading).write_text(
+                render_reading_page(a, index, pages, reading), encoding="utf-8")
             if figures_dir:
                 # Same precomputed positions as the page, so the figure IS the
                 # picture the reader saw — only unelided and print-scaled.
@@ -826,6 +1070,9 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
     meta["counts"]["findings"] = sum(len(v) for v in findings_by.values())
     (out / "index.html").write_text(
         T.render_overview_html(elements, meta, cyto,
+                               corpus_title=title or "community record"), encoding="utf-8")
+    (out / "contents.html").write_text(
+        T.render_contents_html(contents_entries(artifacts, colors, pages, findings_by),
                                corpus_title=title or "community record"), encoding="utf-8")
 
     manifest = {

@@ -56,7 +56,11 @@ def load_roles():
     parser would be a new way to be silently wrong about what a role permits.
 
     Prose in the file is for the agent to read. Only the fence is read here, and only
-    `may_publish` and `must_not` are used at all.
+    `may_publish`, `may_import` and `must_not` are used at all.
+
+    `may_import` is separate from `may_publish` because importing is not a type. An import is
+    a Data artifact and Data is what an analyst is meant to publish; what marks it is
+    `import_method` (spec 1.10). Only `importer` claims it, and absent means no.
     """
     out = {}
     if not ROLES_DIR.is_dir():
@@ -78,6 +82,9 @@ def load_roles():
             name = p.stem
         c.setdefault("must_not", [])
         c.setdefault("may_publish", [])
+        # Absent means no: a role that does not claim the importer's job does not get it by
+        # omission, which is what let three imports through under `analyst` and `researcher`.
+        c.setdefault("may_import", False)
         c["_path"] = p
         out[name] = c
     return out
@@ -225,6 +232,24 @@ def main(argv):
                   f"(allowed: {', '.join(sorted(allowed))})")
             for line in roles[role].get("must_not", []):
                 print(f"           {line}")
+            fatal = True
+            kinds.add("role")
+        # IMPORTING IS A SEPARATE ACT FROM PUBLISHING A TYPE. `may_publish` cannot express it:
+        # an import is a Data artifact, and Data is exactly what an analyst is meant to
+        # publish. What distinguishes them is `import_method`, which spec 1.10 requires on
+        # anything rendered from outside the record. The fidelity policy draws a line between
+        # the importer's job and the analyst's, and without this check that line was invisible
+        # at the moment it was crossed — three imports in this deployment's first run were
+        # published by sessions holding `analyst` and `researcher`, one of them by a Member
+        # whose own role file told her to ask an importer first.
+        if allowed is not None and h.get("import_method") \
+                and not roles[role].get("may_import", False):
+            print(f"  {name}: FAIL  role '{role}' may not import — this artifact carries "
+                  f"`import_method`.\n"
+                  f"           Rendering outside material into the record is the importer's "
+                  f"act and its own\n           job (policy/import-fidelity.md). Publish it "
+                  f"from an `--role importer` session,\n           or ask the Member holding "
+                  f"that role.")
             fatal = True
             kinds.add("role")
         # one session holds one role, so the role segment partitions the namespace and keeps

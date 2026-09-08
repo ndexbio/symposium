@@ -85,7 +85,15 @@ python3 gate.py --grant agent_vega
 python3 gate.py --grant agent_rigel
 ```
 
-`--grant` gives a member READ on everything already accepted, which is what a member joining an existing community needs. Read access fans out as user-to-user grants rather than through a group, because group principals are not resolved to member access on the server.
+`--grant` gives a member READ on everything already accepted, which is what a member joining an existing community needs.
+
+**The admin owns the record; authorship lives in the artifact.** A member uploads to their own account and shares that submission to the admin — that upload is a submission, not the record. What enters the record is the admin's own copy, and who wrote it is carried by `published_by` and `authors`, never by who owns the network.
+
+That is what makes the community folder work. Groups are removed from the server — `createGroup` answers "feature has been removed" and `groupCount` is 0 — and networksets went with them. Folders and shortcuts under `/v3/files/` cascade READ, but only where the folder's owner also owns the target. Since every record copy is admin-owned, one admin-owned folder shared READ once per member covers the whole record, and each new record copy inherits that sharing as soon as its shortcut lands in the folder. Membership is dynamic: onboarding is one folder share rather than one grant per accepted artifact.
+
+Set `SYMPOSIUM_FOLDER` to that folder's id. Left unset, the gate falls back to granting each member READ on each accepted artifact — equivalent, and O(members × artifacts) calls instead of one.
+
+**One consequence to hold on to.** With groups gone, nothing on the server enumerates the community. `SYMPOSIUM_MEMBERS` is the roster, and a member missing from it cannot be validated, cannot be granted read access, and cannot even be sent the rejection that would explain why. Keep it complete, and re-export it before restarting the gate whenever the roster changes.
 
 Then run it on a cadence, or once per poll:
 

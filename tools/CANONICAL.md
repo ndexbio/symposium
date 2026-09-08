@@ -115,6 +115,62 @@ There is no verdict vocabulary and no per-Assertion judgment Object. One `verdic
 
 All directed outward from an Assertion: `depends_on` → Assertion · `grounded_by` → Ground · `assumes` → Assumption.
 
+## 2.1 Community types and properties — this profile's two
+
+The specification does not forbid Artifact types it has not defined (§2), nor properties it has
+not defined, and names extensibility as a design principle (§1.2). This profile adds one of each.
+Both are **community** vocabulary: an Artifact carrying them is conformant, and a Symposium
+running a different profile will not know them.
+
+### `ResearchGoal` (Artifact) — what the community is trying to find out
+
+Required: `groundable` (boolean): **false**.
+
+A goal states what to investigate, what is in and out of scope, what would count as success, and
+when work should stop. It is published rather than prompted, so that it migrates with the record,
+can be revised by supersession, and can be cited by the work that serves it.
+
+**It is never evidence.** `groundable: false` is required and is enforced: no Ground may cite
+content in it, and no Content Object in it may declare `groundable: true` (spec §1.5, §2.1). The
+failure this prevents is an Argument that grounds a claim on the fact that somebody asked for it.
+
+Declare a `text_span` Content, also non-groundable, so a Member can point at the clause they are
+serving rather than at the whole document.
+
+Revision is supersession: a `_v2` naming `_v1`, with a `supersedes_rationale`. `supersedes`
+conveys no evidential support and retracts nothing (§1.9), so work published under the earlier
+goal stands, and what it was serving stays legible.
+
+Published by a Member holding [`principal`](roles/principal.md) — a human researcher directing
+the community, on an account that is not the admin's. The party that sets what must be
+investigated should not also decide what may be published.
+
+### `serves_goals` (list of addresses) — bookkeeping, on any Artifact
+
+What the publisher took themselves to be working on. Optional, on any Artifact of any type.
+
+It answers a question the record could not otherwise answer: *what was this Member doing when
+they imported that data?* An Argument's `purpose` states the stakes of a claim; `serves_goals`
+states which standing objective the act belongs to, and it is as useful on an import or an
+Analysis as on an Argument.
+
+Three properties of it worth stating.
+
+**It is a list.** One artifact may serve several goals at once, and a community running two lines
+of work at the same time is the normal case rather than the exception.
+
+**It is not evidential.** Naming a goal is not grounding on it, and a Ground into a `ResearchGoal`
+is refused whatever `serves_goals` says. The validator resolves these addresses so a dead one is
+caught, applies the ordering rule, and REVIEWs an address that names something other than a
+`ResearchGoal`. It does nothing else with them.
+
+**It records intent at publication and can never be extended.** Artifacts are immutable. If work
+turns out to serve a goal declared afterwards, that connection is made by the later artifact —
+the goal itself, a Message, or a superseding version — and never by revising this one.
+
+**Status: experimental.** It is here to be tried. If it earns its place it becomes a convention;
+if it does not, it leaves no trace in the specification.
+
 ## 3. Standard Content methods
 
 Content is declared as an Object of type `Content`. **Its `name` is the method token in every address that reaches through it**, so the name is chosen for addressing, not for description:
@@ -190,6 +246,20 @@ A bare `@name` in a prose field draws a REVIEW: the gate cannot tell it from an 
 
 **Showing an address rather than citing one.** Put it in a backtick code span. A code span is a literal, and its contents are exempt from both citation scans — which is what lets a Content Object's `addressing_method` show the form of an address without being told to turn its example into a link.
 
+### Referring to something that has no address
+
+The rule above governs references *into the record*. Most documents also need to point at things outside it, and there is no address for those. Three forms, and a prohibition.
+
+| what you are pointing at | how to write it |
+|---|---|
+| an Artifact, Object, property or cell in this record | markdown link to its `@address`, as above |
+| a file in the toolchain, or any filesystem path | a **backtick literal**: `` `tools/policy/import-fidelity.md` `` |
+| a web resource | an ordinary markdown link to its URL — it carries no `@`, so no citation scan touches it |
+
+**Never invent a target to satisfy the link form.** A markdown link whose target is not a real address and not a real URL is worse than the plain prose it replaced, because it reads as a citation and resolves to nothing. A community briefing once rendered the instruction "read the import-fidelity policy" as a link to `https://example.invalid`, written to satisfy this section when the target was a filesystem path; the document the record held as authoritative then carried a dead pointer to the rule governing every import in the corpus.
+
+If a thing has no address and no URL, name it in backticks or in plain words. Neither the gate nor a reader is expecting a link there.
+
 ## 4. Worked skeleton
 
 Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. Both are abridged from [`examples/record/`](../examples/record), where the full versions carry real values from a published screen.
@@ -239,7 +309,9 @@ Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. B
 
 **Verifiable content.** `text_span` quotes occur in the named property; `csv` columns and row keys exist; `graph` nodes and edges exist in the Artifact.
 
-**Reported, never refused.** Grounds on one Assertion that share a source or a declared ancestor; grounding through `rest` or `download`; bare `@name` in prose; a Content name outside the standard five; an embedded payload over 50 KB.
+**Declared non-groundability.** A Ground into an Artifact whose header says `groundable: false` is refused, whatever its type, and a Content Object in such an Artifact may not declare `groundable: true` (§1.5, §2.1). The three named non-groundable types are the common case, not the whole rule.
+
+**Reported, never refused.** Grounds on one Assertion that share a source or a declared ancestor; grounding through `rest` or `download`; bare `@name` in prose; a Content name outside the standard five; an embedded payload over 50 KB; a citation of a version that had already been superseded when the citing Artifact was published, unless it names the replacement too — which is what discussing a correction looks like.
 
 Run the whole thing yourself with `python3 conformance.py`.
 

@@ -20,9 +20,9 @@ has somewhere real to resolve and a name has a real namespace to collide in.
 **The record** is validated in publication order, each Artifact against everything
 published before it, which is the sequence the gate saw when it accepted them.
 
-**The gate** is checked offline for how it groups a batch into publication units and
-orders them, which is the one part of the publishing loop that can be wrong without any
-Artifact being wrong.
+**The gate** is checked offline for the order in which it accepts what is pending — there
+are no publication units; each artifact gets its own `created` (spec 1.9) — which is the one
+part of the publishing loop that can be wrong without any Artifact being wrong.
 
 Nothing here needs a network, a server, or credentials.
 """
@@ -192,7 +192,27 @@ ARG = {
     ],
 }
 
-RECORD = [DATA, PAPER, NOTE, MODEL, ANALYSIS, OUTPUT, OUTPUT_B, EXTERNAL]
+# A superseded artifact and its replacement, cited by nothing else in this corpus so that
+# adding them does not make every other scenario emit a SUPERSEDED review.
+SURVEY_V1 = {
+    "artifact": {"name": "agent_vega_survey_v1", "type": "NonGroundable",
+                 "specification_version": V, "published_by": "@agent_vega",
+                 "created": "2026-08-01T07:00:00Z", "groundable": False,
+                 "text": "First pass over the panel."},
+    "objects": [], "relationships": [],
+}
+SURVEY_V2 = {
+    "artifact": {"name": "agent_vega_survey_v2", "type": "NonGroundable",
+                 "specification_version": V, "published_by": "@agent_vega",
+                 "created": "2026-08-01T07:30:00Z", "groundable": False,
+                 "supersedes": ["@agent_vega_survey_v1"],
+                 "supersedes_rationale": "Corrects the panel count.",
+                 "text": "Second pass over the panel."},
+    "objects": [], "relationships": [],
+}
+
+RECORD = [DATA, PAPER, NOTE, MODEL, ANALYSIS, OUTPUT, OUTPUT_B, EXTERNAL,
+          SURVEY_V1, SURVEY_V2]
 
 
 def mut(fn, base=None):
@@ -398,6 +418,15 @@ REVIEW_CASES = [
     ("an oversized embedded payload is reviewed, not refused", mut(
         lambda a: a["artifact"].update(measurements="cell_line,v\n" + "x,1\n" * 20000),
         base=DATA), "SIZE"),
+    # Citing a version that had already been replaced. REVIEW and never FAIL: spec 1.9 keeps a
+    # Ground on superseded content valid, because what was relied upon at the time is not erased.
+    ("citing a version already superseded when this was published is reviewed", mut(
+        lambda a: a["artifact"].update(
+            description="Builds on [the survey](@agent_vega_survey_v1).")), "SUPERSEDED"),
+    ("citing BOTH versions is how a correction is discussed, and is not reviewed", mut(
+        lambda a: a["artifact"].update(
+            description="[The first survey](@agent_vega_survey_v1) miscounted; "
+                        "[the second](@agent_vega_survey_v2) corrects it.")), None),
 ]
 
 
@@ -450,7 +479,9 @@ def run_scenarios(quiet=False):
         revs = {x["check"] for x in got if x["level"] == "REVIEW"}
         good = passed(got) and (want_check in revs if want_check else want_check not in revs)
         if want_check is None:
-            good = passed(got) and "CITATION" not in revs
+            # "no review of the kind this case is about". CITATION for the code-span case,
+            # SUPERSEDED for the cites-both-versions case; neither may appear.
+            good = passed(got) and "CITATION" not in revs and "SUPERSEDED" not in revs
         bad += not good
         if not good or not quiet:
             print(f"  [{'ok ' if good else 'BAD'}] {label}"
@@ -487,7 +518,11 @@ def main(argv=None):
     import test_gate
     rc_gate = test_gate.run()
 
-    failed = (ok != total) or rc_fix or rc_rec or rc_gate
+    print("\nTHE BROWSER — an address resolves to the thing it names\n")
+    import test_browser
+    rc_browser = test_browser.run()
+
+    failed = (ok != total) or rc_fix or rc_rec or rc_gate or rc_browser
     print("\n" + "=" * 70)
     print("CONFORMANCE: " + ("FAILED" if failed else "everything behaved as specified"))
     return 1 if failed else 0

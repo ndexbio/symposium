@@ -295,6 +295,14 @@ def groundable(info, citing_artifact):
     rec = info["rec"]
     if rec["type"] in NON_GROUNDABLE_TYPES:
         return False, "FAIL", f"{rec['type']} is a non-groundable Artifact type (spec 2.1)"
+    # Spec 1.5: `groundable: false` on the header means NO content in that Artifact may be
+    # cited in a Ground. The type check above only covers the three types the specification
+    # names, and 2.7 explicitly invites communities to declare non-groundable Artifacts under
+    # their own type names — so without this, the documented extensibility path published a
+    # guarantee the checker did not keep.
+    if (rec.get("header") or {}).get("groundable") is False:
+        return False, "FAIL", (f"'{info['artifact']}' declares groundable:false; no content in it "
+                               f"may be cited in a Ground (spec 1.5)")
     if info.get("node_type") == "Content":
         return False, "FAIL", "Content Objects are not themselves groundable (spec 2.2.4)"
     if info.get("node_type") == "Assertion":
@@ -432,9 +440,18 @@ def check_type_specific(a):
                                  f"optionally with a label in front (e.g. 'class_a_csv')"))
             if meth in ("rest", "download") and not o.get("access_method"):
                 f.append(finding("TYPE", "FAIL", f"method '{meth}' requires access_method"))
-        if ot == "Content" and h.get("type") in NON_GROUNDABLE_TYPES and o.get("groundable") is True:
-            f.append(finding("TYPE", "FAIL",
-                             f"{h['type']} is non-groundable; its methods are addressable only (spec 2.1)"))
+        if ot == "Content" and o.get("groundable") is True:
+            if h.get("type") in NON_GROUNDABLE_TYPES:
+                f.append(finding("TYPE", "FAIL",
+                                 f"{h['type']} is non-groundable; its methods are addressable only "
+                                 f"(spec 2.1)"))
+            elif h.get("groundable") is False:
+                # Spec 2.1: a non-groundable Artifact may hold Content Objects, but none of them
+                # may declare `groundable: true`. Caught here as well as at the Ground, so the
+                # contradiction is refused when it is WRITTEN rather than when someone relies on it.
+                f.append(finding("TYPE", "FAIL",
+                                 f"artifact declares groundable:false, so Content Object "
+                                 f"'{o.get('name')}' may not declare groundable:true (spec 2.1)"))
     return f
 
 
@@ -527,6 +544,19 @@ def _ancestry(name, index, seen=None):
     return seen
 
 
+def _nearest(common, index):
+    """The join point of two provenance chains: the common ancestors nearest the Grounds.
+
+    A shared pipeline four imports deep makes every artifact in it a common ancestor, and
+    naming all nine says only that the chains are long. What a reader needs is WHERE they
+    meet, because that is what has to be argued about. An ancestor that another common
+    ancestor itself descends from is behind the join and is dropped."""
+    behind = set()
+    for x in common:
+        behind |= (_ancestry(x, index) - {x})
+    return (common - behind) or common
+
+
 def check_independence(a, index):
     """Grounds on one Assertion that rest on a common source are not independent evidence.
 
@@ -563,8 +593,9 @@ def check_independence(a, index):
             for root, gs in sorted(shared_carrier.items()):
                 f.append(finding("INDEPENDENCE", "REVIEW",
                                  f"Assertion '{assertion}': Grounds {', '.join(sorted(gs))} all address "
-                                 f"'{root}'. Their agreement is not independent corroboration unless the "
-                                 f"evaluation says why (spec 2.2.4)"))
+                                 f"'{root}'. Say in the rationale what the sharing does here — "
+                                 f"corroboration, contrast, or a chain — because a reader who is not "
+                                 f"told reads several Grounds as agreement (spec 2.2.4)"))
             continue                                        # same carrier subsumes shared ancestry
         anc = {gname: _ancestry(root, idx) for gname, root in grounds}
         reported = set()
@@ -574,10 +605,15 @@ def check_independence(a, index):
                 key = tuple(sorted((gi, gj)))
                 if common and key not in reported:
                     reported.add(key)
+                    join = _nearest(common, idx)
+                    more = len(common) - len(join)
                     f.append(finding("INDEPENDENCE", "REVIEW",
                                      f"Assertion '{assertion}': Grounds {gi} and {gj} address different "
-                                     f"Artifacts that both descend from {', '.join(sorted(common))}; their "
-                                     f"agreement is not independent corroboration (spec 2.2.4)"))
+                                     f"Artifacts whose provenance meets at {', '.join(sorted(join))}"
+                                     + (f" (and {more} further shared ancestor(s) behind it)"
+                                        if more else "")
+                                     + ". Say in the rationale what the sharing does here — "
+                                       "corroboration, contrast, or a chain (spec 2.2.4)"))
     return f
 
 
@@ -605,6 +641,25 @@ def check_corpus(a, index, members, record_names):
     if name in record_names:
         f.append(finding("UNIQUE", "FAIL", f"name '{name}' is already in the record; names are never reused"))
 
+    # What supersedes what, across the whole record. Built here rather than in the index so
+    # that `index` stays a plain description of the artifacts and this stays a judgment about
+    # the record as a whole.
+    # Naming BOTH versions is how an artifact discussing a correction looks, and it is correct:
+    # "the first version said X, and the correction is Y" has to cite the first version. So the
+    # check below fires only where the replacement is never mentioned anywhere in this artifact,
+    # which is what reaching for stale content looks like. Without this the reference examples
+    # in examples/record -- which exist to demonstrate supersession -- were two of three
+    # findings, and a check that flags the worked example teaches agents to ignore it.
+    _mentions = json.dumps(a)
+
+    replaced_by = {}
+    for other in index.values():
+        oh = other.get("header") or {}
+        for s in (oh.get("supersedes") or []):
+            p_ = parse_address(s)
+            if p_:
+                replaced_by[p_["root"]] = oh
+
     def check_addr(addr, ctx, evidential):
         ok, info, why = resolve(addr, index, members)
         if not ok:
@@ -627,6 +682,22 @@ def check_corpus(a, index, members, record_names):
             f.append(finding("ORDER", "FAIL",
                              f"{ctx}: '{info['artifact']}' ({info['rec']['created']}) is not strictly "
                              f"earlier than '{name}' ({h.get('created')}) — spec 1.9"))
+        # CITING SOMETHING THAT HAD ALREADY BEEN REPLACED. Never a FAIL: spec 1.9 is explicit
+        # that a Ground on superseded content stays valid, because the record of what was
+        # published and relied upon at the time is not erased. But an artifact that names an
+        # older version when the newer one was already in the record is usually reaching for
+        # stale content, and it is invisible to a reader who does not follow the chain. Guarded
+        # on the replacement's own `created`: an artifact published BEFORE its target was
+        # superseded did nothing wrong and must not start emitting findings when a v2 appears.
+        repl = replaced_by.get(info["artifact"])
+        if repl and repl.get("name") != name and repl.get("name") not in _mentions:
+            r_when = parse_instant(repl.get("created"))
+            if mine and r_when and r_when < mine:
+                f.append(finding("SUPERSEDED", "REVIEW",
+                                 f"{ctx}: '{info['artifact']}' was already superseded by "
+                                 f"'{repl.get('name')}' when this was published. Cite the "
+                                 f"later version, or say why the earlier one is the one you "
+                                 f"mean (spec 1.9)"))
         if evidential:
             g_ok, lvl, reason = groundable(info, name)
             if not g_ok:
@@ -684,8 +755,21 @@ def check_corpus(a, index, members, record_names):
     # outputs could be published as one act under one timestamp, which serial publication no
     # longer does. The property is unused in every corpus, so the walk is gone rather than
     # re-pointed: an Analysis cannot name artifacts that do not exist yet.
-    for hk in ("supersedes", "inputs", "used_models", "recipients"):
+    for hk in ("supersedes", "inputs", "used_models", "recipients", "serves_goals"):
         each_address(hk)
+
+    # `serves_goals` is a COMMUNITY property, not a specification one (CANONICAL.md 2.1). It
+    # records what the publisher took themselves to be working on, so a reader can ask "what
+    # was this Member doing when they imported that?". It is bookkeeping and never evidential:
+    # it is walked here only so a dead goal address is caught and so the temporal rule applies.
+    # An artifact is immutable, so this states intent AT PUBLICATION and can never be extended
+    # afterwards; a goal declared later is connected by the later artifact, not by this one.
+    for a_ in (h.get("serves_goals") or []):
+        ok_, info_, _ = resolve(a_, index, members)
+        if ok_ and info_.get("kind") != "member" and info_["rec"]["type"] != "ResearchGoal":
+            f.append(finding("GOAL", "REVIEW",
+                             f"serves_goals names '{info_['artifact']}', which is a "
+                             f"{info_['rec']['type']} rather than a ResearchGoal"))
 
     for n, o in objs.items():
         if o["type"] == "Ground":

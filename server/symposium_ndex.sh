@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 # symposium_ndex.sh — run the community's record server in a container.
 #
-#   ./symposium_ndex.sh              start it (idempotent; safe to re-run)
-#   ./symposium_ndex.sh --logs       follow the container log
-#   ./symposium_ndex.sh --stop       stop and remove the container, keep the data
-#   ./symposium_ndex.sh --reset      stop, remove, AND DELETE ALL RECORD DATA
+#   ./symposium_ndex.sh --data DIR              start it (idempotent; safe to re-run)
+#   ./symposium_ndex.sh --data DIR --logs       follow the container log
+#   ./symposium_ndex.sh --data DIR --stop       stop and remove the container, keep the data
+#   ./symposium_ndex.sh --data DIR --reset      stop, remove, AND DELETE ALL RECORD DATA
+#
+# --data is REQUIRED and names where this community's record lives. There is no default,
+# deliberately: the record is the community's permanent history, it outlives any clone of
+# this repository, and a directory chosen silently is a directory nobody can find again.
+# `SYMPOSIUM_NDEX_DATA` sets it for a shell session; env.sh from `tools/setup.py` is the
+# usual place for it.
+#
+# ONE COMMUNITY PER DIRECTORY. The container name and port are derived from the data
+# directory, so two communities on one machine do not collide and neither has to be
+# remembered. Override with SYMPOSIUM_NDEX_CONTAINER and SYMPOSIUM_NDEX_PORT.
 #
 # The record server is an NDEx instance. Symposium repurposes NDEx for accounts,
 # permissions and storage and needs no modification to it, so this runs the published
@@ -25,23 +35,78 @@
 set -euo pipefail
 
 IMAGE="ndexbio/ndex-rest:3.0.0"
-CONTAINER="${SYMPOSIUM_NDEX_CONTAINER:-symposium-ndex}"
-PORT="${SYMPOSIUM_NDEX_PORT:-8080}"
 BIND="${SYMPOSIUM_NDEX_BIND:-127.0.0.1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DATA="${SYMPOSIUM_NDEX_DATA:-${SCRIPT_DIR}/data}"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+DATA="${SYMPOSIUM_NDEX_DATA:-}"
 READY_TIMEOUT="${SYMPOSIUM_NDEX_TIMEOUT:-180}"
+ACTION="start"
 
-usage() { sed -n '2,24p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
+usage() { sed -n '2,34p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0; }
 
-case "${1:-start}" in
-  -h|--help) usage ;;
-  --logs)    exec docker logs -f "${CONTAINER}" ;;
-  --stop)
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help) usage ;;
+    --data)    DATA="${2:-}"; [ -n "${DATA}" ] || { echo "ERROR: --data needs a directory" >&2; exit 2; }; shift 2 ;;
+    --data=*)  DATA="${1#*=}"; shift ;;
+    --logs|--stop|--reset) ACTION="${1#--}"; shift ;;
+    start)     shift ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+if [ -z "${DATA}" ]; then
+  cat >&2 <<'EOF'
+ERROR: --data is required. It names the directory holding this community's record.
+
+    ./symposium_ndex.sh --data ~/symposium-mycommunity/server
+
+There is no default. The record is the community's permanent history: it must
+outlive this repository, be somewhere you can back up, and be somewhere you can
+find again in six months. Choose the directory deliberately, once, and keep it.
+
+To run the example rather than found a community, give it a directory of its own:
+
+    ./symposium_ndex.sh --data ~/symposium-demo/server
+EOF
+  exit 2
+fi
+
+# Absolute, so the derived container name is stable no matter where it is invoked from.
+mkdir -p "${DATA}" 2>/dev/null || true
+DATA="$(cd "${DATA}" 2>/dev/null && pwd)" || { echo "ERROR: cannot use ${DATA}" >&2; exit 2; }
+
+# A record inside a clone is a record that `git clean` deletes and a second clone
+# cannot see. The data is gitignored, which hides the problem rather than fixing it.
+case "${DATA}/" in
+  "${REPO_ROOT}"/*)
+    echo "ERROR: ${DATA} is inside the Symposium repository." >&2
+    echo "       The record must live outside the clone — deleting or re-cloning the" >&2
+    echo "       repository would destroy it, and it is append-only by design." >&2
+    echo "       Pick a directory elsewhere, e.g. ~/symposium-mycommunity/server" >&2
+    exit 2 ;;
+esac
+
+# Derived from the data directory so two communities on one machine cannot collide on
+# the container name or the port, and neither has to be remembered separately.
+SLUG="$(basename "$(dirname "${DATA}")")-$(basename "${DATA}")"
+SLUG="$(printf '%s' "${SLUG}" | tr -c 'a-zA-Z0-9_.-' '-' | sed 's/^-*//;s/-*$//')"
+CONTAINER="${SYMPOSIUM_NDEX_CONTAINER:-symposium-ndex-${SLUG}}"
+if [ -n "${SYMPOSIUM_NDEX_PORT:-}" ]; then
+  PORT="${SYMPOSIUM_NDEX_PORT}"
+else
+  # Stable per-directory port in 8080-8179, so the same community always comes back on
+  # the same URL and a second one does not silently take the first one's place.
+  PORT=$(( 8080 + $(printf '%s' "${DATA}" | cksum | cut -d' ' -f1) % 100 ))
+fi
+
+case "${ACTION}" in
+  logs)    exec docker logs -f "${CONTAINER}" ;;
+  stop)
     echo "==> stopping ${CONTAINER} (data kept in ${DATA})"
     docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
     exit 0 ;;
-  --reset)
+  reset)
     echo "This deletes the whole record: every account, every accepted Artifact,"
     echo "every permission grant, under ${DATA}."
     printf "Type the word DELETE to confirm: "
@@ -51,8 +116,6 @@ case "${1:-start}" in
     rm -rf "${DATA}"
     echo "==> removed"
     exit 0 ;;
-  start) ;;
-  *) echo "unknown option: $1" >&2; exit 2 ;;
 esac
 
 command -v docker >/dev/null || { echo "ERROR: docker is not on PATH" >&2; exit 1; }
@@ -100,7 +163,8 @@ until curl -sf "http://${BIND}:${PORT}/v2/admin/status" >/dev/null 2>&1; do
     echo >&2
     echo "If the log ends in 'exec format error', this machine needs Rosetta for" >&2
     echo "linux/amd64 images. If it never mentions NDEx at all, the bind mounts under" >&2
-    echo "${DATA} may be left over from an incompatible run — ./symposium_ndex.sh --reset" >&2
+    echo "${DATA} may be left over from an incompatible run:" >&2
+    echo "    ./symposium_ndex.sh --data ${DATA} --reset" >&2
     exit 1
   fi
   echo -n "."
@@ -110,6 +174,13 @@ done
 
 echo
 echo "==> ready at http://${BIND}:${PORT}"
+echo "    record data: ${DATA}"
+echo "    container:   ${CONTAINER}"
+echo
+echo "The port is derived from the data directory, so this community always comes back"
+echo "on this URL. Every tool needs to be told it:"
+echo
+echo "    export SYMPOSIUM_BASE=http://${BIND}:${PORT}"
 echo
 echo "Next: create the community's accounts."
 echo "    python3 bootstrap.py --community community.json"

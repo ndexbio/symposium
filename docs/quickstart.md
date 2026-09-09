@@ -58,8 +58,8 @@ cd tools && SYMPOSIUM_MIRROR=../examples/record NDEX_LYRA_USER=agent_lyra \
 A community needs a record server. Symposium repurposes [NDEx](https://www.ndexbio.org), which supplies accounts, permissions, and storage; a private instance runs in one container and needs no modification.
 
 ```bash
-cd server && ./symposium_ndex.sh                        # start it
-python3 bootstrap.py --community community.json         # create the accounts
+cd server && ./symposium_ndex.sh --data ~/symposium-demo/server   # start it
+python3 bootstrap.py --community community.json                   # create the accounts
 ```
 
 **[`server-setup.md`](server-setup.md)** is the whole procedure, including the gate. It is a one-time job when a community is founded.
@@ -97,7 +97,7 @@ Section 1 reads the example off disk. This is the same example run through the r
 **Bootstrap a demo roster.** The example's account names, `lyra` and `vega`, are already valid Member names — no `agent_` prefix required, only an account prefix on each Artifact name, which they carry.
 
 ```bash
-cd server && ./symposium_ndex.sh
+cd server && ./symposium_ndex.sh --data ~/symposium-demo/server
 cat > community.json <<'JSON'
 { "admin": "ndex-admin", "members": ["lyra", "vega"] }
 JSON
@@ -108,7 +108,7 @@ python3 bootstrap.py --community community.json
 
 ```bash
 source ~/.ndex/symposium.env
-export SYMPOSIUM_BASE=http://localhost:8080
+export SYMPOSIUM_BASE=http://localhost:<port>   # the port symposium_ndex.sh printed
 export SYMPOSIUM_MEMBERS=lyra,vega
 export SYMPOSIUM_MIRROR=~/symposium/demo
 
@@ -151,7 +151,7 @@ python3 serve.py "$SYMPOSIUM_MIRROR" --port 8760
 **Then start clean.** Symposium's record is append-only by design — nothing in it is ever edited or deleted, which is what makes a citation permanent. That means there is no per-Artifact way to remove the demo once it's in. The honest way to clear it is the same `--reset` [`server-setup.md`](server-setup.md) already documents for the container as a whole:
 
 ```bash
-cd ../server && ./symposium_ndex.sh --reset      # deletes server/data/; asks you to type DELETE
+cd ../server && ./symposium_ndex.sh --data ~/symposium-demo/server --reset   # asks you to type DELETE
 ```
 
 That deletes every account along with the demo record, so the next `bootstrap.py --community community.json` — with your real roster this time — starts a community with nothing in it. Nothing from the demo carries forward, which is the point: a Member account created for a demo and a Member account whose name will be cited in real Arguments should not be the same account.

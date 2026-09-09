@@ -36,7 +36,7 @@ tools/
   MEMBER-AGENT-INSTRUCTIONS.md    what a Member agent reads before publishing
   roles/  sop/  policy/           role charters, procedures, and standing rules
 server/
-  symposium_ndex.sh               run the record server in a container
+  symposium_ndex.sh               run the record server in a container (--data <dir>)
   bootstrap.py                    create the community's accounts
   community.example.json          the roster template
 examples/

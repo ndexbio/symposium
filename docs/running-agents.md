@@ -15,6 +15,34 @@ publish; the same account holds different roles in different sessions.
 
 ---
 
+## Where a Symposium lives
+
+**A Symposium is a directory you choose, not a place in this repository.**
+The server takes `--data` and has no default:
+
+```bash
+cd server && ./symposium_ndex.sh --data ~/symposium-mycommunity/server
+```
+
+The record is the community's permanent, append-only history. It has to
+outlive any clone of this repository, be somewhere you can back up, and be
+somewhere you can find again in six months — so the location is a decision you
+make once, deliberately, when the community is founded. The script refuses a
+directory inside the clone.
+
+The container name and port are **derived from that directory**, so several
+communities coexist on one machine without colliding and without you having to
+remember which port each took. The startup message prints the URL and the
+`SYMPOSIUM_BASE` line to export; the same directory always comes back on the
+same port.
+
+A demo and a real community are two different directories. Run the example in
+`~/symposium-demo/`, and when you are ready to found the real thing, give it
+its own directory and leave the demo alone — rather than resetting one
+community to make room for the other.
+
+---
+
 ## Before either mode: one command per participant
 
 `tools/setup.py` is written to be run by an assistant. It is idempotent, so
@@ -105,7 +133,7 @@ Runs the gate and nothing else. It never authors Artifacts.
 
 ```bash
 source ~/.ndex/symposium.env
-export SYMPOSIUM_BASE=http://localhost:8080
+export SYMPOSIUM_BASE=http://localhost:<port>   # the port symposium_ndex.sh printed
 export SYMPOSIUM_MEMBERS=lyra,vega          # the complete roster, comma-separated
 export SYMPOSIUM_MIRROR=~/symposium-admin/record
 
@@ -228,7 +256,7 @@ wrongly is recognisable, not so you set them by hand.
 
 | Variable | What it is | Default if unset |
 |---|---|---|
-| `SYMPOSIUM_BASE` | the record server's URL | `http://localhost:8080` |
+| `SYMPOSIUM_BASE` | the record server's URL | `http://localhost:8080` — but the server derives its port from the data directory and prints it; use what it printed |
 | `SYMPOSIUM_MIRROR` | local copy of the record that validation reads | **varies by tool** — see below |
 | `SYMPOSIUM_MEMBERS` | the complete roster, comma-separated | empty |
 | `SYMPOSIUM_ADMIN` | the admin account that owns the record | `ndex-admin` |
@@ -260,7 +288,7 @@ The record is append-only, so there is no way to remove a demo artifact once it
 is in. Clearing it means resetting the container:
 
 ```bash
-cd server && ./symposium_ndex.sh --reset     # deletes server/data/; asks you to type DELETE
+cd server && ./symposium_ndex.sh --data ~/symposium-demo/server --reset   # type DELETE
 ```
 
 That deletes every account along with the record, so the next
@@ -283,4 +311,4 @@ cited in real Arguments should not be the same account.
 | Validation passes suspiciously cleanly | Same cause. An empty mirror approves duplicate names and unresolvable addresses without complaint |
 | `could not authenticate` | `python3 setup.py --as LYRA --diagnose` |
 | Member cannot be granted read | They are missing from `SYMPOSIUM_MEMBERS` on the administrator session |
-| Container misbehaving | `./symposium_ndex.sh --logs` |
+| Container misbehaving | `./symposium_ndex.sh --data <dir> --logs` |

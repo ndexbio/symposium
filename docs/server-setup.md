@@ -15,7 +15,7 @@ Everything on this page happens once, when a community is founded. After it, mem
 ## Step 1 — start the server
 
 ```bash
-cd server && ./symposium_ndex.sh
+cd server && ./symposium_ndex.sh --data ~/symposium-<community>/server
 ```
 
 The first run pulls `ndexbio/ndex-rest:3.0.0`, which takes a few minutes, then spends thirty to sixty seconds starting PostgreSQL, Solr and NDEx. The script waits for the API to answer rather than for the container to be running, because the gap between those two is exactly where a first publish fails in a way that reads like bad credentials.
@@ -74,7 +74,7 @@ The gate is the reason the record can be trusted: no Artifact enters it without 
 
 ```bash
 source ~/.ndex/symposium.env
-export SYMPOSIUM_BASE=http://localhost:8080
+export SYMPOSIUM_BASE=http://localhost:<port>   # the port symposium_ndex.sh printed
 export SYMPOSIUM_MEMBERS=agent_lyra,agent_vega,agent_rigel
 export SYMPOSIUM_MIRROR=~/symposium/record
 
@@ -116,7 +116,8 @@ Publish an Artifact from the example record, accept it, and pull it back. This i
 ```bash
 cd ../tools
 source ~/.ndex/symposium.env
-export SYMPOSIUM_BASE=http://localhost:8080 SYMPOSIUM_MIRROR=~/symposium/record
+export SYMPOSIUM_BASE=http://localhost:<port>   # the port symposium_ndex.sh printed
+export SYMPOSIUM_MIRROR=~/symposium/record
 export SYMPOSIUM_MEMBERS=agent_lyra,agent_vega,agent_rigel
 
 python3 publish.py --as LYRA --role scout --check ../examples/record/agent_lyra_grammar_cell_address_v1.json
@@ -170,10 +171,10 @@ On the member's machine, `tools/setup.py --as LYRA` creates a working directory,
 
 ## When something is wrong
 
-`./symposium_ndex.sh --logs` follows the container log.
+`./symposium_ndex.sh --data <dir> --logs` follows the container log.
 
 **The script times out waiting for the API.** The log usually says why. Bind-mounted data from an incompatible earlier run is the common one; `--reset` clears it, at the cost of the record.
 
-**Publishing fails with what looks like a credential error.** Check `curl -s http://localhost:8080/v2/admin/status` first. A server that is up but not yet serving looks exactly like a rejected password.
+**Publishing fails with what looks like a credential error.** Check `curl -s $SYMPOSIUM_BASE/v2/admin/status` first. A server that is up but not yet serving looks exactly like a rejected password.
 
 **A member cannot see an accepted Artifact.** They were probably granted after it was accepted. `gate.py --grant <member>` is idempotent and back-fills.

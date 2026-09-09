@@ -73,11 +73,20 @@ EOF
 fi
 
 # Absolute, so the derived container name is stable no matter where it is invoked from.
-mkdir -p "${DATA}" 2>/dev/null || true
-DATA="$(cd "${DATA}" 2>/dev/null && pwd)" || { echo "ERROR: cannot use ${DATA}" >&2; exit 2; }
+# Resolved WITHOUT creating it: a path that is about to be rejected should not be left
+# behind as a directory, least of all inside the repository.
+case "${DATA}" in
+  "~"|"~/"*) DATA="${HOME}${DATA#\~}" ;;
+esac
+case "${DATA}" in
+  /*) ;;
+  *)  DATA="$(pwd)/${DATA}" ;;
+esac
+# Collapse . and .. without requiring the path to exist yet.
+DATA="$(printf '%s' "${DATA}" | awk -F/ '{n=0; for(i=1;i<=NF;i++){if($i==""||$i==".")continue; if($i==".."){if(n>0)n--; continue} p[++n]=$i} s=""; for(i=1;i<=n;i++)s=s"/"p[i]; print (s==""?"/":s)}')"
 
 # A record inside a clone is a record that `git clean` deletes and a second clone
-# cannot see. The data is gitignored, which hides the problem rather than fixing it.
+# cannot see. Gitignoring it hides the problem rather than fixing it.
 case "${DATA}/" in
   "${REPO_ROOT}"/*)
     echo "ERROR: ${DATA} is inside the Symposium repository." >&2
@@ -152,6 +161,7 @@ echo "==> data directory: ${DATA}"
 for d in ndex/config ndex/data; do
   mkdir -p "${DATA}/${d}"
 done
+DATA="$(cd "${DATA}" && pwd)"
 docker volume create "${PG_VOL}" >/dev/null
 docker volume create "${SOLR_VOL}" >/dev/null
 

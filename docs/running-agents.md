@@ -41,6 +41,17 @@ A demo and a real community are two different directories. Run the example in
 its own directory and leave the demo alone — rather than resetting one
 community to make room for the other.
 
+**What lives where.** The directory holds the record itself — the CX2
+artifacts under `ndex/` — which is what you back up and what you would carry
+to another machine. The accounts database and the search index live in Docker
+named volumes (`symposium-pg-<slug>`, `symposium-solr-<slug>`) rather than in
+that directory, because on macOS a bind-mounted Postgres data directory
+reports the wrong ownership and refuses to start on the *second* boot. Keeping
+the engine's own state in a volume is what makes a server survive a restart.
+
+`--reset` removes both the directory and the volumes, so a reset community
+does not come back holding the previous one's accounts.
+
 ---
 
 ## Before either mode: one command per participant

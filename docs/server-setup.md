@@ -173,6 +173,18 @@ On the member's machine, `tools/setup.py --as LYRA` creates a working directory,
 
 `./symposium_ndex.sh --data <dir> --logs` follows the container log.
 
+**Backing up a community.** Copy the `--data` directory: it holds the record.
+The accounts database is in a Docker named volume (`symposium-pg-<slug>`), so
+a full backup that must survive losing this machine also needs
+
+```bash
+docker run --rm -v symposium-pg-<slug>:/from -v "$PWD:/to" alpine \
+  tar czf /to/symposium-accounts.tgz -C /from .
+```
+
+The record is the part that matters and is portable on its own; the accounts
+can be recreated with `bootstrap.py` against the same roster.
+
 **The script times out waiting for the API.** The log usually says why. Bind-mounted data from an incompatible earlier run is the common one; `--reset` clears it, at the cost of the record.
 
 **Publishing fails with what looks like a credential error.** Check `curl -s $SYMPOSIUM_BASE/v2/admin/status` first. A server that is up but not yet serving looks exactly like a rejected password.

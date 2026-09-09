@@ -100,6 +100,9 @@ else
   PORT=$(( 8080 + $(printf '%s' "${DATA}" | cksum | cut -d' ' -f1) % 100 ))
 fi
 
+PG_VOL="symposium-pg-${SLUG}"
+SOLR_VOL="symposium-solr-${SLUG}"
+
 case "${ACTION}" in
   logs)    exec docker logs -f "${CONTAINER}" ;;
   stop)
@@ -114,7 +117,10 @@ case "${ACTION}" in
     [ "${confirm}" = "DELETE" ] || { echo "not confirmed; nothing changed"; exit 1; }
     docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
     rm -rf "${DATA}"
-    echo "==> removed"
+    # The accounts and the search index live in named volumes, not in ${DATA}. Leaving
+    # them behind would give the "new" community the old one's accounts.
+    docker volume rm "${PG_VOL}" "${SOLR_VOL}" >/dev/null 2>&1 || true
+    echo "==> removed (record, accounts and index)"
     exit 0 ;;
 esac
 
@@ -129,12 +135,25 @@ if [ -n "$(docker ps -q -f "name=^${CONTAINER}$" 2>/dev/null)" ]; then
 fi
 docker rm -f "${CONTAINER}" >/dev/null 2>&1 || true
 
-# One bind mount per service, at the paths the image expects under /apps, so the record
-# survives the container being removed and can be backed up by copying a directory.
+# TWO KINDS OF STATE, TWO KINDS OF MOUNT.
+#
+# The record — the CX2 artifacts under ndex/ — is yours: it stays a bind mount in ${DATA}
+# so you can read it, back it up by copying a directory, and move it between machines. NDEx
+# runs as root in the container, so the ownership the mount reports does not trouble it.
+#
+# Postgres and Solr are the engine's own state, and they must be owned by the postgres and
+# solr users inside the container. On macOS a bind mount reports every file as 0:0 and
+# silently ignores chown, so `initdb` succeeds the first time (it creates PGDATA itself)
+# and every RESTART then fails with `data directory has wrong ownership` — a server that
+# works until the first reboot and then never starts again, with the record still inside it.
+# Docker named volumes keep the ownership that is set on them, so they restart correctly.
+# They are per-community, derived from the same slug as the container.
 echo "==> data directory: ${DATA}"
-for d in ndex/config ndex/data postgres/config postgres/data solr/config solr/data; do
+for d in ndex/config ndex/data; do
   mkdir -p "${DATA}/${d}"
 done
+docker volume create "${PG_VOL}" >/dev/null
+docker volume create "${SOLR_VOL}" >/dev/null
 
 echo "==> starting ${CONTAINER} from ${IMAGE}"
 docker run -d \
@@ -142,10 +161,8 @@ docker run -d \
   -p "${BIND}:${PORT}:8080" \
   -v "${DATA}/ndex/config:/apps/ndex/config" \
   -v "${DATA}/ndex/data:/apps/ndex/data" \
-  -v "${DATA}/postgres/config:/apps/postgres/config" \
-  -v "${DATA}/postgres/data:/apps/postgres/data" \
-  -v "${DATA}/solr/config:/apps/solr/config" \
-  -v "${DATA}/solr/data:/apps/solr/data" \
+  -v "${PG_VOL}:/apps/postgres" \
+  -v "${SOLR_VOL}:/apps/solr" \
   "${IMAGE}" \
   --ndex --postgres --solr >/dev/null
 

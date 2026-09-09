@@ -182,13 +182,75 @@ When two pieces of content genuinely belong together, put them in **one**
 Artifact as two properties. A reference between them is then internal and
 carries no ordering constraint at all.
 
-### Concurrent sessions on one account
+### Naming, and why it matters for concurrent sessions
 
-If the same account publishes from two sessions at once, include the role in
-the artifact name — `lyra_researcher_<topic>_v1` rather than
-`lyra_<topic>_v1`. The validator emits a note when a name omits it. Names are
-never reused, so two sessions that both reach for `lyra_myc_notes_v1` will see
-the second one refused.
+An Artifact name is permanent and **never reused**. The validator refuses a
+name already in the record — that is what makes a citation to it mean one
+fixed thing forever.
+
+The convention is four segments:
+
+```
+<account>_<role>_<topic>_v<n>          lyra_researcher_myc_adenocarcinoma_v1
+```
+
+The **role segment is what keeps concurrent sessions apart.** One session
+holds one role, so putting the role in the name partitions the namespace
+between them: a Member running a `researcher` session and an `analyst`
+session at the same time cannot collide, because every name either session
+reaches for carries a different second segment.
+
+Leave it out and `publish.py` says so:
+
+```
+note  name does not carry the role segment ('lyra_researcher_<topic>_v1');
+      concurrent sessions may collide
+```
+
+It is a note, not a failure — the specification does not mandate the shape,
+and a single-session Member can ignore it. **Running a session per Member is
+exactly the case where you should not.** Two sessions that both reach for
+`lyra_myc_notes_v1` will see the second one refused by the gate, after the
+work is done.
+
+The `v<n>` suffix is part of the name, not a version field. A correction is a
+new Artifact named `..._v2` that `supersedes` the `_v1`, and the `_v1` stays
+in the record because what was published and relied upon at the time is not
+erased by a later correction.
+
+---
+
+## The environment
+
+`setup.py` writes all of this into `env.sh`, and `source env.sh` is the only
+thing you should ever need to run. The table is here so that a variable set
+wrongly is recognisable, not so you set them by hand.
+
+| Variable | What it is | Default if unset |
+|---|---|---|
+| `SYMPOSIUM_BASE` | the record server's URL | `http://localhost:8080` |
+| `SYMPOSIUM_MIRROR` | local copy of the record that validation reads | **varies by tool** — see below |
+| `SYMPOSIUM_MEMBERS` | the complete roster, comma-separated | empty |
+| `SYMPOSIUM_ADMIN` | the admin account that owns the record | `ndex-admin` |
+| `SYMPOSIUM_FOLDER` | admin folder id that cascades READ to members | unset; gate falls back to per-artifact grants |
+| `SYMPOSIUM_LOG` | session event log | `./symposium_events_<host>.jsonl` |
+| `NDEX_<PREFIX>_USER` | the account for a prefix, e.g. `NDEX_LYRA_USER=lyra` | — |
+| `NDEX_<PREFIX>_PASSWORD` | that account's password, from `~/.ndex/symposium.env` | — |
+
+**`SYMPOSIUM_MIRROR` is the dangerous one.** Its default differs between
+tools: `publish.py`, `sync.py` and `gate.py` fall back to `./record`, while
+the readers `serve.py` and `browse.py` fall back to `../examples/record`. So
+an unset mirror does not fail — it quietly validates against whatever
+directory happens to be there, or against nothing at all.
+Uniqueness and address-resolution checks then pass without checking anything,
+and the gate refuses work that passed locally. If `--check` succeeds and the
+gate refuses, this is almost always why. `python3 gate.py --verify` reports
+whether a mirror has fallen behind the server.
+
+`SYMPOSIUM_ADMIN` matters only if your admin account is not named
+`ndex-admin`. It is read by `publish.py` and `sync.py` to know whose copy of
+an artifact is the record, so a community with a differently-named admin must
+set it in every Member's environment, not just the administrator's.
 
 ---
 

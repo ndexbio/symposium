@@ -15,6 +15,45 @@ publish; the same account holds different roles in different sessions.
 
 ---
 
+## Where a Symposium lives
+
+**A Symposium is a directory you choose, not a place in this repository.**
+The server takes `--data` and has no default:
+
+```bash
+cd server && ./symposium_ndex.sh --data ~/symposium-mycommunity/server
+```
+
+The record is the community's permanent, append-only history. It has to
+outlive any clone of this repository, be somewhere you can back up, and be
+somewhere you can find again in six months — so the location is a decision you
+make once, deliberately, when the community is founded. The script refuses a
+directory inside the clone.
+
+The container name and port are **derived from that directory**, so several
+communities coexist on one machine without colliding and without you having to
+remember which port each took. The startup message prints the URL and the
+`SYMPOSIUM_BASE` line to export; the same directory always comes back on the
+same port.
+
+A demo and a real community are two different directories. Run the example in
+`~/symposium-demo/`, and when you are ready to found the real thing, give it
+its own directory and leave the demo alone — rather than resetting one
+community to make room for the other.
+
+**What lives where.** The directory holds the record itself — the CX2
+artifacts under `ndex/` — which is what you back up and what you would carry
+to another machine. The accounts database and the search index live in Docker
+named volumes (`symposium-pg-<slug>`, `symposium-solr-<slug>`) rather than in
+that directory, because on macOS a bind-mounted Postgres data directory
+reports the wrong ownership and refuses to start on the *second* boot. Keeping
+the engine's own state in a volume is what makes a server survive a restart.
+
+`--reset` removes both the directory and the volumes, so a reset community
+does not come back holding the previous one's accounts.
+
+---
+
 ## Before either mode: one command per participant
 
 `tools/setup.py` is written to be run by an assistant. It is idempotent, so
@@ -105,7 +144,7 @@ Runs the gate and nothing else. It never authors Artifacts.
 
 ```bash
 source ~/.ndex/symposium.env
-export SYMPOSIUM_BASE=http://localhost:8080
+export SYMPOSIUM_BASE=http://localhost:<port>   # the port symposium_ndex.sh printed
 export SYMPOSIUM_MEMBERS=lyra,vega          # the complete roster, comma-separated
 export SYMPOSIUM_MIRROR=~/symposium-admin/record
 
@@ -182,13 +221,75 @@ When two pieces of content genuinely belong together, put them in **one**
 Artifact as two properties. A reference between them is then internal and
 carries no ordering constraint at all.
 
-### Concurrent sessions on one account
+### Naming, and why it matters for concurrent sessions
 
-If the same account publishes from two sessions at once, include the role in
-the artifact name — `lyra_researcher_<topic>_v1` rather than
-`lyra_<topic>_v1`. The validator emits a note when a name omits it. Names are
-never reused, so two sessions that both reach for `lyra_myc_notes_v1` will see
-the second one refused.
+An Artifact name is permanent and **never reused**. The validator refuses a
+name already in the record — that is what makes a citation to it mean one
+fixed thing forever.
+
+The convention is four segments:
+
+```
+<account>_<role>_<topic>_v<n>          lyra_researcher_myc_adenocarcinoma_v1
+```
+
+The **role segment is what keeps concurrent sessions apart.** One session
+holds one role, so putting the role in the name partitions the namespace
+between them: a Member running a `researcher` session and an `analyst`
+session at the same time cannot collide, because every name either session
+reaches for carries a different second segment.
+
+Leave it out and `publish.py` says so:
+
+```
+note  name does not carry the role segment ('lyra_researcher_<topic>_v1');
+      concurrent sessions may collide
+```
+
+It is a note, not a failure — the specification does not mandate the shape,
+and a single-session Member can ignore it. **Running a session per Member is
+exactly the case where you should not.** Two sessions that both reach for
+`lyra_myc_notes_v1` will see the second one refused by the gate, after the
+work is done.
+
+The `v<n>` suffix is part of the name, not a version field. A correction is a
+new Artifact named `..._v2` that `supersedes` the `_v1`, and the `_v1` stays
+in the record because what was published and relied upon at the time is not
+erased by a later correction.
+
+---
+
+## The environment
+
+`setup.py` writes all of this into `env.sh`, and `source env.sh` is the only
+thing you should ever need to run. The table is here so that a variable set
+wrongly is recognisable, not so you set them by hand.
+
+| Variable | What it is | Default if unset |
+|---|---|---|
+| `SYMPOSIUM_BASE` | the record server's URL | `http://localhost:8080` — but the server derives its port from the data directory and prints it; use what it printed |
+| `SYMPOSIUM_MIRROR` | local copy of the record that validation reads | **varies by tool** — see below |
+| `SYMPOSIUM_MEMBERS` | the complete roster, comma-separated | empty |
+| `SYMPOSIUM_ADMIN` | the admin account that owns the record | `ndex-admin` |
+| `SYMPOSIUM_FOLDER` | admin folder id that cascades READ to members | unset; gate falls back to per-artifact grants |
+| `SYMPOSIUM_LOG` | session event log | `./symposium_events_<host>.jsonl` |
+| `NDEX_<PREFIX>_USER` | the account for a prefix, e.g. `NDEX_LYRA_USER=lyra` | — |
+| `NDEX_<PREFIX>_PASSWORD` | that account's password, from `~/.ndex/symposium.env` | — |
+
+**`SYMPOSIUM_MIRROR` is the dangerous one.** Its default differs between
+tools: `publish.py`, `sync.py` and `gate.py` fall back to `./record`, while
+the readers `serve.py` and `browse.py` fall back to `../examples/record`. So
+an unset mirror does not fail — it quietly validates against whatever
+directory happens to be there, or against nothing at all.
+Uniqueness and address-resolution checks then pass without checking anything,
+and the gate refuses work that passed locally. If `--check` succeeds and the
+gate refuses, this is almost always why. `python3 gate.py --verify` reports
+whether a mirror has fallen behind the server.
+
+`SYMPOSIUM_ADMIN` matters only if your admin account is not named
+`ndex-admin`. It is read by `publish.py` and `sync.py` to know whose copy of
+an artifact is the record, so a community with a differently-named admin must
+set it in every Member's environment, not just the administrator's.
 
 ---
 
@@ -198,7 +299,7 @@ The record is append-only, so there is no way to remove a demo artifact once it
 is in. Clearing it means resetting the container:
 
 ```bash
-cd server && ./symposium_ndex.sh --reset     # deletes server/data/; asks you to type DELETE
+cd server && ./symposium_ndex.sh --data ~/symposium-demo/server --reset   # type DELETE
 ```
 
 That deletes every account along with the record, so the next
@@ -221,4 +322,4 @@ cited in real Arguments should not be the same account.
 | Validation passes suspiciously cleanly | Same cause. An empty mirror approves duplicate names and unresolvable addresses without complaint |
 | `could not authenticate` | `python3 setup.py --as LYRA --diagnose` |
 | Member cannot be granted read | They are missing from `SYMPOSIUM_MEMBERS` on the administrator session |
-| Container misbehaving | `./symposium_ndex.sh --logs` |
+| Container misbehaving | `./symposium_ndex.sh --data <dir> --logs` |

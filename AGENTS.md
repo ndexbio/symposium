@@ -63,6 +63,9 @@ Role charters live in `tools/roles/<name>.md`, standing rules in
   `--check`, which uploads nothing and needs no network, or run a local server.
 - **Never publish an artifact the user has not seen.** Publication is
   permanent and attributed to the user's account, not to you.
+- **Never put a community's record inside this repository.** The server
+  requires `--data <dir>` and refuses a path inside the clone. Ask the user
+  where the community should live; do not choose for them.
 
 ## Verifying your work
 

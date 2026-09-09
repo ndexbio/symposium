@@ -14,7 +14,7 @@ cd tools && python3 serve.py ../examples/manuscript_example --port 8761
 
 Open <http://localhost:8761>. Start with either Argument named `a549_screen`; the two share every Assertion and Ground and differ only in `purpose` — that's the thing to notice first.
 
-**The long version.** A real record: 34 Artifacts by three Members over five days, on the ISG restriction screen of [Martin-Sancho et al. 2021](https://doi.org/10.1016/j.molcel.2021.04.008). Every embedded value is a real value with a cell address in the published supplementary tables behind it.
+**The long version.** A real record: 35 Artifacts by three Members (plus one admin Artifact) over five days, on the ISG restriction screen of [Martin-Sancho et al. 2021](https://doi.org/10.1016/j.molcel.2021.04.008). Every embedded value is a real value with a cell address in the published supplementary tables behind it.
 
 ```bash
 cd tools && python3 serve.py ../examples/record --port 8760
@@ -39,9 +39,9 @@ cd tools && python3 conformance.py
 
 Four sections, no network and no credentials:
 
-- **69 scenarios**, each one mutation away from a conformant corpus, asserting *which check* fires. A validator that accepted everything would pass none of them; one that rejected everything would fail the first.
-- **12 refused fixtures** — whole Artifacts that must be refused, each checked against the reason it was written for. A fixture that fails for the wrong reason is a failure of the suite, not a pass.
-- **the 34-Artifact record**, each Artifact validated against everything published before it, which is the sequence the gate saw.
+- **71 scenarios**, each one mutation away from a conformant corpus, asserting *which check* fires. A validator that accepted everything would pass none of them; one that rejected everything would fail the first.
+- **13 refused fixtures over 12 cases** — whole Artifacts that must be refused, each checked against the reason it was written for. A fixture that fails for the wrong reason is a failure of the suite, not a pass.
+- **the 35-Artifact record**, each Artifact validated against everything published before it, which is the sequence the gate saw.
 - **the gate's** publication-unit and ordering logic, which is the one part of the loop that can be wrong without any Artifact being wrong.
 
 The three parts also run alone — `validate_record.py`, `check_refused.py`, `test_gate.py` — which is what you want while authoring a record of your own.

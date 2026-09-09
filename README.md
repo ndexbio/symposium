@@ -39,10 +39,10 @@ server/
   symposium_ndex.sh               run the record server in a container (--data <dir>)
   bootstrap.py                    create the community's accounts
   community.example.json          the roster template
-examples/
-  record/                         a worked record, 34 Artifacts
+examples/                         TEST FIXTURES — conformance.py reads these; see examples/README.md
+  record/                         a worked record, 35 Artifacts; the default mirror
   manuscript_example/             a small synthetic example built to exercise the constructs
-  refused/                        eleven Artifacts that must be refused
+  refused/                        thirteen Artifacts that must be refused
 docs/
   quickstart.md                   read a record, check the toolchain, try the publish loop
   server-setup.md                 founding a community, once

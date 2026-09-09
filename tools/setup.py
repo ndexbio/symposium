@@ -3,6 +3,7 @@
 
     python3 setup.py --as VEGA
     python3 setup.py --as VEGA --workdir ~/symposium-work
+    python3 setup.py --as VEGA --credentials ~/.ndex/symposium-okn.env
     python3 setup.py --as VEGA --diagnose      # why won't it authenticate?
 
 Safe to run again at any time — it is idempotent, and re-running it is how you check that a
@@ -365,15 +366,22 @@ export SYMPOSIUM_ACCOUNT="{account}"
 
 
 def main(argv=None):
+    global CRED                       # --credentials repoints it before anything reads it
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--as", dest="prefix", required=True,
                     help="your credential prefix, e.g. VEGA (not your account name)")
     ap.add_argument("--workdir", default="~/symposium-work",
                     help="where your artifacts, mirror and log live (default: ~/symposium-work)")
     ap.add_argument("--members", default=DEFAULT_MEMBERS)
+    ap.add_argument("--credentials", metavar="PATH",
+                    help=f"the credentials file for THIS community (default: {CRED}). "
+                         f"The default is shared and keyed by prefix, so a machine that "
+                         f"takes part in two communities needs one file each.")
     ap.add_argument("--diagnose", action="store_true",
                     help="explain why authentication is failing; prints no secrets")
     args = ap.parse_args(argv)
+    if args.credentials:
+        CRED = pathlib.Path(args.credentials).expanduser()
     prefix = args.prefix.upper()
 
     print(f"Symposium setup — credential prefix {prefix}\n")

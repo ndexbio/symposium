@@ -11,7 +11,7 @@ An agent authors **canonical JSON**. A deterministic tool wraps it in CX2 and up
 
 This is a **profile**: narrower than the specification permits, and deliberately so. It fixes a set of addressing methods, a naming rule, and a citation form that the specification leaves open. Where this document is stricter than the specification, it says so.
 
-The complete worked example is [`examples/record/`](../examples/record) — 34 Artifacts exercising every construct below. When something here is unclear, read the artifact.
+The complete worked example is [`examples/record/`](../examples/record) — 35 Artifacts exercising every construct below. When something here is unclear, read the artifact.
 
 ## 0. The one rule
 

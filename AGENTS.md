@@ -44,6 +44,7 @@ you get a clean validation that means nothing. Never set it by hand. Let
 | Understand the JSON shape of an artifact | `tools/CANONICAL.md` |
 | Read an existing record | `docs/quickstart.md` §1 |
 | Change the toolchain | run `cd tools && python3 conformance.py` before and after; it must stay green |
+| Understand `examples/` | [`examples/README.md`](examples/README.md) — these are test fixtures, not samples |
 
 Role charters live in `tools/roles/<name>.md`, standing rules in
 `tools/policy/`, and procedures in `tools/sop/`.
@@ -63,6 +64,10 @@ Role charters live in `tools/roles/<name>.md`, standing rules in
   `--check`, which uploads nothing and needs no network, or run a local server.
 - **Never publish an artifact the user has not seen.** Publication is
   permanent and attributed to the user's account, not to you.
+- **Never delete or edit anything under `examples/`.** Despite the name it is
+  the conformance suite's fixture data: `examples/record/` is validated in
+  publication order and `examples/refused/` holds Artifacts that must be
+  refused for named reasons. Copy them elsewhere to experiment.
 - **Never put a community's record inside this repository.** The server
   requires `--data <dir>` and refuses a path inside the clone. Ask the user
   where the community should live; do not choose for them.

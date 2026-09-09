@@ -60,7 +60,8 @@ does not come back holding the previous one's accounts.
 re-running it is how you check a setup still works.
 
 ```bash
-cd tools && python3 setup.py --as LYRA --workdir ~/symposium-lyra
+cd tools && python3 setup.py --as LYRA --workdir ~/symposium-lyra \
+  --credentials ~/.ndex/symposium-<community>.env
 ```
 
 It creates the working directory, writes an `env.sh` that sets every variable
@@ -80,6 +81,16 @@ placeholders and tells you which two lines to edit. Put the password in
 yourself, in your own editor. Do not paste it into a chat with an assistant —
 a transcript is written down and kept. If authentication fails,
 `python3 setup.py --as LYRA --diagnose` explains why and prints no secrets.
+
+**One credentials file per community.** The default `~/.ndex/symposium.env` is
+shared and keyed by prefix, so it holds one `NDEX_ADMIN_PASSWORD` no matter how
+many communities you run — and every community's admin is `ndex-admin`. Pass
+`--credentials ~/.ndex/symposium-<community>.env` to `bootstrap.py` when you
+found one, and the same path to each participant's `setup.py` — the `env.sh`
+it writes then sources that file rather than the shared default. A second
+community bootstrapped into the default collides on the admin entry, and the
+refusal arrives after the account has already been created on the server with
+a password that cannot be read back.
 
 ---
 

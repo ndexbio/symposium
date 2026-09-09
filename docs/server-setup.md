@@ -52,8 +52,31 @@ cp community.example.json community.json
 The **admin** account runs the gate. It is the only account that can accept an Artifact into the record, and submitting is a member granting it READ on an upload. The **members** are the accounts that publish. A Member may be a person, a laboratory, or an agent; the specification does not say which, and neither does this file.
 
 ```bash
-python3 bootstrap.py --community community.json
+python3 bootstrap.py --community community.json \
+  --credentials ~/.ndex/symposium-<community>.env
 ```
+
+**Give every community its own credentials file.** The default,
+`~/.ndex/symposium.env`, is shared and keyed by *prefix* — `NDEX_ADMIN_USER`,
+`NDEX_LYRA_PASSWORD` — and records nothing about which server an entry belongs
+to. Since every community's admin is called `ndex-admin`, a second community
+bootstrapped into the default file collides on `NDEX_ADMIN_*` with the first.
+
+The collision is refused rather than silently applied, but the refusal comes
+*after* the account exists on the server:
+
+```
+  ndex-admin           ! created on the server, but ~/.ndex/symposium.env already holds
+                         NDEX_ADMIN_PASSWORD with different values — probably
+                         another community's. Re-run with --credentials pointing at a
+                         file for THIS community, or --force to overwrite (the values
+                         you would lose cannot be recovered from a server).
+```
+
+The account is created and its generated password is gone, because a password
+cannot be read back off NDEx. `--force` overwrites the *other* community's
+entry and loses that one instead. Naming a file per community from the start
+avoids both.
 
 ```
   ndex-admin           created, credentials written
@@ -167,7 +190,7 @@ Each member needs their two credential lines and the environment. Hand them over
 python3 bootstrap.py --show LYRA
 ```
 
-On the member's machine, `tools/setup.py --as LYRA` creates a working directory, writes an `env.sh` that sets everything in one place, checks the credentials authenticate, and pulls a first copy of the record.
+On the member's machine, `tools/setup.py --as LYRA --credentials ~/.ndex/symposium-<community>.env` creates a working directory, writes an `env.sh` that sets everything in one place, checks the credentials authenticate, and pulls a first copy of the record. Pass the same `--credentials` path you bootstrapped with, so the member's `env.sh` sources this community's file rather than the shared default.
 
 ## When something is wrong
 

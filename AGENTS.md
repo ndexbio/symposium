@@ -41,6 +41,8 @@ you get a clean validation that means nothing. Never set it by hand. Let
 | Set up a server and found a community | `docs/server-setup.md` |
 | Get one participant's machine working | `tools/setup.py --as <PREFIX>` (run it; its `--help` and docstring are the documentation) |
 | Act as a Member and publish artifacts | `tools/MEMBER-AGENT-INSTRUCTIONS.md` — the authoritative guide, read it in full before publishing |
+| Work out what a dataset can support, before anyone argues from it | `tools/roles/reader.md` — run it after the import and before the analysis |
+| Understand why the roles say what they say | [`docs/lessons-from-test1.md`](docs/lessons-from-test1.md) — six rounds of a real community, and what went wrong |
 | Understand the JSON shape of an artifact | `tools/CANONICAL.md` |
 | Read an existing record | `docs/quickstart.md` §1 |
 | Change the toolchain | run `cd tools && python3 conformance.py` before and after; it must stay green |

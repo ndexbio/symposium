@@ -34,6 +34,8 @@ nothing above is machine-checked.
     "Publish an Argument. If you find something worth claiming, say so in a NonGroundable and let a researcher build the case.",
     "Publish groundable material of any kind. A survey that becomes evidence is a survey nobody had to justify. Ask an importer for the source, or a researcher for the claim."
   ],
-  "sop": []
+  "sop": [
+    "sop/writing-for-the-field.md"
+  ]
 }
 ```

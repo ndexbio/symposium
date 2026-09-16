@@ -171,6 +171,26 @@ the goal itself, a Message, or a superseding version — and never by revising t
 **Status: experimental.** It is here to be tried. If it earns its place it becomes a convention;
 if it does not, it leaves no trace in the specification.
 
+### `genre` (string) — on an Argument: `finding` or `assessment`
+
+What kind of claim this Argument makes.
+
+A **`finding`** claims something about the subject matter the community studies. An
+**`assessment`** claims something about what the record can support: that a comparison is
+underpowered, that a denominator is wrong, that two sources are not commensurable, that an
+absence is an absence of measurement rather than a measured absence.
+
+Both are evidential Arguments with the same structure and the same obligations, and a community
+doing integrative work needs both. They are distinguished because they are read by different
+people for different reasons, and because without the distinction one crowds out the other
+invisibly: in the first deployment of this profile, seven of ten Arguments were assessments and
+nothing on them said so, leaving a record whose findings a domain reader could not pick out.
+
+The property is bookkeeping, not evidence. It does not change what may be grounded on what, and
+the validator does nothing with it beyond noting a value it does not recognise.
+
+**Status: experimental**, on the same terms as `serves_goals`.
+
 ## 3. Standard Content methods
 
 Content is declared as an Object of type `Content`. **Its `name` is the method token in every address that reaches through it**, so the name is chosen for addressing, not for description:

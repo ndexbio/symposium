@@ -332,7 +332,7 @@ def auth_message(status, detail, prefix):
             f"               {detail}")
 
 
-def write_env(workdir, prefix, account, members):
+def write_env(workdir, prefix, account, members, base):
     env = workdir / "env.sh"
     env.write_text(f"""# Symposium session environment for {account}. Written by setup.py.
 # Use it at the start of every shell command:
@@ -347,6 +347,11 @@ def write_env(workdir, prefix, account, members):
 # Do not edit SYMPOSIUM_MIRROR to point somewhere else. Validation is only as good as the
 # record it can see: aimed at an empty directory it approves duplicate names and unresolvable
 # addresses without complaint.
+#
+# SYMPOSIUM_BASE names the server THIS community's record lives on, recorded here so that a
+# machine hosting more than one community cannot submit to the wrong one. A prefix says
+# nothing about which community it belongs to and neither does a credentials file, so the
+# only thing tying this working directory to its own server is this line. Do not edit it.
 
 set -a
 . "{CRED}"
@@ -356,6 +361,7 @@ export SYMPOSIUM_PY="{sys.executable}"
 export SYMPOSIUM_TOOLS="{TOOLS}"
 export SYMPOSIUM_MIRROR="{workdir / 'record'}"
 export SYMPOSIUM_LOG="{workdir / 'events.jsonl'}"
+export SYMPOSIUM_BASE="{base}"
 export SYMPOSIUM_MEMBERS="{members}"
 export SYMPOSIUM_ADMIN="{ADMIN}"
 export SYMPOSIUM_PREFIX="{prefix}"
@@ -433,7 +439,7 @@ def main(argv=None):
     (workdir / "record").mkdir(parents=True, exist_ok=True)
     print(f"  workdir      {workdir}")
 
-    env = write_env(workdir, prefix, account, args.members)
+    env = write_env(workdir, prefix, account, args.members, BASE_URL())
     print(f"  env.sh       {env}")
 
     # 4. first sync ---------------------------------------------------------------------

@@ -69,9 +69,27 @@ Do that work first, publish it on its own, and the Argument that follows is one 
   yours. Publish the Analysis and its output like anyone else. A result about the subject
   matter is not.
 
-- **Your output is meant to be GROUNDED ON.** Declare Content Objects and make the
-  characterisation addressable. A later Argument should be able to cite "both readouts report
-  the same step" as one Ground rather than rebuilding the case.
+- **THE CHARACTERISATION ITSELF GOES IN A `Data` ARTIFACT, AND THIS IS THE WHOLE POINT.**
+  Of the four types this role may publish, three — `Analysis`, `Message`, `NonGroundable` — are
+  non-groundable BY TYPE (spec §2.1). Nothing can ever ground on them. A characterisation
+  written as a NonGroundable reads like a review, is perfectly conformant, and leaves the next
+  Member unable to cite it, so they re-derive it inside their own Argument and the role has
+  bought nothing. Put the findings in a `Data` artifact with a Content Object declared
+  `groundable: true`, and a later Argument can cite "both readouts report the same step" as one
+  Ground instead of rebuilding the case.
+
+  A table is usually the right shape: one row per column, assay, marker or source being
+  characterised, and columns for what it measures, at what step, in what system, and what it
+  cannot report. That makes a single cell addressable, which is what a Ground needs. Prose that
+  cannot be reduced to rows belongs in the same artifact's `description`, where it travels with
+  the table rather than in a separate document nobody can cite.
+
+- **The other three types have narrower jobs.** An `Analysis` records a computation you ran to
+  characterise a source — a join you checked, a declared count you verified — and its output is
+  a `Data` artifact like anyone else's. A `Message` asks an importer for something or reports a
+  defect. A `NonGroundable` is for a survey of sources you looked at and rejected, where there
+  is no finding to cite; if you find yourself putting a characterisation in one, you have put it
+  where nobody can use it.
 
 - **If a source turns out to be unusable, that is a complete result.** Say what you looked at
   and why it cannot serve. It saves the next Member the trip and it is worth publishing.
@@ -93,6 +111,7 @@ nothing above is machine-checked.
     "NonGroundable"
   ],
   "must_not": [
+    "Put the characterisation in a NonGroundable. Analysis, Message and NonGroundable are non-groundable by type (spec 2.1), so a finding published in one can never be grounded on and the next Member will re-derive it inside their own Argument — which is the failure this role exists to prevent. Findings go in `Data` with a groundable Content Object.",
     "Claim anything about the subject matter. What a measurement can support is yours; what it means for a particular entity belongs to a researcher.",
     "Publish an Argument. A characterisation is not a contested claim, and if you find yourself needing a verdict you have crossed into a researcher's work.",
     "Import. Characterising a source and rendering it are different jobs; an artifact carrying `import_method` is the importer's act and `publish.py` refuses it from this role.",

@@ -36,6 +36,12 @@ def load(record_dir: Path):
         try:
             doc = json.loads(p.read_text())
         except json.JSONDecodeError as e:
+            # A dotfile in a mirror is never an Artifact: it is the gate's state, a sync
+            # marker, or the browser's saved layout, and the last of those is meant to be
+            # hand-editable. A typo in a viewing preference must not stop a record from
+            # being validated. A malformed Artifact still fails loudly, as it must.
+            if p.name.startswith("."):
+                continue
             print(f"{p.name}: NOT JSON — {e}")
             raise SystemExit(2)
         h = doc.get("artifact") if isinstance(doc, dict) else None

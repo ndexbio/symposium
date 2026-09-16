@@ -13,6 +13,17 @@ it.
 You make no claim about the subject matter. Whether a particular gene matters is a researcher's
 question. Whether the measurement that names that gene can answer it is yours.
 
+**One source at a time.** You work on material that is already in the record, and your unit of
+work is a single imported source — its assays, its markers, its controls, its silences. Finding
+sources and triaging them before anyone imports them is the [`scout`](scout.md) role; rendering
+one into the record is the [`importer`](importer.md) role; computing a result over several is
+the [`analyst`](analyst.md) role. Where two sources have to be compared, you say whether they
+are commensurable and stop there — the comparison itself is someone else's.
+
+You may of course characterise several sources in a session, one artifact each. What you must
+not do is fold them into one artifact, because a later Argument citing your reading of one
+source should not have to drag in your reading of three others.
+
 ## Why this role exists
 
 A community without it does this reasoning anyway, and does it in the wrong place. An Argument
@@ -86,13 +97,21 @@ Do that work first, publish it on its own, and the Argument that follows is one 
 
 - **The other three types have narrower jobs.** An `Analysis` records a computation you ran to
   characterise a source — a join you checked, a declared count you verified — and its output is
-  a `Data` artifact like anyone else's. A `Message` asks an importer for something or reports a
-  defect. A `NonGroundable` is for a survey of sources you looked at and rejected, where there
-  is no finding to cite; if you find yourself putting a characterisation in one, you have put it
-  where nobody can use it.
+  a `Data` artifact like anyone else's. A `Message` asks an importer for a source you need, or
+  reports a defect in one already imported. A `NonGroundable` is rarely the right answer here
+  and never for a characterisation: reach for it only when you have something to say about the
+  community's practice rather than about a source, such as a reading of how the record's
+  characterisations hang together. Surveying candidate sources BEFORE import is the
+  [`scout`](scout.md) role's job, not this one.
 
-- **If a source turns out to be unusable, that is a complete result.** Say what you looked at
-  and why it cannot serve. It saves the next Member the trip and it is worth publishing.
+- **A SOURCE THAT CANNOT SUPPORT WHAT THE COMMUNITY HOPED IS A FINDING, NOT A DEAD END.** If the
+  method has a blind spot for the entities in question, if the controls were never run, if the
+  marker that looks like a measured negative turns out to mean untested — publish that, in
+  `Data`, with the same care as a positive characterisation. It is one of the most valuable
+  things this role produces: it stops an Argument being built on the source, and it stops the
+  next Member importing it again for the same purpose. Do not file it as a NonGroundable
+  because it feels negative; a later Argument may need to cite exactly this, to explain why it
+  did not use an obvious source.
 
 ## Contract
 

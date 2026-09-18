@@ -789,7 +789,10 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   function liveTypeCounts() {{
     var m = {{}};
-    cy.nodes().forEach(function (n) {{ var t = n.data('ntype'); if (t) m[t] = (m[t] || 0) + 1; }});
+    cy.nodes().forEach(function (n) {{
+      var t = n.data('ntype');
+      if (t && t !== 'Annotation' && t !== 'TimeTick') m[t] = (m[t] || 0) + 1;
+    }});
     return m;
   }}
   function markersLegend() {{
@@ -984,7 +987,7 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 </header>
 <div id="app">
   <div id="graphwrap">
-    <div class="toolbar"><button id="btn-fit">Fit</button><button id="btn-export">Export PNG</button><button id="btn-hide">Hide node</button><button id="btn-showall">Show all</button><button id="btn-savepos" title="Download the current arrangement as .browser_layout.json; drop it beside the record and it survives every rebuild">Save layout</button><button id="btn-resetpos" title="Return every node to its computed position">Reset layout</button><span id="postate" style="font-size:11px;color:var(--muted);align-self:center;user-select:none">alt-click a node to hide it &middot; drag to rearrange</span></div>
+    <div class="toolbar"><button id="btn-fit">Fit</button><button id="btn-export">Export PNG</button><button id="btn-hide">Hide node</button><button id="btn-showall">Show all</button><button id="btn-note" title="Place a caption on the graph. Captions are presenter annotations, not part of the record.">Add note</button><button id="btn-savepos" title="Download the current arrangement and captions as .browser_layout.json; drop it beside the record and it survives every rebuild">Save layout</button><button id="btn-resetpos" title="Return every node to its computed position">Reset layout</button><span id="postate" style="font-size:11px;color:var(--muted);align-self:center;user-select:none">alt-click a node to hide it &middot; drag to rearrange</span></div>
     <div id="cy"></div>
     <div id="tip" class="tip"></div>
   </div>
@@ -1041,6 +1044,16 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
       // the arrangement they chose from the one the layout computed.
       {{ selector:'node.pinned', style: {{
         'border-width':2, 'border-color':'#0f766e', 'border-style':'dashed' }} }},
+      // A presenter caption. Deliberately unlike an artifact — no fill, no member colour, a
+      // dashed grey outline — so nobody reading the picture mistakes a caption for something
+      // the community published.
+      {{ selector:'node[ntype="Annotation"]', style: {{
+        'background-opacity':0.9, 'background-color':'#f8fafc',
+        'border-width':1.5, 'border-color':'#94a3b8', 'border-style':'dashed',
+        'shape':'round-rectangle', 'color':'#475569', 'font-size':13, 'font-style':'italic',
+        'text-valign':'center', 'text-halign':'center', 'text-wrap':'wrap',
+        'text-max-width':190, 'width':210, 'height':'label', 'padding':'10px',
+        'z-index':1 }} }},
       // Long edges are the ones that were unreadable: a `cites` edge spanning four columns
       // passes near unrelated nodes however the layer ordering is chosen. Bowing it by an
       // amount proportional to its span separates it from both the straight short edges and
@@ -1107,13 +1120,20 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
     cy.elements().removeClass('hi faded');
     updateHideUI();
   }}
-  cy.on('tap','node',function(e){{ if(e.target.data('ntype')==='TimeTick') return;
+  cy.on('tap','node',function(e){{
+    var nt=e.target.data('ntype');
+    if(nt==='TimeTick') return;
     var oe=e.originalEvent||{{}};
     if(oe.altKey){{ figHide(e.target); return; }}
+    // A caption is not an artifact: it opens no detail panel and highlights nothing.
+    // Double-click edits it, handled separately.
+    if(nt==='Annotation') return;
     lastTapped=e.target; renderNode(e.target.data()); highlight(e.target); }});
   cy.on('tap','edge',function(e){{ renderEdge(e.target.data()); highlight(e.target); }});
   cy.on('tap',function(e){{ if(e.target===cy) cy.elements().removeClass('hi faded'); }});
-  cy.on('dbltap','node',function(e){{ var f=e.target.data('nav_file'); if(f) window.location.href=f; }});
+  cy.on('dbltap','node',function(e){{
+    if(e.target.data('ntype')==='Annotation') return;   // captions are edited, not navigated
+    var f=e.target.data('nav_file'); if(f) window.location.href=f; }});
   detail.addEventListener('click',function(e){{ var b=e.target.closest?e.target.closest('.navbtn'):null;
     if(b){{ var f=b.getAttribute('data-file'); if(f) window.location.href=f; }} }});
   document.getElementById('btn-fit').onclick=function(){{ cy.fit(undefined,40); }};
@@ -1161,11 +1181,55 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
     moved[n.id()] = {{x:Math.round(p.x*10)/10, y:Math.round(p.y*10)/10}};
     markPinned(n); posState();
   }});
+  // ---- presenter captions ----
+  //
+  // A caption is a label on the picture, not a statement in the record: "more analytic work
+  // not shown" standing where a section has been hidden. It is drawn as a node so it pans,
+  // zooms and exports with the graph, and it is saved into the same sidecar as the manual
+  // positions. Nothing can cite one and the gate never sees it.
+  var notes = [];
+  cy.nodes('[ntype="Annotation"]').forEach(function(n){{
+    var p=n.position(); notes.push({{text:n.data('label'), x:p.x, y:p.y, id:n.id()}});
+  }});
+  function noteAt(text, x, y){{
+    var id='__annotation_'+Date.now()+'_'+Math.floor(Math.random()*1000);
+    cy.add({{group:'nodes', data:{{
+      id:id, ntype:'Annotation', label:text, member:'', owner_color:'#64748b',
+      shape:'round-rectangle', tooltip:'presenter annotation — not part of the record',
+      _pos:{{x:x,y:y}}, _pinned:true }}, position:{{x:x,y:y}} }});
+    notes.push({{text:text, x:x, y:y, id:id}});
+  }}
+  document.getElementById('btn-note').onclick=function(){{
+    var t=window.prompt('Caption text (leave empty to cancel):','more analytic work not shown');
+    if(!t || !t.trim()) return;
+    var e=cy.extent();                       // drop it in the middle of what is on screen
+    noteAt(t.trim(), (e.x1+e.x2)/2, (e.y1+e.y2)/2);
+  }};
+  // double-click a caption to edit it; empty text deletes it
+  cy.on('dbltap','node[ntype="Annotation"]',function(ev){{
+    var n=ev.target;
+    var t=window.prompt('Caption text (leave empty to delete):', n.data('label'));
+    if(t===null) return;
+    if(!t.trim()){{ notes=notes.filter(function(x){{return x.id!==n.id();}}); n.remove(); return; }}
+    n.data('label',t.trim());
+    notes.forEach(function(x){{ if(x.id===n.id()) x.text=t.trim(); }});
+  }});
+  function collectNotes(){{
+    var out=[];
+    notes.forEach(function(x){{
+      var n=cy.getElementById(x.id);
+      if(n && n.length){{ var p=n.position();
+        out.push({{text:x.text, x:Math.round(p.x*10)/10, y:Math.round(p.y*10)/10}}); }}
+    }});
+    return out;
+  }}
+
   document.getElementById('btn-savepos').onclick=function(){{
     var out={{
-      note:'Manual node positions for the Symposium community browser. Drop this file in the record directory as .browser_layout.json; browse.py reads it and pins these nodes. Delete it to return to the computed layout. It is not an artifact and the gate never sees it.',
+      note:'Manual node positions and presenter captions for the Symposium community browser. Drop this file in the record directory as .browser_layout.json; browse.py reads it and pins these nodes and draws these captions. Delete it to return to the computed layout. It is not an artifact and the gate never sees it.',
       generated:new Date().toISOString(),
-      positions:moved
+      positions:moved,
+      annotations:collectNotes()
     }};
     var blob=new Blob([JSON.stringify(out,null,2)],{{type:'application/json'}});
     var a=document.createElement('a');

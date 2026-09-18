@@ -285,14 +285,20 @@ _STRUCTURAL_RELS = {"produced_by", "inputs", "grounded_by", "testimony", "cites"
 
 
 def _overview_of(rec):
-    """Rebuild the overview elements for a record directory."""
+    """Rebuild the overview elements for a record directory.
+
+    This must read the sidecar exactly as compile_record does — positions AND annotations —
+    or a test passes against a build path no reader ever sees.
+    """
     arts = browse.load_record(str(rec))
     colors = browse.member_colors(arts)
     index = browse.build_index(arts)
     pages = {a["artifact"]["name"]: browse.page_name(a["artifact"]["name"]) for a in arts}
     findings = browse.run_validator(arts, set(colors))
     pins = browse.load_pins(str(rec))
-    return browse.build_overview(arts, index, colors, pages, findings, pins=pins)
+    annotations = browse.load_annotations(str(rec))
+    return browse.build_overview(arts, index, colors, pages, findings,
+                                 pins=pins, annotations=annotations)
 
 
 def case_g_citation_edges_span_columns(dists):
@@ -440,6 +446,54 @@ def case_j_internal_structure_is_shown(dists):
     return (not bad, f"{drawn} artifact(s) with internal structure draw it", bad)
 
 
+def case_k_annotations_are_not_artifacts(dists):
+    """A presenter caption is drawn, and is not mistaken for something the community published.
+
+    Captions let a presenter write "more analytic work not shown" where a section of the graph
+    has been hidden. They live in the same sidecar as the manual positions, carry no address,
+    and nothing can cite one. The risk is not that they fail to draw; it is that they are
+    counted, clicked or cited as if they were artifacts, so that is what this checks.
+    """
+    bad = []
+    rec = sorted(dists)[0]
+    sidecar = pathlib.Path(rec) / browse.PIN_FILE
+    saved = sidecar.read_text() if sidecar.is_file() else None
+    try:
+        sidecar.write_text(json.dumps({"annotations": [
+            {"text": "more analytic work not shown", "x": 10.0, "y": 20.0},
+            {"text": "no coordinates"},                       # malformed, must be dropped
+            {"text": "   ", "x": 1, "y": 2},                  # empty, must be dropped
+        ]}))
+        anns = browse.load_annotations(str(rec))
+        if len(anns) != 1:
+            bad.append(f"expected 1 usable annotation, got {len(anns)}")
+        elements, meta = _overview_of(rec)
+        ann = [n for n in elements["nodes"] if n["data"].get("ntype") == "Annotation"]
+        if len(ann) != 1:
+            bad.append(f"{len(ann)} annotation node(s) emitted, expected 1")
+        arts = browse.load_record(str(rec))
+        if meta["counts"]["artifacts"] != len(arts):
+            bad.append("annotation counted among the artifacts")
+        ids = {n["data"]["id"] for n in elements["nodes"]}
+        for e in elements["edges"]:
+            if e["data"]["source"] in ids and e["data"]["source"].startswith("__annotation"):
+                bad.append("an edge starts at an annotation")
+            if e["data"]["target"].startswith("__annotation"):
+                bad.append("an edge ends at an annotation")
+        if ann and ann[0]["data"].get("nav_file"):
+            bad.append("annotation carries a nav_file and would navigate somewhere")
+        # a malformed sidecar must cost the captions and nothing else
+        sidecar.write_text("{ not json")
+        if browse.load_annotations(str(rec)) != []:
+            bad.append("malformed sidecar did not degrade to no annotations")
+    finally:
+        if saved is None:
+            sidecar.unlink(missing_ok=True)
+        else:
+            sidecar.write_text(saved)
+    return (not bad, "a caption is drawn, uncounted, unlinked and uncitable", bad)
+
+
 CASES = [
     ("every Ground lands on the content it names", case_a_grounds_land),
     ("an Argument's prose is readable, not letterboxed", case_f_argument_is_readable),
@@ -451,6 +505,7 @@ CASES = [
     ("a hand-placed node survives a rebuild", case_h_pins_survive_a_rebuild),
     ("an Argument page restores moved nodes on load", case_i_claim_positions_restore_on_load),
     ("an Artifact's own Objects and relationships are shown", case_j_internal_structure_is_shown),
+    ("a presenter caption is not mistaken for an artifact", case_k_annotations_are_not_artifacts),
 ]
 
 

@@ -51,6 +51,36 @@ cp community.example.json community.json
 
 The **admin** account runs the gate. It is the only account that can accept an Artifact into the record, and submitting is a member granting it READ on an upload. The **members** are the accounts that publish. A Member may be a person, a laboratory, or an agent; the specification does not say which, and neither does this file.
 
+### A second community on the same server needs its own account names
+
+Not just its own credentials file — its own **names**. This is the mistake that is easiest to
+make and most expensive to discover.
+
+One server can host several communities: their records are separated by which account owns a
+network and by which mirror directory each participant syncs into. But the gate has no notion
+of "this community". It accepts, indexes and mirrors **every network the admin account can
+see**, so an admin account shared between two communities gives you one record wearing two
+names.
+
+The symptom is unmistakable once you know it. `gate.py --rebuild` on what should be a brand new
+community reports a record that is not empty:
+
+```
+rebuilt .../admin/record from the server: 46 artifact(s)
+```
+
+Those are the other community's artifacts, now indexed as this one's. The same applies to any
+member account reused across communities: everything that account has ever published follows it.
+
+So give a second community a distinct admin (`hpmi-admin`, not `ndex-admin`) and distinct member
+names, even where the same person or agent is behind them. If a human takes part in two
+communities and you want their identity to be visibly the same, that is a reason to run the
+second community on its own server rather than to share the account.
+
+Caught before anything is published, the fix costs ten minutes: change the roster, re-run
+`bootstrap.py`, re-run `setup.py` for the affected participants, and rebuild the gate. Caught
+afterwards, the two records have to be separated by hand.
+
 ```bash
 python3 bootstrap.py --community community.json \
   --credentials ~/.ndex/symposium-<community>.env
@@ -213,3 +243,21 @@ can be recreated with `bootstrap.py` against the same roster.
 **Publishing fails with what looks like a credential error.** Check `curl -s $SYMPOSIUM_BASE/v2/admin/status` first. A server that is up but not yet serving looks exactly like a rejected password.
 
 **A member cannot see an accepted Artifact.** They were probably granted after it was accepted. `gate.py --grant <member>` is idempotent and back-fills.
+
+**`bootstrap.py` says the server is not answering, and the port in the message is not yours.**
+It defaults to `http://localhost:8080`. A server started on any other port needs
+`SYMPOSIUM_BASE` set, and setting it as a prefix on the one command — `SYMPOSIUM_BASE=http://127.0.0.1:8157 python3 bootstrap.py ...` — keeps it from following you into work on a different community later. `setup.py` reads the same variable and **writes it into every `env.sh` it generates**, so if it is unset or wrong there, every participant is configured against the wrong server and the failures appear later, one account at a time, looking like authentication errors.
+
+**`setup.py` asks you to replace `REPLACE_ME` for an account `bootstrap.py` already created.**
+The two tools share the credentials file but not the knowledge of which one wrote it. If
+`bootstrap.py` wrote the passwords into one file and `setup.py` is pointed at another — or at
+the same file after it has been moved aside — `setup.py` finds no entry, assumes a human will
+paste one, and **overwrites the real values with placeholders**. Check that both commands carry
+the same `--credentials` path before running either. If it has already happened, the real
+values are in whichever file `bootstrap.py` actually wrote; they are not recoverable from the
+server, which is why that file is worth keeping until a community is running.
+
+**A prefix that is no longer in the roster keeps reappearing.** `setup.py --as OLDNAME` adds
+`NDEX_OLDNAME_*` to the credentials file whether or not `OLDNAME` is in `community.json`. After
+renaming an account, delete the stale entries; they authenticate against nothing and will
+confuse the next person to read the file.

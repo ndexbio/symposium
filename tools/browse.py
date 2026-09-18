@@ -827,7 +827,7 @@ def apply_pins(positions, pins):
     return used
 
 
-def build_overview(artifacts, index, colors, pages, findings_by, pins=None):
+def build_overview(artifacts, index, colors, pages, findings_by, pins=None, annotations=None):
     nodes, edges = [], []
     stamps = []
     for a in artifacts:
@@ -976,6 +976,19 @@ def build_overview(artifacts, index, colors, pages, findings_by, pins=None):
         base = 18 + 22 * max(span - 1, 0)
         d["cpd"] = (base + 16 * (k // 2)) * (1 if k % 2 == 0 else -1)
         d["tooltip"] += f"\nspans {span} column(s)"
+
+    # Presenter captions. They are nodes so that they pan, zoom and export with the graph
+    # rather than floating over it in screen coordinates, and they carry a distinct ntype so
+    # nothing downstream mistakes one for an artifact: they are excluded from every count, are
+    # not clickable, and have no edges.
+    for k, ann in enumerate(annotations or []):
+        nodes.append({"data": {
+            "id": f"__annotation_{k}", "ntype": "Annotation", "label": ann["text"],
+            "member": "", "owner_color": "#64748b", "shape": "round-rectangle",
+            "nav_file": None, "page_kind": None, "full": None,
+            "tooltip": "presenter annotation — not part of the record",
+            "_pos": {"x": ann["x"], "y": ann["y"]}, "_pinned": True,
+        }})
 
     by_member, by_type = defaultdict(int), defaultdict(int)
     for a in artifacts:
@@ -1492,6 +1505,42 @@ def load_pins(record_dir):
     return pos if isinstance(pos, dict) else {}
 
 
+def load_annotations(record_dir):
+    """Free text the presenter has placed on the overview, from the same sidecar.
+
+    An annotation is a caption on the picture, not a statement in the record: "more analytic
+    work not shown" standing where a reader has hidden a section, a label over a cluster. It
+    carries no address, nothing can cite it, and the gate never sees it — it lives beside the
+    artifacts in the same dotfile as the manual positions, for the same reason and with the
+    same failure behaviour.
+
+    Returns a list of {text, x, y} with anything malformed dropped, because a mistyped caption
+    must cost the caption and not the build.
+    """
+    p = pathlib.Path(record_dir) / PIN_FILE
+    if not p.is_file():
+        return []
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    items = raw.get("annotations") if isinstance(raw, dict) else None
+    if not isinstance(items, list):
+        return []
+    out = []
+    for a in items:
+        if not isinstance(a, dict):
+            continue
+        t = a.get("text")
+        try:
+            x, y = float(a["x"]), float(a["y"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if isinstance(t, str) and t.strip():
+            out.append({"text": t.strip()[:200], "x": x, "y": y})
+    return out
+
+
 def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=None, quiet=False,
                    figures_dir=None):
     artifacts = load_record(record_dir)
@@ -1558,7 +1607,9 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
                 print(f"    {w.name}")
 
     pins = load_pins(record_dir)
-    elements, meta = build_overview(artifacts, index, colors, pages, findings_by, pins=pins)
+    annotations = load_annotations(record_dir)
+    elements, meta = build_overview(artifacts, index, colors, pages, findings_by,
+                                    pins=pins, annotations=annotations)
     meta["counts"]["findings"] = sum(len(v) for v in findings_by.values())
     meta["pin_file"] = PIN_FILE
     if not quiet and meta["counts"].get("pinned"):

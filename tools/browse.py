@@ -1555,10 +1555,14 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
 
     out = pathlib.Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    vendor_src = pathlib.Path(__file__).resolve().parent / "vendor" / "cytoscape.min.js"
-    if vendor_src.is_file():
-        (out / "vendor").mkdir(exist_ok=True)
-        shutil.copy2(vendor_src, out / "vendor" / "cytoscape.min.js")
+    # cytoscape-svg is optional: without it the pages still build and still export PNG,
+    # and the Export SVG button hides itself rather than failing on click.
+    vendor_dir = pathlib.Path(__file__).resolve().parent / "vendor"
+    for lib in ("cytoscape.min.js", "cytoscape-svg.js"):
+        src = vendor_dir / lib
+        if src.is_file():
+            (out / "vendor").mkdir(exist_ok=True)
+            shutil.copy2(src, out / "vendor" / lib)
 
     n_arg = 0
     figs = []

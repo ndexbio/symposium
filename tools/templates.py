@@ -146,6 +146,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     <div class="toolbar">
       <button id="btn-fit">Fit</button>
       <button id="btn-export">Export PNG</button>
+      <button id="btn-export-svg" title="Vector, for print. Exports exactly what is on screen now, with hidden nodes left out.">Export SVG</button>
       <button id="btn-hide">Hide node</button>
       <button id="btn-showall">Show all</button>
       <button id="btn-claim" class="active">Claim map</button>
@@ -165,6 +166,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 </div>
 
 <script src="{cyto_src}"></script>
+<script src="vendor/cytoscape-svg.js"></script>
 <script id="graph-data" type="application/json">{graph_json}</script>
 <script>
 (function () {{
@@ -647,7 +649,15 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   document.getElementById('btn-fit').onclick = function () {{ cy.fit(undefined, 30); }};
   document.getElementById('btn-export').onclick = function () {{
-    var uri = cy.png({{ full: true, bg: '#ffffff', maxWidth: 2400 }});
+    // A flat 2400px cap is about 100 dpi once the picture is blown up to poster
+    // width, which is visibly soft — the node labels go first. Scale to a target
+    // pixel width instead, computed from the graph's own extent so a small record
+    // is not upscaled into a huge empty canvas and a large one still lands inside
+    // the browser's canvas limit. Only visible elements count, so hiding a section
+    // for a poster makes the rest bigger rather than leaving a gap.
+    var bb = cy.elements(':visible').boundingBox();
+    var scale = Math.max(1, Math.min(8, 8000 / Math.max(bb.w, 1)));
+    var uri = cy.png({{ full: true, bg: '#ffffff', scale: scale }});
     var a = document.createElement('a');
     a.href = uri;
     a.download = (document.title || 'symposium').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.png';
@@ -655,6 +665,28 @@ HTML_TEMPLATE = r"""<!doctype html>
     a.click();
     document.body.removeChild(a);
   }};
+  // Vector export. cytoscape-svg draws the CURRENT graph, so hiding a section and
+  // dragging nodes are both reflected — the same contract the PNG button has. The
+  // extension is optional: if it did not load, hide the button rather than leave
+  // one that throws when pressed.
+  (function () {{
+    var btn = document.getElementById('btn-export-svg');
+    if (!btn) {{ return; }}
+    if (typeof cy.svg !== 'function') {{ btn.style.display = 'none'; return; }}
+    btn.onclick = function () {{
+      var svg = cy.svg({{ full: true, bg: '#ffffff', scale: 1 }});
+      var blob = new Blob([svg], {{ type: 'image/svg+xml;charset=utf-8' }});
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (document.title || 'symposium').toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.svg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }};
+  }})();
+
   document.getElementById('btn-hide').onclick = function () {{ if (lastTapped) figHide(lastTapped); }};
   document.getElementById('btn-showall').onclick = figShowAll;
   updateHideUI();
@@ -987,7 +1019,7 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 </header>
 <div id="app">
   <div id="graphwrap">
-    <div class="toolbar"><button id="btn-fit">Fit</button><button id="btn-export">Export PNG</button><button id="btn-hide">Hide node</button><button id="btn-showall">Show all</button><button id="btn-note" title="Place a caption on the graph. Captions are presenter annotations, not part of the record.">Add note</button><button id="btn-savepos" title="Download the current arrangement and captions as .browser_layout.json; drop it beside the record and it survives every rebuild">Save layout</button><button id="btn-resetpos" title="Return every node to its computed position">Reset layout</button><span id="postate" style="font-size:11px;color:var(--muted);align-self:center;user-select:none">alt-click a node to hide it &middot; drag to rearrange</span></div>
+    <div class="toolbar"><button id="btn-fit">Fit</button><button id="btn-export">Export PNG</button><button id="btn-export-svg" title="Vector, for print. Exports exactly what is on screen now, with hidden nodes left out.">Export SVG</button><button id="btn-hide">Hide node</button><button id="btn-showall">Show all</button><button id="btn-note" title="Place a caption on the graph. Captions are presenter annotations, not part of the record.">Add note</button><button id="btn-savepos" title="Download the current arrangement and captions as .browser_layout.json; drop it beside the record and it survives every rebuild">Save layout</button><button id="btn-resetpos" title="Return every node to its computed position">Reset layout</button><span id="postate" style="font-size:11px;color:var(--muted);align-self:center;user-select:none">alt-click a node to hide it &middot; drag to rearrange</span></div>
     <div id="cy"></div>
     <div id="tip" class="tip"></div>
   </div>
@@ -997,6 +1029,7 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   </div>
 </div>
 <script src="{cyto_src}"></script>
+<script src="vendor/cytoscape-svg.js"></script>
 <script id="graph-data" type="application/json">{graph_json}</script>
 <script>
 (function () {{
@@ -1138,7 +1171,15 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
     if(b){{ var f=b.getAttribute('data-file'); if(f) window.location.href=f; }} }});
   document.getElementById('btn-fit').onclick=function(){{ cy.fit(undefined,40); }};
   document.getElementById('btn-export').onclick=function(){{
-    var uri = cy.png({{ full: true, bg: '#ffffff', maxWidth: 2400 }});
+    // A flat 2400px cap is about 100 dpi once the picture is blown up to poster
+    // width, which is visibly soft — the node labels go first. Scale to a target
+    // pixel width instead, computed from the graph's own extent so a small record
+    // is not upscaled into a huge empty canvas and a large one still lands inside
+    // the browser's canvas limit. Only visible elements count, so hiding a section
+    // for a poster makes the rest bigger rather than leaving a gap.
+    var bb = cy.elements(':visible').boundingBox();
+    var scale = Math.max(1, Math.min(8, 8000 / Math.max(bb.w, 1)));
+    var uri = cy.png({{ full: true, bg: '#ffffff', scale: scale }});
     var a = document.createElement('a');
     a.href = uri;
     a.download = (document.title || 'symposium').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.png';
@@ -1146,6 +1187,28 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
     a.click();
     document.body.removeChild(a);
   }};
+  // Vector export. cytoscape-svg draws the CURRENT graph, so hiding a section and
+  // dragging nodes are both reflected — the same contract the PNG button has. The
+  // extension is optional: if it did not load, hide the button rather than leave
+  // one that throws when pressed.
+  (function () {{
+    var btn = document.getElementById('btn-export-svg');
+    if (!btn) {{ return; }}
+    if (typeof cy.svg !== 'function') {{ btn.style.display = 'none'; return; }}
+    btn.onclick = function () {{
+      var svg = cy.svg({{ full: true, bg: '#ffffff', scale: 1 }});
+      var blob = new Blob([svg], {{ type: 'image/svg+xml;charset=utf-8' }});
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (document.title || 'symposium').toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.svg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }};
+  }})();
+
   document.getElementById('btn-hide').onclick=function(){{ if(lastTapped) figHide(lastTapped); }};
   document.getElementById('btn-showall').onclick=function(){{
     figHidden.forEach(function(n){{ n.removeStyle('display'); }});
@@ -1948,6 +2011,7 @@ ARTIFACT_TEMPLATE = """<!doctype html>
      It is loaded HERE, before the page script, and the graph defers itself to
      DOMContentLoaded because its own <script> is emitted inside <main> above. -->
 <script src="{cyto_src}"></script>
+<script src="vendor/cytoscape-svg.js"></script>
 <script>
 /* Live reload while the record is growing. serve.py answers /__build with the current
    build number; a static host does not, and the fetch simply fails and stops. Nothing

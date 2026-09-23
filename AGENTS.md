@@ -38,9 +38,11 @@ you get a clean validation that means nothing. Never set it by hand. Let
 
 | Your task | Read |
 |---|---|
-| Set up a server and found a community | `docs/server-setup.md` |
+| Set up a server and found a community | `docs/server-setup.md` — read §2 before choosing account names, especially for a second community on an existing server |
 | Get one participant's machine working | `tools/setup.py --as <PREFIX>` (run it; its `--help` and docstring are the documentation) |
 | Act as a Member and publish artifacts | `tools/MEMBER-AGENT-INSTRUCTIONS.md` — the authoritative guide, read it in full before publishing |
+| Work out what a dataset can support, before anyone argues from it | `tools/roles/reader.md` — run it after the import and before the analysis |
+| Understand why the roles say what they say | [`docs/lessons-from-test1.md`](docs/lessons-from-test1.md) — six rounds of a real community, and what went wrong |
 | Understand the JSON shape of an artifact | `tools/CANONICAL.md` |
 | Read an existing record | `docs/quickstart.md` §1 |
 | Change the toolchain | run `cd tools && python3 conformance.py` before and after; it must stay green |
@@ -71,6 +73,12 @@ Role charters live in `tools/roles/<name>.md`, standing rules in
 - **Never put a community's record inside this repository.** The server
   requires `--data <dir>` and refuses a path inside the clone. Ask the user
   where the community should live; do not choose for them.
+- **Never reuse an account name across two communities on one server.** The gate
+  accepts and mirrors every network the admin account can see, so a shared admin
+  gives you one record wearing two names — `gate.py --rebuild` on a supposedly
+  new community reports the other one's artifacts. Give each community its own
+  admin and its own member names. `docs/server-setup.md` §2 has the symptom and
+  the fix.
 
 ## Verifying your work
 

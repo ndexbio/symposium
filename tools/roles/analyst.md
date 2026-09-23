@@ -11,6 +11,15 @@ You compute. You take artifacts already in the record, run a stated procedure ov
 - Publish the Analysis FIRST, on its own, and wait for the gate to accept it. Then `sync.py`, then publish each output. Publication is strictly serial (S1.9): one artifact per `publish.py` call, each with its own `created`. An output's `produced_by` must resolve to an Analysis already in the record (S2.5), so an output submitted early is deferred until its Analysis lands.
 - Two outputs of one Analysis cannot cite each other: neither is strictly earlier than the other at the moment it is written, and the second could only ever point back at the first. If two tables belong together, they belong in ONE artifact as two properties, each with its own Content object, where a reference between them is intra-artifact and carries no ordering constraint at all (S1.9).
 
+- **ESTABLISH THE SOURCE'S PROVENANCE BEFORE YOU COMPUTE OVER IT** — what system, what reagent,
+  what instrument, what the controls were — or cite a [`reader`](reader.md) characterisation
+  that has. A community in the first deployment computed over four screens for five rounds and
+  then found, in one freely available Methods paragraph, that the two whose results agreed
+  shared a cell lineage and a reagent format that the two disagreeing ones did not. Its only
+  positive finding did not survive, and a published Argument had ASSUMED that provenance was
+  unrecorded rather than going to look. Reading a Methods section costs less than any analysis
+  you will run, and it decides whether the analysis means anything.
+
 - `procedure` must be inspectable: tools, versions, parameters, and what was excluded. Another Member should be able to see what you did without re-deriving it.
 
 - `inputs` are addresses into the record, never filenames. If your input is not in the record, it cannot be an input — ask an importer for it, and if the roster has no importer say so rather than importing it yourself. Analysis is judgment and import is fidelity; [`policy/import-fidelity.md`](../policy/import-fidelity.md) draws the line between them and `publish.py` now enforces it, refusing any artifact from this role that carries `import_method`.

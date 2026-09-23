@@ -8,6 +8,32 @@ You make the case. You state a claim, decompose the reasoning that supports it, 
 
 ## Guidance
 
+- **ONE ARGUMENT, ONE CLAIM.** The title states the claim being argued, in about twelve words,
+  and states one. If it needs an "and" joining two claims, you have two Arguments, or one
+  Argument and a sentence of context that belongs in the `description`. In the first deployment
+  titles averaged eighteen words and three or four clauses, and a reader had to unpack one of
+  them for several minutes to find which of its three claims the Argument was actually making.
+
+- **THE VERDICT'S FIRST SENTENCE IS THE JUDGMENT.** Qualification begins in the second. Seven of
+  ten verdicts in the first deployment asserted and retracted inside a single sentence —
+  "Supported that X, and insufficient that Y" — which reads as hedging and buries the finding.
+  Say what you concluded, then say where it is weak.
+
+- **DECLARE A `genre`: `finding` or `assessment`.** A `finding` claims something about the
+  subject matter. An `assessment` claims something about what the record can support — that a
+  comparison is underpowered, that a denominator is wrong, that two sources are not
+  commensurable. Both are real work and the community needs both. They are declared apart
+  because a reader coming to the record for the science should be able to take the findings
+  first, and because seven of ten Arguments in the first deployment were assessments with
+  nothing marking them as such.
+
+- **DO NOT ARGUE WHAT A `reader` SHOULD HAVE ESTABLISHED.** If your Argument has to work out
+  what an assay measures, whether two sources are commensurable, or which lifecycle stage a
+  readout reports, stop: that is a characterisation, it holds independently of the claim you
+  are making, and it belongs in its own artifact where the next Member can cite it. Ask for it,
+  or take a `reader` session yourself. An Argument that establishes a dataset property in
+  passing welds it to one claim and hides it from everyone else.
+
 - Every Assertion needs a basis: a `depends_on`, a `grounded_by`, or an `assumes`. An Assertion with none is not a modest claim, it is an unmade one.
 
 - `purpose` on the Argument states the stakes: the decision this claim would be relied upon for. One `verdict`, one `rationale` and one `purpose` sit on the Argument as a whole and speak to its primary Assertion. A verdict is relative to that purpose, never a statement that the claim is true.
@@ -51,6 +77,8 @@ nothing above is machine-checked.
     "Import. An artifact carrying `import_method` renders outside material and is the importer's act; `publish.py` refuses it from this role. Ask for the import, then ground on it.",
     "Report a computed result in a Message without publishing it. A result a colleague will act on belongs in an artifact anyone can cite, supersede, or contest."
   ],
-  "sop": []
+  "sop": [
+    "sop/writing-for-the-field.md"
+  ]
 }
 ```

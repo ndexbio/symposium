@@ -50,7 +50,43 @@ PLACEHOLDER = "REPLACE_ME"
 # The community's roster. Every Member here receives READ on each accepted Artifact, so
 # it is a property of the community rather than a default anyone can usefully guess.
 DEFAULT_MEMBERS = os.environ.get("SYMPOSIUM_MEMBERS", "")
-ADMIN = "ndex-admin"
+# The account the gate runs as. A member grants it READ as the very act of submitting, so a
+# wrong value here does not fail loudly — it submits to somebody else. On a machine hosting
+# more than one community the wrong name usually resolves to a REAL account: publish.py
+# prints a success line, the member believes it published, and the gate never sees the
+# artifact. So this is resolved per community rather than assumed. The credentials file
+# bootstrap.py wrote for THIS community names the gate's account in NDEX_ADMIN_USER, and that
+# is the authority; the constant below is only the fallback, and taking it warns.
+ADMIN_FALLBACK = "ndex-admin"
+
+
+def resolve_admin(explicit):
+    """-> (account, note). The account the gate runs as, for THIS community.
+
+    Order: an explicit --admin, then NDEX_ADMIN_USER from the credentials file, then a
+    SYMPOSIUM_ADMIN already in the environment, then the fallback.
+
+    The credentials file beats the environment for the same reason load_credentials()
+    overrides rather than setdefaults: a shell that has sourced an older env.sh carries a
+    stale SYMPOSIUM_ADMIN, and letting it win reintroduces the very mismatch this order
+    exists to prevent.
+    """
+    from_cred = os.environ.get("NDEX_ADMIN_USER")
+    if explicit:
+        if from_cred and from_cred != explicit:
+            return explicit, (f"! --admin {explicit} disagrees with NDEX_ADMIN_USER="
+                              f"{from_cred} in the credentials file. Using {explicit}. "
+                              f"The gate runs as one of these, not both.")
+        return explicit, f"{explicit} (--admin)"
+    if from_cred:
+        return from_cred, f"{from_cred} (NDEX_ADMIN_USER)"
+    from_env = os.environ.get("SYMPOSIUM_ADMIN")
+    if from_env:
+        return from_env, f"{from_env} (SYMPOSIUM_ADMIN, already in the environment)"
+    return ADMIN_FALLBACK, (f"! this community does not name its admin account; assuming "
+                            f"{ADMIN_FALLBACK}. If the gate runs as anything else, every "
+                            f"submission from this session is granted to the wrong account "
+                            f"and the gate never sees it. Pass --admin to be certain.")
 
 
 def _entries(text):
@@ -332,7 +368,7 @@ def auth_message(status, detail, prefix):
             f"               {detail}")
 
 
-def write_env(workdir, prefix, account, members):
+def write_env(workdir, prefix, account, members, base, admin):
     env = workdir / "env.sh"
     env.write_text(f"""# Symposium session environment for {account}. Written by setup.py.
 # Use it at the start of every shell command:
@@ -347,6 +383,16 @@ def write_env(workdir, prefix, account, members):
 # Do not edit SYMPOSIUM_MIRROR to point somewhere else. Validation is only as good as the
 # record it can see: aimed at an empty directory it approves duplicate names and unresolvable
 # addresses without complaint.
+#
+# SYMPOSIUM_BASE names the server THIS community's record lives on, recorded here so that a
+# machine hosting more than one community cannot submit to the wrong one. A prefix says
+# nothing about which community it belongs to and neither does a credentials file, so the
+# only thing tying this working directory to its own server is this line. Do not edit it.
+#
+# SYMPOSIUM_ADMIN names the account THIS community's gate runs as. publish.py grants it READ
+# on a submission, and that grant is the whole submission signal. Point it at another real
+# account and nothing errors: the upload succeeds, the success line prints, and the artifact
+# is shared with a stranger instead of the gate. Do not edit it.
 
 set -a
 . "{CRED}"
@@ -356,8 +402,9 @@ export SYMPOSIUM_PY="{sys.executable}"
 export SYMPOSIUM_TOOLS="{TOOLS}"
 export SYMPOSIUM_MIRROR="{workdir / 'record'}"
 export SYMPOSIUM_LOG="{workdir / 'events.jsonl'}"
+export SYMPOSIUM_BASE="{base}"
 export SYMPOSIUM_MEMBERS="{members}"
-export SYMPOSIUM_ADMIN="{ADMIN}"
+export SYMPOSIUM_ADMIN="{admin}"
 export SYMPOSIUM_PREFIX="{prefix}"
 export SYMPOSIUM_ACCOUNT="{account}"
 """)
@@ -377,6 +424,10 @@ def main(argv=None):
                     help=f"the credentials file for THIS community (default: {CRED}). "
                          f"The default is shared and keyed by prefix, so a machine that "
                          f"takes part in two communities needs one file each.")
+    ap.add_argument("--admin", metavar="ACCOUNT",
+                    help="the account THIS community's gate runs as. Normally taken from "
+                         "NDEX_ADMIN_USER in the credentials file; pass it when that file "
+                         "holds only your own credentials.")
     ap.add_argument("--diagnose", action="store_true",
                     help="explain why authentication is failing; prints no secrets")
     args = ap.parse_args(argv)
@@ -433,14 +484,17 @@ def main(argv=None):
     (workdir / "record").mkdir(parents=True, exist_ok=True)
     print(f"  workdir      {workdir}")
 
-    env = write_env(workdir, prefix, account, args.members)
+    admin, admin_note = resolve_admin(args.admin)
+    print(f"  gate         {admin_note}")
+
+    env = write_env(workdir, prefix, account, args.members, BASE_URL(), admin)
     print(f"  env.sh       {env}")
 
     # 4. first sync ---------------------------------------------------------------------
     r = subprocess.run([sys.executable, str(TOOLS / "sync.py"), "--as", prefix],
                        env={**os.environ,
                             "SYMPOSIUM_MIRROR": str(workdir / "record"),
-                            "SYMPOSIUM_ADMIN": ADMIN},
+                            "SYMPOSIUM_ADMIN": admin},
                        capture_output=True, text=True)
     # Structural count, not a glob: the mirror also holds manifest.json and .sync_state.json,
     # and reporting "48 artifacts" for a 46-artifact record is a number someone will later try

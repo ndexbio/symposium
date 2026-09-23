@@ -280,6 +280,220 @@ def case_f_argument_is_readable(dists):
             f"are on a page that scrolls", bad)
 
 
+_STRUCTURAL_RELS = {"produced_by", "inputs", "grounded_by", "testimony", "cites",
+                    "extracted_from", "used_models"}
+
+
+def _overview_of(rec):
+    """Rebuild the overview elements for a record directory.
+
+    This must read the sidecar exactly as compile_record does — positions AND annotations —
+    or a test passes against a build path no reader ever sees.
+    """
+    arts = browse.load_record(str(rec))
+    colors = browse.member_colors(arts)
+    index = browse.build_index(arts)
+    pages = {a["artifact"]["name"]: browse.page_name(a["artifact"]["name"]) for a in arts}
+    findings = browse.run_validator(arts, set(colors))
+    pins = browse.load_pins(str(rec))
+    annotations = browse.load_annotations(str(rec))
+    return browse.build_overview(arts, index, colors, pages, findings,
+                                 pins=pins, annotations=annotations)
+
+
+def case_g_citation_edges_span_columns(dists):
+    """A citing artifact is never drawn in the same column as one it cites.
+
+    This is the layout rule the overview exists to honour. When position came from
+    publication time, a whole round shared one x and its citation edges ran vertically
+    through a stack of unrelated nodes — visible in the picture as lines that could not be
+    followed. Nothing but a test keeps that from coming back, because the failure is
+    invisible to every other check: the record is valid either way.
+    """
+    bad, total = [], 0
+    for rec in dists:
+        elements, _meta = _overview_of(rec)
+        pos = {n["data"]["id"]: n["data"]["_pos"] for n in elements["nodes"]}
+        for e in elements["edges"]:
+            d = e["data"]
+            if d["rel"] not in _STRUCTURAL_RELS or d["source"] == d["target"]:
+                continue
+            s, t = pos.get(d["source"]), pos.get(d["target"])
+            if not (s and t):
+                continue
+            total += 1
+            dx = abs(s["x"] - t["x"])
+            if dx < browse._MIN_DX - 0.5:
+                bad.append(f"{rec.name}: {d['source']} --{d['rel']}--> {d['target']} "
+                           f"dx={dx:.0f} < {browse._MIN_DX:.0f}")
+    return (not bad, f"{total - len(bad)}/{total} citation edges clear the minimum column gap",
+            bad)
+
+
+def case_h_pins_survive_a_rebuild(dists):
+    """A hand-placed node stays where it was put, and a bad pin file cannot break the build.
+
+    Manual arrangement used to be lost on every rebuild. The sidecar is also hand-editable,
+    so the malformed case is part of the contract: a typo in a viewing preference must cost
+    the arrangement and nothing else.
+    """
+    bad = []
+    rec = sorted(dists)[0]
+    sidecar = pathlib.Path(rec) / browse.PIN_FILE
+    saved = sidecar.read_text() if sidecar.is_file() else None
+    try:
+        elements, _ = _overview_of(rec)
+        first = elements["nodes"][0]["data"]["id"]
+        sidecar.write_text(json.dumps({"positions": {first: {"x": 4242.0, "y": -777.0}}}))
+        elements, meta = _overview_of(rec)
+        got = {n["data"]["id"]: n["data"] for n in elements["nodes"]}[first]
+        if got["_pos"] != {"x": 4242.0, "y": -777.0}:
+            bad.append(f"pinned node moved: {got['_pos']}")
+        if not got.get("_pinned"):
+            bad.append("pinned node not marked _pinned")
+        if meta["counts"].get("pinned") != 1:
+            bad.append(f"pinned count {meta['counts'].get('pinned')} != 1")
+
+        sidecar.write_text("{ not json at all")
+        elements, meta = _overview_of(rec)
+        if len(elements["nodes"]) != len(got and elements["nodes"]):
+            bad.append("node count changed on malformed pin file")
+        if meta["counts"].get("pinned"):
+            bad.append("malformed pin file still reported pins")
+        # and the validator must not choke on it either
+        if browse.load_pins(str(rec)) != {}:
+            bad.append("malformed pin file did not degrade to no pins")
+    finally:
+        if saved is None:
+            sidecar.unlink(missing_ok=True)
+        else:
+            sidecar.write_text(saved)
+    return (not bad, "a pinned position survives a rebuild; a malformed sidecar does not "
+                     "break one", bad)
+
+
+def case_i_claim_positions_restore_on_load(dists):
+    """An Argument page restores hand-moved nodes on a plain load, not only on a mode switch.
+
+    The first version of this feature applied saved positions inside runLayout(), which only
+    the three mode buttons call. The FIRST layout is run by the cytoscape() constructor, so a
+    refresh — the case that matters — silently showed the computed arrangement and the reader's
+    work looked lost. The page must therefore apply saved positions on load as well.
+
+    Checked by reading the generated page rather than by driving a browser: the suite runs
+    without a headless Chrome, and what regressed was the presence of the initial-apply call.
+    """
+    bad, checked = [], 0
+    for rec, dist in dists.items():
+        for a in browse.load_record(str(rec)):
+            h = a["artifact"]
+            if h["type"] != browse.ARGUMENT:
+                continue
+            page = pathlib.Path(dist) / browse.page_name(h["name"])
+            if not page.is_file():
+                continue
+            txt = page.read_text(encoding="utf-8")
+            checked += 1
+            if "dragfree" not in txt:
+                bad.append(f"{h['name']}: no dragfree handler — drags are never captured")
+            if "initSavedPos" not in txt:
+                bad.append(f"{h['name']}: no initial apply — a refresh would drop saved positions")
+            # the initial apply must not be reachable only from the mode buttons
+            if "applySavedPos" in txt and txt.count("applySavedPos") < 2:
+                bad.append(f"{h['name']}: applySavedPos called once; load path likely missing")
+    return (not bad, f"{checked} Argument page(s) restore hand-moved nodes on load", bad)
+
+
+def case_j_internal_structure_is_shown(dists):
+    """An Artifact that contains Objects and relationships shows them.
+
+    The specification's structural claim is that an Artifact IS a property graph (spec 1.7).
+    An Argument's graph is drawn by its claim map; for every other type it was drawn nowhere,
+    so a Model published as thirteen nodes and fifteen edges rendered as prose with its own
+    node names absent from the page — while its `graph` Content told readers to address
+    `node=<name>`. A reader could not see that the names existed.
+
+    Also checks the two ways this can go wrong in the other direction: an artifact with only
+    Content Objects must NOT get an empty graph pane, and an Argument must keep using its
+    claim map rather than growing a second, redundant graph.
+    """
+    bad, drawn = [], 0
+    for rec, dist in dists.items():
+        for a in browse.load_record(str(rec)):
+            h = a["artifact"]
+            page = pathlib.Path(dist) / browse.page_name(h["name"])
+            if not page.is_file():
+                continue
+            txt = page.read_text(encoding="utf-8")
+            structural = [o for o in a.get("objects", []) if o.get("type") != "Content"]
+            if h["type"] == browse.ARGUMENT:
+                if 'id="og"' in txt:
+                    bad.append(f"{h['name']}: Argument grew a second graph; the claim map owns it")
+                continue
+            if structural:
+                drawn += 1
+                if 'id="og"' not in txt:
+                    bad.append(f"{h['name']}: {len(structural)} Object(s) and no internal graph")
+                    continue
+                if "cytoscape.min.js" not in txt:
+                    bad.append(f"{h['name']}: graph emitted but cytoscape never loaded")
+                for o in structural:
+                    if '"' + o["name"] + '"' not in txt:
+                        bad.append(f"{h['name']}: Object {o['name']} absent from its own page")
+                        break
+            elif 'id="og"' in txt:
+                bad.append(f"{h['name']}: empty graph pane on an artifact with no Objects")
+    return (not bad, f"{drawn} artifact(s) with internal structure draw it", bad)
+
+
+def case_k_annotations_are_not_artifacts(dists):
+    """A presenter caption is drawn, and is not mistaken for something the community published.
+
+    Captions let a presenter write "more analytic work not shown" where a section of the graph
+    has been hidden. They live in the same sidecar as the manual positions, carry no address,
+    and nothing can cite one. The risk is not that they fail to draw; it is that they are
+    counted, clicked or cited as if they were artifacts, so that is what this checks.
+    """
+    bad = []
+    rec = sorted(dists)[0]
+    sidecar = pathlib.Path(rec) / browse.PIN_FILE
+    saved = sidecar.read_text() if sidecar.is_file() else None
+    try:
+        sidecar.write_text(json.dumps({"annotations": [
+            {"text": "more analytic work not shown", "x": 10.0, "y": 20.0},
+            {"text": "no coordinates"},                       # malformed, must be dropped
+            {"text": "   ", "x": 1, "y": 2},                  # empty, must be dropped
+        ]}))
+        anns = browse.load_annotations(str(rec))
+        if len(anns) != 1:
+            bad.append(f"expected 1 usable annotation, got {len(anns)}")
+        elements, meta = _overview_of(rec)
+        ann = [n for n in elements["nodes"] if n["data"].get("ntype") == "Annotation"]
+        if len(ann) != 1:
+            bad.append(f"{len(ann)} annotation node(s) emitted, expected 1")
+        arts = browse.load_record(str(rec))
+        if meta["counts"]["artifacts"] != len(arts):
+            bad.append("annotation counted among the artifacts")
+        ids = {n["data"]["id"] for n in elements["nodes"]}
+        for e in elements["edges"]:
+            if e["data"]["source"] in ids and e["data"]["source"].startswith("__annotation"):
+                bad.append("an edge starts at an annotation")
+            if e["data"]["target"].startswith("__annotation"):
+                bad.append("an edge ends at an annotation")
+        if ann and ann[0]["data"].get("nav_file"):
+            bad.append("annotation carries a nav_file and would navigate somewhere")
+        # a malformed sidecar must cost the captions and nothing else
+        sidecar.write_text("{ not json")
+        if browse.load_annotations(str(rec)) != []:
+            bad.append("malformed sidecar did not degrade to no annotations")
+    finally:
+        if saved is None:
+            sidecar.unlink(missing_ok=True)
+        else:
+            sidecar.write_text(saved)
+    return (not bad, "a caption is drawn, uncounted, unlinked and uncitable", bad)
+
+
 CASES = [
     ("every Ground lands on the content it names", case_a_grounds_land),
     ("an Argument's prose is readable, not letterboxed", case_f_argument_is_readable),
@@ -287,6 +501,11 @@ CASES = [
     ("an artifact's Content Objects are shown to the reader", case_c_content_section),
     ("a grounded quote is anchored on every rendering path", case_d_marking_paths),
     ("a quoted comma does not shift a row's cells", case_e_quoted_commas),
+    ("a citing artifact is never in the column of what it cites", case_g_citation_edges_span_columns),
+    ("a hand-placed node survives a rebuild", case_h_pins_survive_a_rebuild),
+    ("an Argument page restores moved nodes on load", case_i_claim_positions_restore_on_load),
+    ("an Artifact's own Objects and relationships are shown", case_j_internal_structure_is_shown),
+    ("a presenter caption is not mistaken for an artifact", case_k_annotations_are_not_artifacts),
 ]
 
 

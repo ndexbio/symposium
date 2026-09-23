@@ -30,6 +30,8 @@ import pathlib
 # Print-scaled geometry. Screen mode packs nodes tightly because the reader can
 # zoom; a figure cannot be zoomed, so everything is larger and further apart.
 PAD = 48.0
+ARROW_L = 9.0      # arrowhead length, in the same units as the drawing
+ARROW_W = 6.0      # arrowhead width at its base
 FONT_CLAIM = 13.0
 FONT_LEAF = 10.5
 LINE_H = 1.28
@@ -143,14 +145,14 @@ def render_claim_svg(elements, meta, title=None):
             lines = lines[:MAX_LEAF_LINES]
             lines[-1] = lines[-1].rstrip(" ,;") + "…"
         text_h = len(lines) * font * LINE_H
-        # The body sits above the text for leaves and behind it for claims, which
-        # is what the screen view does; keeping it identical keeps the figure and
-        # the interactive page recognisably the same picture.
-        if is_claim:
-            w = wrap_w + 22
-            h = max(38.0, text_h + 16)
-        else:
-            w, h = 46.0, 22.0
+        # EVERY label is drawn below its body, claims included. The screen view sets
+        # `text-valign: bottom` on the base node style and the Assertion selector does
+        # not override it, so a claim on the page is a small round-rectangle with its
+        # text beneath it. Drawing a claim's text INSIDE a wide box made the figure
+        # disagree with the page it exists to reproduce, and turned the backbone into
+        # slabs of reversed-out type. A claim body is simply bigger than a leaf's,
+        # exactly as it is on screen.
+        w, h = (76.0, 34.0) if is_claim else (46.0, 22.0)
         # A leaf's body is a small hexagon and its label is a wrapped block drawn
         # BELOW it, centred, up to the wrap width — so the drawn extent of a leaf is
         # its text, not its body, and it is three times wider. Bounds taken from the
@@ -167,8 +169,7 @@ def render_claim_svg(elements, meta, title=None):
     max_x = max(pos[d["id"]][0] + boxes[d["id"]]["draw_w"] / 2 for d in nodes)
     min_y = min(pos[d["id"]][1] - boxes[d["id"]]["h"] / 2 for d in nodes)
     max_y = max(pos[d["id"]][1] + boxes[d["id"]]["h"] / 2
-                + (0 if boxes[d["id"]]["is_claim"]
-                   else boxes[d["id"]]["text_h"] + 10) for d in nodes)
+                + boxes[d["id"]]["text_h"] + 10 for d in nodes)
     w_total, h_total = (max_x - min_x) + 2 * PAD, (max_y - min_y) + 2 * PAD
     ox, oy = PAD - min_x, PAD - min_y
 
@@ -180,13 +181,10 @@ def render_claim_svg(elements, meta, title=None):
     ]
     if title:
         out.append(f'<title>{html.escape(str(title))}</title>')
-    # arrowheads, one per edge colour
-    out.append("<defs>")
-    for key, (colour, _w, _d) in EDGE_STYLE.items():
-        out.append(f'<marker id="a_{key}" viewBox="0 0 10 10" refX="9" refY="5" '
-                   f'markerWidth="6" markerHeight="6" orient="auto-start-reverse">'
-                   f'<path d="M 0 0 L 10 5 L 0 10 z" fill="{colour}"/></marker>')
-    out.append("</defs>")
+    # Arrowheads are drawn as ordinary polygons at the end of each line rather than
+    # declared as <marker>s. Markers are correct SVG and every browser honours them,
+    # but PowerPoint's importer does not reliably, and an edge that loses its head
+    # loses its direction — which in a claim map is the whole point of the edge.
 
     # ---- edges first, so nodes sit on top ----
     for e in edges:
@@ -204,9 +202,17 @@ def render_claim_svg(elements, meta, title=None):
         x2 -= dx / dist * inset
         y2 -= dy / dist * inset
         da = f' stroke-dasharray="{dash}"' if dash else ""
-        out.append(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
-                   f'stroke="{colour}" stroke-width="{width}"{da} '
-                   f'marker-end="url(#a_{key})"/>')
+        ux, uy = dx / dist, dy / dist
+        # stop the shaft at the base of the head, so the two do not overlap
+        bx, by = x2 - ux * ARROW_L, y2 - uy * ARROW_L
+        out.append(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{bx:.1f}" y2="{by:.1f}" '
+                   f'stroke="{colour}" stroke-width="{width}"{da}/>')
+        nx, ny = -uy, ux
+        head = " ".join(f"{px:.1f},{py:.1f}" for px, py in [
+            (x2, y2),
+            (bx + nx * ARROW_W / 2, by + ny * ARROW_W / 2),
+            (bx - nx * ARROW_W / 2, by - ny * ARROW_W / 2)])
+        out.append(f'<polygon points="{head}" fill="{colour}"/>')
 
     # ---- nodes ----
     for d in nodes:
@@ -226,23 +232,24 @@ def render_claim_svg(elements, meta, title=None):
                        f'stroke-dasharray="3 3"/>')
 
         is_cite = str(d.get("id", "")).startswith("cite:")
-        colour = ("#ffffff" if ntype == "Assertion"
-                  else "#94a3b8" if is_cite else "#1f2937")
+        colour = "#94a3b8" if is_cite else "#1f2937"
         weight = "600" if ntype == "Assertion" else "400"
-        if b["is_claim"]:
-            start = y - b["text_h"] / 2 + b["font"] * 0.9
-        else:
-            start = y + b["h"] / 2 + b["font"] * 1.15
-        # A leaf's label is drawn outside its body, in the space edges run through.
-        # A white halo under the glyphs keeps it readable where an unrelated edge
-        # passes behind it, without boxing the label and cluttering the figure.
-        halo = ("" if b["is_claim"] else
-                ' stroke="#ffffff" stroke-width="3.2" paint-order="stroke"')
+        start = y + b["h"] / 2 + b["font"] * 1.15
+        # A label is drawn outside its body, in the space edges run through. A white
+        # halo under the glyphs keeps it readable where an unrelated edge passes
+        # behind it, without boxing the label and cluttering the figure.
         for i, line in enumerate(b["lines"]):
-            out.append(
-                f'<text x="{x:.1f}" y="{start + i * b["font"] * LINE_H:.1f}" '
-                f'text-anchor="middle" font-size="{b["font"]:.1f}" fill="{colour}" '
-                f'font-weight="{weight}"{halo}>{html.escape(line)}</text>')
+            ty = start + i * b["font"] * LINE_H
+            common = (f'x="{x:.1f}" y="{ty:.1f}" text-anchor="middle" '
+                      f'font-size="{b["font"]:.1f}" font-weight="{weight}"')
+            esc = html.escape(line)
+            # The halo is a SECOND copy of the glyphs drawn underneath in white
+            # stroke, rather than `paint-order="stroke"` on a single element.
+            # paint-order is SVG 2 and PowerPoint ignores it — the stroke then
+            # paints OVER the fill and every label disappears into the page.
+            out.append(f'<text {common} fill="none" stroke="#ffffff" '
+                       f'stroke-width="3.2" stroke-linejoin="round">{esc}</text>')
+            out.append(f'<text {common} fill="{colour}">{esc}</text>')
 
     out.append("</svg>")
     return "\n".join(out)

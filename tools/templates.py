@@ -44,7 +44,10 @@ HTML_TEMPLATE = r"""<!doctype html>
   #app {{ display: flex; height: calc(100% - 52px); }}
   body.has-intro #app {{ height: calc(100% - 52px - var(--introh, 60px)); }}
   #graphwrap {{ position: relative; flex: 1 1 62%; min-width: 0; }}
-  #cy {{ position: absolute; inset: 0; }}
+  /* White behind the graph, not the page grey: a dotted grey citation edge on a grey
+     ground was very nearly invisible, and the edge that says 'this is a reference,
+     NOT evidence' is one a reader has to be able to see. */
+  #cy {{ position: absolute; inset: 0; background: #ffffff; }}
   #side {{ flex: 0 0 38%; max-width: 460px; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; }}
   #legend {{ padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 11px; }}
   #legend b {{ display:block; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 6px 0 4px; }}
@@ -143,11 +146,13 @@ HTML_TEMPLATE = r"""<!doctype html>
     <div class="toolbar">
       <button id="btn-fit">Fit</button>
       <button id="btn-export">Export PNG</button>
+      <button id="btn-export-svg" title="Vector, for print. Exports exactly what is on screen now, with hidden nodes left out.">Export SVG</button>
       <button id="btn-hide">Hide node</button>
       <button id="btn-showall">Show all</button>
       <button id="btn-claim" class="active">Claim map</button>
       <button id="btn-full">Full graph</button>
       <button id="btn-force">Force (cose)</button>
+      <button id="btn-resetpos" title="Return hand-moved nodes to their computed positions for this view">Reset positions</button>
       <span class="flowkey" id="claimkey">evidence, sub-claims &amp; assumptions <b>&larr;</b> &nbsp;ground / depend / assume into&nbsp; <b>&rarr;</b> primary assertion</span>
       <span class="flowkey" id="fullkey" style="display:none">every Object as authored: addressed content <b>&larr;</b> Ground &middot; Assumption <b>&rarr;</b> Assertion</span>
     </div>
@@ -161,6 +166,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 </div>
 
 <script src="{cyto_src}"></script>
+<script src="vendor/cytoscape-svg.js"></script>
 <script id="graph-data" type="application/json">{graph_json}</script>
 <script>
 (function () {{
@@ -284,13 +290,20 @@ HTML_TEMPLATE = r"""<!doctype html>
           'line-color': '#d97706', 'target-arrow-color': '#d97706', 'width': 2,
           'line-style': 'dotted', 'target-arrow-shape': 'diamond', 'arrow-scale': 0.9 }} }},
       // a prose citation (markdown link) — reference, never evidence.
+      // Deliberately NOT #64748b: that is evidential grounding, and the whole point of this
+      // edge is that it is not evidence. Darker and cooler, so it reads as grey against the
+      // coloured edges while still being plainly visible on white.
       {{ selector: 'edge[rel="cites"]', style: {{
-          'line-color': '#a3a3a3', 'target-arrow-color': '#a3a3a3', 'line-style': 'dotted' }} }},
+          'line-color': '#475569', 'target-arrow-color': '#475569', 'line-style': 'dotted',
+          'width': 1.6 }} }},
       // Per-mode de-emphasis: whichever edges are NOT the current mode's organizing
       // structure get dimmed so they don't fight the reading. Applied generically to
       // any edge tagged .nonflow-dim (the JS decides which rels get tagged per mode).
       // Hover/click still highlights a dimmed edge at full strength.
-      {{ selector: 'edge.nonflow-dim', style: {{ 'opacity': 0.14, 'width': 1 }} }},
+      // 0.14 on a dotted grey line was indistinguishable from the background. De-emphasis
+      // has to leave the edge legible: a reader who cannot see a citation cannot tell a
+      // claim that cites its neighbours from one that stands alone.
+      {{ selector: 'edge.nonflow-dim', style: {{ 'opacity': 0.6, 'width': 1.3 }} }},
       // Grounding, split by the ONE thing the record says structurally about it: whether the
       // author claimed the material as a TEST (a `criterion` — it could have counted
       // against the claim and did not) or offered it as material they build on.
@@ -307,6 +320,10 @@ HTML_TEMPLATE = r"""<!doctype html>
 
       {{ selector: '.faded', style: {{ 'opacity': 0.15 }} }},
       {{ selector: '.hi', style: {{ 'border-width': 3, 'border-color': '#111827' }} }},
+      // a node a person placed by hand, so the reader can tell their arrangement from the
+      // computed one
+      {{ selector: 'node.moved', style: {{
+          'border-width': 2, 'border-color': '#0f766e', 'border-style': 'dashed' }} }},
       // a highlighted edge wins over the flow-mode dimming (listed last)
       {{ selector: 'edge.hi', style: {{ 'width': 3.2, 'opacity': 1 }} }}
     ],
@@ -632,7 +649,15 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   document.getElementById('btn-fit').onclick = function () {{ cy.fit(undefined, 30); }};
   document.getElementById('btn-export').onclick = function () {{
-    var uri = cy.png({{ full: true, bg: '#ffffff', maxWidth: 2400 }});
+    // A flat 2400px cap is about 100 dpi once the picture is blown up to poster
+    // width, which is visibly soft — the node labels go first. Scale to a target
+    // pixel width instead, computed from the graph's own extent so a small record
+    // is not upscaled into a huge empty canvas and a large one still lands inside
+    // the browser's canvas limit. Only visible elements count, so hiding a section
+    // for a poster makes the rest bigger rather than leaving a gap.
+    var bb = cy.elements(':visible').boundingBox();
+    var scale = Math.max(1, Math.min(8, 8000 / Math.max(bb.w, 1)));
+    var uri = cy.png({{ full: true, bg: '#ffffff', scale: scale }});
     var a = document.createElement('a');
     a.href = uri;
     a.download = (document.title || 'symposium').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.png';
@@ -640,6 +665,28 @@ HTML_TEMPLATE = r"""<!doctype html>
     a.click();
     document.body.removeChild(a);
   }};
+  // Vector export. cytoscape-svg draws the CURRENT graph, so hiding a section and
+  // dragging nodes are both reflected — the same contract the PNG button has. The
+  // extension is optional: if it did not load, hide the button rather than leave
+  // one that throws when pressed.
+  (function () {{
+    var btn = document.getElementById('btn-export-svg');
+    if (!btn) {{ return; }}
+    if (typeof cy.svg !== 'function') {{ btn.style.display = 'none'; return; }}
+    btn.onclick = function () {{
+      var svg = cy.svg({{ full: true, bg: '#ffffff', scale: 1 }});
+      var blob = new Blob([svg], {{ type: 'image/svg+xml;charset=utf-8' }});
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (document.title || 'symposium').toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.svg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }};
+  }})();
+
   document.getElementById('btn-hide').onclick = function () {{ if (lastTapped) figHide(lastTapped); }};
   document.getElementById('btn-showall').onclick = figShowAll;
   updateHideUI();
@@ -670,6 +717,57 @@ HTML_TEMPLATE = r"""<!doctype html>
     _elementsMode = wantFull ? 'full' : 'collapsed';
   }}
 
+  // ---- manual node positions, per Argument and per mode ----
+  //
+  // An Assumption's rationale is a paragraph, so its node is large and often has to be moved
+  // by hand; losing that on every refresh made the page tiresome to use. Unlike the community
+  // overview there is no record directory to write beside — an Argument page is one artifact's
+  // own page — and the arrangement is one reader's convenience rather than something the
+  // community shares, so it lives in this browser's localStorage, keyed by artifact and mode.
+  //
+  // Per MODE because the claim map and the full graph are different element sets on different
+  // coordinates; one saved position cannot serve both.
+  //
+  // Every access is wrapped: localStorage throws outright in some privacy modes, and a page
+  // that cannot remember a node position must still draw its graph.
+  // review_id is the artifact name — unique in the record, so two Arguments never share a key.
+  var POSKEY = 'symposium:nodepos:' + (DATA.meta.review_id || document.title);
+  function loadPos() {{
+    try {{ return JSON.parse(localStorage.getItem(POSKEY) || '{{}}') || {{}}; }}
+    catch (e) {{ return {{}}; }}
+  }}
+  function savePos(all) {{
+    try {{ localStorage.setItem(POSKEY, JSON.stringify(all)); }} catch (e) {{}}
+  }}
+  var _savedPos = loadPos();
+  function applySavedPos(mode) {{
+    var m = _savedPos[mode] || {{}};
+    cy.nodes().forEach(function (node) {{
+      var p = m[node.id()];
+      if (p && typeof p.x === 'number' && typeof p.y === 'number') {{
+        node.position({{ x: p.x, y: p.y }});
+        node.addClass('moved');
+      }}
+    }});
+  }}
+  function updatePosUI() {{
+    var m = _savedPos[_layoutMode] || {{}}, k = Object.keys(m).length;
+    var b = document.getElementById('btn-resetpos');
+    if (b) {{
+      b.disabled = !k;
+      b.textContent = k ? ('Reset positions (' + k + ')') : 'Reset positions';
+    }}
+  }}
+  cy.on('dragfree', 'node', function (e) {{
+    var node = e.target, p = node.position();
+    if (!_savedPos[_layoutMode]) _savedPos[_layoutMode] = {{}};
+    _savedPos[_layoutMode][node.id()] = {{ x: Math.round(p.x * 10) / 10,
+                                          y: Math.round(p.y * 10) / 10 }};
+    node.addClass('moved');
+    savePos(_savedPos);
+    updatePosUI();
+  }});
+
   function runLayout(mode) {{
     _layoutMode = mode;
     figShowAll();                            // mode switch rebuilds elements; drop stale hides
@@ -683,12 +781,39 @@ HTML_TEMPLATE = r"""<!doctype html>
     applyDimming(mode);
     buildLegend(mode);
     var lay = cy.layout(layoutOpts());
-    lay.one('layoutstop', function () {{ cy.fit(undefined, 30); }});
+    lay.one('layoutstop', function () {{
+      // Saved positions are applied AFTER the layout runs and BEFORE the fit, so the fit
+      // frames what the reader will actually see rather than the computed arrangement.
+      applySavedPos(mode);
+      updatePosUI();
+      cy.fit(undefined, 30);
+    }});
     lay.run();
   }}
   btnClaim.onclick = function () {{ runLayout('claim'); }};
   btnFull.onclick = function () {{ runLayout('full'); }};
+  var btnResetPos = document.getElementById('btn-resetpos');
+  if (btnResetPos) btnResetPos.onclick = function () {{
+    delete _savedPos[_layoutMode];           // this view only; the other mode keeps its own
+    savePos(_savedPos);
+    cy.nodes().removeClass('moved');
+    runLayout(_layoutMode);
+  }};
   btnForce.onclick = function () {{ runLayout('cose'); }};
+
+  // The FIRST layout is run by the cytoscape() constructor, not by runLayout, so nothing
+  // above applies saved positions on a plain page load or refresh — which is the case that
+  // matters, since that is when a reader expects their arrangement to still be there.
+  // Apply them once now, and fit to what the reader will actually see.
+  (function initSavedPos() {{
+    if (!_savedPos[_layoutMode] || !Object.keys(_savedPos[_layoutMode]).length) {{
+      updatePosUI();
+      return;
+    }}
+    applySavedPos(_layoutMode);
+    updatePosUI();
+    cy.fit(undefined, 30);
+  }})();
 
   // ---- legend (rebuilt per mode so it never describes a mode you're not in) ----
   var c = DATA.meta.counts;
@@ -696,7 +821,10 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   function liveTypeCounts() {{
     var m = {{}};
-    cy.nodes().forEach(function (n) {{ var t = n.data('ntype'); if (t) m[t] = (m[t] || 0) + 1; }});
+    cy.nodes().forEach(function (n) {{
+      var t = n.data('ntype');
+      if (t && t !== 'Annotation' && t !== 'TimeTick') m[t] = (m[t] || 0) + 1;
+    }});
     return m;
   }}
   function markersLegend() {{
@@ -720,7 +848,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       + lgLine('#64748b','dashed','grounded_by, no criterion — material built on')
       + lgLine('#7c3aed','dashed','grounded_by another Argument\'s assertion — testimony')
       + lgLine('#d97706','dotted','assumes — rests on something not addressable')
-      + lgLine('#a3a3a3','dotted','cites — prose citation, never evidence (dimmed)')
+      + lgLine('#475569','dotted','cites — prose citation, never evidence (de-emphasised)')
       + markersLegend()
       + memberLegend()
       + '<div class="hint" style="margin-top:6px">'
@@ -746,7 +874,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       + lgLine('#0d9488','dashed','addresses — Ground &rarr; the content it names')
       + lgLine('#d97706','dotted','assumes — assertion &rarr; assumption')
       + lgLine('#dc2626','solid','depends_on')
-      + lgLine('#a3a3a3','dotted','cites')
+      + lgLine('#475569','dotted','cites')
       + markersLegend()
       + memberLegend()
       + '<div class="hint" style="margin-top:6px">Nothing is folded. Little is hidden: '
@@ -855,7 +983,8 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   .uplink:hover {{ text-decoration:underline; }}
   #app {{ display:flex; height:calc(100% - 50px); }}
   #graphwrap {{ position:relative; flex:1 1 66%; min-width:0; }}
-  #cy {{ position:absolute; inset:0; }}
+  /* White behind the graph: a grey citation edge on the page grey is invisible. */
+  #cy {{ position:absolute; inset:0; background:#ffffff; }}
   #side {{ flex:0 0 34%; max-width:440px; border-left:1px solid var(--line); background:var(--panel); display:flex; flex-direction:column; }}
   #legend {{ padding:10px 14px; border-bottom:1px solid var(--line); font-size:11px; }}
   #legend b {{ display:block; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin:8px 0 4px; }}
@@ -890,7 +1019,7 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 </header>
 <div id="app">
   <div id="graphwrap">
-    <div class="toolbar"><button id="btn-fit">Fit</button><button id="btn-export">Export PNG</button><button id="btn-hide">Hide node</button><button id="btn-showall">Show all</button><span style="font-size:11px;color:var(--muted);align-self:center;user-select:none">alt-click a node to hide it &middot; hidden nodes are left out of the export</span></div>
+    <div class="toolbar"><button id="btn-fit">Fit</button><button id="btn-export">Export PNG</button><button id="btn-export-svg" title="Vector, for print. Exports exactly what is on screen now, with hidden nodes left out.">Export SVG</button><button id="btn-hide">Hide node</button><button id="btn-showall">Show all</button><button id="btn-note" title="Place a caption on the graph. Captions are presenter annotations, not part of the record.">Add note</button><button id="btn-savepos" title="Download the current arrangement and captions as .browser_layout.json; drop it beside the record and it survives every rebuild">Save layout</button><button id="btn-resetpos" title="Return every node to its computed position">Reset layout</button><span id="postate" style="font-size:11px;color:var(--muted);align-self:center;user-select:none">alt-click a node to hide it &middot; drag to rearrange</span></div>
     <div id="cy"></div>
     <div id="tip" class="tip"></div>
   </div>
@@ -900,6 +1029,7 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   </div>
 </div>
 <script src="{cyto_src}"></script>
+<script src="vendor/cytoscape-svg.js"></script>
 <script id="graph-data" type="application/json">{graph_json}</script>
 <script>
 (function () {{
@@ -908,7 +1038,7 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   // artifact, so every edge here is derived from an ADDRESS held in a property value:
   // a Ground's `address`, a provenance field, or a markdown link in prose.
   var REL_COLORS = {{
-    grounded_by:'#16a34a', testimony:'#7c3aed', cites:'#a3a3a3',
+    grounded_by:'#16a34a', testimony:'#7c3aed', cites:'#475569',
     produced_by:'#0d9488', outputs:'#0d9488', inputs:'#0284c7', used_models:'#6366f1',
     extracted_from:'#db2777', supersedes:'#b45309', recipients:'#94a3b8'
   }};
@@ -942,7 +1072,30 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
         'text-background-color':'#f6f7f9', 'text-background-opacity':0.85, 'text-background-padding':1 }} }},
       {{ selector:'.faded', style: {{ 'opacity':0.12 }} }},
       {{ selector:'.hi', style: {{ 'border-width':3, 'border-color':'#111827' }} }},
-      {{ selector:'.hidden', style: {{ 'display':'none' }} }}
+      {{ selector:'.hidden', style: {{ 'display':'none' }} }},
+      // A pinned node was put where it is by a person; say so, quietly, so a reader can tell
+      // the arrangement they chose from the one the layout computed.
+      {{ selector:'node.pinned', style: {{
+        'border-width':2, 'border-color':'#0f766e', 'border-style':'dashed' }} }},
+      // A presenter caption. Deliberately unlike an artifact — no fill, no member colour, a
+      // dashed grey outline — so nobody reading the picture mistakes a caption for something
+      // the community published.
+      {{ selector:'node[ntype="Annotation"]', style: {{
+        'background-opacity':0.9, 'background-color':'#f8fafc',
+        'border-width':1.5, 'border-color':'#94a3b8', 'border-style':'dashed',
+        'shape':'round-rectangle', 'color':'#475569', 'font-size':13, 'font-style':'italic',
+        'text-valign':'center', 'text-halign':'center', 'text-wrap':'wrap',
+        'text-max-width':190, 'width':210, 'height':'label', 'padding':'10px',
+        'z-index':1 }} }},
+      // Long edges are the ones that were unreadable: a `cites` edge spanning four columns
+      // passes near unrelated nodes however the layer ordering is chosen. Bowing it by an
+      // amount proportional to its span separates it from both the straight short edges and
+      // from its own neighbours, so two long edges running between the same columns no longer
+      // lie on top of each other.
+      {{ selector:'edge[span > 1]', style: {{
+        'control-point-distances':'data(cpd)', 'control-point-weights':0.5,
+        'line-style':'solid', 'opacity':0.75 }} }},
+      {{ selector:'edge[span > 3]', style: {{ 'opacity':0.6 }} }}
     ],
     layout: {{ name:'preset', padding:50, fit:true, positions:function(n){{ return n.data('_pos'); }} }}
   }});
@@ -1000,18 +1153,33 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
     cy.elements().removeClass('hi faded');
     updateHideUI();
   }}
-  cy.on('tap','node',function(e){{ if(e.target.data('ntype')==='TimeTick') return;
+  cy.on('tap','node',function(e){{
+    var nt=e.target.data('ntype');
+    if(nt==='TimeTick') return;
     var oe=e.originalEvent||{{}};
     if(oe.altKey){{ figHide(e.target); return; }}
+    // A caption is not an artifact: it opens no detail panel and highlights nothing.
+    // Double-click edits it, handled separately.
+    if(nt==='Annotation') return;
     lastTapped=e.target; renderNode(e.target.data()); highlight(e.target); }});
   cy.on('tap','edge',function(e){{ renderEdge(e.target.data()); highlight(e.target); }});
   cy.on('tap',function(e){{ if(e.target===cy) cy.elements().removeClass('hi faded'); }});
-  cy.on('dbltap','node',function(e){{ var f=e.target.data('nav_file'); if(f) window.location.href=f; }});
+  cy.on('dbltap','node',function(e){{
+    if(e.target.data('ntype')==='Annotation') return;   // captions are edited, not navigated
+    var f=e.target.data('nav_file'); if(f) window.location.href=f; }});
   detail.addEventListener('click',function(e){{ var b=e.target.closest?e.target.closest('.navbtn'):null;
     if(b){{ var f=b.getAttribute('data-file'); if(f) window.location.href=f; }} }});
   document.getElementById('btn-fit').onclick=function(){{ cy.fit(undefined,40); }};
   document.getElementById('btn-export').onclick=function(){{
-    var uri = cy.png({{ full: true, bg: '#ffffff', maxWidth: 2400 }});
+    // A flat 2400px cap is about 100 dpi once the picture is blown up to poster
+    // width, which is visibly soft — the node labels go first. Scale to a target
+    // pixel width instead, computed from the graph's own extent so a small record
+    // is not upscaled into a huge empty canvas and a large one still lands inside
+    // the browser's canvas limit. Only visible elements count, so hiding a section
+    // for a poster makes the rest bigger rather than leaving a gap.
+    var bb = cy.elements(':visible').boundingBox();
+    var scale = Math.max(1, Math.min(8, 8000 / Math.max(bb.w, 1)));
+    var uri = cy.png({{ full: true, bg: '#ffffff', scale: scale }});
     var a = document.createElement('a');
     a.href = uri;
     a.download = (document.title || 'symposium').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.png';
@@ -1019,11 +1187,128 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
     a.click();
     document.body.removeChild(a);
   }};
+  // Vector export. cytoscape-svg draws the CURRENT graph, so hiding a section and
+  // dragging nodes are both reflected — the same contract the PNG button has. The
+  // extension is optional: if it did not load, hide the button rather than leave
+  // one that throws when pressed.
+  (function () {{
+    var btn = document.getElementById('btn-export-svg');
+    if (!btn) {{ return; }}
+    if (typeof cy.svg !== 'function') {{ btn.style.display = 'none'; return; }}
+    btn.onclick = function () {{
+      var svg = cy.svg({{ full: true, bg: '#ffffff', scale: 1 }});
+      var blob = new Blob([svg], {{ type: 'image/svg+xml;charset=utf-8' }});
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (document.title || 'symposium').toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') + '.svg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(a.href);
+    }};
+  }})();
+
   document.getElementById('btn-hide').onclick=function(){{ if(lastTapped) figHide(lastTapped); }};
   document.getElementById('btn-showall').onclick=function(){{
     figHidden.forEach(function(n){{ n.removeStyle('display'); }});
     figHidden=[]; updateHideUI(); }};
   updateHideUI();
+
+  // ---- manual arrangement, saved beside the record ----
+  //
+  // Dragging a node used to be lost on the next build, because the page held the only copy
+  // of where it had been put. The arrangement is a reading aid, not part of the record, so
+  // it is written to a sidecar file the build reads back rather than into any artifact.
+  //
+  // The page cannot write to the filesystem, so "Save layout" hands over a download; the
+  // reader drops it next to the record once and every later rebuild honours it. Only nodes
+  // actually moved are written, so the computed layout continues to place everything else
+  // and a pin file stays small and reviewable.
+  var moved = {{}};
+  DATA.elements.nodes.forEach(function(n){{
+    if(n.data._pinned) moved[n.data.id] = {{x:n.data._pos.x, y:n.data._pos.y}};
+  }});
+  function markPinned(n){{ n.addClass('pinned'); }}
+  cy.nodes().forEach(function(n){{ if(moved[n.id()]) markPinned(n); }});
+  function posState(){{
+    var k=Object.keys(moved).length;
+    var el=document.getElementById('postate');
+    if(el) el.textContent = k
+      ? (k+' node'+(k===1?'':'s')+' pinned \u00b7 Save layout to keep them')
+      : 'alt-click a node to hide it \u00b7 drag to rearrange';
+    var rb=document.getElementById('btn-resetpos'); if(rb) rb.disabled = !k;
+  }}
+  cy.on('dragfree','node',function(e){{
+    var n=e.target, p=n.position();
+    moved[n.id()] = {{x:Math.round(p.x*10)/10, y:Math.round(p.y*10)/10}};
+    markPinned(n); posState();
+  }});
+  // ---- presenter captions ----
+  //
+  // A caption is a label on the picture, not a statement in the record: "more analytic work
+  // not shown" standing where a section has been hidden. It is drawn as a node so it pans,
+  // zooms and exports with the graph, and it is saved into the same sidecar as the manual
+  // positions. Nothing can cite one and the gate never sees it.
+  var notes = [];
+  cy.nodes('[ntype="Annotation"]').forEach(function(n){{
+    var p=n.position(); notes.push({{text:n.data('label'), x:p.x, y:p.y, id:n.id()}});
+  }});
+  function noteAt(text, x, y){{
+    var id='__annotation_'+Date.now()+'_'+Math.floor(Math.random()*1000);
+    cy.add({{group:'nodes', data:{{
+      id:id, ntype:'Annotation', label:text, member:'', owner_color:'#64748b',
+      shape:'round-rectangle', tooltip:'presenter annotation — not part of the record',
+      _pos:{{x:x,y:y}}, _pinned:true }}, position:{{x:x,y:y}} }});
+    notes.push({{text:text, x:x, y:y, id:id}});
+  }}
+  document.getElementById('btn-note').onclick=function(){{
+    var t=window.prompt('Caption text (leave empty to cancel):','more analytic work not shown');
+    if(!t || !t.trim()) return;
+    var e=cy.extent();                       // drop it in the middle of what is on screen
+    noteAt(t.trim(), (e.x1+e.x2)/2, (e.y1+e.y2)/2);
+  }};
+  // double-click a caption to edit it; empty text deletes it
+  cy.on('dbltap','node[ntype="Annotation"]',function(ev){{
+    var n=ev.target;
+    var t=window.prompt('Caption text (leave empty to delete):', n.data('label'));
+    if(t===null) return;
+    if(!t.trim()){{ notes=notes.filter(function(x){{return x.id!==n.id();}}); n.remove(); return; }}
+    n.data('label',t.trim());
+    notes.forEach(function(x){{ if(x.id===n.id()) x.text=t.trim(); }});
+  }});
+  function collectNotes(){{
+    var out=[];
+    notes.forEach(function(x){{
+      var n=cy.getElementById(x.id);
+      if(n && n.length){{ var p=n.position();
+        out.push({{text:x.text, x:Math.round(p.x*10)/10, y:Math.round(p.y*10)/10}}); }}
+    }});
+    return out;
+  }}
+
+  document.getElementById('btn-savepos').onclick=function(){{
+    var out={{
+      note:'Manual node positions and presenter captions for the Symposium community browser. Drop this file in the record directory as .browser_layout.json; browse.py reads it and pins these nodes and draws these captions. Delete it to return to the computed layout. It is not an artifact and the gate never sees it.',
+      generated:new Date().toISOString(),
+      positions:moved,
+      annotations:collectNotes()
+    }};
+    var blob=new Blob([JSON.stringify(out,null,2)],{{type:'application/json'}});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='.browser_layout.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){{ URL.revokeObjectURL(a.href); }},1000);
+  }};
+  document.getElementById('btn-resetpos').onclick=function(){{
+    cy.nodes().forEach(function(n){{
+      var d=n.data('_pos'); if(d) n.position({{x:d.x,y:d.y}});
+      n.removeClass('pinned');
+    }});
+    moved={{}}; posState(); cy.fit(undefined,50);
+  }};
+  posState();
 
   // ---- legend + member filter ----
   var mem=DATA.meta.members||{{}}, c=DATA.meta.counts;
@@ -1097,7 +1382,7 @@ import re as _re              # noqa: E402
 #: cross-artifact relationship, so each of these names a way an address got into a
 #: property value, not an edge anyone authored.
 OVERVIEW_REL_COLORS = {
-    "grounded_by": "#16a34a", "testimony": "#7c3aed", "cites": "#a3a3a3",
+    "grounded_by": "#16a34a", "testimony": "#7c3aed", "cites": "#475569",
     "produced_by": "#0d9488", "outputs": "#0d9488", "inputs": "#0284c7",
     "used_models": "#6366f1", "extracted_from": "#db2777", "supersedes": "#b45309",
     "recipients": "#94a3b8",
@@ -1490,6 +1775,145 @@ def csv_table(text, max_rows=None, method="csv"):
             + "".join(body) + more + "</table></div>")
 
 
+def internal_graph_section(ig, artifact_name, artifact_type):
+    """The Artifact's internal structure: its graph, with a detail pane beside it.
+
+    Clicking a node or an edge shows every property its author wrote. That matters most for a
+    Model, where the disclosure the specification requires — `modeling_choices`, and whatever
+    per-edge qualification the author added — is the difference between a diagram and a claim
+    a reader can attack. An edge marked `evidence: conjecture` says something a picture alone
+    cannot.
+    """
+    import json as _j
+    counts = ig["counts"]
+    legend = ig["legend"]
+    types_html = "".join(
+        '<span class="olg"><span class="osw" style="background:{}"></span>{}</span>'.format(
+            _html.escape(c), _html.escape(t))
+        for t, c in sorted(legend["types"].items()))
+    rels_html = "".join(
+        '<span class="olg"><span class="oln" style="background:{}"></span>{}</span>'.format(
+            _html.escape(c), _html.escape(r.replace("_", " ")))
+        for r, c in sorted(legend["rels"].items()))
+    dropped = ""
+    if counts.get("dropped"):
+        dropped = ('<div class="hint">{} relationship(s) not drawn: an endpoint is not an Object '
+                   'of this Artifact. All relationships are internal (spec §1.7).</div>'
+                   .format(counts["dropped"]))
+    payload = _j.dumps(ig["elements"], ensure_ascii=False)
+    return f"""<h2>Internal structure</h2>
+<p class="hint">The Objects this {_html.escape(artifact_type)} contains and the relationships
+among them. All relationships are internal to one Artifact (spec §1.7) — nothing here reaches
+another artifact. <b>Click a node or an edge</b> for every property its author wrote.
+{counts['objects']} object(s), {counts['relationships']} relationship(s).</p>
+<div class="oglegend">{types_html}{rels_html}</div>
+{dropped}
+<div class="ogwrap">
+  <div id="og"></div>
+  <div id="ogside"><p class="placeholder">Click a node or an edge to read its properties.</p></div>
+</div>
+<div class="ogtools">
+  <button id="og-fit">Fit</button>
+  <button id="og-reset">Reset positions</button>
+  <span class="hint">drag to rearrange &middot; your arrangement is remembered in this browser</span>
+</div>
+<script>
+// The page body is emitted before the cytoscape <script> tag at the foot of the template, so
+// this runs with `cytoscape` still undefined. Defer to DOMContentLoaded, which fires after all
+// parser-inserted scripts have run.
+(function () {{
+  function boot() {{
+  var OG = {payload};
+  var KEY = 'symposium:objpos:{_html.escape(artifact_name)}';
+  function load() {{ try {{ return JSON.parse(localStorage.getItem(KEY) || '{{}}') || {{}}; }}
+                     catch (e) {{ return {{}}; }} }}
+  function save(o) {{ try {{ localStorage.setItem(KEY, JSON.stringify(o)); }} catch (e) {{}} }}
+  var saved = load();
+  var cy = cytoscape({{
+    container: document.getElementById('og'),
+    elements: OG,
+    wheelSensitivity: 0.2,
+    style: [
+      {{ selector: 'node', style: {{
+        'label': 'data(label)', 'shape': 'data(shape)',
+        'background-color': 'data(color)', 'background-opacity': 0.9,
+        'color': '#fff', 'font-size': 10, 'text-wrap': 'wrap', 'text-max-width': 120,
+        'text-valign': 'center', 'width': 132, 'height': 46,
+        'border-width': 1, 'border-color': '#334155' }} }},
+      {{ selector: 'edge', style: {{
+        'label': 'data(label)', 'font-size': 8, 'color': '#475569',
+        'text-background-color': '#fff', 'text-background-opacity': 0.9,
+        'text-background-padding': 2, 'text-rotation': 'autorotate',
+        'width': 1.8, 'line-color': 'data(color)', 'target-arrow-color': 'data(color)',
+        'target-arrow-shape': 'triangle', 'arrow-scale': 0.9,
+        'curve-style': 'bezier' }} }},
+      // Selection has to be split by element kind: `width` means line thickness on an edge
+      // and box width on a node, so a single '.sel' rule setting width:3.4 collapsed the
+      // selected node to a 3px sliver.
+      {{ selector: 'node.sel', style: {{ 'border-width': 4, 'border-color': '#111827' }} }},
+      {{ selector: 'edge.sel', style: {{ 'width': 3.4, 'opacity': 1,
+                                        'line-color': '#111827', 'target-arrow-color': '#111827' }} }},
+      {{ selector: 'node.moved', style: {{ 'border-width': 2, 'border-color': '#0f766e',
+                                          'border-style': 'dashed' }} }}
+    ],
+    layout: {{ name: 'preset', padding: 30, fit: true,
+              positions: function (n) {{ return n.data('_pos'); }} }}
+  }});
+  function applySaved() {{
+    cy.nodes().forEach(function (n) {{
+      var p = saved[n.id()];
+      if (p && typeof p.x === 'number') {{ n.position({{x: p.x, y: p.y}}); n.addClass('moved'); }}
+    }});
+  }}
+  applySaved(); cy.fit(undefined, 30);
+  cy.on('dragfree', 'node', function (e) {{
+    var p = e.target.position();
+    saved[e.target.id()] = {{x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10}};
+    e.target.addClass('moved'); save(saved);
+  }});
+  var side = document.getElementById('ogside');
+  function esc(s) {{ return String(s).replace(/[&<>]/g, function (c) {{
+    return {{'&':'&amp;','<':'&lt;','>':'&gt;'}}[c]; }}); }}
+  function show(title, sub, props) {{
+    var h = '<h3>' + esc(title) + '</h3><div class="osub">' + esc(sub) + '</div>';
+    var keys = Object.keys(props || {{}});
+    if (!keys.length) h += '<p class="placeholder">No further properties.</p>';
+    keys.forEach(function (k) {{
+      var v = props[k];
+      if (v === null || v === undefined || v === '') return;
+      if (typeof v === 'object') v = JSON.stringify(v);
+      h += '<div class="oprop"><b>' + esc(k) + '</b><div>' + esc(v) + '</div></div>';
+    }});
+    side.innerHTML = h;
+  }}
+  cy.on('tap', 'node', function (e) {{
+    cy.elements().removeClass('sel'); e.target.addClass('sel');
+    var d = e.target.data();
+    show(d.label, d.otype + ' · ' + d.oname, d.props);
+  }});
+  cy.on('tap', 'edge', function (e) {{
+    cy.elements().removeClass('sel'); e.target.addClass('sel');
+    var d = e.target.data();
+    show(d.rel.replace(/_/g, ' '), d.source + ' \u2192 ' + d.target, d.props);
+  }});
+  cy.on('tap', function (e) {{ if (e.target === cy) cy.elements().removeClass('sel'); }});
+  document.getElementById('og-fit').onclick = function () {{ cy.fit(undefined, 30); }};
+  document.getElementById('og-reset').onclick = function () {{
+    saved = {{}}; save(saved);
+    cy.nodes().forEach(function (n) {{ n.removeClass('moved');
+      var d = n.data('_pos'); if (d) n.position({{x: d.x, y: d.y}}); }});
+    cy.fit(undefined, 30);
+  }};
+  }}
+  if (document.readyState === 'loading') {{
+    document.addEventListener('DOMContentLoaded', boot);
+  }} else {{
+    boot();
+  }}
+}})();
+</script>"""
+
+
 ARTIFACT_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
@@ -1533,6 +1957,35 @@ ARTIFACT_TEMPLATE = """<!doctype html>
      only: the method name and the groundable marker are short words in narrow columns, and
      break-anywhere turns "groundable" into a vertical stack of letters. */
   table.methods td:last-child {{ overflow-wrap:anywhere; word-break:break-word; }}
+  /* Internal structure: the graph and a pane that reads the clicked element's properties.
+     Side by side on a wide screen, stacked on a narrow one — the properties are prose and
+     unreadable in a column 200px wide. */
+  .ogwrap {{ display:flex; gap:12px; align-items:stretch; margin:10px 0 4px;
+             border:1px solid var(--line); border-radius:8px; background:#fff; }}
+  #og {{ flex:1 1 62%; min-width:0; height:460px; background:#fff; border-radius:8px 0 0 8px; }}
+  #ogside {{ flex:0 0 34%; max-width:380px; border-left:1px solid var(--line);
+             padding:10px 12px; overflow:auto; max-height:460px; font-size:13px; }}
+  #ogside h3 {{ margin:2px 0 2px; font-size:14px; }}
+  #ogside .osub {{ color:var(--muted); font-size:11px; margin-bottom:8px;
+                   font-family:ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; }}
+  #ogside .oprop {{ margin:0 0 9px; }}
+  #ogside .oprop b {{ display:block; font-size:11px; text-transform:uppercase;
+                      letter-spacing:.04em; color:var(--muted); }}
+  #ogside .oprop div {{ overflow-wrap:anywhere; }}
+  #ogside .placeholder {{ color:var(--muted); }}
+  .oglegend {{ display:flex; flex-wrap:wrap; gap:10px; font-size:11px; color:var(--muted);
+               margin:6px 0; }}
+  .olg {{ display:inline-flex; align-items:center; gap:4px; }}
+  .osw {{ width:11px; height:11px; border-radius:3px; display:inline-block; }}
+  .oln {{ width:16px; height:3px; border-radius:2px; display:inline-block; }}
+  .ogtools {{ display:flex; gap:8px; align-items:center; margin-bottom:14px; }}
+  .ogtools button {{ font-size:12px; padding:3px 9px; border:1px solid var(--line);
+                     background:#fff; border-radius:6px; cursor:pointer; }}
+  .ogtools button:hover {{ background:#eef1f5; }}
+  @media (max-width: 900px) {{
+    .ogwrap {{ flex-direction:column; }}
+    #ogside {{ max-width:none; border-left:0; border-top:1px solid var(--line); max-height:300px; }}
+  }}
   table.methods td:first-child, table.methods td:nth-child(2) {{ white-space:nowrap; }}
   .yes {{ color:#15803d; font-weight:650; }} .no {{ color:#b45309; font-weight:650; }}
   .hint {{ font-size:12px; color:var(--muted); }}
@@ -1554,6 +2007,11 @@ ARTIFACT_TEMPLATE = """<!doctype html>
     &middot; <a href="index.html" class="uplink">&uarr; community record</a></div>
 </header>
 <main>{body}</main>
+<!-- Cytoscape is needed by the internal-structure graph that the body may emit.
+     It is loaded HERE, before the page script, and the graph defers itself to
+     DOMContentLoaded because its own <script> is emitted inside <main> above. -->
+<script src="{cyto_src}"></script>
+<script src="vendor/cytoscape-svg.js"></script>
 <script>
 /* Live reload while the record is growing. serve.py answers /__build with the current
    build number; a static host does not, and the fetch simply fails and stops. Nothing

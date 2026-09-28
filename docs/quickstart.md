@@ -44,7 +44,7 @@ Four sections, no network and no credentials:
 - **the 35-Artifact record**, each Artifact validated against everything published before it, which is the sequence the gate saw.
 - **the gate's** publication-unit and ordering logic, which is the one part of the loop that can be wrong without any Artifact being wrong.
 
-The three parts also run alone — `validate_record.py`, `check_refused.py`, `test_gate.py` — which is what you want while authoring a record of your own.
+The parts also run alone — `validate_record.py`, `check_refused.py`, `test_gate.py`, `test_sync.py` — which is what you want while authoring a record of your own.
 
 `--check` needs no network and no password, so the publish loop itself can be tried against the example record before any server exists:
 

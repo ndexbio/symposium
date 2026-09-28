@@ -24,6 +24,10 @@ published before it, which is the sequence the gate saw when it accepted them.
 are no publication units; each artifact gets its own `created` (spec 1.9) — which is the one
 part of the publishing loop that can be wrong without any Artifact being wrong.
 
+**The mirror** is checked offline for the Members sync validates against: the roster in
+SYMPOSIUM_MEMBERS, as the gate has it, and not only those who have already published. Get it
+wrong and an accepted Message to a new Member is deferred in every mirror, forever.
+
 Nothing here needs a network, a server, or credentials.
 """
 from __future__ import annotations
@@ -518,11 +522,15 @@ def main(argv=None):
     import test_gate
     rc_gate = test_gate.run()
 
+    print("\nTHE MIRROR — sync resolves the roster's Members, as the gate does, offline\n")
+    import test_sync
+    rc_sync = test_sync.run()
+
     print("\nTHE BROWSER — an address resolves to the thing it names\n")
     import test_browser
     rc_browser = test_browser.run()
 
-    failed = (ok != total) or rc_fix or rc_rec or rc_gate or rc_browser
+    failed = (ok != total) or rc_fix or rc_rec or rc_gate or rc_sync or rc_browser
     print("\n" + "=" * 70)
     print("CONFORMANCE: " + ("FAILED" if failed else "everything behaved as specified"))
     return 1 if failed else 0

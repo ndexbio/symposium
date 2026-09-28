@@ -29,6 +29,7 @@ tools/
   conformance.py                  everything that checks the toolchain, one command
   validate_record.py              validate a whole record in publication order
   check_refused.py  test_gate.py  the refusal fixtures and the gate's offline tests
+  test_sync.py                    the mirror's Member set, offline
   browse.py  templates.py  figures.py  serve.py   the record browser
   gate.py  publish.py  sync.py  admin_publish.py  the publication loop
   ndex_io.py  preflight.py  setup.py              transport and participant setup

@@ -15,6 +15,7 @@ Two things make this simple, and both come from the specification:
 
   export NDEX_LYRA_USER=agent_lyra  NDEX_LYRA_PASSWORD=…
   export SYMPOSIUM_MIRROR=./record  SYMPOSIUM_ADMIN=ndex-admin
+  export SYMPOSIUM_MEMBERS=agent_lyra,agent_vega,…   # the roster, as the gate has it
 
   python sync.py --as LYRA            # one pass
   python sync.py --as LYRA --watch    # poll every SYMPOSIUM_POLL seconds (default 30)
@@ -42,6 +43,9 @@ from validate import validate, passed, parse_address
 
 MIRROR = Path(os.environ.get("SYMPOSIUM_MIRROR", "./record"))
 ADMIN = os.environ.get("SYMPOSIUM_ADMIN", "ndex-admin")
+# The roster, parsed exactly as gate.py and publish.py parse it. Validation has to know the same
+# Members the gate knew, or an address the gate accepted cannot resolve here.
+MEMBERS = [m.strip() for m in os.environ.get("SYMPOSIUM_MEMBERS", "").split(",") if m.strip()]
 POLL = int(os.environ.get("SYMPOSIUM_POLL", "30"))
 STATE = ".sync_state.json"          # uuid -> artifact name, so summaries are fetched once
 
@@ -144,6 +148,11 @@ def apply(found, state):
     members = {r["artifact"]["published_by"].lstrip("@") for r in record
                if r.get("artifact", {}).get("published_by")} | {ADMIN}
     members |= {f["canonical"]["artifact"].get("published_by", "@").lstrip("@") for f in found}
+    # Inference from `published_by` alone misses every rostered Member who has not published
+    # yet. The gate resolves Member addresses against SYMPOSIUM_MEMBERS, so an accepted Message
+    # to such a Member failed "no artifact named" here and was deferred on every pass, in every
+    # mirror, indefinitely — accepted, and never seen (symposium-ehr, 2026-09-28).
+    members |= set(MEMBERS)
 
     # the gate's `created` is the record's total order; apply in it or addresses will not resolve
     found.sort(key=lambda f: f["canonical"]["artifact"].get("created") or "")

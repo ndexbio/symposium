@@ -84,7 +84,7 @@ Role charters live in `tools/roles/<name>.md`, standing rules in
 
 `cd tools && python3 conformance.py` runs the whole suite — 69 mutation
 scenarios, 12 refusal fixtures, the 34-artifact record in publication order,
-and the gate's own logic. No network and no credentials. It must print
+the gate's own logic, and the Members sync resolves. No network and no credentials. It must print
 `CONFORMANCE: everything behaved as specified`.
 
 To check an artifact without publishing it:

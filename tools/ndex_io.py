@@ -13,9 +13,9 @@ import json
 import os
 import sys
 import time
-from pathlib import Path
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 BASE = os.environ.get("SYMPOSIUM_BASE", "http://localhost:8080").rstrip("/")
 CANONICAL_ATTR = "symposium_canonical"

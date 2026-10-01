@@ -47,9 +47,9 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import browse                                                          # noqa: E402
-import templates as T                                                  # noqa: E402
-from validate import parse_address                                     # noqa: E402
+import browse  # noqa: E402
+import templates as T  # noqa: E402
+from validate import parse_address  # noqa: E402
 
 RECORDS = [HERE.parent / "examples" / "record",
            HERE.parent / "examples" / "manuscript_example"]

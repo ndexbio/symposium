@@ -22,8 +22,8 @@ BROKEN interpreter and can tell you it is broken.
 """
 import json
 import os
-import subprocess
 import ssl
+import subprocess
 import sys
 import urllib.error
 import urllib.request

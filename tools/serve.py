@@ -28,7 +28,7 @@ import time
 import traceback
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import browse                                                      # noqa: E402
+import browse  # noqa: E402
 
 STATE = {"build": 0, "error": None, "artifacts": 0, "at": ""}
 _LOCK = threading.Lock()

@@ -213,7 +213,7 @@ def diagnose(prefix):
         print(f"    in file   {shape(fv)}   fingerprint {fingerprint(fv)}")
         print(f"    in shell  {shape(ev)}   fingerprint {fingerprint(ev)}")
         if fv is not None and ev is not None and fv != ev:
-            print(f"    !! THEY DIFFER — the shell is stale; open a new terminal")
+            print("    !! THEY DIFFER — the shell is stale; open a new terminal")
     if f.get(user_var) and not f[user_var].startswith("agent_"):
         print(f"\n  !! {user_var} is {f[user_var]!r}, which does not look like an account name.\n"
               f"     It should be the account (e.g. agent_lyra), not the prefix ({prefix}).")
@@ -234,8 +234,8 @@ def diagnose(prefix):
         elif status == 0:
             print(f"  {label:6s} SERVER UNREACHABLE (no HTTP response at all)")
             print(f"         {detail}")
-            print(f"         The credentials were never sent. This is a NETWORK problem — "
-                  f"nothing here\n         is wrong with your password.")
+            print("         The credentials were never sent. This is a NETWORK problem — "
+                  "nothing here\n         is wrong with your password.")
         else:
             print(f"  {label:6s} HTTP {status}" + (" — credentials rejected" if status == 401 else ""))
             if detail:
@@ -300,7 +300,7 @@ def check_tls():
         msg += ["", "  Working interpreters already on this machine — use one of these:"]
         for path, ver in alts:
             msg.append(f"      {path}     ({ver})")
-        msg += ["", f"  For example:", f"      {alts[0][0]} tools/setup.py --as <PREFIX>"]
+        msg += ["", "  For example:", f"      {alts[0][0]} tools/setup.py --as <PREFIX>"]
     else:
         msg += ["", "  None found on this machine. Install one:",
                 "      brew install python@3.12                  # Homebrew",

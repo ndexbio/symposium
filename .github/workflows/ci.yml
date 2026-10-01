@@ -1,0 +1,16 @@
+name: ci
+
+on:
+  push:
+    branches: [data-store]
+  pull_request:
+    branches: [data-store]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: make test
+      - run: make -C data-server test

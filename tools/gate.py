@@ -93,12 +93,27 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import telemetry
-from ndex_io import (BASE, CANONICAL_ATTR, NON_ARTIFACT_MARKS, NON_ARTIFACT_SEGMENTS,
-                     add_shortcut, share_folder,
-                     RECORD_MARK, REPLY_MARK, auth, api as _api, extract_artifact,
-                     extract_canonical, grant_read as _grant, permission_map, to_cx2,
-                     upload_cx2 as _upload, user_uuid, load_canonical_dir)
-from validate import validate, passed, parse_instant
+from ndex_io import (
+    BASE,
+    CANONICAL_ATTR,
+    NON_ARTIFACT_MARKS,
+    NON_ARTIFACT_SEGMENTS,
+    RECORD_MARK,
+    REPLY_MARK,
+    add_shortcut,
+    auth,
+    extract_artifact,
+    extract_canonical,
+    load_canonical_dir,
+    permission_map,
+    share_folder,
+    to_cx2,
+    user_uuid,
+)
+from ndex_io import api as _api
+from ndex_io import grant_read as _grant
+from ndex_io import upload_cx2 as _upload
+from validate import parse_instant, passed, validate
 
 MIRROR = Path(os.environ.get("SYMPOSIUM_MIRROR", "./record"))
 DRY = "--dry-run" in sys.argv
@@ -585,7 +600,7 @@ def accept(canonical, record, muuids, state, stamp=None, submission_uuid=None):
         st_, body = add_shortcut(FOLDER, uuid, ADMIN_TOK)
         if st_ not in (200, 201):
             print(f"    ! shortcut into folder {FOLDER} failed: HTTP {st_} {body}")
-            print(f"      falling back to per-member grants for this artifact")
+            print("      falling back to per-member grants for this artifact")
             reach = _fan_out(uuid, muuids)
         else:
             reach = f"shortcut -> folder {FOLDER[:8]}"

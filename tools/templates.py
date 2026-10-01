@@ -1372,11 +1372,11 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 # Rendering
 # --------------------------------------------------------------------------- #
 
-import csv as _csv            # noqa: E402
-import html as _html          # noqa: E402
-import io as _io              # noqa: E402
-import json as _json          # noqa: E402
-import re as _re              # noqa: E402
+import csv as _csv  # noqa: E402
+import html as _html  # noqa: E402
+import io as _io  # noqa: E402
+import json as _json  # noqa: E402
+import re as _re  # noqa: E402
 
 #: Colours for the DERIVED cross-artifact edges on the overview. The record stores no
 #: cross-artifact relationship, so each of these names a way an address got into a
@@ -1682,7 +1682,7 @@ def preformatted(text, spans=None):
     Still passed through `_mark_grounded`, because a Content Object may declare a
     `text_span` method over code and a Ground through it has to land on the line it
     quotes — the same reason every other rendering path marks."""
-    return (f"<pre class='code'><code>"
+    return ("<pre class='code'><code>"
             + _mark_grounded(_html.escape(text or ""), spans) + "</code></pre>")
 
 
@@ -1712,7 +1712,7 @@ def md_to_html(md, pages=None, spans=None):
             # split out line by line rather than by testing the block as a whole.
             para = []
 
-            def flush():
+            def flush(para=para):
                 if para:
                     out.append("<p>" + "<br>".join(para) + "</p>")
                     para.clear()
@@ -1764,9 +1764,9 @@ def csv_table(text, max_rows=None, method="csv"):
     # these ids exist for: a Ground addressing row 400 of a 714-row table would resolve in
     # the validator and land the reader at the top of the page. What bounds the size here
     # is policy/embedding-and-size.md, which bounds the artifact.
-    more = ("<tr><td colspan='%d' class='hint'>… %d further row(s) not shown; an address "
-            "into them will not resolve on this page</td></tr>"
-            % (len(hdr), len(rows) - 1 - limit)) if len(rows) - 1 > limit else ""
+    more = (f"<tr><td colspan='{len(hdr)}' class='hint'>… {len(rows) - 1 - limit} further row(s) "
+            "not shown; an address into them will not resolve on this page</td></tr>"
+            ) if len(rows) - 1 > limit else ""
     head = "".join(f"<th>{_html.escape(c)}</th>" for c in hdr)
     return (f"<p class='hint'>Addressed as <code>#{_html.escape(method)}"
             f".row=&lt;{_html.escape(key)}&gt;"
@@ -1788,8 +1788,7 @@ def internal_graph_section(ig, artifact_name, artifact_type):
     counts = ig["counts"]
     legend = ig["legend"]
     types_html = "".join(
-        '<span class="olg"><span class="osw" style="background:{}"></span>{}</span>'.format(
-            _html.escape(c), _html.escape(t))
+        f'<span class="olg"><span class="osw" style="background:{_html.escape(c)}"></span>{_html.escape(t)}</span>'
         for t, c in sorted(legend["types"].items()))
     rels_html = "".join(
         '<span class="olg"><span class="oln" style="background:{}"></span>{}</span>'.format(

@@ -36,9 +36,16 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ndex_io import (RECORD_MARK, api, auth, extract_artifact, permission_map, whoami,
-                     load_canonical_dir)
-from validate import validate, passed, parse_address
+from ndex_io import (
+    RECORD_MARK,
+    api,
+    auth,
+    extract_artifact,
+    load_canonical_dir,
+    permission_map,
+    whoami,
+)
+from validate import parse_address, passed, validate
 
 MIRROR = Path(os.environ.get("SYMPOSIUM_MIRROR", "./record"))
 ADMIN = os.environ.get("SYMPOSIUM_ADMIN", "ndex-admin")
@@ -196,8 +203,8 @@ def once(tok, state):
         held = len(load_record())
         print(f"! COULD NOT REACH THE SERVER — {why}")
         print(f"  Your mirror is UNCHANGED at {held} artifact(s) and may now be STALE.")
-        print(f"  Do not publish against it: validation can only see the record it has, so a")
-        print(f"  stale mirror will approve a name someone else has already taken.")
+        print("  Do not publish against it: validation can only see the record it has, so a")
+        print("  stale mirror will approve a name someone else has already taken.")
         return None
     added, dirty, deferred = apply(found, state)
     for name, why in deferred:

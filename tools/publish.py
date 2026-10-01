@@ -35,10 +35,22 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import telemetry
-from ndex_io import (auth, whoami, user_uuid, grant_read, to_cx2, upload_cx2,
-                     load_canonical_dir)
-from validate import (EMBED_REFUSE, EMBED_REVIEW, embedded_size, parse_instant, passed,
-                         validate)
+from ndex_io import (
+    auth,
+    grant_read,
+    load_canonical_dir,
+    to_cx2,
+    upload_cx2,
+    user_uuid,
+    whoami,
+)
+from validate import (
+    EMBED_REFUSE,
+    embedded_size,
+    parse_instant,
+    passed,
+    validate,
+)
 
 MIRROR = Path(os.environ.get("SYMPOSIUM_MIRROR", "./record"))
 ADMIN = os.environ.get("SYMPOSIUM_ADMIN", "ndex-admin")

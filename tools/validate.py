@@ -384,7 +384,7 @@ def check_structure(a):
 
 def check_type_specific(a):
     f, h = [], a["artifact"]
-    t, objs = h.get("type"), {o["name"]: o for o in a.get("objects", []) if o.get("name")}
+    t = h.get("type")
     req = {"Analysis": ("procedure",), "Model": ("modeling_choices",),
            "Message": ("recipients", "text")}.get(t, ())
     for k in req:
@@ -621,7 +621,8 @@ def _cyclic(g):
     seen, stack = set(), set()
 
     def go(n):
-        seen.add(n); stack.add(n)
+        seen.add(n)
+        stack.add(n)
         for m in g.get(n, []):
             if m in stack or (m not in seen and go(m)):
                 return True
@@ -634,7 +635,7 @@ def _cyclic(g):
 # --------------------------------------------------------------------------- corpus level
 def check_corpus(a, index, members, record_names):
     f, h = [], a["artifact"]
-    name, t = h.get("name"), h.get("type")
+    name = h.get("name")
     mine = parse_instant(h.get("created"))
     objs = {o["name"]: o for o in a.get("objects", []) if o.get("name")}
 

@@ -1,0 +1,4 @@
+# The data server targets the image's Python (Debian bookworm, 3.11); everything else is
+# inherited from the repository-wide configuration.
+extend = "../../ruff.toml"
+target-version = "py311"

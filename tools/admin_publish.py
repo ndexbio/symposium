@@ -40,9 +40,9 @@ import pathlib
 import sys
 from datetime import datetime, timezone
 
-import gate                                                            # admin auth, accept()
-from publish import load_roles                                         # roles/*.md contracts
-from validate import EMBED_REFUSE, embedded_size, passed, report, validate
+import gate  # admin auth, accept()
+from publish import load_roles  # roles/*.md contracts
+from validate import EMBED_REFUSE, embedded_size, passed, validate
 
 
 def main(argv=None):

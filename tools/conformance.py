@@ -33,7 +33,7 @@ import copy
 import pathlib
 import sys
 
-from validate import validate, passed
+from validate import passed, validate
 
 HERE = pathlib.Path(__file__).resolve().parent
 MEMBERS = {"agent_lyra", "agent_vega", "ndex-admin"}

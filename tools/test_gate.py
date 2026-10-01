@@ -30,11 +30,11 @@ from __future__ import annotations
 import sys
 
 sys.path.insert(0, ".")
-import ndex_io                                                        # noqa: E402
+import ndex_io  # noqa: E402
 
 ndex_io.auth = lambda prefix: ("ndex-admin", "stub-token")            # noqa: E731
 
-import gate                                                           # noqa: E402
+import gate  # noqa: E402
 
 
 def art(name, typ, objs=(), **header):

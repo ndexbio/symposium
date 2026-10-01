@@ -13,3 +13,11 @@ tools/dist/
 
 # the community's own roster; community.example.json is the template
 server/community.json
+
+# python tooling
+.venv/
+.ruff_cache/
+.pytest_cache/
+
+# build output
+dist/

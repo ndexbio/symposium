@@ -137,7 +137,81 @@ class OwnerKey:
     def jwk_text(self) -> str:
         return json.dumps(self.jwk)
 
+    def sign(self, message: str) -> str:
+        return (
+            base64.urlsafe_b64encode(self.private.sign(message.encode()))
+            .rstrip(b"=")
+            .decode()
+        )
+
 
 @pytest.fixture
 def owner_key():
     return OwnerKey
+
+
+class Owner:
+    """A member as the skill would act: a handle, a locally generated key, a server URL."""
+
+    def __init__(self, server: Server, handle: str, key: OwnerKey | None = None):
+        self.server, self.handle = server, handle
+        self.key = key or OwnerKey()
+
+    def challenge(self) -> str:
+        r = httpx.post(
+            self.server.url + "/v1/auth/challenge", json={"handle": self.handle}
+        )
+        r.raise_for_status()
+        return r.json()["nonce"]
+
+    def register(
+        self, community: str, invite: str | None = None, key: OwnerKey | None = None
+    ):
+        key = key or self.key
+        nonce = self.challenge()
+        body = {
+            "handle": self.handle,
+            "community": community,
+            "public_jwk": key.jwk,
+            "nonce": nonce,
+            "signature": key.sign(nonce),
+        }
+        if invite is not None:
+            body["invite"] = invite
+        return httpx.post(self.server.url + "/v1/owners", json=body)
+
+    def token_response(self, key: OwnerKey | None = None):
+        key = key or self.key
+        nonce = self.challenge()
+        return httpx.post(
+            self.server.url + "/v1/auth/token",
+            json={"handle": self.handle, "nonce": nonce, "signature": key.sign(nonce)},
+        )
+
+    def token(self) -> str:
+        r = self.token_response()
+        assert r.status_code == 200, r.text
+        return r.json()["token"]
+
+    def headers(self, token: str | None = None) -> dict:
+        return {"Authorization": f"Bearer {token or self.token()}"}
+
+
+def init_admin(server: Server, handle: str = "demo-admin") -> Owner:
+    """Bind the admin's public key through data-admin, as the operator does."""
+    admin = Owner(server, handle)
+    result = server.admin(
+        "init", "--admin", handle, "--pubkey", "-", input=admin.key.jwk_text()
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return admin
+
+
+def set_roster(server: Server, admin: Owner, community: str, handles: list) -> dict:
+    r = httpx.put(
+        f"{server.url}/v1/c/{community}/roster",
+        json={"handles": handles},
+        headers=admin.headers(),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()

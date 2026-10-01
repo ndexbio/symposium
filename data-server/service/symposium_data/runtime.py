@@ -43,8 +43,11 @@ class Settings:
         self.s3_secret_key = values["S3_SECRET_KEY"]
         self.s3_bucket = values.get("S3_BUCKET", "symposium-data")
         self.server_id = values["SERVER_ID"]
+        self.token_key_file = values["TOKEN_KEY_FILE"]
         self.registration = env.get("SYMPOSIUM_DATA_REGISTRATION", "invite")
         self.public_base_url = env.get("SYMPOSIUM_DATA_PUBLIC_BASE_URL", "")
+        self.token_ttl = int(env.get("SYMPOSIUM_DATA_TOKEN_TTL", "900"))
+        self.invite_hours = int(env.get("SYMPOSIUM_DATA_INVITE_HOURS", "72"))
 
 
 class Database:

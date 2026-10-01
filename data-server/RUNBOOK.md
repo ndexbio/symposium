@@ -42,6 +42,25 @@ docker exec -i symposium-data data-admin init --admin <admin-handle> --pubkey - 
 
 `init` prints the key's fingerprint, which is its RFC 7638 thumbprint. Compare it with the fingerprint shown on the operator's machine. `init` works only once; a second call exits with status 2 and changes nothing.
 
+## Rosters and invites
+
+The admin sets each community's roster with `PUT /v1/c/<community>/roster`; Symposium's `bootstrap.py` does this. On an `invite` server, the operator then mints one invite per member and hands it over **out of band**, never through chat:
+
+```bash
+docker exec symposium-data data-admin invite --community demo --handle lyra > lyra.invite   # single-use, 72 h
+```
+
+The member registers with that file (Symposium's `setup.py --invite-file lyra.invite`). An invite works once, only for its own handle and community, and only before it expires (`--hours N` changes the lifetime).
+
+**Lost or compromised key:**
+
+```bash
+docker exec symposium-data data-admin rebind-key --community demo --handle lyra > lyra.invite
+docker exec symposium-data data-admin suspect-after --handle lyra --at 2026-10-01T12:00:00+00:00
+```
+
+`rebind-key` retires the handle's keys and prints a fresh invite, so the member registers a new key under the same handle. `suspect-after` records the instant from which the handle's activity is suspect, and `GET /v1/whoami` reports it. Nothing is deleted, and attribution is kept.
+
 ## Kubernetes or Podman
 
 ```bash

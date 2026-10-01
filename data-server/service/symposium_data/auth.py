@@ -1,11 +1,17 @@
-"""Owner public keys: Ed25519 JWK validation and RFC 7638 thumbprints (the key id)."""
+"""Identity primitives: owner public keys (Ed25519 JWKs, RFC 7638 key ids), bearer secrets
+stored as hashes, and the server's short-lived EdDSA access tokens."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
 import json
+import os
+import time
+from pathlib import Path
 
+import jwt
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 
@@ -39,3 +45,55 @@ class PublicKeys:
             sort_keys=True,
         )
         return self.b64u(hashlib.sha256(canon.encode()).digest())
+
+    def verify(self, jwk: dict, message: bytes, signature_b64u: str) -> bool:
+        """True when `signature_b64u` is this key's Ed25519 signature over `message`."""
+        try:
+            self.validate(jwk).verify(self.b64u_decode(signature_b64u), message)
+            return True
+        except Exception:
+            return False
+
+
+class Secrets:
+    """Bearer secrets (invites now, read keys later): random, prefixed, stored only as hashes."""
+
+    def new(self, prefix: str) -> str:
+        return prefix + base64.urlsafe_b64encode(os.urandom(32)).rstrip(b"=").decode()
+
+    def digest(self, secret: str) -> str:
+        return hashlib.sha256(secret.encode()).hexdigest()
+
+
+class Tokens:
+    """Short-lived EdDSA access tokens, signed with the server's first-boot key."""
+
+    def __init__(self, key_file: str, issuer: str, ttl_seconds: int):
+        pem = Path(key_file).read_bytes()
+        self.signing_key = serialization.load_pem_private_key(pem, password=None)
+        self.issuer = issuer
+        self.ttl = ttl_seconds
+
+    def issue(self, handle: str, kid: str) -> str:
+        now = int(time.time())
+        claims = {
+            "sub": handle,
+            "kid": kid,
+            "iat": now,
+            "exp": now + self.ttl,
+            "iss": self.issuer,
+        }
+        return jwt.encode(claims, self.signing_key, algorithm="EdDSA")
+
+    def read(self, token: str) -> dict | None:
+        """The claims of a valid, unexpired token from this server; None otherwise."""
+        try:
+            return jwt.decode(
+                token,
+                self.signing_key.public_key(),
+                algorithms=["EdDSA"],
+                issuer=self.issuer,
+                options={"require": ["sub", "kid", "exp", "iss"]},
+            )
+        except jwt.PyJWTError:
+            return None

@@ -3,7 +3,7 @@
 A single Docker image that runs Symposium Data, the versioned file store Symposium communities use to persist, share and cite data files. The image contains three services, managed by `supervisord`:
 
 - **the data service**: FastAPI on port 8080, the only port the container exposes;
-- **PostgreSQL 16**: the server's records. Today that means its configuration, owner identities, community rosters, grants and invites, all managed by Alembic migrations;
+- **PostgreSQL 16**: the server's records: configuration, owner identities, rosters, grants, invites, collections, files, versions and metadata. All of it is managed by Alembic migrations;
 - **SeaweedFS**: the internal S3 store for file contents. It is never exposed; the data service streams every byte.
 
 The design and requirements are in the spike on ndexbio/symposium#13. Its sections are referred to here as R-*.
@@ -53,6 +53,31 @@ The server provisions no accounts. Each member generates an Ed25519 key on their
 
 Requests authenticate with `Authorization: Bearer <token>`.
 
+## Files and versions
+
+Every community has three collections: `inbox` (submissions), `files` (stored data) and `record` (the accepted record). They are created when the admin first sets its roster. Files are immutable and versioned (R-A, R-B). The service streams every byte, both up and down.
+
+| Endpoint | Purpose |
+|---|---|
+| `PUT /v1/c/{community}/{collection}/files/{name}` | Create a file; the body becomes v1. `Repr-Digest: sha-256=:<base64>:` is required, because the server hashes the body as it streams and rejects a mismatch with `400`, keeping nothing. Optional headers: `X-Data-Metadata` (a base64url JSON object), `X-Data-Size` and `Content-Type`. Returns `409` if the name is taken, including by an upload still in progress, `413` over quota. |
+| `POST /v1/files/{id}/versions` | Append a version. With a body: new content, keeping the current metadata unless `X-Data-Metadata` is sent. With `X-Data-Metadata-Only: 1`: new metadata, reusing the content. Optional `If-Match: "v<n>"`: apply only if the head is still v<n>, otherwise `412`. |
+| `DELETE /v1/files/{id}?reason=…` | Soft delete: appends a tombstone version that keeps serving the previous content with `X-Data-Deleted: true`. A later version un-deletes the file. Accepts `If-Match` like a new version. |
+| `GET /v1/files/{id}/v/{n}` | Stream one version, with Range support. Headers: `Repr-Digest`, `X-Data-Citation`, `X-Data-Version`, `X-Data-Deleted`, `X-Data-File-Deleted`, and a `Link` header with `latest`, `prev` and `next`. A purged version answers `410` with its metadata. `latest` is the newest version that isn't a tombstone. |
+| `GET /v1/files/{id}/v/{n}/stat` | Metadata only, never the content. Includes `sha256`, `size`, `created`, `seq`, `created_by`, `key_id`, `deleted`, `purged`, `suspect` and `integrity`. |
+| `GET /v1/files/{id}/versions` | Every version of the file. |
+
+- **Citations** take the form `symposium-data:<file-id>@v<n>`. Every file response carries `ETag: "v<n>"`.
+- **Atomic writes (R-A6):** every write either fully happens or leaves nothing behind.
+  - A name is reserved before any bytes move, so a racing duplicate gets `409` at once.
+  - Streamed content stays pending until one transaction checks `If-Match` and quota, turns the content ready (or reuses an identical copy), inserts the version and makes the file live.
+  - On any failure, including a client disconnect mid-upload, the transaction rolls back and the pending bytes are deleted.
+- **Ordering:** every version in a collection gets the next `seq` and a strictly later `created`, both from the server's clock.
+- **Deduplication:** identical content is stored once.
+- **Who may write:**
+  - A roster member may create files in `inbox` and `files`.
+  - Only a file's creator or the admin may version or delete it.
+  - A submission in `inbox` is readable only by its submitter, the admin, and the handles listed in its `recipients` metadata.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -62,5 +87,10 @@ Requests authenticate with `Authorization: Bearer <token>`.
 | `SYMPOSIUM_DATA_TRUSTED_PROXY` | `127.0.0.1` | The only address whose `X-Forwarded-*` headers are trusted. |
 | `SYMPOSIUM_DATA_TOKEN_TTL` | `900` | Access-token lifetime, in seconds. |
 | `SYMPOSIUM_DATA_INVITE_HOURS` | `72` | Default invite lifetime, in hours. |
+| `SYMPOSIUM_DATA_QUOTA_BYTES` | `0` (none) | Per-owner limit on the bytes of content the owner uploaded first. |
+| `SYMPOSIUM_DATA_PENDING_TTL` | `86400` | Age, in seconds, after which the janitor removes an upload that never completed. |
+| `SYMPOSIUM_DATA_JANITOR_INTERVAL` | `3600` | How often, in seconds, the janitor runs. |
+| `SYMPOSIUM_DATA_SCRUB_INTERVAL` | `3600` | How often, in seconds, the integrity scrub runs. |
+| `SYMPOSIUM_DATA_SCRUB_BATCH` | `50` | How many payloads each scrub pass re-hashes, least recently checked first. |
 
 All state lives under `/apps` inside the container: one volume, or a PVC. Internal secrets are generated on first boot with mode 0600 and are never baked into the image.

@@ -59,7 +59,19 @@ docker exec symposium-data data-admin rebind-key --community demo --handle lyra 
 docker exec symposium-data data-admin suspect-after --handle lyra --at 2026-10-01T12:00:00+00:00
 ```
 
-`rebind-key` retires the handle's keys and prints a fresh invite, so the member registers a new key under the same handle. `suspect-after` records the instant from which the handle's activity is suspect, and `GET /v1/whoami` reports it. Nothing is deleted, and attribution is kept.
+`rebind-key` retires the handle's keys and prints a fresh invite, so the member registers a new key under the same handle. `suspect-after` flags every version the handle writes after that instant: `stat` reports `"suspect": true`, and `GET /v1/whoami` reports the instant. Nothing is deleted, and attribution is kept.
+
+## Purge, the janitor and the scrub
+
+**Purge** frees one version's content (R-B3). The version stays addressable and answers `410` with its metadata. The bytes are deleted only when no other live version shares them. The payload is marked `purging` before its bytes are touched and becomes `purged` only after they are gone; if S3 refuses, the command reports `"bytes_freed": false` and the janitor finishes the job:
+
+```bash
+docker exec symposium-data data-admin purge --cite symposium-data:<file-id>@v<n>
+```
+
+**Janitor.** It runs in the background and removes what a crash mid-write leaves behind: uploads that never completed, and name reservations that never turned into a file. Both are removed after `SYMPOSIUM_DATA_PENDING_TTL`. Normal failures are cleaned up immediately; the janitor covers a crash, and retries any S3 delete that failed. Bytes are always deleted before the row that tracks them, so every object in the bucket stays accounted for. An upload that is still streaming refreshes its timestamps (a heartbeat every TTL/3, at most every 60 s), so the janitor never expires live work.
+
+**Scrub.** It also runs in the background, re-hashing stored content on a schedule. A mismatch is recorded, never repaired: `stat` reports `"integrity": "mismatch"`, and clients also detect it because the bytes no longer match `Repr-Digest`.
 
 ## Kubernetes or Podman
 

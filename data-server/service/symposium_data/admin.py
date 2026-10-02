@@ -5,6 +5,7 @@
     data-admin invite --community <c> --handle <h> [--hours N]
     data-admin rebind-key --community <c> --handle <h>
     data-admin suspect-after --handle <h> --at <ISO-8601 instant>
+    data-admin purge --cite symposium-data:<file-id>@v<n>
 
 Invites are printed alone on stdout, for the operator to redirect into a file and hand over
 out of band. They are single-use and stored only as hashes.
@@ -14,13 +15,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+import uuid
 from datetime import datetime
 
 from . import version
 from .auth import PublicKeys, Secrets
-from .records import AlreadyInitialized, Records
-from .runtime import Database, Settings
+from .cleanup import Cleanup
+from .records import AlreadyInitialized, NotFound, Records
+from .runtime import Database, PayloadStore, Settings
+
+CITATION = re.compile(r"^symposium-data:([0-9a-f-]{36})@v(\d+)$")
 
 
 class Admin:
@@ -32,6 +38,8 @@ class Admin:
         self.records = Records()
         self.keys = PublicKeys()
         self.secrets = Secrets()
+        self.store = PayloadStore(self.settings)
+        self.cleanup = Cleanup(self.db, self.store, self.records)
 
     def emit(self, payload: dict, stream=None):
         print(json.dumps(payload), file=stream or sys.stdout)
@@ -71,6 +79,30 @@ class Admin:
             invite = self.mint_invite(conn, args.community, args.handle, args.hours)
         self.emit({"handle": args.handle, "retired_keys": retired}, stream=sys.stderr)
         print(invite)
+        return 0
+
+    def purge(self, args) -> int:
+        """Free a version's content (R-B3). The version stays addressable and answers 410 with
+        its metadata; the bytes go only when no other live version shares them."""
+        match = CITATION.match(args.cite)
+        if not match:
+            self.emit({"error": "expected symposium-data:<file-id>@v<n>"})
+            return 1
+        try:
+            with self.db.connection() as conn:
+                pid = self.records.purge(
+                    conn, uuid.UUID(match.group(1)), int(match.group(2))
+                )
+        except NotFound:
+            self.emit({"error": f"no version {args.cite}"})
+            return 2
+        freed = pid is not None and self.cleanup.finish_purge(pid)
+        result = {"purged": args.cite, "bytes_freed": freed}
+        if pid is not None and not freed:
+            result["note"] = (
+                "the bytes could not be removed yet; the janitor will retry"
+            )
+        self.emit(result)
         return 0
 
     def suspect_after(self, args) -> int:
@@ -156,6 +188,10 @@ def build_parser():
             type=int,
             help="validity (default 72, or SYMPOSIUM_DATA_INVITE_HOURS)",
         )
+    purge = sub.add_parser(
+        "purge", help="free one version's content; it then answers 410"
+    )
+    purge.add_argument("--cite", required=True, metavar="symposium-data:<id>@v<n>")
     flag = sub.add_parser(
         "suspect-after", help="flag a handle's writes after an instant"
     )
@@ -173,6 +209,7 @@ def main(argv=None) -> int:
         "invite": admin.invite,
         "rebind-key": admin.rebind_key,
         "suspect-after": admin.suspect_after,
+        "purge": admin.purge,
     }[args.command](args)
 
 

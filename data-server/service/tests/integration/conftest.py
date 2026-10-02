@@ -7,9 +7,9 @@ the image; every container and volume a test creates is named sdtest-* and remov
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
-import socket
 import subprocess
 import time
 import uuid
@@ -32,12 +32,6 @@ def docker(*args, check=True, input=None, timeout=600):
     return result
 
 
-def free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 class Server:
     """One running data-server container and the volume holding its state."""
 
@@ -45,18 +39,25 @@ class Server:
         self.env = env
         self.name = f"sdtest-{uuid.uuid4().hex[:10]}"
         self.volume = f"{self.name}-vol"
-        self.port = free_port()
-        self.url = f"http://127.0.0.1:{self.port}"
+        self.url = ""
 
     def start(self, wait=True):
-        cmd = ["run", "-d", "--name", self.name, "-p", f"127.0.0.1:{self.port}:8080"]
+        # Docker assigns the host port itself: picking a "free" port first races with
+        # anything else that grabs it before the container binds.
+        cmd = ["run", "-d", "--name", self.name, "-p", "127.0.0.1::8080"]
         cmd += ["-v", f"{self.volume}:/apps"]
         for key, value in self.env.items():
             cmd += ["-e", f"{key}={value}"]
         docker(*cmd, IMAGE)
+        self.locate()
         if wait:
             self.wait()
         return self
+
+    def locate(self):
+        """Read the host port Docker assigned; it changes on every start and restart."""
+        mapped = docker("port", self.name, "8080").stdout.splitlines()[0].strip()
+        self.url = f"http://127.0.0.1:{mapped.rsplit(':', 1)[1]}"
 
     def wait(self, timeout=180):
         deadline = time.time() + timeout
@@ -85,10 +86,11 @@ class Server:
 
     def restart(self):
         docker("restart", self.name)
+        self.locate()
         self.wait()
 
     def recreate(self):
-        """Remove the container and start a new one on the same volume and port."""
+        """Remove the container and start a new one on the same volume."""
         docker("rm", "-f", self.name)
         self.start()
 
@@ -194,7 +196,96 @@ class Owner:
         return r.json()["token"]
 
     def headers(self, token: str | None = None) -> dict:
-        return {"Authorization": f"Bearer {token or self.token()}"}
+        if token is None:
+            token = getattr(self, "_token", None) or self.token()
+            self._token = token
+        return {"Authorization": f"Bearer {token}"}
+
+    # ── files ────────────────────────────────────────────────────────────────────────────────
+    def put(
+        self, community, collection, name, data: bytes, metadata=None, content_type=None
+    ):
+        headers = {**self.headers(), **file_headers(data, metadata)}
+        if content_type:
+            headers["Content-Type"] = content_type
+        return httpx.put(
+            f"{self.server.url}/v1/c/{community}/{collection}/files/{name}",
+            content=data,
+            headers=headers,
+            timeout=600,
+        )
+
+    def version(self, file_id, data: bytes | None = None, metadata=None):
+        headers = dict(self.headers())
+        if data is None:
+            headers["X-Data-Metadata-Only"] = "1"
+            headers["X-Data-Metadata"] = b64u_json(metadata)
+            data = b""
+        else:
+            headers.update(file_headers(data, metadata))
+        return httpx.post(
+            f"{self.server.url}/v1/files/{file_id}/versions",
+            content=data,
+            headers=headers,
+            timeout=600,
+        )
+
+    def delete(self, file_id, reason=None):
+        params = {"reason": reason} if reason else {}
+        return httpx.delete(
+            f"{self.server.url}/v1/files/{file_id}",
+            params=params,
+            headers=self.headers(),
+        )
+
+    def get(self, file_id, ref="latest", headers=None):
+        return httpx.get(
+            f"{self.server.url}/v1/files/{file_id}/v/{ref}",
+            headers={**self.headers(), **(headers or {})},
+            timeout=600,
+        )
+
+    def stat(self, file_id, ref="latest"):
+        return httpx.get(
+            f"{self.server.url}/v1/files/{file_id}/v/{ref}/stat", headers=self.headers()
+        )
+
+
+def b64u_json(value) -> str:
+    return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
+
+
+def repr_digest(data: bytes) -> str:
+    return "sha-256=:" + base64.b64encode(hashlib.sha256(data).digest()).decode() + ":"
+
+
+def file_headers(data: bytes, metadata=None) -> dict:
+    headers = {
+        "Repr-Digest": repr_digest(data),
+        "Content-Type": "application/octet-stream",
+    }
+    if metadata is not None:
+        headers["X-Data-Metadata"] = b64u_json(metadata)
+    return headers
+
+
+def psql(server: Server, sql: str) -> str:
+    return server.exec(
+        "gosu", "postgres", "psql", "-tA", "-d", "symposium_data", "-c", sql
+    ).stdout.strip()
+
+
+def community_with(server: Server, members=("lyra", "vega", "rigel")):
+    """An initialized open server: the demo roster, each member registered. -> (admin, {h: Owner})."""
+    admin = init_admin(server)
+    set_roster(server, admin, "demo", list(members))
+    owners = {}
+    for handle in members:
+        owner = Owner(server, handle)
+        r = owner.register("demo")
+        assert r.status_code == 201, r.text
+        owners[handle] = owner
+    return admin, owners
 
 
 def init_admin(server: Server, handle: str = "demo-admin") -> Owner:
@@ -215,3 +306,76 @@ def set_roster(server: Server, admin: Owner, community: str, handles: list) -> d
     )
     assert r.status_code == 200, r.text
     return r.json()
+
+
+def store_counts(server: Server) -> tuple[int, int]:
+    """(objects, open multipart uploads) in the internal S3 bucket."""
+    out = server.exec(
+        "/opt/venv/bin/python",
+        "-c",
+        "from symposium_data.runtime import Settings, PayloadStore;"
+        "s = PayloadStore(Settings());"
+        "keys = [o['Key'] for p in s.s3.get_paginator('list_objects_v2').paginate(Bucket=s.bucket)"
+        " for o in p.get('Contents', [])];"
+        "u = s.s3.list_multipart_uploads(Bucket=s.bucket).get('Uploads', []);"
+        "print(len(keys), len(u))",
+    ).stdout.split()
+    return int(out[0]), int(out[1])
+
+
+def untracked_objects(server: Server) -> int:
+    """Objects no payload row accounts for. Must be zero at every moment, even while S3
+    deletes are failing: a row always records bytes before they exist and outlives them."""
+    tracked = int(
+        psql(
+            server,
+            "SELECT count(*) FROM payloads WHERE state IN ('pending', 'ready', 'purging')",
+        )
+    )
+    objects, _ = store_counts(server)
+    return max(0, objects - tracked)
+
+
+def consistency(server: Server) -> dict:
+    """The R-A6 invariants, as numbers that must all be zero (or equal)."""
+    ready = int(psql(server, "SELECT count(*) FROM payloads WHERE state = 'ready'"))
+    objects, uploads = store_counts(server)
+    return {
+        "purging_payloads": int(
+            psql(server, "SELECT count(*) FROM payloads WHERE state = 'purging'")
+        ),
+        "pending_payloads": int(
+            psql(server, "SELECT count(*) FROM payloads WHERE state = 'pending'")
+        ),
+        "unreferenced_ready_payloads": int(
+            psql(
+                server,
+                "SELECT count(*) FROM payloads p WHERE p.state = 'ready' AND NOT EXISTS "
+                "(SELECT 1 FROM versions v WHERE v.payload_id = p.id)",
+            )
+        ),
+        "reserved_files": int(
+            psql(server, "SELECT count(*) FROM files WHERE state = 'reserved'")
+        ),
+        "live_files_without_versions": int(
+            psql(
+                server,
+                "SELECT count(*) FROM files f WHERE f.state = 'live' AND NOT EXISTS "
+                "(SELECT 1 FROM versions v WHERE v.file_id = f.id)",
+            )
+        ),
+        "objects_minus_ready_payloads": objects - ready,
+        "open_multipart_uploads": uploads,
+    }
+
+
+def assert_consistent(server: Server, timeout: float = 30):
+    """Every write either fully happened or left nothing; poll briefly for cleanup that runs
+    after a client disconnect."""
+    deadline = time.time() + timeout
+    while True:
+        state = consistency(server)
+        if not any(state.values()) or time.time() > deadline:
+            break
+        time.sleep(1)
+    assert not any(state.values()), state

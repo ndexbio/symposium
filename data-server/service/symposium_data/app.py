@@ -28,6 +28,7 @@ from .records import (
 )
 from .runtime import Database, MultipartWriter, PayloadStore, Settings
 from .wire import (
+    NAME,
     WireError,
     digest_header,
     etag,
@@ -50,9 +51,6 @@ secrets = Secrets()
 tokens = Tokens(settings.token_key_file, settings.server_id, settings.token_ttl)
 jobs = Jobs(settings, db, store, records)
 cleanup = jobs.cleanup
-
-# Handles and community names: what Symposium account names look like (agent_lyra, demo-admin).
-NAME = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
 
 
 @asynccontextmanager
@@ -882,11 +880,12 @@ def promote(file_id: uuid.UUID, n: int, body: PromoteIn, request: Request):
     version's own `created` at that pointer: the clock is the server's, never the caller's.
     The stamped bytes are a pending payload until the one transaction that allocates
     `created`, creates the file and inserts its version (R-A6). They are re-serialized the
-    way Symposium serializes canonical JSON: json.dumps defaults."""
+    way Symposium serializes canonical JSON: json.dumps defaults. The new version is
+    credited to the source version's creator, with no key id."""
     name = body.name
     pointer = body.stamp_json_pointer
     with db.connection() as conn:
-        handle, kid = owner_of(conn, request)
+        handle, _ = owner_of(conn, request)
         if not records.is_admin(conn, handle):
             refuse(403, "only the admin promotes")
         source = records.version(conn, file_id, n)
@@ -942,8 +941,10 @@ def promote(file_id: uuid.UUID, n: int, body: PromoteIn, request: Request):
                 payload,
                 metadata,
                 source["content_type"],
-                handle,
-                kid,
+                # credited to the submitter, like a ported record (R-G4, R-M2); the
+                # admin's token only authorizes the promote
+                source["created_by"],
+                None,
                 clock=clock,
             )
             conn.commit()

@@ -255,6 +255,23 @@ class Records:
             raise NotFound(f"no collection {community}/{collection}")
         return row["seq"], row["last_created"]
 
+    def allocate_at(self, conn, community: str, collection: str, created: datetime):
+        """-> (seq, created) for an instant the caller supplies. Only the one-time port does
+        this (R-M2): each instant must be strictly later than the collection's last one, so
+        the clock still never runs backwards, and later writes continue after it."""
+        row = conn.execute(
+            "UPDATE collections SET seq = seq + 1, last_created = %s "
+            "WHERE community = %s AND name = %s "
+            "AND (last_created IS NULL OR last_created < %s) RETURNING seq, last_created",
+            (created, community, collection, created),
+        ).fetchone()
+        if row is None:
+            raise Conflict(
+                f"{community}/{collection}: {created.isoformat()} is not later than the "
+                "collection's clock"
+            )
+        return row["seq"], row["last_created"]
+
     # ── authorization over files ────────────────────────────────────────────────────────────
     def is_admin(self, conn, handle: str | None) -> bool:
         return handle is not None and handle == self.config(conn, "admin")

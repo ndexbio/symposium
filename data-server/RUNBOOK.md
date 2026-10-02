@@ -85,6 +85,11 @@ docker exec symposium-data data-admin purge --cite symposium-data:<file-id>@v<n>
 
 **Scrub.** It also runs in the background, re-hashing stored content on a schedule. A mismatch is recorded, never repaired: `stat` reports `"integrity": "mismatch"`, and clients also detect it because the bytes no longer match `Repr-Digest`.
 
+## Bootstrap from an existing community
+
+A community that already lives on NDEx is copied in once, before the first boot, with the port-ndex bootstrap: see `PORT_NDEX.md` (Docker, and the `k8s-data-port-job.yml` Job).
+After it, start the server as above and run `data-admin init` with the ported `PORT_ADMIN_HANDLE`; any other handle is refused.
+
 ## Kubernetes or Podman
 
 ```bash
@@ -95,7 +100,7 @@ kubectl exec -i deploy/symposium-data -- data-admin init --admin <admin-handle> 
 
 - **Storage:** the manifest uses one ReadWriteOnce PVC, so the Deployment runs a single replica with the `Recreate` strategy.
 - **Before applying:** edit the PVC size, the Ingress host and TLS secret, and `SYMPOSIUM_DATA_PUBLIC_BASE_URL`. Pin the image to a released version.
-- **Validating the manifest:** `docker run --rm -v "$PWD/docker:/m:ro" ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary /m/k8s-data-deployment.yml`. The `make test` integration suite runs this same check.
+- **Validating the manifests:** `docker run --rm -v "$PWD/docker:/m:ro" ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary /m/k8s-data-deployment.yml /m/k8s-data-port-job.yml`. The `make test` integration suite runs this same check.
 
 ## Verify
 

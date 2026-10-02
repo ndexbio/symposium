@@ -15,9 +15,11 @@ The design and requirements are in the spike on ndexbio/symposium#13. Its sectio
 | `service/` | The `symposium_data` Python package: the HTTP API, `data-admin` and the Alembic migrations, plus the tests. Locked with `uv.lock`. |
 | `docker/Dockerfile` | Multi-stage build: `runtime-base` (PostgreSQL, supervisor, gosu, SeaweedFS with a pinned sha256), then `builder` (installs the locked wheel into `/opt/venv`), then `deploy`. |
 | `docker/supervisord/` | One config snippet per service. `start.sh` assembles them. |
-| `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, registration guard, then `exec supervisord`. |
+| `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, the one-time port when `PORT_NDEX_URL` is set, registration guard, then `exec supervisord`. |
 | `docker/k8s-data-deployment.yml` | Kubernetes or Podman deployment on a single ReadWriteOnce PVC. |
+| `docker/k8s-data-port-job.yml` | The one-time port-ndex bootstrap as a Kubernetes Job (`PORT_NDEX.md`). |
 | `RUNBOOK.md` | How to run, initialize, verify and tear down. |
+| `PORT_NDEX.md` | The one-time port-ndex bootstrap of a fresh server from an NDEx community. |
 
 ## Make targets
 

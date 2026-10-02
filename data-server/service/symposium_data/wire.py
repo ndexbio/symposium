@@ -9,6 +9,9 @@ import re
 import uuid
 from datetime import datetime
 
+# Handles and community names: what Symposium account names look like (agent_lyra, demo-admin).
+NAME = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+
 # A file name is one path segment: no slashes, no control characters, not . or ..
 FILE_NAME = re.compile(r"^(?!\.{1,2}$)[^/\x00-\x1f\x7f]{1,255}$")
 MAX_METADATA = 64 * 1024

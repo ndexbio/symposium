@@ -197,6 +197,15 @@ def test_promote_stamps_the_server_clock_into_the_record(demo):
         "accepted": True,
     }
     assert record["content_type"] == "application/json"
+    # credited to its submitter, who may therefore key it (R-G4, R-E2)
+    assert record["created_by"] == "lyra" and record["key_id"] is None
+    keyed = httpx.post(
+        f"{server.url}/v1/c/demo/record/keys",
+        json={"label": "reviewer", "file_id": record["file_id"]},
+        headers=lyra.headers(),
+    )
+    assert keyed.status_code == 201, keyed.text
+    assert promote(lyra, source["file_id"], 1, name="mine.json").status_code == 403
 
     body = vega.get(record["file_id"])  # members read the record with their own token
     assert body.status_code == 200
@@ -268,7 +277,7 @@ def test_verify_checks_existence_hash_and_strict_ordering(demo):
     hidden = verify(bob, cite).json()
     unknown = verify(bob, "symposium-data:00000000-0000-0000-0000-000000000000@v1")
     assert hidden == unknown.json() and not hidden["exists"]
-    assert not verify(admin, "ndex:abc").json()["exists"]
+    assert not verify(admin, "other:abc").json()["exists"]
     assert verify(admin, cite, before="yesterday").status_code == 400
     anonymous = httpx.get(f"{server.url}/v1/verify", params={"cite": cite})
     assert anonymous.status_code == 401

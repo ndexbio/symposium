@@ -1,0 +1,40 @@
+# Symposium Data: the one-time NDEx port as a Kubernetes Job (see PORT_NDEX.md).
+#
+# It bootstraps a FRESH server once and never runs again. The PVC is ReadWriteOnce, so the
+# Deployment must not be running while the Job does:
+#   1. Create only the PVC from k8s-data-deployment.yml (or scale the Deployment to 0 before
+#      it has ever served).
+#   2. kubectl create secret generic ndex-port-credentials --from-file=credentials.json
+#      (credentials.json: {"username": "<NDEx admin account>", "password": "..."})
+#   3. Edit PORT_NDEX_URL, PORT_COMMUNITY and PORT_ADMIN_HANDLE below, then
+#      kubectl apply -f k8s-data-port-job.yml
+#      kubectl wait --for=condition=complete --timeout=30m job/symposium-data-port-ndex
+#   4. kubectl delete job/symposium-data-port-ndex secret/ndex-port-credentials
+#   5. Apply k8s-data-deployment.yml, then `data-admin init` with PORT_ADMIN_HANDLE.
+#
+# Pin the image to a released version (ndexbio/symposium-data:<version>) for production.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: symposium-data-port-ndex
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: port-ndex
+          image: docker.io/ndexbio/symposium-data
+          env:
+            - {name: PORT_NDEX_URL, value: "https://ndex.example.org"}
+            - {name: PORT_NDEX_CREDENTIALS_FILE, value: /run/secrets/ndex/credentials.json}
+            - {name: PORT_COMMUNITY, value: demo}
+            - {name: PORT_ADMIN_HANDLE, value: demo-admin}
+          volumeMounts:
+            - {name: symposium-data-storage, mountPath: /apps}
+            - {name: ndex-port-credentials, mountPath: /run/secrets/ndex, readOnly: true}
+      volumes:
+        - name: symposium-data-storage
+          persistentVolumeClaim: {claimName: symposium-data-pvc}
+        - name: ndex-port-credentials
+          secret: {secretName: ndex-port-credentials}

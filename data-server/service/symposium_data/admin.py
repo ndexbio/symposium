@@ -8,6 +8,7 @@
     data-admin purge --cite symposium-data:<file-id>@v<n>
     data-admin export --community <c> > <c>.tar
     data-admin import < <c>.tar
+    data-admin port-ndex      (one-time bootstrap; configured by PORT_* environment, see PORT_NDEX.md)
 
 Invites are printed alone on stdout, for the operator to redirect into a file and hand over
 out of band. They are single-use and stored only as hashes.
@@ -17,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 
@@ -131,6 +133,13 @@ class Admin:
         self.emit(report)
         return 0
 
+    def port(self, _args) -> int:
+        from . import port_ndex  # the port feature, isolated: port_ndex only here
+
+        return port_ndex.Port(
+            self.db, self.store, self.records, self.cleanup, dict(os.environ)
+        ).run()
+
     def suspect_after(self, args) -> int:
         """Flag everything the handle writes after an instant; nothing is deleted."""
         try:
@@ -164,6 +173,15 @@ class Admin:
         kid = self.keys.thumbprint(jwk)
         try:
             with self.db.connection() as conn:
+                ported = self.records.config(conn, "port_admin")
+                if ported is not None and ported != args.admin:
+                    self.emit(
+                        {
+                            "error": f"this server was ported for admin '{ported}'; "
+                            "initialize with that handle"
+                        }
+                    )
+                    return 2
                 self.records.bind_admin(conn, args.admin, kid, jwk)
         except AlreadyInitialized as e:
             self.emit({"error": f"already initialized with admin '{e}'"})
@@ -223,6 +241,9 @@ def build_parser():
     )
     export.add_argument("--community", required=True)
     sub.add_parser("import", help="read an export from stdin into this server")
+    sub.add_parser(
+        "port-ndex", help="one-time bootstrap of a fresh server (PORT_* env)"
+    )
     flag = sub.add_parser(
         "suspect-after", help="flag a handle's writes after an instant"
     )
@@ -243,6 +264,7 @@ def main(argv=None) -> int:
         "purge": admin.purge,
         "export": admin.export,
         "import": admin.import_,
+        "port-ndex": admin.port,
     }[args.command](args)
 
 

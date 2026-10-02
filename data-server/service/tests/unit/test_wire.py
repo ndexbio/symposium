@@ -131,7 +131,7 @@ def test_citations_parse_to_file_and_version():
     for bad in (
         f"symposium-data:{fid}@v0",
         f"symposium-data:{fid}",
-        f"ndex:{fid}@v1",
+        f"other:{fid}@v1",
         "",
     ):
         assert parse_citation(bad) is None

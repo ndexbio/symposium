@@ -250,11 +250,13 @@ def test_the_janitor_expires_stale_reservations(make_server):
         SYMPOSIUM_DATA_PENDING_TTL="5", SYMPOSIUM_DATA_JANITOR_INTERVAL="1"
     )
     _, owners = community_with(server, ("lyra",))
+    # a crash's leftover, still fresh: it holds the name until the 5 s TTL runs out (inserting
+    # it already stale would race the janitor, which sweeps every second)
     psql(
         server,
         "INSERT INTO files (id, community, collection, name, state, reserved_by, reserved_at) "
         "VALUES ('22222222-2222-2222-2222-222222222222', 'demo', 'files', 'crashed.bin', "
-        "'reserved', 'lyra', now() - interval '1 hour')",
+        "'reserved', 'lyra', now())",
     )
     assert owners["lyra"].put("demo", "files", "crashed.bin", b"x").status_code == 409
     assert_consistent(server)  # polls until the janitor has expired the reservation

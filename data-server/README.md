@@ -3,7 +3,7 @@
 A single Docker image that runs Symposium Data, the versioned file store Symposium communities use to persist, share and cite data files. The image contains three services, managed by `supervisord`:
 
 - **the data service**: FastAPI on port 8080, the only port the container exposes;
-- **PostgreSQL 16**: the server's records: configuration, owner identities, rosters, grants, invites, collections, files, versions and metadata. All of it is managed by Alembic migrations;
+- **PostgreSQL 16**: the server's records: configuration, owner identities, rosters, grants, invites, collections, files, versions, metadata and read keys. All of it is managed by Alembic migrations;
 - **SeaweedFS**: the internal S3 store for file contents. It is never exposed; the data service streams every byte.
 
 The design and requirements are in the spike on ndexbio/symposium#13. Its sections are referred to here as R-*.
@@ -77,6 +77,37 @@ Every community has three collections: `inbox` (submissions), `files` (stored da
   - A roster member may create files in `inbox` and `files`.
   - Only a file's creator or the admin may version or delete it.
   - A submission in `inbox` is readable only by its submitter, the admin, and the handles listed in its `recipients` metadata.
+
+## Sharing
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/c/{community}/collections {name}` | A roster member, or the admin, creates a collection and becomes its owner. The three default collections are owned by the admin. |
+| `PUT /v1/c/{community}/{collection}/grants {handle, perm, granted}` | The owner (or the admin) grants or withdraws `read` or `write` for a roster member. |
+| `PUT /v1/c/{community}/{collection}/public {public}` | The owner makes a collection readable without a token. `inbox` can never be public. |
+| `POST /v1/c/{community}/{collection}/keys {label, file_id?, expires_hours?}` | Mint a read key for a non-member. The owner may key the whole collection or any file in it; a file's creator may key that file. `inbox` takes no keys. The secret (`sdr_…`) is returned only here and stored only as a hash. |
+| `GET /v1/c/{community}/{collection}/keys` | List keys with their use count and last use, never their secrets. The owner sees all of them; others see only the keys they minted. |
+| `DELETE /v1/keys/{id}` | Revoke a key (its minter, the owner, or the admin). It is refused from the very next request. |
+
+**Read keys:**
+- A key goes only in `Authorization: Bearer sdr_…`.
+- A key can only read: it never writes and never acts as an identity.
+- Every use is counted.
+
+**Owners leaving the roster:** an owner removed from the roster loses control of their collections; the admin keeps it.
+
+## Feed, lookups, promote and verify
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /v1/c/{community}/{collection}/changes?since&limit` | Every version written into the collection after seq `since`, in seq order, with its metadata. `limit` is 1–1000 (default 100). Page with `next_since` until `more` is false; nothing is silently capped. |
+| `POST /v1/c/{community}/{collection}/query {contains, since?, limit?}` | Versions whose metadata contains `contains` (JSONB containment), paged like `changes`. |
+| `GET /v1/c/{community}/{collection}/find?name` | The file holding a name, at its newest version. A deleted file still holds its name. |
+| `GET /v1/sha256/{hash}` | Every version the caller may read that holds this content. |
+| `POST /v1/files/{id}/v/{n}/promote {collection, name?, metadata?, stamp_json_pointer?}` | Admin only. Copies a version into a collection as a new file, atomically. The new file's metadata is the source's merged with `metadata`. With `stamp_json_pointer`, the content must be JSON, and the server writes the new version's own `created` at that pointer. A taken name returns 409, a tombstone 409, purged content 410, and a failure leaves nothing behind. |
+| `GET /v1/verify?cite&before?&sha256?` | Checks a citation: the version exists, its sha256 matches, and it was created strictly before `before`. A version the caller cannot read reports `exists: false`, like one that never existed. Purged content fails with `content purged`. |
+
+Listing a collection (`changes`, `query`, `find`) needs read access to it. A member listing `inbox` sees only their own submissions and the replies addressed to them; a file-scoped read key sees only its file.
 
 ## Configuration
 

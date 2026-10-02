@@ -57,7 +57,6 @@ S3_SECRET_KEY=${S3_SECRET}
 S3_BUCKET=symposium-data
 SERVER_ID=$(cat /proc/sys/kernel/random/uuid)
 TOKEN_KEY_FILE=/apps/data/config/token_ed25519.pem
-SHARE_SECRET=$(gen)
 EOT
   /opt/venv/bin/python - <<'EOP'
 from cryptography.hazmat.primitives import serialization
@@ -84,11 +83,14 @@ fi
 if [[ ! -f /apps/postgres/config/.initialized ]]; then
   log "first boot: initialising PostgreSQL"
   PG_PASS="$(cat /apps/postgres/config/superuser.pw)"
-  gosu postgres initdb -D /apps/postgres/data --auth-local=peer --auth-host=scram-sha-256 >/dev/null
+  # UTF-8 explicitly: a bare Debian base has no default locale, and initdb would
+  # otherwise create an SQL_ASCII cluster.
+  gosu postgres initdb -D /apps/postgres/data --auth-local=peer --auth-host=scram-sha-256 \
+    --encoding=UTF8 --locale=C.UTF-8 >/dev/null
   gosu postgres pg_ctl -D /apps/postgres/data -o "-c listen_addresses=127.0.0.1" -w start >/dev/null
   gosu postgres psql -v ON_ERROR_STOP=1 -q -v pw="$PG_PASS" <<'EOSQL'
 CREATE ROLE symposium_data LOGIN PASSWORD :'pw';
-CREATE DATABASE symposium_data OWNER symposium_data;
+CREATE DATABASE symposium_data OWNER symposium_data ENCODING 'UTF8' TEMPLATE template0;
 EOSQL
   gosu postgres pg_ctl -D /apps/postgres/data -m fast -w stop >/dev/null
   touch /apps/postgres/config/.initialized

@@ -8,7 +8,6 @@ S3_ACCESS_KEY=ak
 S3_SECRET_KEY=sk=with=equals
 SERVER_ID=6f1c
 TOKEN_KEY_FILE=/apps/data/config/token_ed25519.pem
-SHARE_SECRET=s
 """
 
 

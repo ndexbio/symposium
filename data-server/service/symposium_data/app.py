@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
@@ -15,16 +17,28 @@ from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from . import API_VERSION, version
 from .auth import PublicKeys, Secrets, Tokens
 from .jobs import Jobs
-from .records import Conflict, NotFound, PreconditionFailed, QuotaExceeded, Records
+from .records import (
+    Conflict,
+    Forbidden,
+    NotFound,
+    PreconditionFailed,
+    QuotaExceeded,
+    Records,
+    iso,
+)
 from .runtime import Database, MultipartWriter, PayloadStore, Settings
 from .wire import (
     WireError,
     digest_header,
     etag,
+    parse_citation,
     parse_digest,
     parse_if_match,
+    parse_instant,
     parse_metadata,
+    stamp,
     valid_file_name,
+    valid_sha256,
 )
 
 settings = Settings()
@@ -58,6 +72,11 @@ app = FastAPI(title="Symposium Data", version=version(), lifespan=lifespan)
 @app.exception_handler(NotFound)
 async def _not_found(_request, error):
     return JSONResponse({"detail": str(error)}, status_code=404)
+
+
+@app.exception_handler(Forbidden)
+async def _forbidden(_request, error):
+    return JSONResponse({"detail": str(error)}, status_code=403)
 
 
 @app.exception_handler(Conflict)
@@ -128,12 +147,25 @@ def refuse(status: int, message: str, conn=None):
     raise HTTPException(status, message)
 
 
-def owner_of(conn, request: Request) -> tuple[str, str]:
-    """The (handle, kid) behind a valid bearer token whose key is still active."""
+READ_KEY_PREFIX = "sdr_"
+
+
+def bearer(request: Request) -> str | None:
     header = request.headers.get("authorization", "")
     if not header.lower().startswith("bearer "):
+        return None
+    return header.split(None, 1)[1].strip()
+
+
+def owner_of(conn, request: Request) -> tuple[str, str]:
+    """The (handle, kid) behind a valid bearer token whose key is still active. Read keys
+    never authorize anything but reads."""
+    credential = bearer(request)
+    if credential is None:
         refuse(401, "a bearer token is required")
-    claims = tokens.read(header.split(None, 1)[1].strip())
+    if credential.startswith(READ_KEY_PREFIX):
+        refuse(403, "a read key can only read")
+    claims = tokens.read(credential)
     if claims is None:
         refuse(401, "the token is not valid or has expired")
     if not records.key_is_active(conn, claims["sub"], claims["kid"]):
@@ -507,11 +539,27 @@ def delete_file(file_id: uuid.UUID, request: Request, reason: str | None = None)
         return written(conn, file_id, n, status_code=200)
 
 
+def reader_of(conn, request: Request) -> tuple[str | None, dict | None]:
+    """Who is reading: (handle, None) for a signed-in owner, (None, key) for a read key,
+    (None, None) for an anonymous request (enough only for a public collection)."""
+    credential = bearer(request)
+    if credential is None:
+        return None, None
+    if credential.startswith(READ_KEY_PREFIX):
+        key = records.use_key(conn, secrets.digest(credential))
+        if key is None:
+            refuse(401, "the read key is not valid, has expired, or was revoked")
+        return None, key
+    return owner_of(conn, request)[0], None
+
+
 def readable(request: Request, file_id, ref):
     with db.connection() as conn:
-        handle, _ = owner_of(conn, request)
+        handle, key = reader_of(conn, request)
         row = records.version(conn, file_id, ref)
-        if not records.can_read(conn, handle, row):
+        if not records.can_read(conn, handle, row, key):
+            if handle is None and key is None:
+                refuse(401, "sign in, or use a read key, to read this file")
             refuse(403, "no read access to this file")
         return records.stat(conn, row), row["s3_key"]
 
@@ -565,3 +613,376 @@ async def content(file_id: uuid.UUID, ref: str, request: Request):
         media_type=info["content_type"],
         headers=headers,
     )
+
+
+# ── collections and sharing ─────────────────────────────────────────────────────────────────
+class CollectionIn(BaseModel):
+    name: str = Field(pattern=NAME)
+
+
+class PublicIn(BaseModel):
+    public: bool
+
+
+class GrantIn(BaseModel):
+    handle: str = Field(pattern=NAME)
+    perm: str = Field(pattern=r"^(read|write)$")
+    granted: bool = True
+
+
+class KeyIn(BaseModel):
+    label: str = Field(min_length=1, max_length=200)
+    file_id: uuid.UUID | None = None
+    expires_hours: int | None = Field(default=None, ge=1, le=24 * 366)
+
+
+def key_view(row) -> dict:
+    """A read key as it may be shown: never its secret."""
+    return {
+        "id": str(row["id"]),
+        "label": row["label"],
+        "community": row["community"],
+        "collection": row["collection"],
+        "file_id": str(row["file_id"]) if row["file_id"] else None,
+        "created_by": row["created_by"],
+        "created": iso(row["created"]),
+        "expires": iso(row["expires"]),
+        "revoked": iso(row["revoked"]),
+        "uses": row["uses"],
+        "last_used": iso(row["last_used"]),
+    }
+
+
+def require_manager(conn, request, community, collection) -> str:
+    handle, _ = owner_of(conn, request)
+    records.collection_row(conn, community, collection)
+    if not records.can_manage(conn, handle, community, collection):
+        refuse(403, "only the collection's owner or the admin may do this")
+    return handle
+
+
+@app.post("/v1/c/{community}/collections", status_code=201)
+def create_collection(community: str, body: CollectionIn, request: Request):
+    """A roster member, or the admin, creates a collection and becomes its owner (R-D3)."""
+    with db.connection() as conn:
+        handle, _ = owner_of(conn, request)
+        if not (
+            records.is_admin(conn, handle) or records.on_roster(conn, community, handle)
+        ):
+            refuse(403, f"'{handle}' is not on the {community} roster")
+        records.create_collection(conn, community, body.name, handle)
+        return {
+            "community": community,
+            "name": body.name,
+            "owner": handle,
+            "public": False,
+        }
+
+
+@app.put("/v1/c/{community}/{collection}/public")
+def set_public(community: str, collection: str, body: PublicIn, request: Request):
+    with db.connection() as conn:
+        require_manager(conn, request, community, collection)
+        records.set_public(conn, community, collection, body.public)
+        return {"community": community, "collection": collection, "public": body.public}
+
+
+@app.put("/v1/c/{community}/{collection}/grants")
+def set_grant(community: str, collection: str, body: GrantIn, request: Request):
+    """The owner grants (or withdraws) read or write to a roster member (R-D3)."""
+    with db.connection() as conn:
+        require_manager(conn, request, community, collection)
+        records.set_grant(
+            conn, community, collection, body.handle, body.perm, body.granted
+        )
+        return {
+            "community": community,
+            "collection": collection,
+            "handle": body.handle,
+            "perm": body.perm,
+            "granted": body.granted,
+        }
+
+
+@app.post("/v1/c/{community}/{collection}/keys", status_code=201)
+def mint_key(community: str, collection: str, body: KeyIn, request: Request):
+    """A read key for non-members (R-E2): for the whole collection by its owner, or for one
+    file by the collection's owner or that file's creator. The secret is shown only here."""
+    with db.connection() as conn:
+        handle, _ = owner_of(conn, request)
+        records.collection_row(conn, community, collection)
+        manager = records.can_manage(conn, handle, community, collection)
+        if body.file_id is None:
+            if not manager:
+                refuse(
+                    403, "only the collection's owner or the admin may key a collection"
+                )
+        else:
+            row = records.file_row(conn, body.file_id)
+            if (row["community"], row["collection"]) != (community, collection):
+                refuse(404, f"no such file in {community}/{collection}")
+            creator = records.first_writer(conn, body.file_id) == handle and (
+                records.on_roster(conn, community, handle)
+            )
+            if not (manager or creator):
+                refuse(
+                    403, "only the file's creator or the collection's owner may key it"
+                )
+        secret = secrets.new(READ_KEY_PREFIX)
+        row = records.mint_key(
+            conn,
+            community,
+            collection,
+            body.file_id,
+            body.label,
+            handle,
+            body.expires_hours,
+            secrets.digest(secret),
+        )
+        return {**key_view(row), "key": secret}
+
+
+@app.get("/v1/c/{community}/{collection}/keys")
+def list_keys(community: str, collection: str, request: Request):
+    """The owner and the admin see every key of the collection; others only the keys they
+    minted. Secrets are never listed."""
+    with db.connection() as conn:
+        handle, _ = owner_of(conn, request)
+        records.collection_row(conn, community, collection)
+        mine_only = not records.can_manage(conn, handle, community, collection)
+        rows = records.list_keys(
+            conn, community, collection, created_by=handle if mine_only else None
+        )
+        return {"keys": [key_view(r) for r in rows]}
+
+
+@app.delete("/v1/keys/{key_id}")
+def revoke_key(key_id: uuid.UUID, request: Request):
+    """Revoke a read key: refused from the very next request on (R-E5)."""
+    with db.connection() as conn:
+        handle, _ = owner_of(conn, request)
+        row = records.key_row(conn, key_id)
+        if not (
+            row["created_by"] == handle
+            or records.can_manage(conn, handle, row["community"], row["collection"])
+        ):
+            refuse(
+                403,
+                "only the key's minter, the collection's owner or the admin may revoke it",
+            )
+        records.revoke_key(conn, key_id)
+        return key_view(records.key_row(conn, key_id))
+
+
+# ── parity: the change feed, lookups, promote and verify (R-G) ──────────────────────────────
+MAX_PAGE = 1000
+
+
+class QueryIn(BaseModel):
+    contains: dict
+    since: int = Field(default=0, ge=0)
+    limit: int = Field(default=100, ge=1, le=MAX_PAGE)
+
+
+class PromoteIn(BaseModel):
+    collection: str = Field(pattern=NAME)
+    name: str | None = None
+    metadata: dict | None = None
+    stamp_json_pointer: str | None = None
+
+
+def lister(conn, request: Request, community: str, collection: str):
+    """Who may list a collection -> (handle, key); refuses everyone else."""
+    handle, key = reader_of(conn, request)
+    records.collection_row(conn, community, collection)
+    if not records.can_read_collection(conn, handle, community, collection, key):
+        if handle is None and key is None:
+            refuse(401, "sign in, or use a read key, to read this collection")
+        refuse(403, f"no read access to {community}/{collection}")
+    return handle, key
+
+
+def page(conn, handle, key, rows, since: int, limit: int) -> dict:
+    """One page of a seq-ordered listing. `more` and `next_since` come from the rows scanned,
+    not the rows shown, so a reader who sees only some rows still pages to the end and never
+    meets a silent cap."""
+    return {
+        "items": [
+            records.stat(conn, r)
+            for r in rows
+            if records.can_read(conn, handle, r, key)
+        ],
+        "next_since": rows[-1]["seq"] if rows else since,
+        "more": len(rows) == limit,
+    }
+
+
+@app.get("/v1/c/{community}/{collection}/changes")
+def changes(
+    community: str,
+    collection: str,
+    request: Request,
+    since: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=MAX_PAGE),
+):
+    """Every version written into the collection after seq `since`, in seq order (R-G3)."""
+    with db.connection() as conn:
+        handle, key = lister(conn, request, community, collection)
+        rows = records.changes(conn, community, collection, since, limit)
+        return page(conn, handle, key, rows, since, limit)
+
+
+@app.post("/v1/c/{community}/{collection}/query")
+def query(community: str, collection: str, body: QueryIn, request: Request):
+    """Versions whose metadata contains `contains`, paged like changes (R-G6)."""
+    with db.connection() as conn:
+        handle, key = lister(conn, request, community, collection)
+        rows = records.query(
+            conn, community, collection, body.contains, body.since, body.limit
+        )
+        return page(conn, handle, key, rows, body.since, body.limit)
+
+
+@app.get("/v1/c/{community}/{collection}/find")
+def find(community: str, collection: str, name: str, request: Request):
+    """The file holding a name (R-G1), at its newest version, tombstone or not: a deleted
+    file still holds its name."""
+    with db.connection() as conn:
+        handle, key = lister(conn, request, community, collection)
+        file_id = records.find_name(conn, community, collection, name)
+        if file_id is None:
+            refuse(404, f"no file named '{name}' in {community}/{collection}")
+        row = records.version(conn, file_id, records.latest_version(conn, file_id)["n"])
+        if not records.can_read(conn, handle, row, key):
+            refuse(404, f"no file named '{name}' in {community}/{collection}")
+        return JSONResponse(records.stat(conn, row), headers={"ETag": etag(row["n"])})
+
+
+@app.get("/v1/sha256/{sha}")
+def by_hash(sha: str, request: Request):
+    """Every version the caller may read that holds this content (R-F2)."""
+    if not valid_sha256(sha):
+        refuse(400, "a sha256 is 64 lowercase hex characters")
+    with db.connection() as conn:
+        handle, key = reader_of(conn, request)
+        return {
+            "items": [
+                records.stat(conn, r)
+                for r in records.by_hash(conn, sha)
+                if records.can_read(conn, handle, r, key)
+            ]
+        }
+
+
+@app.post("/v1/files/{file_id}/v/{n}/promote", status_code=201)
+def promote(file_id: uuid.UUID, n: int, body: PromoteIn, request: Request):
+    """Copy one version into a collection as a new file, atomically (R-G4); admin only.
+
+    With `stamp_json_pointer` the content is a JSON document, and the server writes the new
+    version's own `created` at that pointer: the clock is the server's, never the caller's.
+    The stamped bytes are a pending payload until the one transaction that allocates
+    `created`, creates the file and inserts its version (R-A6). They are re-serialized the
+    way Symposium serializes canonical JSON: json.dumps defaults."""
+    name = body.name
+    pointer = body.stamp_json_pointer
+    with db.connection() as conn:
+        handle, kid = owner_of(conn, request)
+        if not records.is_admin(conn, handle):
+            refuse(403, "only the admin promotes")
+        source = records.version(conn, file_id, n)
+        community = source["community"]
+        records.collection_row(conn, community, body.collection)
+        name = name or source["name"]
+        if not valid_file_name(name):
+            refuse(400, "a file name is one path segment of 1-255 characters")
+        if source["purged"]:
+            refuse(410, "this version's content was purged")
+        if source["deleted"]:
+            refuse(409, "a tombstone cannot be promoted")
+        if records.find_name(conn, community, body.collection, name):
+            refuse(409, f"'{name}' already exists in {community}/{body.collection}")
+        document = None
+        if pointer is not None:
+            raw = store.open_read(source["s3_key"])["Body"].read()
+            try:
+                document = json.loads(raw)
+            except ValueError:
+                refuse(422, "only a JSON document can be stamped")
+            wire(
+                stamp, json.loads(raw), pointer, ""
+            )  # refuse a bad pointer before writing
+            pid, s3_key = records.begin_payload(conn, handle)
+    metadata = {**source["metadata"], **(body.metadata or {})}
+
+    def commit():
+        duplicate = None
+        with db.connection() as conn:
+            records.lock_owner(conn, handle)
+            new = records.create_live_file(conn, community, body.collection, name)
+            clock, payload = None, source["payload_id"]
+            if document is not None:
+                clock = records.allocate(conn, community, body.collection)
+                data = json.dumps(stamp(document, pointer, iso(clock[1]))).encode()
+                store.put_bytes(s3_key, data)
+                try:
+                    payload, duplicate = records.commit_payload(
+                        conn,
+                        pid,
+                        hashlib.sha256(data).hexdigest(),
+                        len(data),
+                        handle,
+                        settings.quota_bytes,
+                    )
+                except QuotaExceeded as e:
+                    conn.rollback()
+                    mapped(e)
+            records.add_version(
+                conn,
+                new,
+                payload,
+                metadata,
+                source["content_type"],
+                handle,
+                kid,
+                clock=clock,
+            )
+            conn.commit()
+            response = written(conn, new, 1)
+        finish_after_commit(duplicate)
+        return response
+
+    try:
+        return commit()
+    except BaseException:
+        if document is not None:
+            cleanup.discard_pending(pid)
+        raise
+
+
+@app.get("/v1/verify")
+def verify(
+    cite: str,
+    request: Request,
+    before: str | None = None,
+    sha256: str | None = None,
+):
+    """The gate's check of a cited download (R-G9). A version the caller cannot read answers
+    exactly like one that never existed, so verify reveals nothing across communities."""
+    when = wire(parse_instant, before) if before else None
+    with db.connection() as conn:
+        handle, _ = owner_of(conn, request)
+        cited = parse_citation(cite)
+        if cited is None:
+            return {
+                "ok": False,
+                "exists": False,
+                "reason": "not a symposium-data citation",
+            }
+        missing = {"ok": False, "exists": False, "reason": "no such file version"}
+        try:
+            row = records.version(conn, *cited)
+        except NotFound:
+            return missing
+        if not records.can_read(conn, handle, row):
+            return missing
+        return records.verify(row, when, sha256)

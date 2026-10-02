@@ -144,3 +144,12 @@ def test_status_reports_unavailable_dependencies_with_503_and_recovers(server):
         up = _status_until(server, lambda r: r.status_code == 200)
         assert up.status_code == 200, up.text
         assert up.json()["postgres"] == "ok" and up.json()["s3"] == "ok"
+
+
+def test_the_image_declares_no_stray_volumes():
+    # every byte of state lives under /apps; a declared VOLUME would leave an anonymous
+    # volume behind for every container ever started from the image
+    volumes = docker(
+        "image", "inspect", IMAGE, "--format", "{{json .Config.Volumes}}"
+    ).stdout
+    assert volumes.strip() in ("null", "{}"), volumes

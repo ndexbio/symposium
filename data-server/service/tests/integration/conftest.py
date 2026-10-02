@@ -91,11 +91,11 @@ class Server:
 
     def recreate(self):
         """Remove the container and start a new one on the same volume."""
-        docker("rm", "-f", self.name)
+        docker("rm", "-f", "-v", self.name)
         self.start()
 
     def remove(self):
-        docker("rm", "-f", self.name, check=False)
+        docker("rm", "-f", "-v", self.name, check=False)
         docker("volume", "rm", "-f", self.volume, check=False)
 
 

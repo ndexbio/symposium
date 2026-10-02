@@ -2,13 +2,27 @@
 # supervisord. Build context: data-server/.
 
 # ── Runtime base: PostgreSQL 16 (PGDG), supervisor, gosu, SeaweedFS ─────────────────────────
-FROM postgres:16 AS runtime-base
+# Debian plus PGDG rather than the postgres image: that image declares
+# VOLUME /var/lib/postgresql/data, which would give every container a stray anonymous volume.
+# All state here lives under /apps.
+FROM debian:bookworm-slim AS runtime-base
 ARG TARGETARCH
+ARG POSTGRES_VERSION=16
 ARG SEAWEEDFS_VERSION=4.48
 ARG SEAWEEDFS_SHA256_AMD64=4a7d108384d044d95212d1342cdda9533fa55842c1c9b41f606ca3c8a9561124
 ARG SEAWEEDFS_SHA256_ARM64=557e92c38c5c7d180748eb8e2b2b45e426f8e5282a4caca8e098a90d09f03a07
+ENV PATH="/usr/lib/postgresql/${POSTGRES_VERSION}/bin:${PATH}"
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 supervisor curl ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        | gpg --dearmor -o /usr/share/keyrings/postgresql.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        postgresql-${POSTGRES_VERSION} postgresql-client-${POSTGRES_VERSION} \
+        python3 supervisor gosu \
+    && apt-get purge -y gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 RUN set -eu; \
     case "${TARGETARCH}" in \

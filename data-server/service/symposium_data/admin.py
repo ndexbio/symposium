@@ -6,6 +6,8 @@
     data-admin rebind-key --community <c> --handle <h>
     data-admin suspect-after --handle <h> --at <ISO-8601 instant>
     data-admin purge --cite symposium-data:<file-id>@v<n>
+    data-admin export --community <c> > <c>.tar
+    data-admin import < <c>.tar
 
 Invites are printed alone on stdout, for the operator to redirect into a file and hand over
 out of band. They are single-use and stored only as hashes.
@@ -15,18 +17,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
-import uuid
 from datetime import datetime
 
 from . import version
+from .archive import Archive, Malformed, Refused
 from .auth import PublicKeys, Secrets
 from .cleanup import Cleanup
 from .records import AlreadyInitialized, NotFound, Records
 from .runtime import Database, PayloadStore, Settings
-
-CITATION = re.compile(r"^symposium-data:([0-9a-f-]{36})@v(\d+)$")
+from .wire import parse_citation
 
 
 class Admin:
@@ -40,6 +40,7 @@ class Admin:
         self.secrets = Secrets()
         self.store = PayloadStore(self.settings)
         self.cleanup = Cleanup(self.db, self.store, self.records)
+        self.archive = Archive(self.db, self.store, self.records, self.cleanup)
 
     def emit(self, payload: dict, stream=None):
         print(json.dumps(payload), file=stream or sys.stdout)
@@ -84,15 +85,13 @@ class Admin:
     def purge(self, args) -> int:
         """Free a version's content (R-B3). The version stays addressable and answers 410 with
         its metadata; the bytes go only when no other live version shares them."""
-        match = CITATION.match(args.cite)
-        if not match:
+        cited = parse_citation(args.cite)
+        if cited is None:
             self.emit({"error": "expected symposium-data:<file-id>@v<n>"})
             return 1
         try:
             with self.db.connection() as conn:
-                pid = self.records.purge(
-                    conn, uuid.UUID(match.group(1)), int(match.group(2))
-                )
+                pid = self.records.purge(conn, *cited)
         except NotFound:
             self.emit({"error": f"no version {args.cite}"})
             return 2
@@ -103,6 +102,33 @@ class Admin:
                 "the bytes could not be removed yet; the janitor will retry"
             )
         self.emit(result)
+        return 0
+
+    def export(self, args) -> int:
+        """Write one community to stdout as a tar stream (R-J6); the summary goes to stderr."""
+        try:
+            manifest = self.archive.export(args.community, sys.stdout.buffer)
+        except Refused as e:
+            self.emit({"error": str(e)}, stream=sys.stderr)
+            return 2
+        sys.stdout.buffer.flush()
+        self.emit({"exported": args.community, **manifest["counts"]}, stream=sys.stderr)
+        return 0
+
+    def import_(self, _args) -> int:
+        """Read an export from stdin and write it in one transaction (R-J6). Prints one line
+        per handle (created, unchanged, keys merged), then the summary."""
+        try:
+            report = self.archive.import_(sys.stdin.buffer)
+        except Refused as e:
+            self.emit({"error": str(e)})
+            return 2
+        except Malformed as e:
+            self.emit({"error": str(e)})
+            return 1
+        for handle in report.pop("handles"):
+            self.emit(handle)
+        self.emit(report)
         return 0
 
     def suspect_after(self, args) -> int:
@@ -192,6 +218,11 @@ def build_parser():
         "purge", help="free one version's content; it then answers 410"
     )
     purge.add_argument("--cite", required=True, metavar="symposium-data:<id>@v<n>")
+    export = sub.add_parser(
+        "export", help="write one community to stdout as a tar stream"
+    )
+    export.add_argument("--community", required=True)
+    sub.add_parser("import", help="read an export from stdin into this server")
     flag = sub.add_parser(
         "suspect-after", help="flag a handle's writes after an instant"
     )
@@ -210,6 +241,8 @@ def main(argv=None) -> int:
         "rebind-key": admin.rebind_key,
         "suspect-after": admin.suspect_after,
         "purge": admin.purge,
+        "export": admin.export,
+        "import": admin.import_,
     }[args.command](args)
 
 

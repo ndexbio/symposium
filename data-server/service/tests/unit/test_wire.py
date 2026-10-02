@@ -1,15 +1,20 @@
 import base64
 import hashlib
 import json
+import uuid
 
 import pytest
 
 from symposium_data.wire import (
     WireError,
     digest_header,
+    parse_citation,
     parse_digest,
+    parse_instant,
     parse_metadata,
+    stamp,
     valid_file_name,
+    valid_sha256,
 )
 
 
@@ -74,3 +79,59 @@ def test_if_match_accepts_only_one_strong_version_etag(value):
     with pytest.raises(WireError) as e:
         parse_if_match(value)
     assert e.value.status == 400
+
+
+def test_stamp_sets_the_member_a_pointer_names():
+    doc = {"artifact": {"created": None, "tags": ["a", "b"]}, "a/b": {"~x": 1}}
+    stamp(doc, "/artifact/created", "2026-10-01T00:00:00+00:00")
+    stamp(doc, "/artifact/tags/1", "z")
+    stamp(doc, "/a~1b/~0x", 2)
+    stamp(doc, "/artifact/new", True)
+    assert doc == {
+        "artifact": {
+            "created": "2026-10-01T00:00:00+00:00",
+            "tags": ["a", "z"],
+            "new": True,
+        },
+        "a/b": {"~x": 2},
+    }
+
+
+@pytest.mark.parametrize(
+    "pointer",
+    ["artifact", "/missing/created", "/artifact/tags/9", "/artifact/tags/x", "/n/x"],
+)
+def test_stamp_refuses_a_pointer_without_a_parent(pointer):
+    doc = {"artifact": {"tags": ["a"]}, "n": 3}
+    with pytest.raises(WireError) as e:
+        stamp(doc, pointer, "v")
+    assert e.value.status == 422
+
+
+def test_instants_need_an_offset():
+    assert parse_instant("2026-10-01T12:00:00Z").utcoffset().total_seconds() == 0
+    assert (
+        parse_instant("2026-10-01T12:00:00+02:00").utcoffset().total_seconds() == 7200
+    )
+    for bad in ("2026-10-01T12:00:00", "yesterday"):
+        with pytest.raises(WireError) as e:
+            parse_instant(bad)
+        assert e.value.status == 400
+
+
+def test_sha256_is_64_lowercase_hex():
+    assert valid_sha256(hashlib.sha256(b"x").hexdigest())
+    assert not valid_sha256(hashlib.sha256(b"x").hexdigest().upper())
+    assert not valid_sha256("abc")
+
+
+def test_citations_parse_to_file_and_version():
+    fid = "0b5e3a52-6a4f-4d55-9a65-1f3c2b7d9e10"
+    assert parse_citation(f"symposium-data:{fid}@v3") == (uuid.UUID(fid), 3)
+    for bad in (
+        f"symposium-data:{fid}@v0",
+        f"symposium-data:{fid}",
+        f"ndex:{fid}@v1",
+        "",
+    ):
+        assert parse_citation(bad) is None

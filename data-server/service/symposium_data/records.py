@@ -37,6 +37,10 @@ class Conflict(Exception):
     pass
 
 
+class Forbidden(Exception):
+    pass
+
+
 class PreconditionFailed(Exception):
     pass
 
@@ -263,32 +267,185 @@ class Records:
         ).fetchone()
         return row is not None
 
+    def collection_row(self, conn, community: str, collection: str):
+        row = conn.execute(
+            "SELECT * FROM collections WHERE community = %s AND name = %s",
+            (community, collection),
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"no collection {community}/{collection}")
+        return row
+
+    def owns(self, conn, handle, community, collection) -> bool:
+        """The collection's owner, while they are still on the community's roster."""
+        row = conn.execute(
+            "SELECT owner FROM collections WHERE community = %s AND name = %s",
+            (community, collection),
+        ).fetchone()
+        return (
+            row is not None
+            and handle is not None
+            and row["owner"] == handle
+            and self.on_roster(conn, community, handle)
+        )
+
     def can_create(self, conn, handle, community, collection) -> bool:
-        return self.is_admin(conn, handle) or self.has_grant(
-            conn, community, collection, handle, "write"
+        """New files in a collection: the admin, its owner, or a member granted write."""
+        return (
+            self.is_admin(conn, handle)
+            or self.owns(conn, handle, community, collection)
+            or self.has_grant(conn, community, collection, handle, "write")
+        )
+
+    def can_manage(self, conn, handle, community, collection) -> bool:
+        """Grants, public visibility and collection read keys: the owner or the admin."""
+        return self.is_admin(conn, handle) or self.owns(
+            conn, handle, community, collection
         )
 
     def can_modify(self, conn, handle, file_row) -> bool:
-        """New versions and tombstones: the file's creator (while they still have write on the
+        """New versions and tombstones: the file's creator (while they can still write to the
         collection) or the admin. Members cannot change each other's files."""
         if self.is_admin(conn, handle):
             return True
         creator = self.first_writer(conn, file_row["id"])
-        return creator == handle and self.has_grant(
-            conn, file_row["community"], file_row["collection"], handle, "write"
+        return creator == handle and self.can_create(
+            conn, handle, file_row["community"], file_row["collection"]
         )
 
-    def can_read(self, conn, handle, row) -> bool:
-        if self.is_admin(conn, handle):
+    def can_read(self, conn, handle, row, key=None) -> bool:
+        """`handle` is a signed-in owner, `key` a read-key row, both None for anonymous."""
+        community, collection = row["community"], row["collection"]
+        if (
+            collection != "inbox"
+            and self.collection_row(conn, community, collection)["public"]
+        ):
             return True
-        if self.has_grant(conn, row["community"], row["collection"], handle, "read"):
+        if key is not None:
+            return (
+                collection != "inbox"
+                and key["community"] == community
+                and key["collection"] == collection
+                and (key["file_id"] is None or key["file_id"] == row["file_id"])
+            )
+        if handle is None:
+            return False
+        if self.is_admin(conn, handle) or self.owns(
+            conn, handle, community, collection
+        ):
             return True
-        if row["collection"] == "inbox":
+        if self.has_grant(conn, community, collection, handle, "read"):
+            return True
+        if collection == "inbox":
             # a submission is readable by its submitter and by the recipients named on it
             return handle == self.first_writer(conn, row["file_id"]) or handle in (
                 row["metadata"] or {}
             ).get("recipients", [])
         return False
+
+    def can_read_collection(
+        self, conn, handle, community, collection, key=None
+    ) -> bool:
+        """Listing a collection (changes, find, query). Each listed row is still checked with
+        can_read: a file-scoped key, or a member reading inbox, sees only some of its rows."""
+        if (
+            collection != "inbox"
+            and self.collection_row(conn, community, collection)["public"]
+        ):
+            return True
+        if key is not None:
+            return (
+                collection != "inbox"
+                and key["community"] == community
+                and key["collection"] == collection
+            )
+        if handle is None:
+            return False
+        if collection == "inbox" and self.on_roster(conn, community, handle):
+            return True
+        return (
+            self.is_admin(conn, handle)
+            or self.owns(conn, handle, community, collection)
+            or self.has_grant(conn, community, collection, handle, "read")
+        )
+
+    # ── collections and sharing ─────────────────────────────────────────────────────────────
+    def create_collection(self, conn, community: str, name: str, owner: str):
+        try:
+            with conn.transaction():
+                conn.execute(
+                    "INSERT INTO collections (community, name, owner) VALUES (%s, %s, %s)",
+                    (community, name, owner),
+                )
+        except psycopg.errors.UniqueViolation:
+            raise Conflict(f"collection {community}/{name} already exists") from None
+
+    def set_public(self, conn, community: str, collection: str, public: bool):
+        if collection == "inbox" and public:
+            raise Forbidden("inbox is never public")
+        conn.execute(
+            "UPDATE collections SET public = %s WHERE community = %s AND name = %s",
+            (public, community, collection),
+        )
+
+    def set_grant(self, conn, community, collection, handle, perm: str, granted: bool):
+        if granted:
+            if not self.on_roster(conn, community, handle):
+                raise Forbidden(f"'{handle}' is not on the {community} roster")
+            conn.execute(
+                "INSERT INTO grants (community, collection, handle, perm) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT DO NOTHING",
+                (community, collection, handle, perm),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM grants WHERE community = %s AND collection = %s AND handle = %s "
+                "AND perm = %s",
+                (community, collection, handle, perm),
+            )
+
+    def mint_key(self, conn, community, collection, file_id, label, by, hours, digest):
+        if collection == "inbox":
+            raise Forbidden("inbox accepts no read keys")
+        key_id = uuid.uuid4()
+        conn.execute(
+            "INSERT INTO read_keys (id, hash, community, collection, file_id, label, created_by, "
+            "expires) VALUES (%s, %s, %s, %s, %s, %s, %s, "
+            "CASE WHEN %s::int IS NULL THEN NULL ELSE now() + %s * interval '1 hour' END)",
+            (key_id, digest, community, collection, file_id, label, by, hours, hours),
+        )
+        return self.key_row(conn, key_id)
+
+    def key_row(self, conn, key_id):
+        row = conn.execute(
+            "SELECT * FROM read_keys WHERE id = %s", (key_id,)
+        ).fetchone()
+        if row is None:
+            raise NotFound("no such read key")
+        return row
+
+    def use_key(self, conn, digest: str):
+        """A usable read key for this secret, its use audited; None if unknown, revoked or
+        expired."""
+        return conn.execute(
+            "UPDATE read_keys SET uses = uses + 1, last_used = now() WHERE hash = %s "
+            "AND revoked IS NULL AND (expires IS NULL OR expires > now()) RETURNING *",
+            (digest,),
+        ).fetchone()
+
+    def list_keys(self, conn, community, collection, created_by=None) -> list:
+        query = "SELECT * FROM read_keys WHERE community = %s AND collection = %s"
+        params = [community, collection]
+        if created_by is not None:
+            query += " AND created_by = %s"
+            params.append(created_by)
+        return conn.execute(query + " ORDER BY created", params).fetchall()
+
+    def revoke_key(self, conn, key_id):
+        conn.execute(
+            "UPDATE read_keys SET revoked = now() WHERE id = %s AND revoked IS NULL",
+            (key_id,),
+        )
 
     # ── payloads ────────────────────────────────────────────────────────────────────────────
     def begin_payload(self, conn, owner: str):
@@ -314,7 +471,7 @@ class Records:
 
         The owner's row is locked first, so the quota check and the payload it admits are one
         atomic step: concurrent uploads by the same owner cannot jointly exceed the quota."""
-        conn.execute("SELECT 1 FROM owners WHERE handle = %s FOR UPDATE", (owner,))
+        self.lock_owner(conn, owner)
         existing = conn.execute(
             "SELECT id FROM payloads WHERE sha256 = %s AND state = 'ready'", (sha,)
         ).fetchone()
@@ -333,6 +490,11 @@ class Records:
         except psycopg.errors.UniqueViolation:
             # an identical payload turned ready concurrently: use that one
             return self.commit_payload(conn, pid, sha, size, owner, quota)
+
+    def lock_owner(self, conn, owner: str):
+        """Writers take the owner's row before the collection's clock, always in that order,
+        so concurrent writes never deadlock."""
+        conn.execute("SELECT 1 FROM owners WHERE handle = %s FOR UPDATE", (owner,))
 
     def touch_pending(self, conn, pid, file_id=None):
         """Heartbeat of an upload in progress: the janitor expires only work that has stopped,
@@ -395,6 +557,22 @@ class Records:
             ) from None
         return fid
 
+    def create_live_file(self, conn, community, collection, name):
+        """Inside a commit transaction: a new file, live at once (promote writes its v1 in the
+        same transaction, so no reservation is needed)."""
+        fid = uuid.uuid4()
+        try:
+            with conn.transaction():
+                conn.execute(
+                    "INSERT INTO files (id, community, collection, name) VALUES (%s, %s, %s, %s)",
+                    (fid, community, collection, name),
+                )
+        except psycopg.errors.UniqueViolation:
+            raise Conflict(
+                f"'{name}' already exists in {community}/{collection}"
+            ) from None
+        return fid
+
     def claim_reservation(self, conn, fid, by):
         """Inside the commit transaction: lock the reservation and turn the file live."""
         row = conn.execute(
@@ -450,7 +628,10 @@ class Records:
         key_id,
         deleted=False,
         reason=None,
+        clock=None,
     ) -> int:
+        """Append version n+1. `clock` is a (seq, created) the caller already allocated in
+        this transaction (promote stamps `created` into the bytes before inserting)."""
         f = conn.execute(
             "SELECT community, collection FROM files WHERE id = %s FOR UPDATE",
             (file_id,),
@@ -461,7 +642,7 @@ class Records:
             "SELECT COALESCE(MAX(n), 0) + 1 AS n FROM versions WHERE file_id = %s",
             (file_id,),
         ).fetchone()["n"]
-        seq, created = self.allocate(conn, f["community"], f["collection"])
+        seq, created = clock or self.allocate(conn, f["community"], f["collection"])
         conn.execute(
             "INSERT INTO versions (file_id, n, payload_id, metadata, content_type, created, seq, "
             "created_by, key_id, deleted, reason) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
@@ -504,12 +685,13 @@ class Records:
             reason=reason,
         )
 
-    _VERSION = (
+    _ROWS = (
         "SELECT v.*, p.sha256, p.size, p.s3_key, p.state AS payload_state, p.scrub_ok, "
         "f.name, f.community, f.collection, o.suspect_after "
         "FROM versions v JOIN payloads p ON p.id = v.payload_id JOIN files f ON f.id = v.file_id "
-        "LEFT JOIN owners o ON o.handle = v.created_by WHERE v.file_id = %s "
+        "LEFT JOIN owners o ON o.handle = v.created_by "
     )
+    _VERSION = _ROWS + "WHERE v.file_id = %s "
 
     def version(self, conn, file_id, ref):
         """ref: a version number, or 'latest' (the newest version that is not a tombstone)."""
@@ -527,6 +709,60 @@ class Records:
         if row is None:
             raise NotFound("no such version")
         return row
+
+    def changes(self, conn, community, collection, since: int, limit: int) -> list:
+        """Versions written into a collection after `since`, in seq order (R-G3). seq is
+        allocated under the collection's lock and committed in order, so a reader paging by
+        seq never skips a version."""
+        return conn.execute(
+            self._ROWS + "WHERE f.community = %s AND f.collection = %s AND v.seq > %s "
+            "ORDER BY v.seq LIMIT %s",
+            (community, collection, since, limit),
+        ).fetchall()
+
+    def query(
+        self, conn, community, collection, contains: dict, since: int, limit: int
+    ):
+        """Versions whose metadata contains `contains` (JSONB @>, GIN-indexed), paged by seq
+        like changes (R-G6)."""
+        return conn.execute(
+            self._ROWS + "WHERE f.community = %s AND f.collection = %s AND v.seq > %s "
+            "AND v.metadata @> %s::jsonb ORDER BY v.seq LIMIT %s",
+            (community, collection, since, json.dumps(contains), limit),
+        ).fetchall()
+
+    def by_hash(self, conn, sha: str) -> list:
+        """Every version holding this content, in any collection (R-F2)."""
+        return conn.execute(
+            self._ROWS
+            + "WHERE p.sha256 = %s ORDER BY f.community, f.collection, v.seq",
+            (sha,),
+        ).fetchall()
+
+    def verify(self, row, before: datetime | None, sha: str | None) -> dict:
+        """The gate's check of a cited version (R-G9): its content is still there, its sha256
+        is the one cited, and it was created strictly before `before`."""
+        out = {
+            "ok": True,
+            "exists": True,
+            "reason": None,
+            "citation": f"symposium-data:{row['file_id']}@v{row['n']}",
+            "sha256": row["sha256"],
+            "created": iso(row["created"]),
+            "deleted": row["deleted"],
+            "purged": row["purged"],
+        }
+        if row["purged"]:
+            out.update(ok=False, reason="content purged")
+        elif sha and sha.lower() != row["sha256"]:
+            out.update(ok=False, reason="sha256 does not match")
+        elif before and not row["created"] < before:
+            out.update(
+                ok=False,
+                reason=f"file version created {iso(row['created'])} is not strictly "
+                f"earlier than {iso(before)}",
+            )
+        return out
 
     def first_writer(self, conn, file_id):
         row = conn.execute(

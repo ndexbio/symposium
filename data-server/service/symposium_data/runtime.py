@@ -20,6 +20,7 @@ from botocore.exceptions import ClientError
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
 
 DEFAULT_CONFIG = "/apps/data/config/service.env"
 # Arbitrary but fixed: every process that migrates takes this lock first, so a starting API
@@ -90,6 +91,18 @@ class Database:
     def connection(self, timeout: float | None = None):
         return self.pool.connection(timeout=timeout)
 
+    def wait_until_reachable(self, connect, attempts: int = 60, pause: float = 1.0):
+        """PostgreSQL starts alongside the API under supervisord, so the first connection
+        can come before it accepts any: retry until it does, then return."""
+        for attempt in range(attempts):
+            try:
+                connect().close()
+                return
+            except OperationalError:
+                if attempt + 1 == attempts:
+                    raise
+                time.sleep(pause)
+
     def migrate(self):
         """Bring the schema to the latest Alembic revision under an advisory lock."""
         url = self.settings.database_url.replace(
@@ -97,6 +110,7 @@ class Database:
         )
         engine = create_engine(url)
         try:
+            self.wait_until_reachable(engine.connect)
             with engine.begin() as conn:
                 conn.exec_driver_sql(f"SELECT pg_advisory_lock({MIGRATION_LOCK_ID})")
                 try:

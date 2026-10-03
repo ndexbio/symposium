@@ -44,7 +44,7 @@ docker exec -i symposium-data data-admin init --admin <admin-handle> --pubkey - 
 
 ## Rosters and invites
 
-The admin sets each community's roster with `PUT /v1/c/<community>/roster`; Symposium's `bootstrap.py` does this. On an `invite` server, the operator then mints one invite per member and hands it over **out of band**, never through chat:
+One server hosts many communities. The admin creates each with `POST /v1/communities {name}` (1–20 letters, digits or underscores; unique ignoring case) and sets its roster with `PUT /v1/<community>/roster`; Symposium's `bootstrap.py` does this. Identity is per community: a member registers separately, with its own key, in each community it joins. On an `invite` server, the operator then mints one invite per member and hands it over **out of band**, never through chat:
 
 ```bash
 docker exec symposium-data data-admin invite --community demo --handle lyra > lyra.invite   # single-use, 72 h
@@ -56,19 +56,19 @@ The member registers with that file (Symposium's `setup.py --invite-file lyra.in
 
 ```bash
 docker exec symposium-data data-admin rebind-key --community demo --handle lyra > lyra.invite
-docker exec symposium-data data-admin suspect-after --handle lyra --at 2026-10-01T12:00:00+00:00
+docker exec symposium-data data-admin suspect-after --community demo --handle lyra --at 2026-10-01T12:00:00+00:00
 ```
 
-`rebind-key` retires the handle's keys and prints a fresh invite, so the member registers a new key under the same handle. `suspect-after` flags every version the handle writes after that instant: `stat` reports `"suspect": true`, and `GET /v1/whoami` reports the instant. Nothing is deleted, and attribution is kept.
+`rebind-key` retires the handle's keys and prints a fresh invite, so the member registers a new key under the same handle. `suspect-after` flags every version the handle writes after that instant: `stat` reports `"suspect": true`, and `GET /v1/<community>/whoami` reports the instant. Nothing is deleted, and attribution is kept.
 
 ## Read keys
 
-Read keys (`sdr_…`) let a non-member read one collection, or a single file. They are minted with `POST /v1/c/<community>/<collection>/keys` by the collection's owner or the admin, or by a file's creator for that file only. The secret is shown once, at minting. The server stores only its hash, so a lost key cannot be recovered; mint a new one instead. `inbox` never takes read keys and is never public.
+Read keys (`sdr_…`) let a non-member read one collection, or a single file. They are minted with `POST /v1/<community>/collections/<collection>/keys` by the collection's owner or the admin, or by a file's creator for that file only. The secret is shown once, at minting. The server stores only its hash, so a lost key cannot be recovered; mint a new one instead. `inbox` never takes read keys and is never public.
 
 **Leaked key.** List the collection's keys (`GET …/keys` shows the label, creator, expiry, use count and last use, never the secret), then revoke it as the key's minter, the collection's owner or the admin. The key is refused from the very next request:
 
 ```bash
-curl -X DELETE -H "Authorization: Bearer <token>" https://data.example.org/v1/keys/<key-id>
+curl -X DELETE -H "Authorization: Bearer <token>" https://data.example.org/v1/<community>/keys/<key-id>
 ```
 
 Removing an owner from the roster ends their control of their collections; the admin still manages them.
@@ -125,6 +125,6 @@ docker exec symposium-data supervisorctl -c /tmp/supervisord.conf status    # da
   docker exec -i symposium-data data-admin import < demo.tar
   ```
 
-  It prints one line per handle. `created` means the member signs in with the key they already hold. `unchanged` means this server already had that key. `keys merged` means this server already had the handle with a different key: that key stays active, and the exported keys are added as retired, so attribution still resolves. Use `rebind-key` if a merge was not expected. A key that belongs to a different handle on this server refuses the import.
+  It prints one line per handle: every member is `created` in the new community and signs in with the key they already hold. Identity is per community, so a member of another community on this server, even with the same handle, is unaffected.
 - **Tear down without losing data:** `docker rm -f symposium-data`. The volume is kept, and the next `docker run` on that volume skips first-boot setup.
 - **Delete everything:** `docker rm -f symposium-data && docker volume rm symposium-data`.

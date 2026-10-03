@@ -4,7 +4,7 @@
     data-admin status
     data-admin invite --community <c> --handle <h> [--hours N]
     data-admin rebind-key --community <c> --handle <h>
-    data-admin suspect-after --handle <h> --at <ISO-8601 instant>
+    data-admin suspect-after --community <c> --handle <h> --at <ISO-8601 instant>
     data-admin purge --cite symposium-data:<file-id>@v<n>
     data-admin export --community <c> > <c>.tar
     data-admin import < <c>.tar
@@ -78,7 +78,7 @@ class Admin:
                     {"error": f"'{args.handle}' is not on the {args.community} roster"}
                 )
                 return 2
-            retired = self.records.retire_keys(conn, args.handle)
+            retired = self.records.retire_keys(conn, args.community, args.handle)
             invite = self.mint_invite(conn, args.community, args.handle, args.hours)
         self.emit({"handle": args.handle, "retired_keys": retired}, stream=sys.stderr)
         print(invite)
@@ -155,10 +155,18 @@ class Admin:
             )
             return 1
         with self.db.connection() as conn:
-            if not self.records.set_suspect_after(conn, args.handle, instant):
-                self.emit({"error": f"no owner '{args.handle}'"})
+            if not self.records.set_suspect_after(
+                conn, args.community, args.handle, instant
+            ):
+                self.emit({"error": f"no owner '{args.handle}' in {args.community}"})
                 return 2
-        self.emit({"handle": args.handle, "suspect_after": instant.isoformat()})
+        self.emit(
+            {
+                "community": args.community,
+                "handle": args.handle,
+                "suspect_after": instant.isoformat(),
+            }
+        )
         return 0
 
     def init(self, args) -> int:
@@ -247,6 +255,7 @@ def build_parser():
     flag = sub.add_parser(
         "suspect-after", help="flag a handle's writes after an instant"
     )
+    flag.add_argument("--community", required=True)
     flag.add_argument("--handle", required=True)
     flag.add_argument("--at", required=True, metavar="ISO-8601")
     return parser

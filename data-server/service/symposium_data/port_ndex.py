@@ -145,9 +145,7 @@ class Port:
             raise PortRefused(
                 "the server is initialized; the port runs only on a fresh one"
             )
-        if conn.execute(
-            "SELECT 1 FROM collections UNION ALL SELECT 1 FROM roster LIMIT 1"
-        ).fetchone():
+        if conn.execute("SELECT 1 FROM communities LIMIT 1").fetchone():
             raise PortRefused("the server already holds a community")
         for name, value in (
             ("PORT_COMMUNITY", self.community),
@@ -235,7 +233,9 @@ class Port:
         try:
             for _, item in items:
                 with self.db.connection() as conn:
-                    pid, key = self.records.begin_payload(conn, item["author"])
+                    pid, key = self.records.begin_payload(
+                        conn, self.community, item["author"]
+                    )
                 pending.append(pid)
                 self.store.put_bytes(key, item["bytes"])
                 item["pid"] = pid
@@ -262,13 +262,14 @@ class Port:
     def write(self, conn, items: list, members: list, duplicates: list):
         """The one transaction: the community, its roster, every file and version, then the
         checks, then the sentinel. Nothing is visible until it commits."""
+        conn.execute("INSERT INTO communities (name) VALUES (%s)", (self.community,))
         self.records.ensure_collections(conn, self.community, self.admin)
         self.records.set_roster(conn, self.community, members)
-        for handle in [*members, self.admin]:
+        for handle in members:
             conn.execute(
-                "INSERT INTO owners (handle, reserved) VALUES (%s, true) "
-                "ON CONFLICT (handle) DO NOTHING",
-                (handle,),
+                "INSERT INTO owners (community, handle, reserved) VALUES (%s, %s, true) "
+                "ON CONFLICT (community, handle) DO NOTHING",
+                (self.community, handle),
             )
         written = []
         for collection, item in items:
@@ -279,7 +280,13 @@ class Port:
             except Conflict as e:
                 raise PortRefused(str(e)) from None
             payload, duplicate = self.records.commit_payload(
-                conn, item["pid"], item["sha256"], len(item["bytes"]), item["author"], 0
+                conn,
+                item["pid"],
+                self.community,
+                item["sha256"],
+                len(item["bytes"]),
+                item["author"],
+                0,
             )
             if duplicate:
                 duplicates.append(duplicate)
@@ -298,7 +305,7 @@ class Port:
             )
             written.append((collection, file_id, item["sha256"]))
         for collection, file_id, sha in written:
-            if self.records.version(conn, file_id, 1)["sha256"] != sha:
+            if self.records.version(conn, self.community, file_id, 1)["sha256"] != sha:
                 raise RuntimeError(f"sha256 mismatch on {collection} file {file_id}")
         for collection in COLLECTIONS:
             expected = sum(1 for c, _, _ in written if c == collection)

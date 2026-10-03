@@ -1,5 +1,5 @@
 """M5: Symposium parity: the change feed, find, metadata query, hash lookup, promote, verify,
-and export/import with identity reconciliation."""
+and export/import."""
 
 import hashlib
 import json
@@ -9,6 +9,7 @@ from datetime import datetime
 import httpx
 import pytest
 from conftest import (
+    Admin,
     Owner,
     assert_consistent,
     community_with,
@@ -26,7 +27,7 @@ def demo(server):
 
 def changes(server, headers, collection, since=0, limit=100, community="demo"):
     return httpx.get(
-        f"{server.url}/v1/c/{community}/{collection}/changes",
+        f"{server.url}/v1/{community}/collections/{collection}/changes",
         params={"since": since, "limit": limit},
         headers=headers,
     )
@@ -46,7 +47,7 @@ def every_change(server, headers, collection, limit=3, community="demo") -> list
 
 def query(server, headers, collection, contains, since=0, limit=100):
     return httpx.post(
-        f"{server.url}/v1/c/demo/{collection}/query",
+        f"{server.url}/v1/demo/collections/{collection}/query",
         json={"contains": contains, "since": since, "limit": limit},
         headers=headers,
     )
@@ -54,7 +55,7 @@ def query(server, headers, collection, contains, since=0, limit=100):
 
 def promote(admin, file_id, n, collection="record", **body):
     return httpx.post(
-        f"{admin.server.url}/v1/files/{file_id}/v/{n}/promote",
+        admin.url(f"/files/{file_id}/v/{n}/promote"),
         json={"collection": collection, **body},
         headers=admin.headers(),
     )
@@ -62,7 +63,7 @@ def promote(admin, file_id, n, collection="record", **body):
 
 def verify(owner, cite, **params):
     return httpx.get(
-        f"{owner.server.url}/v1/verify",
+        owner.url("/verify"),
         params={"cite": cite, **params},
         headers=owner.headers(),
     )
@@ -136,7 +137,7 @@ def test_find_and_query_by_metadata(demo):
     assert names == ["a0.json", "a1.json", "a2.json"] and not rest["more"]
     assert query(server, lyra.headers(), "files", ["kind"]).status_code == 422
 
-    url = f"{server.url}/v1/c/demo/files/find"
+    url = f"{server.url}/v1/demo/collections/files/find"
     hit = httpx.get(url, params={"name": "d.json"}, headers=lyra.headers())
     assert hit.status_code == 200
     assert hit.json()["file_id"] == data.json()["file_id"]
@@ -159,11 +160,19 @@ def test_hash_lookup_finds_every_readable_copy(demo):
     assert bob.register("other").status_code == 201
     bob.put("other", "files", "three.csv", content)
 
-    url = f"{server.url}/v1/sha256/{sha}"
+    url = f"{server.url}/v1/demo/sha256/{sha}"
     seen = httpx.get(url, headers=lyra.headers()).json()["items"]
     assert sorted(i["name"] for i in seen) == ["one.csv", "two.csv"]
-    assert len(httpx.get(url, headers=admin.headers()).json()["items"]) == 3
-    bad = httpx.get(f"{server.url}/v1/sha256/{sha.upper()}", headers=lyra.headers())
+    # hash lookup stays inside its community, even for the admin
+    assert len(httpx.get(url, headers=admin.headers()).json()["items"]) == 2
+    elsewhere = httpx.get(f"{server.url}/v1/other/sha256/{sha}", headers=bob.headers())
+    assert [i["name"] for i in elsewhere.json()["items"]] == ["three.csv"]
+    # content is deduplicated within a community, never across: one payload each
+    stored = psql(server, f"SELECT count(*) FROM payloads WHERE sha256 = '{sha}'")
+    assert stored == "2"
+    bad = httpx.get(
+        f"{server.url}/v1/demo/sha256/{sha.upper()}", headers=lyra.headers()
+    )
     assert bad.status_code == 400
 
 
@@ -200,7 +209,7 @@ def test_promote_stamps_the_server_clock_into_the_record(demo):
     # credited to its submitter, who may therefore key it (R-G4, R-E2)
     assert record["created_by"] == "lyra" and record["key_id"] is None
     keyed = httpx.post(
-        f"{server.url}/v1/c/demo/record/keys",
+        f"{server.url}/v1/demo/collections/record/keys",
         json={"label": "reviewer", "file_id": record["file_id"]},
         headers=lyra.headers(),
     )
@@ -224,13 +233,9 @@ def test_promote_stamps_the_server_clock_into_the_record(demo):
     assert_consistent(server)
 
 
-def test_a_failing_promote_leaves_nothing_behind(make_server):
+def test_a_failing_promote_leaves_nothing_behind(demo):
     content = submission()
-    # the quota admits the submission but not its stamped copy, so the promote fails
-    # inside its commit transaction, after the stamped bytes were written
-    # (stamping replaces null with a 34-character instant, adding 30 bytes)
-    server = make_server(SYMPOSIUM_DATA_QUOTA_BYTES=str(len(content) + 20))
-    admin, owners = community_with(server)
+    server, admin, owners = demo
     lyra = owners["lyra"]
     fid = lyra.put("demo", "inbox", "goal.json", content).json()["file_id"]
     text = lyra.put("demo", "inbox", "note.txt", b"plain").json()["file_id"]
@@ -239,7 +244,16 @@ def test_a_failing_promote_leaves_nothing_behind(make_server):
     pointer = {"stamp_json_pointer": "/artifact/created"}
 
     assert promote(lyra, fid, 1, **pointer).status_code == 403
-    assert promote(admin, fid, 1, **pointer).status_code == 413
+    # an upload still in progress holds the target name: the stamped promote fails inside
+    # its commit transaction, after its pending payload was recorded, and leaves nothing
+    psql(
+        server,
+        "INSERT INTO files (id, community, collection, name, state, reserved_by, reserved_at) "
+        "VALUES (gen_random_uuid(), 'demo', 'record', 'goal.json', 'reserved', 'vega', now())",
+    )
+    assert promote(admin, fid, 1, **pointer).status_code == 409
+    assert psql(server, "SELECT count(*) FROM payloads WHERE state = 'pending'") == "0"
+    psql(server, "DELETE FROM files WHERE state = 'reserved'")
     assert promote(admin, fid, 1, stamp_json_pointer="/missing/x").status_code == 422
     assert promote(admin, text, 1, **pointer).status_code == 422
     assert promote(admin, gone, 2).status_code == 409
@@ -279,7 +293,7 @@ def test_verify_checks_existence_hash_and_strict_ordering(demo):
     assert hidden == unknown.json() and not hidden["exists"]
     assert not verify(admin, "other:abc").json()["exists"]
     assert verify(admin, cite, before="yesterday").status_code == 400
-    anonymous = httpx.get(f"{server.url}/v1/verify", params={"cite": cite})
+    anonymous = httpx.get(f"{server.url}/v1/demo/verify", params={"cite": cite})
     assert anonymous.status_code == 401
 
     server.admin("purge", "--cite", cite)
@@ -334,18 +348,18 @@ def test_export_import_round_trip_preserves_the_community(make_server, tmp_path)
     purged = lyra.put("demo", "files", "secret.csv", b"remove me").json()["citation"]
     source.admin("purge", "--cite", purged)
     httpx.post(
-        f"{source.url}/v1/c/demo/collections",
+        f"{source.url}/v1/demo/collections",
         json={"name": "project"},
         headers=lyra.headers(),
     )
     httpx.put(
-        f"{source.url}/v1/c/demo/project/grants",
+        f"{source.url}/v1/demo/collections/project/grants",
         json={"handle": "vega", "perm": "read"},
         headers=lyra.headers(),
     )
     shared = lyra.put("demo", "project", "shared.csv", b"for vega").json()["file_id"]
     key = httpx.post(
-        f"{source.url}/v1/c/demo/project/keys",
+        f"{source.url}/v1/demo/collections/project/keys",
         json={"label": "reviewer"},
         headers=lyra.headers(),
     ).json()["key"]
@@ -370,7 +384,6 @@ def test_export_import_round_trip_preserves_the_community(make_server, tmp_path)
     assert code == 0, report
     results = {r["handle"]: r["result"] for r in report if "handle" in r}
     assert results == {
-        "demo-admin": "admin: this server's keys kept",
         "lyra": "created",
         "vega": "created",
         "rigel": "created",
@@ -386,10 +399,10 @@ def test_export_import_round_trip_preserves_the_community(make_server, tmp_path)
     assert lyra2.get(fid, 2).content == b"1,2,3,4"
     assert vega2.get(shared).content == b"for vega"  # the grant survived
     assert (
-        Owner(target, "demo-admin", key=admin.key).token_response().status_code == 401
+        Admin(target, "demo-admin", key=admin.key).token_response().status_code == 401
     )
     read = httpx.get(
-        f"{target.url}/v1/files/{shared}/v/1",
+        f"{target.url}/v1/demo/files/{shared}/v/1",
         headers={"Authorization": f"Bearer {key}"},
     )
     assert read.content == b"for vega"  # the read key survived
@@ -407,44 +420,37 @@ def test_export_import_round_trip_preserves_the_community(make_server, tmp_path)
     assert_consistent(target)
 
 
-def test_import_reconciles_handles_and_refuses_what_cannot_be(make_server, tmp_path):
+def test_imported_identities_are_per_community(make_server, tmp_path):
     source = make_server()
     admin, owners = community_with(source, members=("lyra", "vega"))
     lyra = owners["lyra"]
     fid = lyra.put("demo", "files", "data.csv", b"lyra's data").json()["file_id"]
     archive = export(source, "demo", tmp_path / "demo.tar")
-    old_kid = psql(source, "SELECT key_id FROM versions LIMIT 1")
 
-    # lyra already holds a different key on the target, through another community
+    # the target already has a lyra, with another key, in another community
     target = make_server()
     target_admin = init_admin(target)
     set_roster(target, target_admin, "other", ["lyra"])
-    lyra_here = Owner(target, "lyra")
-    assert lyra_here.register("other").status_code == 201
+    lyra_other = Owner(target, "lyra")
+    assert lyra_other.register("other").status_code == 201
     code, report = import_(target, archive)
     assert code == 0, report
     results = {r["handle"]: r["result"] for r in report if "handle" in r}
-    assert results["lyra"] == "keys merged" and results["vega"] == "created"
-    assert lyra_here.token_response().status_code == 200  # this server's key wins
-    assert Owner(target, "lyra", key=lyra.key).token_response().status_code == 401
-    assert lyra_here.get(fid).content == b"lyra's data"
-    retired = psql(
-        target,
-        f"SELECT active FROM owner_keys WHERE kid = '{old_kid}' AND handle = 'lyra'",
-    )
-    assert retired == "f"  # every imported key_id still resolves
-
-    # one key cannot belong to two handles
-    clash = make_server()
-    clash_admin = init_admin(clash)
-    set_roster(clash, clash_admin, "other", ["mallory"])
-    assert Owner(clash, "mallory", key=lyra.key).register("other").status_code == 201
-    code, report = import_(clash, archive)
-    assert code == 2 and "belongs to 'mallory'" in report[0]["error"]
+    assert results == {
+        "lyra": "created",
+        "vega": "created",
+    }
+    # two independent identities: each signs in with its own key, in its own community
+    lyra_demo = Owner(target, "lyra", key=lyra.key)
+    assert lyra_demo.get(fid).content == b"lyra's data"
+    assert lyra_other.token_response().status_code == 200
     assert (
-        psql(clash, "SELECT count(*) FROM collections WHERE community = 'demo'") == "0"
+        Owner(target, "lyra", key=lyra.key, community="other")
+        .token_response()
+        .status_code
+        == 401
     )
-    assert_consistent(clash)
+    assert Owner(target, "lyra", key=lyra_other.key).token_response().status_code == 401
 
     # the admin handle must match
     elsewhere = make_server()

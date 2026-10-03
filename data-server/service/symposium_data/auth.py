@@ -74,7 +74,9 @@ class Tokens:
         self.issuer = issuer
         self.ttl = ttl_seconds
 
-    def issue(self, handle: str, kid: str) -> str:
+    def issue(self, handle: str, kid: str, community: str | None = None) -> str:
+        """A member's token is valid only in its community (`com`); without a community it
+        is the server admin's token (`adm`), valid in every community (R-G8, R-D4)."""
         now = int(time.time())
         claims = {
             "sub": handle,
@@ -83,6 +85,10 @@ class Tokens:
             "exp": now + self.ttl,
             "iss": self.issuer,
         }
+        if community is None:
+            claims["adm"] = True
+        else:
+            claims["com"] = community
         return jwt.encode(claims, self.signing_key, algorithm="EdDSA")
 
     def read(self, token: str) -> dict | None:

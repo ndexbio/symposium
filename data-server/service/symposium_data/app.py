@@ -1,4 +1,9 @@
-"""Symposium Data HTTP API. Every byte is streamed by this service; S3 is never exposed."""
+"""Symposium Data HTTP API. Every byte is streamed by this service; S3 is never exposed.
+
+Communities are tenants (R-G8): every community-dependent route is under /v1/{community}/...,
+with collection-scoped routes under collections/{collection}/ and file routes under files/{id}/.
+Only /v1/status, /v1/communities and the server admin's sign-in (/v1/admin/...) are server-wide.
+"""
 
 from __future__ import annotations
 
@@ -38,6 +43,7 @@ from .wire import (
     parse_instant,
     parse_metadata,
     stamp,
+    valid_community,
     valid_file_name,
     valid_sha256,
 )
@@ -118,9 +124,13 @@ class TokenIn(BaseModel):
     signature: str
 
 
+class AdminTokenIn(BaseModel):
+    nonce: str
+    signature: str
+
+
 class RegisterIn(BaseModel):
     handle: str = Field(pattern=NAME)
-    community: str = Field(pattern=NAME)
     public_jwk: dict
     nonce: str
     signature: str
@@ -135,6 +145,10 @@ class RotateIn(BaseModel):
 
 class RosterIn(BaseModel):
     handles: list[str] = Field(max_length=10_000)
+
+
+class CommunityIn(BaseModel):
+    name: str
 
 
 def refuse(status: int, message: str, conn=None):
@@ -155,9 +169,21 @@ def bearer(request: Request) -> str | None:
     return header.split(None, 1)[1].strip()
 
 
-def owner_of(conn, request: Request) -> tuple[str, str]:
-    """The (handle, kid) behind a valid bearer token whose key is still active. Read keys
-    never authorize anything but reads."""
+def community_of(conn, name: str) -> str:
+    """The community a path names, as it was created; 404 for a non-slug or unknown name,
+    without touching the database for a non-slug (R-G8)."""
+    if not valid_community(name):
+        refuse(404, f"no community '{name}'")
+    found = records.community_name(conn, name)
+    if found is None:
+        refuse(404, f"no community '{name}'")
+    return found
+
+
+def owner_of(conn, request: Request, community: str | None) -> tuple[str, str]:
+    """The (handle, kid) behind a valid bearer token whose key is still active. A member's
+    token is valid only in its own community; the server admin's token in every community.
+    `community` None accepts only the admin. Read keys never authorize anything but reads."""
     credential = bearer(request)
     if credential is None:
         refuse(401, "a bearer token is required")
@@ -166,21 +192,29 @@ def owner_of(conn, request: Request) -> tuple[str, str]:
     claims = tokens.read(credential)
     if claims is None:
         refuse(401, "the token is not valid or has expired")
-    if not records.key_is_active(conn, claims["sub"], claims["kid"]):
+    if claims.get("adm"):
+        if not records.admin_key_is_active(conn, claims["kid"]):
+            refuse(401, "the token's key is no longer active")
+        return claims["sub"], claims["kid"]
+    if community is None:
+        refuse(403, "only the admin may do this")
+    if claims.get("com") != community:
+        refuse(401, "the token is for another community")
+    if not records.key_is_active(conn, community, claims["sub"], claims["kid"]):
         refuse(401, "the token's key is no longer active")
     return claims["sub"], claims["kid"]
 
 
-def require_admin(conn, request: Request) -> str:
-    handle, _ = owner_of(conn, request)
-    if handle != records.config(conn, "admin"):
+def require_admin(conn, request: Request, community: str | None = None) -> str:
+    handle, _ = owner_of(conn, request, community)
+    if not records.is_admin(conn, handle):
         refuse(403, "only the admin may do this")
     return handle
 
 
-def checked_new_key(conn, handle: str, body) -> tuple[str, dict]:
+def checked_new_key(conn, community: str, handle: str, body) -> tuple[str, dict]:
     """Consume the challenge and check the new key's proof of possession -> (kid, jwk)."""
-    if not records.take_challenge(conn, handle, body.nonce):
+    if not records.take_challenge(conn, community, handle, body.nonce):
         refuse(401, "the challenge is unknown, spent or expired")
     try:
         keys.validate(body.public_jwk)
@@ -195,100 +229,181 @@ def checked_new_key(conn, handle: str, body) -> tuple[str, dict]:
     return keys.thumbprint(body.public_jwk), body.public_jwk
 
 
-@app.post("/v1/auth/challenge")
-def challenge(body: ChallengeIn):
+# ── the server admin and communities (server-wide) ──────────────────────────────────────────
+@app.post("/v1/admin/challenge")
+def admin_challenge():
     nonce = secrets.new("n_")
     with db.connection() as conn:
-        records.add_challenge(conn, body.handle, nonce)
+        admin = records.config(conn, "admin")
+        if admin is None:
+            refuse(503, "the server is not initialized")
+        records.add_challenge(conn, None, admin, nonce)
     return {"nonce": nonce, "expires_in": 300}
 
 
-@app.post("/v1/auth/token")
-def token(body: TokenIn):
+@app.post("/v1/admin/token")
+def admin_token(body: AdminTokenIn):
+    """The server admin's token: signed by the admin's key, valid in every community."""
     with db.connection() as conn:
-        if not records.take_challenge(conn, body.handle, body.nonce):
+        admin = records.config(conn, "admin")
+        if admin is None or not records.take_challenge(conn, None, admin, body.nonce):
             refuse(401, "the challenge is unknown, spent or expired", conn)
-        for key in records.active_keys(conn, body.handle):
+        for key in records.admin_keys(conn):
             if keys.verify(key["jwk"], body.nonce.encode(), body.signature):
                 return {
-                    "token": tokens.issue(body.handle, key["kid"]),
+                    "token": tokens.issue(admin, key["kid"]),
+                    "expires_in": tokens.ttl,
+                    "kid": key["kid"],
+                }
+        refuse(401, "the signature does not match the admin's key", conn)
+
+
+@app.post("/v1/communities")
+def create_community(body: CommunityIn, request: Request, response: Response):
+    """Create a community and its default collections (R-G8); admin only, idempotent: the
+    exact existing name answers 200, a new one 201."""
+    if not valid_community(body.name):
+        refuse(
+            400,
+            "a community name is 1-20 letters, digits or underscores, and not "
+            "'status', 'communities' or 'admin'",
+        )
+    with db.connection() as conn:
+        admin = require_admin(conn, request)
+        try:
+            created = records.create_community(conn, body.name, admin)
+        except Conflict as e:
+            conn.rollback()
+            refuse(400, f"{e}; names are unique ignoring case")
+        response.status_code = 201 if created else 200
+        return {"name": body.name, "created": created}
+
+
+@app.get("/v1/communities")
+def list_communities(request: Request):
+    with db.connection() as conn:
+        require_admin(conn, request)
+        return {
+            "communities": [
+                {"name": r["name"], "created": iso(r["created"])}
+                for r in records.communities(conn)
+            ]
+        }
+
+
+# ── identity within a community ─────────────────────────────────────────────────────────────
+@app.post("/v1/{community}/auth/challenge")
+def challenge(community: str, body: ChallengeIn):
+    nonce = secrets.new("n_")
+    with db.connection() as conn:
+        if records.config(conn, "admin") is None:
+            refuse(503, "the server is not initialized")
+        community = community_of(conn, community)
+        records.add_challenge(conn, community, body.handle, nonce)
+    return {"nonce": nonce, "expires_in": 300}
+
+
+@app.post("/v1/{community}/auth/token")
+def token(community: str, body: TokenIn):
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        if not records.take_challenge(conn, community, body.handle, body.nonce):
+            refuse(401, "the challenge is unknown, spent or expired", conn)
+        for key in records.active_keys(conn, community, body.handle):
+            if keys.verify(key["jwk"], body.nonce.encode(), body.signature):
+                return {
+                    "token": tokens.issue(body.handle, key["kid"], community),
                     "expires_in": tokens.ttl,
                     "kid": key["kid"],
                 }
         refuse(401, "the signature does not match an active key of this handle", conn)
 
 
-@app.post("/v1/owners", status_code=201)
-def register(body: RegisterIn):
-    """Register a handle with a key generated on the member's machine (R-D1, R-D5)."""
+@app.post("/v1/{community}/owners", status_code=201)
+def register(community: str, body: RegisterIn):
+    """Register a handle in this community with a key generated on the member's machine
+    (R-D1, R-D5). Identity is per community."""
     with db.connection() as conn:
         if records.config(conn, "admin") is None:
             refuse(503, "the server is not initialized")
-        kid, jwk = checked_new_key(conn, body.handle, body)
-        if not records.on_roster(conn, body.community, body.handle):
-            refuse(403, f"'{body.handle}' is not on the {body.community} roster", conn)
-        if records.active_keys(conn, body.handle):
-            refuse(409, f"'{body.handle}' is already registered", conn)
+        community = community_of(conn, community)
+        kid, jwk = checked_new_key(conn, community, body.handle, body)
+        if not records.on_roster(conn, community, body.handle):
+            refuse(403, f"'{body.handle}' is not on the {community} roster", conn)
+        if records.active_keys(conn, community, body.handle):
+            refuse(409, f"'{body.handle}' is already registered in {community}", conn)
         if settings.registration == "invite" and not records.consume_invite(
-            conn, secrets.digest(body.invite or ""), body.community, body.handle
+            conn, secrets.digest(body.invite or ""), community, body.handle
         ):
             refuse(
                 403,
                 "a valid, unused invite for this handle and community is required",
                 conn,
             )
-        records.register(conn, body.handle, kid, jwk)
-        return {"handle": body.handle, "kid": kid, "community": body.community}
+        records.register(conn, community, body.handle, kid, jwk)
+        return {"handle": body.handle, "kid": kid, "community": community}
 
 
-@app.post("/v1/owners/{handle}/keys", status_code=201)
-def rotate(handle: str, body: RotateIn, request: Request):
-    """Replace the caller's key. Signed by the current token and proven by the new key; the
-    old key is retired, not deleted, so attribution survives."""
+@app.post("/v1/{community}/owners/{handle}/keys", status_code=201)
+def rotate(community: str, handle: str, body: RotateIn, request: Request):
+    """Replace the caller's key in this community. Signed by the current token and proven by
+    the new key; the old key is retired, not deleted, so attribution survives."""
     with db.connection() as conn:
-        current, _ = owner_of(conn, request)
-        if current != handle:
+        community = community_of(conn, community)
+        current, _ = owner_of(conn, request, community)
+        if current != handle or records.is_admin(conn, current):
             refuse(403, "an owner may rotate only their own key")
-        kid, jwk = checked_new_key(conn, handle, body)
-        if conn.execute("SELECT 1 FROM owner_keys WHERE kid = %s", (kid,)).fetchone():
+        kid, jwk = checked_new_key(conn, community, handle, body)
+        if records.key_on_record(conn, community, kid):
             refuse(409, "that key is already on record", conn)
-        records.rotate(conn, handle, kid, jwk)
+        records.rotate(conn, community, handle, kid, jwk)
         return {"handle": handle, "kid": kid}
 
 
-@app.get("/v1/whoami")
-def whoami(request: Request):
+@app.get("/v1/{community}/whoami")
+def whoami(community: str, request: Request):
     with db.connection() as conn:
-        handle, kid = owner_of(conn, request)
-        owner = records.owner(conn, handle)
+        community = community_of(conn, community)
+        handle, kid = owner_of(conn, request, community)
+        if records.is_admin(conn, handle):
+            return {
+                "handle": handle,
+                "kid": kid,
+                "community": community,
+                "admin": True,
+                "grants": [],
+                "suspect_after": None,
+            }
+        owner = records.owner(conn, community, handle)
         return {
             "handle": handle,
             "kid": kid,
-            "admin": handle == records.config(conn, "admin"),
-            "communities": {
-                community: [
-                    {"collection": collection, "perm": perm}
-                    for collection, perm in records.grants(conn, community, handle)
-                ]
-                for community in records.communities_of(conn, handle)
-            },
+            "community": community,
+            "admin": False,
+            "grants": [
+                {"collection": collection, "perm": perm}
+                for collection, perm in records.grants(conn, community, handle)
+            ],
             "suspect_after": owner["suspect_after"].isoformat()
             if owner["suspect_after"]
             else None,
         }
 
 
-@app.put("/v1/c/{community}/roster")
+@app.put("/v1/{community}/roster")
 def roster(community: str, body: RosterIn, request: Request):
-    """Replace the community roster (admin only). Members get the default grants (R-D6)."""
-    if not re.match(NAME, community) or not all(
-        re.match(NAME, h) for h in body.handles
-    ):
-        refuse(422, "community and handles must be plain names")
+    """Replace the community roster (admin only). Members get the default grants (R-D6); the
+    community must exist, and the admin's handle cannot be on it."""
+    if not all(re.match(NAME, h) for h in body.handles):
+        refuse(422, "handles must be plain names")
     with db.connection() as conn:
-        admin = require_admin(conn, request)
-        records.ensure_collections(conn, community, admin)
-        added, removed = records.set_roster(conn, community, body.handles)
+        community = community_of(conn, community)
+        require_admin(conn, request, community)
+        try:
+            added, removed = records.set_roster(conn, community, body.handles)
+        except Forbidden as e:
+            conn.rollback()
+            refuse(400, str(e))
         return {
             "community": community,
             "roster": sorted(set(body.handles)),
@@ -317,7 +432,14 @@ class Upload:
         cleanup.discard_pending(self.pid)
 
 
-async def stream_upload(request: Request, owner: str, file_id=None) -> Upload:
+def quota_for(conn, handle: str) -> int:
+    """The per-owner quota; the server admin's own writes are exempt (R-H2)."""
+    return 0 if records.is_admin(conn, handle) else settings.quota_bytes
+
+
+async def stream_upload(
+    request: Request, community: str, owner: str, quota: int, file_id=None
+) -> Upload:
     """Stream the body into S3 as a pending payload, hashing it in flight. Only a body that
     matches its declared Repr-Digest (and size, when declared) is returned; anything else is
     removed before raising."""
@@ -330,10 +452,10 @@ async def stream_upload(request: Request, owner: str, file_id=None) -> Upload:
     def begin():
         with db.connection() as conn:
             # an early, advisory check; the binding one runs in the commit transaction
-            if settings.quota_bytes and declared_size is not None:
-                if records.usage(conn, owner) + declared_size > settings.quota_bytes:
+            if quota and declared_size is not None:
+                if records.usage(conn, community, owner) + declared_size > quota:
                     refuse(413, "this upload would exceed the owner's quota")
-            return records.begin_payload(conn, owner)
+            return records.begin_payload(conn, community, owner)
 
     pid, key = await run_in_threadpool(begin)
 
@@ -368,13 +490,13 @@ async def stream_upload(request: Request, owner: str, file_id=None) -> Upload:
     return upload
 
 
-def written(conn, file_id, n, status_code=201) -> JSONResponse:
-    info = records.stat(conn, records.version(conn, file_id, n))
+def written(conn, community, file_id, n, status_code=201) -> JSONResponse:
+    info = records.stat(conn, records.version(conn, community, file_id, n))
     return JSONResponse(info, status_code=status_code, headers={"ETag": etag(n)})
 
 
 def commit_version(
-    conn, file_id, upload, head, metadata, content_type, handle, kid
+    conn, community, file_id, upload, head, metadata, content_type, handle, kid
 ) -> tuple:
     """The atomic step (R-A6): quota under the owner's lock, the payload turned ready (or an
     identical one reused), and the version inserted, all in the caller's transaction.
@@ -383,7 +505,13 @@ def commit_version(
         payload, duplicate = head["payload_id"], None
     else:
         payload, duplicate = records.commit_payload(
-            conn, upload.pid, upload.sha, upload.size, handle, settings.quota_bytes
+            conn,
+            upload.pid,
+            community,
+            upload.sha,
+            upload.size,
+            handle,
+            quota_for(conn, handle),
         )
     n = records.add_version(conn, file_id, payload, metadata, content_type, handle, kid)
     return n, duplicate
@@ -404,7 +532,7 @@ def mapped(error: Exception):
     raise error
 
 
-@app.put("/v1/c/{community}/{collection}/files/{name}", status_code=201)
+@app.put("/v1/{community}/collections/{collection}/files/{name}", status_code=201)
 async def put_file(community: str, collection: str, name: str, request: Request):
     """Create a file; its content and metadata become version 1. The name is reserved before
     any bytes move, and the file turns live only in the transaction that inserts v1."""
@@ -415,25 +543,28 @@ async def put_file(community: str, collection: str, name: str, request: Request)
 
     def reserve():
         with db.connection() as conn:
-            handle, kid = owner_of(conn, request)
-            if not records.collection_exists(conn, community, collection):
-                refuse(404, f"no collection {community}/{collection}")
-            if not records.can_create(conn, handle, community, collection):
-                refuse(403, f"no write access to {community}/{collection}")
+            found = community_of(conn, community)
+            handle, kid = owner_of(conn, request, found)
+            if not records.collection_exists(conn, found, collection):
+                refuse(404, f"no collection {found}/{collection}")
+            if not records.can_create(conn, handle, found, collection):
+                refuse(403, f"no write access to {found}/{collection}")
             return (
+                found,
                 handle,
                 kid,
-                records.reserve_file(conn, community, collection, name, handle),
+                quota_for(conn, handle),
+                records.reserve_file(conn, found, collection, name, handle),
             )
 
-    handle, kid, file_id = await run_in_threadpool(reserve)
+    community, handle, kid, quota, file_id = await run_in_threadpool(reserve)
 
     def release():
         with db.connection() as conn:
             records.release_reservation(conn, file_id)
 
     try:
-        upload = await stream_upload(request, handle, file_id)
+        upload = await stream_upload(request, community, handle, quota, file_id)
     except BaseException:
         await run_in_threadpool(release)
         raise
@@ -443,13 +574,21 @@ async def put_file(community: str, collection: str, name: str, request: Request)
             try:
                 records.claim_reservation(conn, file_id, handle)
                 n, duplicate = commit_version(
-                    conn, file_id, upload, None, metadata, content_type, handle, kid
+                    conn,
+                    community,
+                    file_id,
+                    upload,
+                    None,
+                    metadata,
+                    content_type,
+                    handle,
+                    kid,
                 )
             except (QuotaExceeded, PreconditionFailed) as e:
                 conn.rollback()
                 mapped(e)
             conn.commit()
-            response = written(conn, file_id, n)
+            response = written(conn, community, file_id, n)
         finish_after_commit(duplicate)
         return response
 
@@ -461,8 +600,8 @@ async def put_file(community: str, collection: str, name: str, request: Request)
         raise
 
 
-@app.post("/v1/files/{file_id}/versions", status_code=201)
-async def put_version(file_id: uuid.UUID, request: Request):
+@app.post("/v1/{community}/files/{file_id}/versions", status_code=201)
+async def put_version(community: str, file_id: uuid.UUID, request: Request):
     """Append a version: new content, new metadata, or both (R-A2). A metadata-only version
     reuses the payload; a content-only version keeps the file's metadata. With If-Match the
     write applies only if the head is still the version the client built on (R-A6)."""
@@ -474,18 +613,23 @@ async def put_version(file_id: uuid.UUID, request: Request):
 
     def check():
         with db.connection() as conn:
-            handle, kid = owner_of(conn, request)
-            row = records.file_row(conn, file_id)
+            found = community_of(conn, community)
+            handle, kid = owner_of(conn, request, found)
+            row = records.file_row(conn, found, file_id)
             if not records.can_modify(conn, handle, row):
                 refuse(403, "only the file's creator or the admin may add versions")
             head = records.latest_version(conn, file_id)
             if expected is not None and head["n"] != expected:
                 # fail fast, before any bytes are streamed; re-checked under the lock below
                 refuse(412, f"the file is at v{head['n']}, not v{expected}")
-            return handle, kid
+            return found, handle, kid, quota_for(conn, handle)
 
-    handle, kid = await run_in_threadpool(check)
-    upload = None if metadata_only else await stream_upload(request, handle)
+    community, handle, kid, quota = await run_in_threadpool(check)
+    upload = (
+        None
+        if metadata_only
+        else await stream_upload(request, community, handle, quota)
+    )
 
     def commit():
         with db.connection() as conn:
@@ -493,6 +637,7 @@ async def put_version(file_id: uuid.UUID, request: Request):
                 head = records.lock_head(conn, file_id, expected)
                 n, duplicate = commit_version(
                     conn,
+                    community,
                     file_id,
                     upload,
                     head,
@@ -507,7 +652,7 @@ async def put_version(file_id: uuid.UUID, request: Request):
                 conn.rollback()
                 mapped(e)
             conn.commit()
-            response = written(conn, file_id, n)
+            response = written(conn, community, file_id, n)
         finish_after_commit(duplicate)
         return response
 
@@ -519,13 +664,16 @@ async def put_version(file_id: uuid.UUID, request: Request):
         raise
 
 
-@app.delete("/v1/files/{file_id}")
-def delete_file(file_id: uuid.UUID, request: Request, reason: str | None = None):
+@app.delete("/v1/{community}/files/{file_id}")
+def delete_file(
+    community: str, file_id: uuid.UUID, request: Request, reason: str | None = None
+):
     """Soft delete (R-B1): append a tombstone that keeps serving the previous content."""
     expected = wire(parse_if_match, request.headers.get("if-match"))
     with db.connection() as conn:
-        handle, kid = owner_of(conn, request)
-        row = records.file_row(conn, file_id)
+        community = community_of(conn, community)
+        handle, kid = owner_of(conn, request, community)
+        row = records.file_row(conn, community, file_id)
         if not records.can_modify(conn, handle, row):
             refuse(403, "only the file's creator or the admin may delete it")
         try:
@@ -534,62 +682,68 @@ def delete_file(file_id: uuid.UUID, request: Request, reason: str | None = None)
             conn.rollback()
             mapped(e)
         conn.commit()
-        return written(conn, file_id, n, status_code=200)
+        return written(conn, community, file_id, n, status_code=200)
 
 
-def reader_of(conn, request: Request) -> tuple[str | None, dict | None]:
-    """Who is reading: (handle, None) for a signed-in owner, (None, key) for a read key,
-    (None, None) for an anonymous request (enough only for a public collection)."""
+def reader_of(conn, request: Request, community: str) -> tuple[str | None, dict | None]:
+    """Who is reading: (handle, None) for a signed-in owner, (None, key) for a read key of
+    this community, (None, None) for an anonymous request (enough only for a public
+    collection)."""
     credential = bearer(request)
     if credential is None:
         return None, None
     if credential.startswith(READ_KEY_PREFIX):
-        key = records.use_key(conn, secrets.digest(credential))
+        key = records.use_key(conn, community, secrets.digest(credential))
         if key is None:
             refuse(401, "the read key is not valid, has expired, or was revoked")
         return None, key
-    return owner_of(conn, request)[0], None
+    return owner_of(conn, request, community)[0], None
 
 
-def readable(request: Request, file_id, ref):
+def readable(request: Request, community: str, file_id, ref):
+    """-> (community, stat, s3 key) of a version the caller may read."""
     with db.connection() as conn:
-        handle, key = reader_of(conn, request)
-        row = records.version(conn, file_id, ref)
+        community = community_of(conn, community)
+        handle, key = reader_of(conn, request, community)
+        row = records.version(conn, community, file_id, ref)
         if not records.can_read(conn, handle, row, key):
             if handle is None and key is None:
                 refuse(401, "sign in, or use a read key, to read this file")
             refuse(403, "no read access to this file")
-        return records.stat(conn, row), row["s3_key"]
+        return community, records.stat(conn, row), row["s3_key"]
 
 
-@app.get("/v1/files/{file_id}/v/{ref}/stat")
-def stat(file_id: uuid.UUID, ref: str, request: Request):
-    info = readable(request, file_id, ref)[0]
+@app.get("/v1/{community}/files/{file_id}/v/{ref}/stat")
+def stat(community: str, file_id: uuid.UUID, ref: str, request: Request):
+    info = readable(request, community, file_id, ref)[1]
     return JSONResponse(info, headers={"ETag": etag(info["version"])})
 
 
-@app.get("/v1/files/{file_id}/versions")
-def versions(file_id: uuid.UUID, request: Request):
-    readable(request, file_id, 1)
+@app.get("/v1/{community}/files/{file_id}/versions")
+def versions(community: str, file_id: uuid.UUID, request: Request):
+    community = readable(request, community, file_id, 1)[0]
     with db.connection() as conn:
-        return {"versions": records.versions(conn, file_id)}
+        return {"versions": records.versions(conn, community, file_id)}
 
 
-@app.get("/v1/files/{file_id}/v/{ref}")
-async def content(file_id: uuid.UUID, ref: str, request: Request):
+@app.get("/v1/{community}/files/{file_id}/v/{ref}")
+async def content(community: str, file_id: uuid.UUID, ref: str, request: Request):
     """Stream one version (R-E5): the service authorizes and streams every byte itself."""
-    info, key = await run_in_threadpool(readable, request, file_id, ref)
+    community, info, key = await run_in_threadpool(
+        readable, request, community, file_id, ref
+    )
     if info["purged"]:
         return JSONResponse(
             {"detail": "this version's content was purged", **info}, status_code=410
         )
     byte_range = request.headers.get("range")
     obj = await run_in_threadpool(store.open_read, key, byte_range)
-    links = [f'</v1/files/{file_id}/v/{info["latest"]}>; rel="latest"']
+    base = f"/v1/{community}/files/{file_id}/v"
+    links = [f'<{base}/{info["latest"]}>; rel="latest"']
     if info["prev"]:
-        links.append(f'</v1/files/{file_id}/v/{info["prev"]}>; rel="prev"')
+        links.append(f'<{base}/{info["prev"]}>; rel="prev"')
     if info["next"]:
-        links.append(f'</v1/files/{file_id}/v/{info["next"]}>; rel="next"')
+        links.append(f'<{base}/{info["next"]}>; rel="next"')
     headers = {
         "Repr-Digest": digest_header(info["sha256"]),
         "X-Data-Citation": info["citation"],
@@ -652,18 +806,19 @@ def key_view(row) -> dict:
 
 
 def require_manager(conn, request, community, collection) -> str:
-    handle, _ = owner_of(conn, request)
+    handle, _ = owner_of(conn, request, community)
     records.collection_row(conn, community, collection)
     if not records.can_manage(conn, handle, community, collection):
         refuse(403, "only the collection's owner or the admin may do this")
     return handle
 
 
-@app.post("/v1/c/{community}/collections", status_code=201)
+@app.post("/v1/{community}/collections", status_code=201)
 def create_collection(community: str, body: CollectionIn, request: Request):
     """A roster member, or the admin, creates a collection and becomes its owner (R-D3)."""
     with db.connection() as conn:
-        handle, _ = owner_of(conn, request)
+        community = community_of(conn, community)
+        handle, _ = owner_of(conn, request, community)
         if not (
             records.is_admin(conn, handle) or records.on_roster(conn, community, handle)
         ):
@@ -677,18 +832,20 @@ def create_collection(community: str, body: CollectionIn, request: Request):
         }
 
 
-@app.put("/v1/c/{community}/{collection}/public")
+@app.put("/v1/{community}/collections/{collection}/public")
 def set_public(community: str, collection: str, body: PublicIn, request: Request):
     with db.connection() as conn:
+        community = community_of(conn, community)
         require_manager(conn, request, community, collection)
         records.set_public(conn, community, collection, body.public)
         return {"community": community, "collection": collection, "public": body.public}
 
 
-@app.put("/v1/c/{community}/{collection}/grants")
+@app.put("/v1/{community}/collections/{collection}/grants")
 def set_grant(community: str, collection: str, body: GrantIn, request: Request):
     """The owner grants (or withdraws) read or write to a roster member (R-D3)."""
     with db.connection() as conn:
+        community = community_of(conn, community)
         require_manager(conn, request, community, collection)
         records.set_grant(
             conn, community, collection, body.handle, body.perm, body.granted
@@ -702,12 +859,13 @@ def set_grant(community: str, collection: str, body: GrantIn, request: Request):
         }
 
 
-@app.post("/v1/c/{community}/{collection}/keys", status_code=201)
+@app.post("/v1/{community}/collections/{collection}/keys", status_code=201)
 def mint_key(community: str, collection: str, body: KeyIn, request: Request):
     """A read key for non-members (R-E2): for the whole collection by its owner, or for one
     file by the collection's owner or that file's creator. The secret is shown only here."""
     with db.connection() as conn:
-        handle, _ = owner_of(conn, request)
+        community = community_of(conn, community)
+        handle, _ = owner_of(conn, request, community)
         records.collection_row(conn, community, collection)
         manager = records.can_manage(conn, handle, community, collection)
         if body.file_id is None:
@@ -716,8 +874,8 @@ def mint_key(community: str, collection: str, body: KeyIn, request: Request):
                     403, "only the collection's owner or the admin may key a collection"
                 )
         else:
-            row = records.file_row(conn, body.file_id)
-            if (row["community"], row["collection"]) != (community, collection):
+            row = records.file_row(conn, community, body.file_id)
+            if row["collection"] != collection:
                 refuse(404, f"no such file in {community}/{collection}")
             creator = records.first_writer(conn, body.file_id) == handle and (
                 records.on_roster(conn, community, handle)
@@ -740,12 +898,13 @@ def mint_key(community: str, collection: str, body: KeyIn, request: Request):
         return {**key_view(row), "key": secret}
 
 
-@app.get("/v1/c/{community}/{collection}/keys")
+@app.get("/v1/{community}/collections/{collection}/keys")
 def list_keys(community: str, collection: str, request: Request):
     """The owner and the admin see every key of the collection; others only the keys they
     minted. Secrets are never listed."""
     with db.connection() as conn:
-        handle, _ = owner_of(conn, request)
+        community = community_of(conn, community)
+        handle, _ = owner_of(conn, request, community)
         records.collection_row(conn, community, collection)
         mine_only = not records.can_manage(conn, handle, community, collection)
         rows = records.list_keys(
@@ -754,12 +913,13 @@ def list_keys(community: str, collection: str, request: Request):
         return {"keys": [key_view(r) for r in rows]}
 
 
-@app.delete("/v1/keys/{key_id}")
-def revoke_key(key_id: uuid.UUID, request: Request):
+@app.delete("/v1/{community}/keys/{key_id}")
+def revoke_key(community: str, key_id: uuid.UUID, request: Request):
     """Revoke a read key: refused from the very next request on (R-E5)."""
     with db.connection() as conn:
-        handle, _ = owner_of(conn, request)
-        row = records.key_row(conn, key_id)
+        community = community_of(conn, community)
+        handle, _ = owner_of(conn, request, community)
+        row = records.key_row(conn, community, key_id)
         if not (
             row["created_by"] == handle
             or records.can_manage(conn, handle, row["community"], row["collection"])
@@ -769,7 +929,7 @@ def revoke_key(key_id: uuid.UUID, request: Request):
                 "only the key's minter, the collection's owner or the admin may revoke it",
             )
         records.revoke_key(conn, key_id)
-        return key_view(records.key_row(conn, key_id))
+        return key_view(records.key_row(conn, community, key_id))
 
 
 # ── parity: the change feed, lookups, promote and verify (R-G) ──────────────────────────────
@@ -791,7 +951,7 @@ class PromoteIn(BaseModel):
 
 def lister(conn, request: Request, community: str, collection: str):
     """Who may list a collection -> (handle, key); refuses everyone else."""
-    handle, key = reader_of(conn, request)
+    handle, key = reader_of(conn, request, community)
     records.collection_row(conn, community, collection)
     if not records.can_read_collection(conn, handle, community, collection, key):
         if handle is None and key is None:
@@ -815,7 +975,7 @@ def page(conn, handle, key, rows, since: int, limit: int) -> dict:
     }
 
 
-@app.get("/v1/c/{community}/{collection}/changes")
+@app.get("/v1/{community}/collections/{collection}/changes")
 def changes(
     community: str,
     collection: str,
@@ -825,15 +985,17 @@ def changes(
 ):
     """Every version written into the collection after seq `since`, in seq order (R-G3)."""
     with db.connection() as conn:
+        community = community_of(conn, community)
         handle, key = lister(conn, request, community, collection)
         rows = records.changes(conn, community, collection, since, limit)
         return page(conn, handle, key, rows, since, limit)
 
 
-@app.post("/v1/c/{community}/{collection}/query")
+@app.post("/v1/{community}/collections/{collection}/query")
 def query(community: str, collection: str, body: QueryIn, request: Request):
     """Versions whose metadata contains `contains`, paged like changes (R-G6)."""
     with db.connection() as conn:
+        community = community_of(conn, community)
         handle, key = lister(conn, request, community, collection)
         rows = records.query(
             conn, community, collection, body.contains, body.since, body.limit
@@ -841,39 +1003,45 @@ def query(community: str, collection: str, body: QueryIn, request: Request):
         return page(conn, handle, key, rows, body.since, body.limit)
 
 
-@app.get("/v1/c/{community}/{collection}/find")
+@app.get("/v1/{community}/collections/{collection}/find")
 def find(community: str, collection: str, name: str, request: Request):
     """The file holding a name (R-G1), at its newest version, tombstone or not: a deleted
     file still holds its name."""
     with db.connection() as conn:
+        community = community_of(conn, community)
         handle, key = lister(conn, request, community, collection)
         file_id = records.find_name(conn, community, collection, name)
         if file_id is None:
             refuse(404, f"no file named '{name}' in {community}/{collection}")
-        row = records.version(conn, file_id, records.latest_version(conn, file_id)["n"])
+        row = records.version(
+            conn, community, file_id, records.latest_version(conn, file_id)["n"]
+        )
         if not records.can_read(conn, handle, row, key):
             refuse(404, f"no file named '{name}' in {community}/{collection}")
         return JSONResponse(records.stat(conn, row), headers={"ETag": etag(row["n"])})
 
 
-@app.get("/v1/sha256/{sha}")
-def by_hash(sha: str, request: Request):
-    """Every version the caller may read that holds this content (R-F2)."""
+@app.get("/v1/{community}/sha256/{sha}")
+def by_hash(community: str, sha: str, request: Request):
+    """Every version of this community the caller may read that holds this content (R-F2)."""
     if not valid_sha256(sha):
         refuse(400, "a sha256 is 64 lowercase hex characters")
     with db.connection() as conn:
-        handle, key = reader_of(conn, request)
+        community = community_of(conn, community)
+        handle, key = reader_of(conn, request, community)
         return {
             "items": [
                 records.stat(conn, r)
-                for r in records.by_hash(conn, sha)
+                for r in records.by_hash(conn, community, sha)
                 if records.can_read(conn, handle, r, key)
             ]
         }
 
 
-@app.post("/v1/files/{file_id}/v/{n}/promote", status_code=201)
-def promote(file_id: uuid.UUID, n: int, body: PromoteIn, request: Request):
+@app.post("/v1/{community}/files/{file_id}/v/{n}/promote", status_code=201)
+def promote(
+    community: str, file_id: uuid.UUID, n: int, body: PromoteIn, request: Request
+):
     """Copy one version into a collection as a new file, atomically (R-G4); admin only.
 
     With `stamp_json_pointer` the content is a JSON document, and the server writes the new
@@ -885,11 +1053,11 @@ def promote(file_id: uuid.UUID, n: int, body: PromoteIn, request: Request):
     name = body.name
     pointer = body.stamp_json_pointer
     with db.connection() as conn:
-        handle, _ = owner_of(conn, request)
+        community = community_of(conn, community)
+        handle, _ = owner_of(conn, request, community)
         if not records.is_admin(conn, handle):
             refuse(403, "only the admin promotes")
-        source = records.version(conn, file_id, n)
-        community = source["community"]
+        source = records.version(conn, community, file_id, n)
         records.collection_row(conn, community, body.collection)
         name = name or source["name"]
         if not valid_file_name(name):
@@ -910,13 +1078,13 @@ def promote(file_id: uuid.UUID, n: int, body: PromoteIn, request: Request):
             wire(
                 stamp, json.loads(raw), pointer, ""
             )  # refuse a bad pointer before writing
-            pid, s3_key = records.begin_payload(conn, handle)
+            pid, s3_key = records.begin_payload(conn, community, handle)
     metadata = {**source["metadata"], **(body.metadata or {})}
 
     def commit():
         duplicate = None
         with db.connection() as conn:
-            records.lock_owner(conn, handle)
+            records.lock_owner(conn, community, handle)
             new = records.create_live_file(conn, community, body.collection, name)
             clock, payload = None, source["payload_id"]
             if document is not None:
@@ -927,10 +1095,11 @@ def promote(file_id: uuid.UUID, n: int, body: PromoteIn, request: Request):
                     payload, duplicate = records.commit_payload(
                         conn,
                         pid,
+                        community,
                         hashlib.sha256(data).hexdigest(),
                         len(data),
                         handle,
-                        settings.quota_bytes,
+                        quota_for(conn, handle),
                     )
                 except QuotaExceeded as e:
                     conn.rollback()
@@ -948,7 +1117,7 @@ def promote(file_id: uuid.UUID, n: int, body: PromoteIn, request: Request):
                 clock=clock,
             )
             conn.commit()
-            response = written(conn, new, 1)
+            response = written(conn, community, new, 1)
         finish_after_commit(duplicate)
         return response
 
@@ -960,18 +1129,21 @@ def promote(file_id: uuid.UUID, n: int, body: PromoteIn, request: Request):
         raise
 
 
-@app.get("/v1/verify")
+@app.get("/v1/{community}/verify")
 def verify(
+    community: str,
     cite: str,
     request: Request,
     before: str | None = None,
     sha256: str | None = None,
 ):
     """The gate's check of a cited download (R-G9). A version the caller cannot read answers
-    exactly like one that never existed, so verify reveals nothing across communities."""
+    exactly like one that never existed, and a citation resolves only inside this community,
+    so verify reveals nothing the caller may not read."""
     when = wire(parse_instant, before) if before else None
     with db.connection() as conn:
-        handle, _ = owner_of(conn, request)
+        community = community_of(conn, community)
+        handle, _ = owner_of(conn, request, community)
         cited = parse_citation(cite)
         if cited is None:
             return {
@@ -981,7 +1153,7 @@ def verify(
             }
         missing = {"ok": False, "exists": False, "reason": "no such file version"}
         try:
-            row = records.version(conn, *cited)
+            row = records.version(conn, community, *cited)
         except NotFound:
             return missing
         if not records.can_read(conn, handle, row):

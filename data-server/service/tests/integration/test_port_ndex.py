@@ -171,7 +171,7 @@ def everything(server, headers, collection) -> list:
     items, since = [], 0
     while True:
         page = httpx.get(
-            f"{server.url}/v1/c/demo/{collection}/changes",
+            f"{server.url}/v1/demo/collections/{collection}/changes",
             params={"since": since, "limit": 4},
             headers=headers,
         ).json()
@@ -242,7 +242,7 @@ def test_the_port_bootstraps_a_fresh_server_once(make_server, tmp_path):
     assert vega.get(ported[0]["file_id"]).status_code == 200
     vegas = next(i for i in ported if i["created_by"] == "vega")
     keyed = httpx.post(
-        f"{server.url}/v1/c/demo/record/keys",
+        f"{server.url}/v1/demo/collections/record/keys",
         json={"label": "reviewer", "file_id": vegas["file_id"]},
         headers=vega.headers(),
     )

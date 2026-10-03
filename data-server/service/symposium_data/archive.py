@@ -17,7 +17,7 @@ import io
 import json
 import tarfile
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 import psycopg
 
@@ -55,12 +55,7 @@ class Archive:
         self.db, self.store, self.records, self.cleanup = db, store, records, cleanup
 
     def community_exists(self, conn, community: str) -> bool:
-        row = conn.execute(
-            "SELECT 1 FROM collections WHERE community = %s "
-            "UNION ALL SELECT 1 FROM roster WHERE community = %s LIMIT 1",
-            (community, community),
-        ).fetchone()
-        return row is not None
+        return self.records.community_name(conn, community) is not None
 
     # ── export ──────────────────────────────────────────────────────────────────────────────
     def export(self, community: str, out) -> dict:
@@ -145,14 +140,14 @@ class Archive:
         )
         owners = q(
             "SELECT handle, reserved, created, suspect_after FROM owners "
-            "WHERE handle = ANY(%s) ORDER BY handle",
-            (handles,),
+            "WHERE community = %s AND handle = ANY(%s) ORDER BY handle",
+            (community, handles),
         ).fetchall()
         for owner in owners:
             owner["keys"] = q(
                 "SELECT kid, jwk, active, created, retired FROM owner_keys "
-                "WHERE handle = %s ORDER BY created",
-                (owner["handle"],),
+                "WHERE community = %s AND handle = %s ORDER BY created",
+                (community, owner["handle"]),
             ).fetchall()
         tables["owners"] = owners
         payloads = q(
@@ -202,7 +197,7 @@ class Archive:
                         json.loads(line) for line in data.read().splitlines()
                     ]
                 elif member.name.startswith("payloads/"):
-                    self.receive(tables, pending, member, data)
+                    self.receive(tables, pending, member, data, manifest["community"])
                 else:
                     raise Malformed(f"unexpected entry {member.name}")
         if manifest is None or set(tables) != set(TABLES):
@@ -242,14 +237,16 @@ class Archive:
             raise Malformed("payloads arrive before versions.jsonl")
         return {v["sha256"]: v for v in tables["versions"] if v["stored"]}
 
-    def receive(self, tables: dict, pending: dict, member, data):
+    def receive(self, tables: dict, pending: dict, member, data, community: str):
         """Stream one payload into S3 as a pending payload, checking its sha256 and size."""
         sha = member.name[len("payloads/") :]
         expected = self.stored(tables).get(sha)
         if not valid_sha256(sha) or expected is None or sha in pending:
             raise Malformed(f"unexpected payload {member.name}")
         with self.db.connection() as conn:
-            pid, key = self.records.begin_payload(conn, expected["first_owner"])
+            pid, key = self.records.begin_payload(
+                conn, community, expected["first_owner"]
+            )
         pending[sha] = pid
 
         def started(upload_id):
@@ -268,12 +265,15 @@ class Archive:
             raise
 
     def commit(self, manifest: dict, tables: dict, pending: dict) -> tuple[dict, list]:
-        community, admin = manifest["community"], manifest["admin"]
+        community = manifest["community"]
         duplicates = []
         try:
             with self.db.connection() as conn:
                 self.check_target(conn, manifest)
-                handles = [self.reconcile(conn, o, admin) for o in tables["owners"]]
+                conn.execute("INSERT INTO communities (name) VALUES (%s)", (community,))
+                handles = [
+                    self.create_owner(conn, community, o) for o in tables["owners"]
+                ]
                 self.write_rows(conn, community, tables, pending, duplicates)
         except psycopg.errors.UniqueViolation as e:
             raise Refused(
@@ -282,62 +282,37 @@ class Archive:
         counts = {name: len(tables[name]) for name in TABLES if name != "owners"}
         return {"imported": community, **counts, "handles": handles}, duplicates
 
-    def reconcile(self, conn, owner: dict, admin: str) -> dict:
-        """Bring one exported handle onto this server (R-J6). This server's identities win:
-        a key it already holds stays as it is, and the export adds only history."""
+    def create_owner(self, conn, community: str, owner: dict) -> dict:
+        """Recreate one exported member in the new community, with its keys (R-J6). Identity
+        is per community and the community is new, so there is nothing to merge. The server
+        admin is not a member of any community, so its keys are never exported."""
         handle = owner["handle"]
-        if handle == admin:
-            return {"handle": handle, "result": "admin: this server's keys kept"}
-        for key in owner["keys"]:
-            row = conn.execute(
-                "SELECT handle FROM owner_keys WHERE kid = %s", (key["kid"],)
-            ).fetchone()
-            if row is not None and row["handle"] != handle:
-                raise Refused(
-                    f"key {key['kid']} of '{handle}' belongs to '{row['handle']}' here"
-                )
-        exists = conn.execute(
-            "SELECT 1 FROM owners WHERE handle = %s FOR UPDATE", (handle,)
-        ).fetchone()
-        if exists is None:
-            conn.execute(
-                "INSERT INTO owners (handle, reserved, created, suspect_after) "
-                "VALUES (%s, %s, %s, %s)",
-                (handle, owner["reserved"], owner["created"], owner["suspect_after"]),
-            )
-            for key in owner["keys"]:
-                self.add_key(conn, handle, key, key["active"], key["retired"])
-            return {"handle": handle, "result": "created"}
         conn.execute(
-            "UPDATE owners SET suspect_after = LEAST(suspect_after, %s::timestamptz) "
-            "WHERE handle = %s",
-            (owner["suspect_after"], handle),
-        )
-        known = {
-            r["kid"]
-            for r in conn.execute(
-                "SELECT kid FROM owner_keys WHERE handle = %s", (handle,)
-            ).fetchall()
-        }
-        added = [key for key in owner["keys"] if key["kid"] not in known]
-        for key in added:
-            # retired, so every imported key_id resolves but none can sign in
-            self.add_key(conn, handle, key, False, key["retired"] or datetime.now(UTC))
-        return {"handle": handle, "result": "keys merged" if added else "unchanged"}
-
-    def add_key(self, conn, handle: str, key: dict, active: bool, retired):
-        conn.execute(
-            "INSERT INTO owner_keys (kid, handle, jwk, active, created, retired) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
+            "INSERT INTO owners (community, handle, reserved, created, suspect_after) "
+            "VALUES (%s, %s, %s, %s, %s)",
             (
-                key["kid"],
+                community,
                 handle,
-                json.dumps(key["jwk"]),
-                active,
-                key["created"],
-                retired,
+                owner["reserved"],
+                owner["created"],
+                owner["suspect_after"],
             ),
         )
+        for key in owner["keys"]:
+            conn.execute(
+                "INSERT INTO owner_keys (community, kid, handle, jwk, active, created, retired) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (
+                    community,
+                    key["kid"],
+                    handle,
+                    json.dumps(key["jwk"]),
+                    key["active"],
+                    key["created"],
+                    key["retired"],
+                ),
+            )
+        return {"handle": handle, "result": "created"}
 
     def write_rows(self, conn, community, tables, pending, duplicates):
         q = conn.execute
@@ -374,7 +349,13 @@ class Archive:
         for sha, version in self.stored(tables).items():
             # the restore is the operator's act: quota (0) does not apply
             ready[sha], duplicate = self.records.commit_payload(
-                conn, pending[sha], sha, version["size"], version["first_owner"], 0
+                conn,
+                pending[sha],
+                community,
+                sha,
+                version["size"],
+                version["first_owner"],
+                0,
             )
             if duplicate:
                 duplicates.append(duplicate)
@@ -382,7 +363,9 @@ class Archive:
             if v["stored"]:
                 payload = ready[v["sha256"]]
             else:
-                payload = purged.get(v["sha256"]) or self.purged_payload(conn, v)
+                payload = purged.get(v["sha256"]) or self.purged_payload(
+                    conn, community, v
+                )
                 purged[v["sha256"]] = payload
             q(
                 "INSERT INTO versions (file_id, n, payload_id, metadata, content_type, created, "
@@ -424,14 +407,15 @@ class Archive:
                 ),
             )
 
-    def purged_payload(self, conn, version: dict):
+    def purged_payload(self, conn, community: str, version: dict):
         """A row for content that was purged at the source: its hash and size, no bytes."""
         pid = uuid.uuid4()
         conn.execute(
-            "INSERT INTO payloads (id, sha256, size, state, s3_key, first_owner) "
-            "VALUES (%s, %s, %s, 'purged', %s, %s)",
+            "INSERT INTO payloads (id, community, sha256, size, state, s3_key, first_owner) "
+            "VALUES (%s, %s, %s, %s, 'purged', %s, %s)",
             (
                 pid,
+                community,
                 version["sha256"],
                 version["size"],
                 f"payloads/{pid}",

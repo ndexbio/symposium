@@ -13,6 +13,7 @@ from symposium_data.wire import (
     parse_instant,
     parse_metadata,
     stamp,
+    valid_community,
     valid_file_name,
     valid_sha256,
 )
@@ -135,3 +136,28 @@ def test_citations_parse_to_file_and_version():
         "",
     ):
         assert parse_citation(bad) is None
+
+
+@pytest.mark.parametrize(
+    "name", ["comm1", "Comm_1", "a", "x" * 20, "lab_2026", "STATUS_x"]
+)
+def test_community_names_are_slugs(name):
+    assert valid_community(name)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        "x" * 21,
+        "my comm",
+        "my-comm",
+        "comm.1",
+        "café",
+        "status",
+        "Communities",
+        "ADMIN",
+    ],
+)
+def test_community_names_that_are_not_slugs_or_are_reserved_are_refused(name):
+    assert not valid_community(name)

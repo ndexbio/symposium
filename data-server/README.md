@@ -40,33 +40,46 @@ These four targets are the only ones. Run them from this folder, or from the rep
 
 Pushing a tag `data-server-v<version>` from the `data-store` branch runs `.github/workflows/release.yml`. That workflow runs `make push-docker TAG=<version>`, which publishes `ndexbio/symposium-data:<version>` and `:latest`. It needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 
-## Identity
+## Communities
 
-The server provisions no accounts. Each member generates an Ed25519 key on their own machine, and the private key never leaves it. Registration binds a handle to the public key (R-D, Part 2 of the spike).
+One server hosts many communities as tenants (R-G8). Each has its own members, identities and data, and every route that depends on a community sits under `/v1/{community}/…`. Only `/v1/status`, `/v1/communities` and the admin's sign-in (`/v1/admin/…`) are server-wide.
+
+A community name is 1–20 letters, digits or underscores; `status`, `communities` and `admin` are reserved. A name keeps the case it was created with, is unique ignoring case, and matches paths ignoring case. A path naming a community that does not exist, or a name that is not a slug, answers `404`.
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /v1/auth/challenge {handle}` | A single-use nonce, valid for 5 minutes. |
-| `POST /v1/auth/token {handle, nonce, signature}` | Sign the nonce with an active key to receive an EdDSA access token (15 minutes by default). |
-| `POST /v1/owners {handle, community, public_jwk, nonce, signature, invite?}` | Register. Returns `503` before `data-admin init`, `403` for a handle not on the community's roster, `409` for a handle already registered, and `401` when the signature fails proof of possession. In `invite` mode a valid, unused invite bound to the handle is also required. |
-| `POST /v1/owners/{handle}/keys {public_jwk, nonce, signature}` | Rotate your own key: authorized with your current token, proven by the new key. The old key is retired, not deleted, so attribution survives. |
-| `GET /v1/whoami` | The caller's handle, key id, admin flag, communities with their grants, and `suspect_after`. |
-| `PUT /v1/c/{community}/roster {handles}` | Admin only. Replaces the roster. New members get the default grants (write on `inbox` and `files`, read on `record` and `files`). Removed members lose every grant in the community but keep their identity. |
+| `POST /v1/communities {name}` | Admin only. Creates a community and its default collections. Idempotent: `201` when created, `200` when exactly that name exists; `400` for a name that is not a slug, is reserved, or differs only in case from an existing one. |
+| `GET /v1/communities` | Admin only. Every community, with when it was created. |
+
+## Identity
+
+The server provisions no accounts. Each member generates an Ed25519 key on their own machine, and the private key never leaves it. Registration binds a handle to the public key **within one community** (R-D, Part 2 of the spike): the same handle in another community is a separate identity, with its own key.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/{community}/auth/challenge {handle}` | A single-use nonce, valid for 5 minutes. `503` before the server is initialized. |
+| `POST /v1/{community}/auth/token {handle, nonce, signature}` | Sign the nonce with an active key to receive an EdDSA access token (15 minutes by default), valid only in this community. |
+| `POST /v1/{community}/owners {handle, public_jwk, nonce, signature, invite?}` | Register. Returns `503` before `data-admin init`, `403` for a handle not on the community's roster, `409` for a handle already registered in it, and `401` when the signature fails proof of possession. In `invite` mode a valid, unused invite bound to the handle is also required. |
+| `POST /v1/{community}/owners/{handle}/keys {public_jwk, nonce, signature}` | Rotate your own key: authorized with your current token, proven by the new key. The old key is retired, not deleted, so attribution survives. |
+| `GET /v1/{community}/whoami` | The caller's handle, key id, community, admin flag, grants in this community, and `suspect_after`. |
+| `PUT /v1/{community}/roster {handles}` | Admin only. Replaces the roster. New members get the default grants (write on `inbox` and `files`, read on `record` and `files`). Removed members lose every grant in the community but keep their identity. The admin's handle cannot be on a roster. |
+
+**The server admin** is server-wide, not a member of any community. It signs in with `POST /v1/admin/challenge` and `POST /v1/admin/token {nonce, signature}`, signing with the key bound by `data-admin init`; its token works in every community.
 
 Requests authenticate with `Authorization: Bearer <token>`.
 
 ## Files and versions
 
-Every community has three collections: `inbox` (submissions), `files` (stored data) and `record` (the accepted record). They are created when the admin first sets its roster. Files are immutable and versioned (R-A, R-B). The service streams every byte, both up and down.
+Every community has three collections: `inbox` (submissions), `files` (stored data) and `record` (the accepted record). They are created with the community. Files are immutable and versioned (R-A, R-B). The service streams every byte, both up and down.
 
 | Endpoint | Purpose |
 |---|---|
-| `PUT /v1/c/{community}/{collection}/files/{name}` | Create a file; the body becomes v1. `Repr-Digest: sha-256=:<base64>:` is required, because the server hashes the body as it streams and rejects a mismatch with `400`, keeping nothing. Optional headers: `X-Data-Metadata` (a base64url JSON object), `X-Data-Size` and `Content-Type`. Returns `409` if the name is taken, including by an upload still in progress, `413` over quota. |
-| `POST /v1/files/{id}/versions` | Append a version. With a body: new content, keeping the current metadata unless `X-Data-Metadata` is sent. With `X-Data-Metadata-Only: 1`: new metadata, reusing the content. Optional `If-Match: "v<n>"`: apply only if the head is still v<n>, otherwise `412`. |
-| `DELETE /v1/files/{id}?reason=…` | Soft delete: appends a tombstone version that keeps serving the previous content with `X-Data-Deleted: true`. A later version un-deletes the file. Accepts `If-Match` like a new version. |
-| `GET /v1/files/{id}/v/{n}` | Stream one version, with Range support. Headers: `Repr-Digest`, `X-Data-Citation`, `X-Data-Version`, `X-Data-Deleted`, `X-Data-File-Deleted`, and a `Link` header with `latest`, `prev` and `next`. A purged version answers `410` with its metadata. `latest` is the newest version that isn't a tombstone. |
-| `GET /v1/files/{id}/v/{n}/stat` | Metadata only, never the content. Includes `sha256`, `size`, `created`, `seq`, `created_by`, `key_id`, `deleted`, `purged`, `suspect` and `integrity`. |
-| `GET /v1/files/{id}/versions` | Every version of the file. |
+| `PUT /v1/{community}/collections/{collection}/files/{name}` | Create a file; the body becomes v1. `Repr-Digest: sha-256=:<base64>:` is required, because the server hashes the body as it streams and rejects a mismatch with `400`, keeping nothing. Optional headers: `X-Data-Metadata` (a base64url JSON object), `X-Data-Size` and `Content-Type`. Returns `409` if the name is taken, including by an upload still in progress, `413` over quota. |
+| `POST /v1/{community}/files/{id}/versions` | Append a version. With a body: new content, keeping the current metadata unless `X-Data-Metadata` is sent. With `X-Data-Metadata-Only: 1`: new metadata, reusing the content. Optional `If-Match: "v<n>"`: apply only if the head is still v<n>, otherwise `412`. |
+| `DELETE /v1/{community}/files/{id}?reason=…` | Soft delete: appends a tombstone version that keeps serving the previous content with `X-Data-Deleted: true`. A later version un-deletes the file. Accepts `If-Match` like a new version. |
+| `GET /v1/{community}/files/{id}/v/{n}` | Stream one version, with Range support. Headers: `Repr-Digest`, `X-Data-Citation`, `X-Data-Version`, `X-Data-Deleted`, `X-Data-File-Deleted`, and a `Link` header with `latest`, `prev` and `next`. A purged version answers `410` with its metadata. `latest` is the newest version that isn't a tombstone. |
+| `GET /v1/{community}/files/{id}/v/{n}/stat` | Metadata only, never the content. Includes `sha256`, `size`, `created`, `seq`, `created_by`, `key_id`, `deleted`, `purged`, `suspect` and `integrity`. |
+| `GET /v1/{community}/files/{id}/versions` | Every version of the file. |
 
 - **Citations** take the form `symposium-data:<file-id>@v<n>`. Every file response carries `ETag: "v<n>"`.
 - **Atomic writes (R-A6):** every write either fully happens or leaves nothing behind.
@@ -84,12 +97,12 @@ Every community has three collections: `inbox` (submissions), `files` (stored da
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /v1/c/{community}/collections {name}` | A roster member, or the admin, creates a collection and becomes its owner. The three default collections are owned by the admin. |
-| `PUT /v1/c/{community}/{collection}/grants {handle, perm, granted}` | The owner (or the admin) grants or withdraws `read` or `write` for a roster member. |
-| `PUT /v1/c/{community}/{collection}/public {public}` | The owner makes a collection readable without a token. `inbox` can never be public. |
-| `POST /v1/c/{community}/{collection}/keys {label, file_id?, expires_hours?}` | Mint a read key for a non-member. The owner may key the whole collection or any file in it; a file's creator may key that file. `inbox` takes no keys. The secret (`sdr_…`) is returned only here and stored only as a hash. |
-| `GET /v1/c/{community}/{collection}/keys` | List keys with their use count and last use, never their secrets. The owner sees all of them; others see only the keys they minted. |
-| `DELETE /v1/keys/{id}` | Revoke a key (its minter, the owner, or the admin). It is refused from the very next request. |
+| `POST /v1/{community}/collections {name}` | A roster member, or the admin, creates a collection and becomes its owner. The three default collections are owned by the admin. |
+| `PUT /v1/{community}/collections/{collection}/grants {handle, perm, granted}` | The owner (or the admin) grants or withdraws `read` or `write` for a roster member. |
+| `PUT /v1/{community}/collections/{collection}/public {public}` | The owner makes a collection readable without a token. `inbox` can never be public. |
+| `POST /v1/{community}/collections/{collection}/keys {label, file_id?, expires_hours?}` | Mint a read key for a non-member. The owner may key the whole collection or any file in it; a file's creator may key that file. `inbox` takes no keys. The secret (`sdr_…`) is returned only here and stored only as a hash. |
+| `GET /v1/{community}/collections/{collection}/keys` | List keys with their use count and last use, never their secrets. The owner sees all of them; others see only the keys they minted. |
+| `DELETE /v1/{community}/keys/{id}` | Revoke a key (its minter, the owner, or the admin). It is refused from the very next request. |
 
 **Read keys:**
 - A key goes only in `Authorization: Bearer sdr_…`.
@@ -102,12 +115,12 @@ Every community has three collections: `inbox` (submissions), `files` (stored da
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /v1/c/{community}/{collection}/changes?since&limit` | Every version written into the collection after seq `since`, in seq order, with its metadata. `limit` is 1–1000 (default 100). Page with `next_since` until `more` is false; nothing is silently capped. |
-| `POST /v1/c/{community}/{collection}/query {contains, since?, limit?}` | Versions whose metadata contains `contains` (JSONB containment), paged like `changes`. |
-| `GET /v1/c/{community}/{collection}/find?name` | The file holding a name, at its newest version. A deleted file still holds its name. |
-| `GET /v1/sha256/{hash}` | Every version the caller may read that holds this content. |
-| `POST /v1/files/{id}/v/{n}/promote {collection, name?, metadata?, stamp_json_pointer?}` | Admin only. Copies a version into a collection as a new file, atomically. The new file's metadata is the source's merged with `metadata`. With `stamp_json_pointer`, the content must be JSON, and the server writes the new version's own `created` at that pointer. A taken name returns 409, a tombstone 409, purged content 410, and a failure leaves nothing behind. |
-| `GET /v1/verify?cite&before?&sha256?` | Checks a citation: the version exists, its sha256 matches, and it was created strictly before `before`. A version the caller cannot read reports `exists: false`, like one that never existed. Purged content fails with `content purged`. |
+| `GET /v1/{community}/collections/{collection}/changes?since&limit` | Every version written into the collection after seq `since`, in seq order, with its metadata. `limit` is 1–1000 (default 100). Page with `next_since` until `more` is false; nothing is silently capped. |
+| `POST /v1/{community}/collections/{collection}/query {contains, since?, limit?}` | Versions whose metadata contains `contains` (JSONB containment), paged like `changes`. |
+| `GET /v1/{community}/collections/{collection}/find?name` | The file holding a name, at its newest version. A deleted file still holds its name. |
+| `GET /v1/{community}/sha256/{hash}` | Every version of this community the caller may read that holds this content. Content is deduplicated within a community, never across. |
+| `POST /v1/{community}/files/{id}/v/{n}/promote {collection, name?, metadata?, stamp_json_pointer?}` | Admin only. Copies a version into a collection as a new file, atomically. The new file's metadata is the source's merged with `metadata`. With `stamp_json_pointer`, the content must be JSON, and the server writes the new version's own `created` at that pointer. A taken name returns 409, a tombstone 409, purged content 410, and a failure leaves nothing behind. |
+| `GET /v1/{community}/verify?cite&before?&sha256?` | Checks a citation: the version exists, its sha256 matches, and it was created strictly before `before`. A version the caller cannot read reports `exists: false`, like one that never existed. Purged content fails with `content purged`. |
 
 Listing a collection (`changes`, `query`, `find`) needs read access to it. A member listing `inbox` sees only their own submissions and the replies addressed to them; a file-scoped read key sees only its file.
 
@@ -120,7 +133,7 @@ Listing a collection (`changes`, `query`, `find`) needs read access to it. A mem
 | `SYMPOSIUM_DATA_TRUSTED_PROXY` | `127.0.0.1` | The only address whose `X-Forwarded-*` headers are trusted. |
 | `SYMPOSIUM_DATA_TOKEN_TTL` | `900` | Access-token lifetime, in seconds. |
 | `SYMPOSIUM_DATA_INVITE_HOURS` | `72` | Default invite lifetime, in hours. |
-| `SYMPOSIUM_DATA_QUOTA_BYTES` | `0` (none) | Per-owner limit on the bytes of content the owner uploaded first. |
+| `SYMPOSIUM_DATA_QUOTA_BYTES` | `0` (none) | Per-member limit, in each community, on the bytes of content the member uploaded first. The server admin's own writes are exempt. |
 | `SYMPOSIUM_DATA_PENDING_TTL` | `86400` | Age, in seconds, after which the janitor removes an upload that never completed. |
 | `SYMPOSIUM_DATA_JANITOR_INTERVAL` | `3600` | How often, in seconds, the janitor runs. |
 | `SYMPOSIUM_DATA_SCRUB_INTERVAL` | `3600` | How often, in seconds, the integrity scrub runs. |

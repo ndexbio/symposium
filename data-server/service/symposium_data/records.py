@@ -1,4 +1,5 @@
-"""The server's records: configuration, identities, rosters, grants, invites, files and versions.
+"""The server's records: configuration, communities, identities, rosters, grants, invites, files
+and versions. Every community-dependent record is scoped by its community (R-G8).
 
 Shared by the HTTP service and data-admin, so every invariant has one implementation.
 """
@@ -67,47 +68,92 @@ class Records:
         )
 
     def bind_admin(self, conn, handle: str, kid: str, jwk: dict):
-        """Initialize the server: bind the admin handle to its public key. Works exactly once."""
+        """Initialize the server: bind the admin handle to its public key. Works exactly once.
+        The admin is server-wide, so its keys live in admin_keys, not in any community."""
         conn.execute("LOCK TABLE server_config IN EXCLUSIVE MODE")
         current = self.config(conn, "admin")
         if current is not None:
             raise AlreadyInitialized(current)
         conn.execute(
-            "INSERT INTO owners (handle) VALUES (%s) ON CONFLICT (handle) DO UPDATE SET reserved = false",
-            (handle,),
-        )
-        conn.execute(
-            "INSERT INTO owner_keys (kid, handle, jwk) VALUES (%s, %s, %s)",
+            "INSERT INTO admin_keys (kid, handle, jwk) VALUES (%s, %s, %s)",
             (kid, handle, json.dumps(jwk)),
         )
         self.set_config(conn, "admin", handle)
 
-    # ── identity ────────────────────────────────────────────────────────────────────────────
-    def add_challenge(self, conn, handle: str, nonce: str, ttl_seconds: int = 300):
+    def admin_keys(self, conn) -> list:
+        return conn.execute("SELECT kid, jwk FROM admin_keys WHERE active").fetchall()
+
+    def admin_key_is_active(self, conn, kid: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM admin_keys WHERE kid = %s AND active", (kid,)
+        ).fetchone()
+        return row is not None
+
+    # ── communities ─────────────────────────────────────────────────────────────────────────
+    def community_name(self, conn, name: str) -> str | None:
+        """The community's name as it was created, matching `name` ignoring case."""
+        row = conn.execute(
+            "SELECT name FROM communities WHERE lower(name) = lower(%s)", (name,)
+        ).fetchone()
+        return row["name"] if row else None
+
+    def create_community(self, conn, name: str, admin: str) -> bool:
+        """Create a community and its default collections, owned by the admin. -> True when
+        created, False when exactly this name already exists. A name differing only in case
+        from an existing one is a Conflict."""
+        existing = self.community_name(conn, name)
+        if existing == name:
+            return False
+        if existing is not None:
+            raise Conflict(f"community '{existing}' already exists")
+        try:
+            with conn.transaction():
+                conn.execute("INSERT INTO communities (name) VALUES (%s)", (name,))
+        except psycopg.errors.UniqueViolation:
+            raise Conflict(f"community '{name}' already exists") from None
+        self.ensure_collections(conn, name, admin)
+        return True
+
+    def communities(self, conn) -> list:
+        return conn.execute(
+            "SELECT name, created FROM communities ORDER BY lower(name)"
+        ).fetchall()
+
+    # ── identity, per community ─────────────────────────────────────────────────────────────
+    def add_challenge(
+        self, conn, community: str | None, handle: str, nonce: str, ttl: int = 300
+    ):
+        """`community` None is the server admin's challenge."""
         conn.execute("DELETE FROM challenges WHERE expires < now()")
         conn.execute(
-            "INSERT INTO challenges (nonce, handle, expires) VALUES (%s, %s, now() + %s * interval '1 second')",
-            (nonce, handle, ttl_seconds),
+            "INSERT INTO challenges (nonce, community, handle, expires) "
+            "VALUES (%s, %s, %s, now() + %s * interval '1 second')",
+            (nonce, community, handle, ttl),
         )
 
-    def take_challenge(self, conn, handle: str, nonce: str) -> bool:
-        """Consume a challenge: true only once, for its own handle, before it expires."""
+    def take_challenge(
+        self, conn, community: str | None, handle: str, nonce: str
+    ) -> bool:
+        """Consume a challenge: true only once, for its own community and handle, before it
+        expires."""
         row = conn.execute(
-            "DELETE FROM challenges WHERE nonce = %s AND handle = %s RETURNING expires > now() AS live",
-            (nonce, handle),
+            "DELETE FROM challenges WHERE nonce = %s AND handle = %s "
+            "AND community IS NOT DISTINCT FROM %s RETURNING expires > now() AS live",
+            (nonce, handle, community),
         ).fetchone()
         return bool(row and row["live"])
 
-    def active_keys(self, conn, handle: str) -> list:
+    def active_keys(self, conn, community: str, handle: str) -> list:
         return conn.execute(
-            "SELECT kid, jwk FROM owner_keys WHERE handle = %s AND active",
-            (handle,),
+            "SELECT kid, jwk FROM owner_keys WHERE community = %s AND handle = %s AND active",
+            (community, handle),
         ).fetchall()
 
-    def key_is_active(self, conn, handle: str, kid: str) -> bool:
+    def key_is_active(self, conn, community: str, handle: str, kid: str) -> bool:
         row = conn.execute(
-            "SELECT 1 FROM owner_keys WHERE handle = %s AND kid = %s AND active",
-            (handle, kid),
+            "SELECT 1 FROM owner_keys WHERE community = %s AND handle = %s AND kid = %s "
+            "AND active",
+            (community, handle, kid),
         ).fetchone()
         return row is not None
 
@@ -120,7 +166,10 @@ class Records:
 
     def set_roster(self, conn, community: str, handles: list) -> tuple[list, list]:
         """Replace a community's roster. New members get the default grants; removed members
-        lose every grant in the community but keep their identity and attribution."""
+        lose every grant in the community but keep their identity and attribution. The admin's
+        handle is reserved: it can never be a member (R-D6)."""
+        if self.config(conn, "admin") in handles:
+            raise Forbidden("the admin's handle cannot be on a roster")
         current = {
             r["handle"]
             for r in conn.execute(
@@ -177,53 +226,54 @@ class Records:
         ).fetchone()
         return row is not None
 
-    def register(self, conn, handle: str, kid: str, jwk: dict):
+    def register(self, conn, community: str, handle: str, kid: str, jwk: dict):
         conn.execute(
-            "INSERT INTO owners (handle) VALUES (%s) ON CONFLICT (handle) DO UPDATE SET reserved = false",
-            (handle,),
+            "INSERT INTO owners (community, handle) VALUES (%s, %s) "
+            "ON CONFLICT (community, handle) DO UPDATE SET reserved = false",
+            (community, handle),
         )
         conn.execute(
-            "INSERT INTO owner_keys (kid, handle, jwk) VALUES (%s, %s, %s)",
-            (kid, handle, json.dumps(jwk)),
+            "INSERT INTO owner_keys (community, kid, handle, jwk) VALUES (%s, %s, %s, %s)",
+            (community, kid, handle, json.dumps(jwk)),
         )
 
-    def retire_keys(self, conn, handle: str) -> int:
+    def retire_keys(self, conn, community: str, handle: str) -> int:
         """Retire every active key of a handle; retired keys stay on record for attribution."""
         return conn.execute(
-            "UPDATE owner_keys SET active = false, retired = now() WHERE handle = %s AND active",
-            (handle,),
+            "UPDATE owner_keys SET active = false, retired = now() "
+            "WHERE community = %s AND handle = %s AND active",
+            (community, handle),
         ).rowcount
 
-    def rotate(self, conn, handle: str, kid: str, jwk: dict):
-        self.retire_keys(conn, handle)
+    def rotate(self, conn, community: str, handle: str, kid: str, jwk: dict):
+        self.retire_keys(conn, community, handle)
         conn.execute(
-            "INSERT INTO owner_keys (kid, handle, jwk) VALUES (%s, %s, %s)",
-            (kid, handle, json.dumps(jwk)),
+            "INSERT INTO owner_keys (community, kid, handle, jwk) VALUES (%s, %s, %s, %s)",
+            (community, kid, handle, json.dumps(jwk)),
         )
 
-    def owner(self, conn, handle: str):
+    def key_on_record(self, conn, community: str, kid: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM owner_keys WHERE community = %s AND kid = %s",
+            (community, kid),
+        ).fetchone()
+        return row is not None
+
+    def owner(self, conn, community: str, handle: str):
         return conn.execute(
-            "SELECT handle, reserved, suspect_after FROM owners WHERE handle = %s",
-            (handle,),
+            "SELECT handle, reserved, suspect_after FROM owners "
+            "WHERE community = %s AND handle = %s",
+            (community, handle),
         ).fetchone()
 
-    def set_suspect_after(self, conn, handle: str, instant) -> bool:
+    def set_suspect_after(self, conn, community: str, handle: str, instant) -> bool:
         return (
             conn.execute(
-                "UPDATE owners SET suspect_after = %s WHERE handle = %s",
-                (instant, handle),
+                "UPDATE owners SET suspect_after = %s WHERE community = %s AND handle = %s",
+                (instant, community, handle),
             ).rowcount
             == 1
         )
-
-    def communities_of(self, conn, handle: str) -> list:
-        return [
-            r["community"]
-            for r in conn.execute(
-                "SELECT community FROM roster WHERE handle = %s ORDER BY community",
-                (handle,),
-            ).fetchall()
-        ]
 
     # ── collections and the per-collection clock ────────────────────────────────────────────
     def ensure_collections(self, conn, community: str, owner: str):
@@ -431,23 +481,25 @@ class Records:
             "CASE WHEN %s::int IS NULL THEN NULL ELSE now() + %s * interval '1 hour' END)",
             (key_id, digest, community, collection, file_id, label, by, hours, hours),
         )
-        return self.key_row(conn, key_id)
+        return self.key_row(conn, community, key_id)
 
-    def key_row(self, conn, key_id):
+    def key_row(self, conn, community: str, key_id):
         row = conn.execute(
-            "SELECT * FROM read_keys WHERE id = %s", (key_id,)
+            "SELECT * FROM read_keys WHERE id = %s AND community = %s",
+            (key_id, community),
         ).fetchone()
         if row is None:
             raise NotFound("no such read key")
         return row
 
-    def use_key(self, conn, digest: str):
-        """A usable read key for this secret, its use audited; None if unknown, revoked or
-        expired."""
+    def use_key(self, conn, community: str, digest: str):
+        """A usable read key of this community for this secret, its use audited; None if
+        unknown here, revoked or expired."""
         return conn.execute(
             "UPDATE read_keys SET uses = uses + 1, last_used = now() WHERE hash = %s "
-            "AND revoked IS NULL AND (expires IS NULL OR expires > now()) RETURNING *",
-            (digest,),
+            "AND community = %s AND revoked IS NULL AND (expires IS NULL OR expires > now()) "
+            "RETURNING *",
+            (digest, community),
         ).fetchone()
 
     def list_keys(self, conn, community, collection, created_by=None) -> list:
@@ -465,12 +517,13 @@ class Records:
         )
 
     # ── payloads ────────────────────────────────────────────────────────────────────────────
-    def begin_payload(self, conn, owner: str):
+    def begin_payload(self, conn, community: str, owner: str):
         pid = uuid.uuid4()
         key = f"payloads/{pid}"
         conn.execute(
-            "INSERT INTO payloads (id, state, s3_key, first_owner) VALUES (%s, 'pending', %s, %s)",
-            (pid, key, owner),
+            "INSERT INTO payloads (id, state, s3_key, community, first_owner) "
+            "VALUES (%s, 'pending', %s, %s, %s)",
+            (pid, key, community, owner),
         )
         return pid, key
 
@@ -479,22 +532,26 @@ class Records:
             "UPDATE payloads SET upload_id = %s WHERE id = %s", (upload_id, pid)
         )
 
-    def commit_payload(self, conn, pid, sha: str, size: int, owner: str, quota: int):
+    def commit_payload(
+        self, conn, pid, community: str, sha: str, size: int, owner: str, quota: int
+    ):
         """Inside the caller's commit transaction: make a verified pending payload ready, or
-        reuse an identical ready one. -> (payload_id, duplicate_pending_id_or_None).
+        reuse an identical ready one in the same community (content is deduplicated within a
+        community, never across). -> (payload_id, duplicate_pending_id_or_None).
 
         A duplicate's own row is deliberately left pending: its bytes still exist, and only
         the cleanup after commit removes them, bytes first and row second.
 
         The owner's row is locked first, so the quota check and the payload it admits are one
         atomic step: concurrent uploads by the same owner cannot jointly exceed the quota."""
-        self.lock_owner(conn, owner)
+        self.lock_owner(conn, community, owner)
         existing = conn.execute(
-            "SELECT id FROM payloads WHERE sha256 = %s AND state = 'ready'", (sha,)
+            "SELECT id FROM payloads WHERE community = %s AND sha256 = %s AND state = 'ready'",
+            (community, sha),
         ).fetchone()
         if existing:
             return existing["id"], pid
-        if quota and self.usage(conn, owner) + size > quota:
+        if quota and self.usage(conn, community, owner) + size > quota:
             raise QuotaExceeded("this upload would exceed the owner's quota")
         try:
             with conn.transaction():
@@ -506,12 +563,15 @@ class Records:
             return pid, None
         except psycopg.errors.UniqueViolation:
             # an identical payload turned ready concurrently: use that one
-            return self.commit_payload(conn, pid, sha, size, owner, quota)
+            return self.commit_payload(conn, pid, community, sha, size, owner, quota)
 
-    def lock_owner(self, conn, owner: str):
+    def lock_owner(self, conn, community: str, owner: str):
         """Writers take the owner's row before the collection's clock, always in that order,
-        so concurrent writes never deadlock."""
-        conn.execute("SELECT 1 FROM owners WHERE handle = %s FOR UPDATE", (owner,))
+        so concurrent writes never deadlock. The server admin has no owner row and no quota."""
+        conn.execute(
+            "SELECT 1 FROM owners WHERE community = %s AND handle = %s FOR UPDATE",
+            (community, owner),
+        )
 
     def touch_pending(self, conn, pid, file_id=None):
         """Heartbeat of an upload in progress: the janitor expires only work that has stopped,
@@ -541,11 +601,11 @@ class Records:
             (pid,),
         )
 
-    def usage(self, conn, owner: str) -> int:
+    def usage(self, conn, community: str, owner: str) -> int:
         row = conn.execute(
             "SELECT COALESCE(SUM(size), 0) AS total FROM payloads "
-            "WHERE first_owner = %s AND state = 'ready'",
-            (owner,),
+            "WHERE community = %s AND first_owner = %s AND state = 'ready'",
+            (community, owner),
         ).fetchone()
         return int(row["total"])
 
@@ -610,9 +670,11 @@ class Records:
             (older_than_seconds,),
         ).fetchall()
 
-    def file_row(self, conn, file_id):
+    def file_row(self, conn, community: str, file_id):
+        """A live file of this community; a file of another community is not found."""
         row = conn.execute(
-            "SELECT * FROM files WHERE id = %s AND state = 'live'", (file_id,)
+            "SELECT * FROM files WHERE id = %s AND community = %s AND state = 'live'",
+            (file_id, community),
         ).fetchone()
         if row is None:
             raise NotFound("no such file")
@@ -706,23 +768,26 @@ class Records:
         "SELECT v.*, p.sha256, p.size, p.s3_key, p.state AS payload_state, p.scrub_ok, "
         "f.name, f.community, f.collection, o.suspect_after "
         "FROM versions v JOIN payloads p ON p.id = v.payload_id JOIN files f ON f.id = v.file_id "
-        "LEFT JOIN owners o ON o.handle = v.created_by "
+        "LEFT JOIN owners o ON o.community = f.community AND o.handle = v.created_by "
     )
-    _VERSION = _ROWS + "WHERE v.file_id = %s "
+    _VERSION = _ROWS + "WHERE v.file_id = %s AND f.community = %s "
 
-    def version(self, conn, file_id, ref):
-        """ref: a version number, or 'latest' (the newest version that is not a tombstone)."""
+    def version(self, conn, community: str, file_id, ref):
+        """ref: a version number, or 'latest' (the newest version that is not a tombstone).
+        A version of another community's file is not found."""
         if ref == "latest":
             row = conn.execute(
                 self._VERSION + "AND NOT v.deleted ORDER BY v.n DESC LIMIT 1",
-                (file_id,),
+                (file_id, community),
             ).fetchone()
         else:
             try:
                 n = int(ref)
             except (TypeError, ValueError):
                 raise NotFound("a version is a number or 'latest'") from None
-            row = conn.execute(self._VERSION + "AND v.n = %s", (file_id, n)).fetchone()
+            row = conn.execute(
+                self._VERSION + "AND v.n = %s", (file_id, community, n)
+            ).fetchone()
         if row is None:
             raise NotFound("no such version")
         return row
@@ -748,12 +813,12 @@ class Records:
             (community, collection, since, json.dumps(contains), limit),
         ).fetchall()
 
-    def by_hash(self, conn, sha: str) -> list:
-        """Every version holding this content, in any collection (R-F2)."""
+    def by_hash(self, conn, community: str, sha: str) -> list:
+        """Every version holding this content, in any collection of the community (R-F2)."""
         return conn.execute(
             self._ROWS
-            + "WHERE p.sha256 = %s ORDER BY f.community, f.collection, v.seq",
-            (sha,),
+            + "WHERE f.community = %s AND p.sha256 = %s ORDER BY f.collection, v.seq",
+            (community, sha),
         ).fetchall()
 
     def verify(self, row, before: datetime | None, sha: str | None) -> dict:
@@ -821,11 +886,14 @@ class Records:
             "metadata": row["metadata"],
         }
 
-    def versions(self, conn, file_id) -> list:
+    def versions(self, conn, community: str, file_id) -> list:
         rows = conn.execute(
             "SELECT n FROM versions WHERE file_id = %s ORDER BY n", (file_id,)
         ).fetchall()
-        return [self.stat(conn, self.version(conn, file_id, r["n"])) for r in rows]
+        return [
+            self.stat(conn, self.version(conn, community, file_id, r["n"]))
+            for r in rows
+        ]
 
     # ── purge, janitor and scrub ────────────────────────────────────────────────────────────
     def purge(self, conn, file_id, n: int):

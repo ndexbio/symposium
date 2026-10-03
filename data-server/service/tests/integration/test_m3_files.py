@@ -65,7 +65,7 @@ def test_one_gib_streams_up_and_back(demo):
         "X-Data-Size": str(GIB),
     }
     r = httpx.put(
-        f"{lyra.server.url}/v1/c/demo/files/files/big.bin",
+        f"{lyra.server.url}/v1/demo/collections/files/files/big.bin",
         content=body(),
         headers=headers,
         timeout=1800,
@@ -77,7 +77,7 @@ def test_one_gib_streams_up_and_back(demo):
     size = 0
     with httpx.stream(
         "GET",
-        f"{lyra.server.url}/v1/files/{r.json()['file_id']}/v/1",
+        f"{lyra.server.url}/v1/demo/files/{r.json()['file_id']}/v/1",
         headers=lyra.headers(),
         timeout=1800,
     ) as resp:
@@ -94,7 +94,7 @@ def test_digest_mismatch_leaves_no_payload_row_or_object(demo):
     before = psql(server, "SELECT count(*) FROM payloads")
     data = os.urandom(12 * 1024 * 1024)  # large enough to use a multipart upload
     r = httpx.put(
-        f"{server.url}/v1/c/demo/files/files/bad.bin",
+        f"{server.url}/v1/demo/collections/files/files/bad.bin",
         content=data,
         headers={**lyra.headers(), "Repr-Digest": repr_digest(b"something else")},
         timeout=300,
@@ -143,7 +143,7 @@ def test_versions_links_and_metadata_rules(demo):
 
 def _versions(owner, fid):
     r = httpx.get(
-        f"{owner.server.url}/v1/files/{fid}/versions", headers=owner.headers()
+        f"{owner.server.url}/v1/demo/files/{fid}/versions", headers=owner.headers()
     )
     assert r.status_code == 200, r.text
     return r.json()["versions"]
@@ -198,7 +198,7 @@ def test_errors(demo):
     assert lyra.stat(missing, 1).status_code == 404
     fid = lyra.put("demo", "files", "f.txt", b"x").json()["file_id"]
     assert lyra.stat(fid, 9).status_code == 404
-    assert httpx.get(f"{server.url}/v1/files/{fid}/v/1").status_code == 401
+    assert httpx.get(f"{server.url}/v1/demo/files/{fid}/v/1").status_code == 401
 
 
 def test_inbox_submissions_are_private_to_submitter_admin_and_recipients(demo):
@@ -261,7 +261,9 @@ def test_suspect_versions_are_flagged(demo):
     instant = datetime.now().astimezone().isoformat()
     time.sleep(1)
     assert (
-        server.admin("suspect-after", "--handle", "lyra", "--at", instant).returncode
+        server.admin(
+            "suspect-after", "--community", "demo", "--handle", "lyra", "--at", instant
+        ).returncode
         == 0
     )
     late = lyra.put("demo", "files", "late.txt", b"after").json()

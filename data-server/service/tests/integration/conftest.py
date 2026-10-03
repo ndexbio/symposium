@@ -153,40 +153,50 @@ def owner_key():
 
 
 class Owner:
-    """A member as the skill would act: a handle, a locally generated key, a server URL."""
+    """A member as the skill would act: a handle in one community, a locally generated key,
+    a server URL. Identity is per community, so the same handle elsewhere is someone else."""
 
-    def __init__(self, server: Server, handle: str, key: OwnerKey | None = None):
-        self.server, self.handle = server, handle
+    def __init__(
+        self,
+        server: Server,
+        handle: str,
+        key: OwnerKey | None = None,
+        community: str = "demo",
+    ):
+        self.server, self.handle, self.community = server, handle, community
         self.key = key or OwnerKey()
 
+    def url(self, path: str) -> str:
+        """A route of this owner's community."""
+        return f"{self.server.url}/v1/{self.community}{path}"
+
     def challenge(self) -> str:
-        r = httpx.post(
-            self.server.url + "/v1/auth/challenge", json={"handle": self.handle}
-        )
+        r = httpx.post(self.url("/auth/challenge"), json={"handle": self.handle})
         r.raise_for_status()
         return r.json()["nonce"]
 
     def register(
         self, community: str, invite: str | None = None, key: OwnerKey | None = None
     ):
+        """Register in `community`, which becomes this owner's community."""
+        self.community = community
         key = key or self.key
         nonce = self.challenge()
         body = {
             "handle": self.handle,
-            "community": community,
             "public_jwk": key.jwk,
             "nonce": nonce,
             "signature": key.sign(nonce),
         }
         if invite is not None:
             body["invite"] = invite
-        return httpx.post(self.server.url + "/v1/owners", json=body)
+        return httpx.post(self.url("/owners"), json=body)
 
     def token_response(self, key: OwnerKey | None = None):
         key = key or self.key
         nonce = self.challenge()
         return httpx.post(
-            self.server.url + "/v1/auth/token",
+            self.url("/auth/token"),
             json={"handle": self.handle, "nonce": nonce, "signature": key.sign(nonce)},
         )
 
@@ -209,7 +219,7 @@ class Owner:
         if content_type:
             headers["Content-Type"] = content_type
         return httpx.put(
-            f"{self.server.url}/v1/c/{community}/{collection}/files/{name}",
+            f"{self.server.url}/v1/{community}/collections/{collection}/files/{name}",
             content=data,
             headers=headers,
             timeout=600,
@@ -224,7 +234,7 @@ class Owner:
         else:
             headers.update(file_headers(data, metadata))
         return httpx.post(
-            f"{self.server.url}/v1/files/{file_id}/versions",
+            self.url(f"/files/{file_id}/versions"),
             content=data,
             headers=headers,
             timeout=600,
@@ -233,22 +243,46 @@ class Owner:
     def delete(self, file_id, reason=None):
         params = {"reason": reason} if reason else {}
         return httpx.delete(
-            f"{self.server.url}/v1/files/{file_id}",
+            self.url(f"/files/{file_id}"),
             params=params,
             headers=self.headers(),
         )
 
     def get(self, file_id, ref="latest", headers=None):
         return httpx.get(
-            f"{self.server.url}/v1/files/{file_id}/v/{ref}",
+            self.url(f"/files/{file_id}/v/{ref}"),
             headers={**self.headers(), **(headers or {})},
             timeout=600,
         )
 
     def stat(self, file_id, ref="latest"):
         return httpx.get(
-            f"{self.server.url}/v1/files/{file_id}/v/{ref}/stat", headers=self.headers()
+            self.url(f"/files/{file_id}/v/{ref}/stat"), headers=self.headers()
         )
+
+
+class Admin(Owner):
+    """The server admin: server-wide, signed in through /v1/admin/..., and acting in any
+    community. `community` only selects which community's routes it calls."""
+
+    def challenge(self) -> str:
+        r = httpx.post(self.server.url + "/v1/admin/challenge")
+        r.raise_for_status()
+        return r.json()["nonce"]
+
+    def token_response(self, key: OwnerKey | None = None):
+        key = key or self.key
+        nonce = self.challenge()
+        return httpx.post(
+            self.server.url + "/v1/admin/token",
+            json={"nonce": nonce, "signature": key.sign(nonce)},
+        )
+
+    def at(self, community: str) -> Admin:
+        """The same admin, calling another community's routes."""
+        other = Admin(self.server, self.handle, self.key, community)
+        other._token = getattr(self, "_token", None)
+        return other
 
 
 def b64u_json(value) -> str:
@@ -288,9 +322,9 @@ def community_with(server: Server, members=("lyra", "vega", "rigel")):
     return admin, owners
 
 
-def init_admin(server: Server, handle: str = "demo-admin") -> Owner:
+def init_admin(server: Server, handle: str = "demo-admin") -> Admin:
     """Bind the admin's public key through data-admin, as the operator does."""
-    admin = Owner(server, handle)
+    admin = Admin(server, handle)
     result = server.admin(
         "init", "--admin", handle, "--pubkey", "-", input=admin.key.jwk_text()
     )
@@ -298,9 +332,21 @@ def init_admin(server: Server, handle: str = "demo-admin") -> Owner:
     return admin
 
 
-def set_roster(server: Server, admin: Owner, community: str, handles: list) -> dict:
+def create_community(server: Server, admin: Admin, community: str):
+    r = httpx.post(
+        f"{server.url}/v1/communities",
+        json={"name": community},
+        headers=admin.headers(),
+    )
+    assert r.status_code in (200, 201), r.text
+    return r
+
+
+def set_roster(server: Server, admin: Admin, community: str, handles: list) -> dict:
+    """Create the community if it does not exist yet, then set its roster."""
+    create_community(server, admin, community)
     r = httpx.put(
-        f"{server.url}/v1/c/{community}/roster",
+        f"{server.url}/v1/{community}/roster",
         json={"handles": handles},
         headers=admin.headers(),
     )

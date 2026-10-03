@@ -18,7 +18,7 @@ def with_key(key: str) -> dict:
 
 def create_collection(owner, name, community="demo"):
     return httpx.post(
-        f"{owner.server.url}/v1/c/{community}/collections",
+        f"{owner.server.url}/v1/{community}/collections",
         json={"name": name},
         headers=owner.headers(),
     )
@@ -26,7 +26,7 @@ def create_collection(owner, name, community="demo"):
 
 def grant(owner, collection, handle, perm, granted=True):
     return httpx.put(
-        f"{owner.server.url}/v1/c/demo/{collection}/grants",
+        f"{owner.server.url}/v1/demo/collections/{collection}/grants",
         json={"handle": handle, "perm": perm, "granted": granted},
         headers=owner.headers(),
     )
@@ -37,14 +37,16 @@ def mint(owner, collection, label="reviewer", file_id=None, community="demo"):
     if file_id:
         body["file_id"] = file_id
     return httpx.post(
-        f"{owner.server.url}/v1/c/{community}/{collection}/keys",
+        f"{owner.server.url}/v1/{community}/collections/{collection}/keys",
         json=body,
         headers=owner.headers(),
     )
 
 
-def read(server, file_id, headers=None, ref=1):
-    return httpx.get(f"{server.url}/v1/files/{file_id}/v/{ref}", headers=headers or {})
+def read(server, file_id, headers=None, ref=1, community="demo"):
+    return httpx.get(
+        f"{server.url}/v1/{community}/files/{file_id}/v/{ref}", headers=headers or {}
+    )
 
 
 def test_a_member_creates_and_owns_a_collection(demo):
@@ -101,22 +103,25 @@ def test_a_collection_read_key_reads_only_within_its_scope(demo):
     assert read(server, inside, with_key(key)).content == b"shared result"
     assert read(server, outside, with_key(key)).status_code == 403
     assert read(server, inside).status_code == 401  # no credential at all
-    stat = httpx.get(f"{server.url}/v1/files/{inside}/v/1/stat", headers=with_key(key))
+    stat = httpx.get(
+        f"{server.url}/v1/demo/files/{inside}/v/1/stat", headers=with_key(key)
+    )
     assert stat.status_code == 200
 
     # a read key never writes, and never acts as an identity
     write = httpx.put(
-        f"{server.url}/v1/c/demo/release/files/x.csv",
+        f"{server.url}/v1/demo/collections/release/files/x.csv",
         content=b"x",
         headers=with_key(key),
     )
     assert write.status_code == 403
     assert (
-        httpx.get(f"{server.url}/v1/whoami", headers=with_key(key)).status_code == 403
+        httpx.get(f"{server.url}/v1/demo/whoami", headers=with_key(key)).status_code
+        == 403
     )
 
     listed = httpx.get(
-        f"{server.url}/v1/c/demo/release/keys", headers=lyra.headers()
+        f"{server.url}/v1/demo/collections/release/keys", headers=lyra.headers()
     ).json()
     assert [k["label"] for k in listed["keys"]] == ["reviewer"]
     assert "key" not in listed["keys"][0]
@@ -131,7 +136,7 @@ def test_a_revoked_key_is_refused_on_the_next_request(demo):
     minted = mint(lyra, "revocable").json()
     assert read(server, fid, with_key(minted["key"])).status_code == 200
 
-    url = f"{server.url}/v1/keys/{minted['id']}"
+    url = f"{server.url}/v1/demo/keys/{minted['id']}"
     assert httpx.delete(url, headers=rigel.headers()).status_code == 403
     revoked = httpx.delete(url, headers=lyra.headers())
     assert revoked.status_code == 200 and revoked.json()["revoked"]
@@ -172,11 +177,11 @@ def test_a_file_creator_keys_their_own_file_only(demo):
 
     # the creator sees only their own keys; the owner sees all of them
     mine_listed = httpx.get(
-        f"{server.url}/v1/c/demo/files/keys", headers=lyra.headers()
+        f"{server.url}/v1/demo/collections/files/keys", headers=lyra.headers()
     )
     assert {k["created_by"] for k in mine_listed.json()["keys"]} == {"lyra"}
     all_listed = httpx.get(
-        f"{server.url}/v1/c/demo/files/keys", headers=admin.headers()
+        f"{server.url}/v1/demo/collections/files/keys", headers=admin.headers()
     )
     assert len(all_listed.json()["keys"]) == 3
 
@@ -187,7 +192,7 @@ def test_inbox_is_never_exposed(demo):
         owners["lyra"].put("demo", "inbox", "submission.json", b"{}").json()["file_id"]
     )
     public = httpx.put(
-        f"{server.url}/v1/c/demo/inbox/public",
+        f"{server.url}/v1/demo/collections/inbox/public",
         json={"public": True},
         headers=admin.headers(),
     )
@@ -204,7 +209,7 @@ def test_a_public_collection_reads_anonymously(demo):
     fid = lyra.put("demo", "open-data", "table.csv", b"public table").json()["file_id"]
     assert read(server, fid).status_code == 401
 
-    url = f"{server.url}/v1/c/demo/open-data/public"
+    url = f"{server.url}/v1/demo/collections/open-data/public"
     assert (
         httpx.put(
             url, json={"public": True}, headers=owners["vega"].headers()
@@ -238,13 +243,17 @@ def test_communities_are_isolated(demo):
         .json()["file_id"]
     )
 
-    assert owners["lyra"].get(other_file).status_code == 403
-    assert bob.get(demo_file).status_code == 403
-    assert create_collection(bob, "sneaky", community="demo").status_code == 403
-
+    # a file id from another community is not found in yours
+    assert owners["lyra"].get(other_file).status_code == 404
+    assert bob.get(demo_file).status_code == 404
+    # a member's token is valid only in its own community
+    assert create_collection(bob, "sneaky", community="demo").status_code == 401
+    # so is a read key
     demo_key = mint(admin, "files").json()["key"]
     assert read(server, demo_file, with_key(demo_key)).status_code == 200
-    assert read(server, other_file, with_key(demo_key)).status_code == 403
+    assert read(server, other_file, with_key(demo_key)).status_code == 404
+    other_read = read(server, other_file, with_key(demo_key), community="other")
+    assert other_read.status_code == 401
 
 
 def test_removing_an_owner_from_the_roster_ends_their_control(demo):

@@ -98,9 +98,19 @@ def test_tokens_round_trip(tmp_path):
     from symposium_data.auth import Tokens
 
     tokens = Tokens(_write_key(tmp_path / "k.pem"), "server-1", 60)
-    claims = tokens.read(tokens.issue("lyra", "kid-1"))
+    claims = tokens.read(tokens.issue("lyra", "kid-1", "comm1"))
     assert claims["sub"] == "lyra" and claims["kid"] == "kid-1"
     assert claims["exp"] - claims["iat"] == 60
+
+
+def test_a_member_token_names_its_community_and_an_admin_token_none(tmp_path):
+    from symposium_data.auth import Tokens
+
+    tokens = Tokens(_write_key(tmp_path / "k.pem"), "server-1", 60)
+    member = tokens.read(tokens.issue("lyra", "kid-1", "comm1"))
+    assert member["com"] == "comm1" and "adm" not in member
+    admin = tokens.read(tokens.issue("opadmin", "kid-a"))
+    assert admin["adm"] is True and "com" not in admin
 
 
 def test_tokens_refuse_expired_foreign_and_other_issuer(tmp_path):

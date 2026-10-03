@@ -15,7 +15,7 @@ The design and requirements are in the spike on ndexbio/symposium#13. Its sectio
 | `service/` | The `symposium_data` Python package: the HTTP API, `data-admin` and the Alembic migrations, plus the tests. Locked with `uv.lock`. |
 | `docker/Dockerfile` | Multi-stage build: `runtime-base` (PostgreSQL, supervisor, gosu, SeaweedFS with a pinned sha256), then `builder` (installs the locked wheel into `/opt/venv`), then `deploy`. |
 | `docker/supervisord/` | One config snippet per service. `start.sh` assembles them. |
-| `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, the one-time port when `PORT_NDEX_URL` is set, registration guard, then `exec supervisord`. |
+| `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, the one-time port when `PORT_NDEX_URL` is set, then `exec supervisord`. |
 | `docker/k8s-data-deployment.yml` | Kubernetes or Podman deployment on a single ReadWriteOnce PVC. |
 | `docker/k8s-data-port-job.yml` | The one-time port-ndex bootstrap as a Kubernetes Job (`PORT_NDEX.md`). |
 | `RUNBOOK.md` | How to run, initialize, verify and tear down. |
@@ -59,10 +59,14 @@ The server provisions no accounts. Each member generates an Ed25519 key on their
 |---|---|
 | `POST /v1/{community}/auth/challenge {handle}` | A single-use nonce, valid for 5 minutes. `503` before the server is initialized. |
 | `POST /v1/{community}/auth/token {handle, nonce, signature}` | Sign the nonce with an active key to receive an EdDSA access token (15 minutes by default), valid only in this community. |
-| `POST /v1/{community}/owners {handle, public_jwk, nonce, signature, invite?}` | Register. Returns `503` before `data-admin init`, `403` for a handle not on the community's roster, `409` for a handle already registered in it, and `401` when the signature fails proof of possession. In `invite` mode a valid, unused invite bound to the handle is also required. |
+| `POST /v1/{community}/owners {handle, public_jwk, nonce, signature, invite?}` | Register. Members join only by invite: a valid, unused invite bound to this handle and community is required. Returns `503` before `data-admin init`, `403` for a handle not on the community's roster or without a valid invite, `409` for a handle already registered in it, and `401` when the signature fails proof of possession. |
 | `POST /v1/{community}/owners/{handle}/keys {public_jwk, nonce, signature}` | Rotate your own key: authorized with your current token, proven by the new key. The old key is retired, not deleted, so attribution survives. |
 | `GET /v1/{community}/whoami` | The caller's handle, key id, community, admin flag, grants in this community, and `suspect_after`. |
-| `PUT /v1/{community}/roster {handles}` | Admin only. Replaces the roster. New members get the default grants (write on `inbox` and `files`, read on `record` and `files`). Removed members lose every grant in the community but keep their identity. The admin's handle cannot be on a roster. |
+| `GET /v1/{community}/roster` | Admin only. Each member with `registered` and `invite_expires` (its pending invite, or null). |
+| `POST /v1/{community}/roster/{handle}` | Admin only. Adds one member with the default grants (write on `inbox` and `files`, read on `record` and `files`). Idempotent: `201` when added, `200` when already there; adding never removes anyone. The admin's handle is refused (`400`). |
+| `DELETE /v1/{community}/roster/{handle}` | Admin only. Removes one member: its grants and pending invite go, its identity and attribution stay. `404` when not on the roster. |
+| `POST /v1/{community}/invites {handle, hours?}` | Admin only. A single-use invite for a roster member (`403` otherwise), returned with its expiry. It revokes the handle's earlier unused invite. |
+| `GET /v1/{community}/invites` | Admin only. The pending invites, secret included, so one can be handed over again. Used, expired and revoked invites are never listed, and their secrets are erased. |
 
 **The server admin** is server-wide, not a member of any community. It signs in with `POST /v1/admin/challenge` and `POST /v1/admin/token {nonce, signature}`, signing with the key bound by `data-admin init`; its token works in every community.
 
@@ -128,8 +132,6 @@ Listing a collection (`changes`, `query`, `find`) needs read access to it. A mem
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SYMPOSIUM_DATA_REGISTRATION` | `invite` | `open`: a handle on the roster may register (for a server bound to localhost). `invite`: it also needs a single-use invite (for a server reachable by other machines). In `invite` mode the container refuses to start without `SYMPOSIUM_DATA_PUBLIC_BASE_URL`. |
-| `SYMPOSIUM_DATA_PUBLIC_BASE_URL` | none | The public URL of the server. Required in `invite` mode; reported by `GET /v1/status`. |
 | `SYMPOSIUM_DATA_TRUSTED_PROXY` | `127.0.0.1` | The only address whose `X-Forwarded-*` headers are trusted. |
 | `SYMPOSIUM_DATA_TOKEN_TTL` | `900` | Access-token lifetime, in seconds. |
 | `SYMPOSIUM_DATA_INVITE_HOURS` | `72` | Default invite lifetime, in hours. |

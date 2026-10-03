@@ -6,7 +6,6 @@
 
 ```bash
 docker run -d --name symposium-data -p 127.0.0.1:8790:8080 \
-  -e SYMPOSIUM_DATA_REGISTRATION=open \
   ndexbio/symposium-data:<version>
 ```
 
@@ -15,17 +14,14 @@ docker run -d --name symposium-data -p 127.0.0.1:8790:8080 \
 ```bash
 docker run -d --name symposium-data --restart unless-stopped \
   -p 127.0.0.1:8790:8080 -v symposium-data:/apps \
-  -e SYMPOSIUM_DATA_REGISTRATION=open \
   ndexbio/symposium-data:<version>
 ```
 
-**Reachable by other machines.** Use invite mode and give the public URL. Put a TLS-terminating proxy in front, and name it in `SYMPOSIUM_DATA_TRUSTED_PROXY`:
+**Reachable by other machines.** Put a TLS-terminating proxy in front, and name it in `SYMPOSIUM_DATA_TRUSTED_PROXY`. Members join the same way as on a local server: by invite.
 
 ```bash
 docker run -d --name symposium-data --restart unless-stopped \
   -p 8790:8080 -v symposium-data:/apps \
-  -e SYMPOSIUM_DATA_REGISTRATION=invite \
-  -e SYMPOSIUM_DATA_PUBLIC_BASE_URL=https://data.example.org \
   -e SYMPOSIUM_DATA_TRUSTED_PROXY=<proxy address> \
   ndexbio/symposium-data:<version>
 ```
@@ -42,15 +38,17 @@ docker exec -i symposium-data data-admin init --admin <admin-handle> --pubkey - 
 
 `init` prints the key's fingerprint, which is its RFC 7638 thumbprint. Compare it with the fingerprint shown on the operator's machine. `init` works only once; a second call exits with status 2 and changes nothing.
 
-## Rosters and invites
+## Communities, rosters and invites
 
-One server hosts many communities. The admin creates each with `POST /v1/communities {name}` (1–20 letters, digits or underscores; unique ignoring case) and sets its roster with `PUT /v1/<community>/roster`; Symposium's `bootstrap.py` does this. Identity is per community: a member registers separately, with its own key, in each community it joins. On an `invite` server, the operator then mints one invite per member and hands it over **out of band**, never through chat:
+One server hosts many communities. The admin creates each with `POST /v1/communities {name}` (1–20 letters, digits or underscores; unique ignoring case), then manages its roster one handle at a time: `POST /v1/<community>/roster/<handle>` adds a member (idempotent; adding never removes anyone), `DELETE` removes one, and `GET /v1/<community>/roster` lists each member with whether it has registered and when its pending invite expires. Symposium's `bootstrap.py` does this. Identity is per community: a member registers separately, with its own key, in each community it joins.
 
-```bash
-docker exec symposium-data data-admin invite --community demo --handle lyra > lyra.invite   # single-use, 72 h
-```
+**Members join only by invite**, on a local server as on a remote one. The admin issues one per member with `POST /v1/<community>/invites {handle, hours?}` and hands it over **out of band**, never through chat:
 
-The member registers with that file (Symposium's `setup.py --invite-file lyra.invite`). An invite works once, only for its own handle and community, and only before it expires (`--hours N` changes the lifetime).
+- An invite works once, only for its own handle and community, and only before it expires (72 h by default).
+- Issuing a new invite for a handle revokes its earlier unused one, so only the newest works. Removing a handle from the roster revokes its pending invite too.
+- `GET /v1/<community>/invites` lists the pending invites, secret included, so the admin can hand one over again. An invite stops being retrievable, and its secret is erased, the moment it is used, expires or is revoked. Export never includes invites.
+
+The member registers with it (Symposium's `setup.py --invite-file`). On the server host, `data-admin invite --community demo --handle lyra > lyra.invite` issues one the same way.
 
 **Lost or compromised key:**
 
@@ -99,7 +97,7 @@ kubectl exec -i deploy/symposium-data -- data-admin init --admin <admin-handle> 
 ```
 
 - **Storage:** the manifest uses one ReadWriteOnce PVC, so the Deployment runs a single replica with the `Recreate` strategy.
-- **Before applying:** edit the PVC size, the Ingress host and TLS secret, and `SYMPOSIUM_DATA_PUBLIC_BASE_URL`. Pin the image to a released version.
+- **Before applying:** edit the PVC size, and the Ingress host and TLS secret. Pin the image to a released version.
 - **Validating the manifests:** `docker run --rm -v "$PWD/docker:/m:ro" ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary /m/k8s-data-deployment.yml /m/k8s-data-port-job.yml`. The `make test` integration suite runs this same check.
 
 ## Verify

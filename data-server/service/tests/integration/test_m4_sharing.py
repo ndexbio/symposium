@@ -3,7 +3,7 @@ non-members, inbox privacy, and per-community isolation."""
 
 import httpx
 import pytest
-from conftest import Owner, community_with, psql, set_roster
+from conftest import Owner, community_with, enroll, psql, set_roster
 
 
 @pytest.fixture
@@ -233,7 +233,7 @@ def test_communities_are_isolated(demo):
     server, admin, owners = demo
     set_roster(server, admin, "other", ["bob"])
     bob = Owner(server, "bob")
-    assert bob.register("other").status_code == 201
+    assert enroll(admin, bob, "other").status_code == 201
     other_file = bob.put("other", "files", "b.csv", b"other community").json()[
         "file_id"
     ]

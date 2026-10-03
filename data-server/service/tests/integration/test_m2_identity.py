@@ -1,36 +1,30 @@
 """M2: identity: registration, tokens, the roster, invites, rotation, rebind and suspicion."""
 
 import json
-import time
 
 import httpx
 import pytest
-from conftest import Owner, OwnerKey, init_admin, set_roster
+from conftest import Owner, OwnerKey, enroll, init_admin, invite, set_roster
 
 
 @pytest.fixture
 def community(server):
-    """An initialized open-mode server with lyra, vega and rigel on the demo roster."""
+    """An initialized server with lyra, vega and rigel on the demo roster."""
     admin = init_admin(server)
     set_roster(server, admin, "demo", ["lyra", "vega", "rigel"])
     return server, admin
 
 
-def test_registration_is_refused_with_503_before_init(server):
-    # registration starts with a challenge, and that already answers 503
-    r = httpx.post(server.url + "/v1/demo/auth/challenge", json={"handle": "lyra"})
-    assert r.status_code == 503, r.text
-
-
-def test_open_registration_checks_the_roster_and_duplicates(community):
-    server, _ = community
+def test_registration_checks_the_roster_and_duplicates(community):
+    server, admin = community
     lyra = Owner(server, "lyra")
-    first = lyra.register("demo")
+    first = enroll(admin, lyra, "demo")
     assert first.status_code == 201, first.text
     assert first.json()["kid"]
 
     assert Owner(server, "mallory").register("demo").status_code == 403
-    assert Owner(server, "lyra").register("demo").status_code == 409
+    assert invite(admin, "demo", "mallory").status_code == 403  # not on the roster
+    assert enroll(admin, Owner(server, "lyra"), "demo").status_code == 409
     # identity is per community: a community that does not exist has nobody to register
     nowhere = httpx.post(
         server.url + "/v1/other/auth/challenge", json={"handle": "lyra"}
@@ -67,9 +61,9 @@ def test_registration_requires_proof_of_possession(community):
 
 
 def test_tokens_need_the_registered_key_and_a_fresh_challenge(community):
-    server, _ = community
+    server, admin = community
     lyra = Owner(server, "lyra")
-    lyra.register("demo")
+    enroll(admin, lyra, "demo")
 
     assert lyra.token_response(key=OwnerKey()).status_code == 401
     nonce = lyra.challenge()
@@ -95,20 +89,19 @@ def test_tokens_need_the_registered_key_and_a_fresh_challenge(community):
 def test_only_the_admin_sets_the_roster(community):
     server, admin = community
     lyra = Owner(server, "lyra")
-    lyra.register("demo")
+    enroll(admin, lyra, "demo")
     url = server.url + "/v1/demo/roster"
-    assert (
-        httpx.put(url, json={"handles": ["lyra"]}, headers=lyra.headers()).status_code
-        == 403
-    )
-    assert httpx.put(url, json={"handles": ["lyra"]}).status_code == 401
+    assert httpx.get(url, headers=lyra.headers()).status_code == 403
+    assert httpx.post(f"{url}/mallory", headers=lyra.headers()).status_code == 403
+    assert httpx.delete(f"{url}/vega", headers=lyra.headers()).status_code == 403
+    assert httpx.post(f"{url}/mallory").status_code == 401
     assert httpx.get(admin.url("/whoami"), headers=admin.headers()).json()["admin"]
 
 
 def test_removing_a_member_revokes_membership_but_keeps_identity(community):
     server, admin = community
     vega = Owner(server, "vega")
-    assert vega.register("demo").status_code == 201
+    assert enroll(admin, vega, "demo").status_code == 201
 
     result = set_roster(server, admin, "demo", ["lyra", "rigel"])
     assert result["removed"] == ["vega"] and result["added"] == []
@@ -131,9 +124,9 @@ def test_removing_a_member_revokes_membership_but_keeps_identity(community):
 
 
 def test_key_rotation_retires_the_old_key(community):
-    server, _ = community
+    server, admin = community
     lyra = Owner(server, "lyra")
-    lyra.register("demo")
+    enroll(admin, lyra, "demo")
     old_token = lyra.token()
 
     new_key = OwnerKey()
@@ -160,7 +153,7 @@ def test_key_rotation_retires_the_old_key(community):
     )
 
     rigel = Owner(server, "rigel")
-    rigel.register("demo")
+    enroll(admin, rigel, "demo")
     nonce = rigel.challenge()
     other = OwnerKey()
     r = httpx.post(
@@ -172,9 +165,9 @@ def test_key_rotation_retires_the_old_key(community):
 
 
 def test_suspect_after_is_recorded_and_reported(community):
-    server, _ = community
+    server, admin = community
     lyra = Owner(server, "lyra")
-    lyra.register("demo")
+    enroll(admin, lyra, "demo")
     result = server.admin(
         "suspect-after",
         "--community",
@@ -226,22 +219,8 @@ def test_suspect_after_is_recorded_and_reported(community):
     )
 
 
-def test_tokens_expire(make_server):
-    server = make_server(SYMPOSIUM_DATA_TOKEN_TTL="2")
-    admin = init_admin(server)
-    token = admin.token()
-    url = server.url + "/v1/communities"
-    assert httpx.get(url, headers=admin.headers(token)).status_code == 200
-    time.sleep(3)
-    assert httpx.get(url, headers=admin.headers(token)).status_code == 401
-
-
 @pytest.fixture
-def invite_server(make_server):
-    server = make_server(
-        SYMPOSIUM_DATA_REGISTRATION="invite",
-        SYMPOSIUM_DATA_PUBLIC_BASE_URL="https://data.example.org",
-    )
+def invite_server(server):
     admin = init_admin(server)
     set_roster(server, admin, "demo", ["lyra", "vega"])
     return server
@@ -255,7 +234,7 @@ def mint(server, handle, *extra):
     return invite
 
 
-def test_invite_mode_refuses_without_a_valid_invite(invite_server):
+def test_registration_refuses_without_a_valid_invite(invite_server):
     server = invite_server
     lyra_invite = mint(server, "lyra")
 

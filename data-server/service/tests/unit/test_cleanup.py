@@ -106,7 +106,7 @@ class RecordingS3:
 
 def _store(s3):
     store = PayloadStore.__new__(PayloadStore)
-    store.s3, store.bucket, store.fault_injection = s3, "b", False
+    store.s3, store.bucket, store.test_hooks = s3, "b", False
     return store
 
 

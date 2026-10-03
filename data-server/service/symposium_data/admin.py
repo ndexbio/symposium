@@ -11,7 +11,7 @@
     data-admin port-ndex      (one-time bootstrap; configured by PORT_* environment, see PORT_NDEX.md)
 
 Invites are printed alone on stdout, for the operator to redirect into a file and hand over
-out of band. They are single-use and stored only as hashes.
+out of band. They are single-use; issuing one revokes the handle's earlier unused invite.
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ class Admin:
         invite = self.secrets.new("sdi_")
         hours = self.settings.invite_hours if hours is None else hours
         self.records.add_invite(
-            conn, self.secrets.digest(invite), community, handle, hours
+            conn, self.secrets.digest(invite), invite, community, handle, hours
         )
         return invite
 
@@ -213,7 +213,6 @@ class Admin:
                 "server_id": self.settings.server_id,
                 "initialized": admin is not None,
                 "admin": admin,
-                "registration": self.settings.registration,
             }
         )
         return 0

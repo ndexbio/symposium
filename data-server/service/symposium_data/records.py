@@ -164,41 +164,50 @@ class Records:
         ).fetchone()
         return row is not None
 
-    def set_roster(self, conn, community: str, handles: list) -> tuple[list, list]:
-        """Replace a community's roster. New members get the default grants; removed members
-        lose every grant in the community but keep their identity and attribution. The admin's
-        handle is reserved: it can never be a member (R-D6)."""
-        if self.config(conn, "admin") in handles:
+    def add_to_roster(self, conn, community: str, handle: str) -> bool:
+        """Add one handle with the default grants (R-D6). Idempotent: -> False when the handle
+        was already on the roster. The admin's handle is reserved: it can never be a member."""
+        if handle == self.config(conn, "admin"):
             raise Forbidden("the admin's handle cannot be on a roster")
-        current = {
-            r["handle"]
-            for r in conn.execute(
-                "SELECT handle FROM roster WHERE community = %s", (community,)
-            ).fetchall()
-        }
-        wanted = set(handles)
-        added, removed = sorted(wanted - current), sorted(current - wanted)
-        for handle in added:
+        added = conn.execute(
+            "INSERT INTO roster (community, handle) VALUES (%s, %s) "
+            "ON CONFLICT DO NOTHING RETURNING handle",
+            (community, handle),
+        ).fetchone()
+        for collection, perm in DEFAULT_GRANTS:
             conn.execute(
-                "INSERT INTO roster (community, handle) VALUES (%s, %s)",
-                (community, handle),
+                "INSERT INTO grants (community, collection, handle, perm) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT DO NOTHING",
+                (community, collection, handle, perm),
             )
-            for collection, perm in DEFAULT_GRANTS:
-                conn.execute(
-                    "INSERT INTO grants (community, collection, handle, perm) VALUES (%s, %s, %s, %s) "
-                    "ON CONFLICT DO NOTHING",
-                    (community, collection, handle, perm),
-                )
-        for handle in removed:
-            conn.execute(
-                "DELETE FROM roster WHERE community = %s AND handle = %s",
-                (community, handle),
-            )
-            conn.execute(
-                "DELETE FROM grants WHERE community = %s AND handle = %s",
-                (community, handle),
-            )
-        return added, removed
+        return added is not None
+
+    def remove_from_roster(self, conn, community: str, handle: str) -> bool:
+        """Remove one handle: it loses every grant and pending invite in the community but keeps
+        its identity and attribution. -> False when it was not on the roster."""
+        removed = conn.execute(
+            "DELETE FROM roster WHERE community = %s AND handle = %s RETURNING handle",
+            (community, handle),
+        ).fetchone()
+        conn.execute(
+            "DELETE FROM grants WHERE community = %s AND handle = %s",
+            (community, handle),
+        )
+        self.revoke_invites(conn, community, handle)
+        return removed is not None
+
+    def roster(self, conn, community: str) -> list:
+        """Each handle with whether it has registered and when its pending invite expires."""
+        return conn.execute(
+            "SELECT r.handle, "
+            "EXISTS (SELECT 1 FROM owner_keys k WHERE k.community = r.community "
+            "AND k.handle = r.handle AND k.active) AS registered, "
+            "(SELECT max(i.expires) FROM invites i WHERE i.community = r.community "
+            "AND i.handle = r.handle AND i.used IS NULL AND i.revoked IS NULL "
+            "AND i.expires > now()) AS invite_expires "
+            "FROM roster r WHERE r.community = %s ORDER BY r.handle",
+            (community,),
+        ).fetchall()
 
     def grants(self, conn, community: str, handle: str) -> list:
         return [
@@ -210,21 +219,49 @@ class Records:
             ).fetchall()
         ]
 
-    def add_invite(self, conn, digest: str, community: str, handle: str, hours: int):
+    def add_invite(
+        self, conn, digest: str, secret: str, community: str, handle: str, hours: int
+    ):
+        """Issue an invite, revoking any earlier unused one for the handle, so only the newest
+        works (R-D6). The secret is kept, retrievable by the admin, only while pending."""
+        self.revoke_invites(conn, community, handle)
+        return conn.execute(
+            "INSERT INTO invites (hash, secret, community, handle, expires) "
+            "VALUES (%s, %s, %s, %s, now() + %s * interval '1 hour') RETURNING expires",
+            (digest, secret, community, handle, hours),
+        ).fetchone()["expires"]
+
+    def revoke_invites(self, conn, community: str, handle: str):
         conn.execute(
-            "INSERT INTO invites (hash, community, handle, expires) "
-            "VALUES (%s, %s, %s, now() + %s * interval '1 hour')",
-            (digest, community, handle, hours),
+            "UPDATE invites SET revoked = now(), secret = NULL WHERE community = %s "
+            "AND handle = %s AND used IS NULL AND revoked IS NULL",
+            (community, handle),
         )
 
+    def pending_invites(self, conn, community: str) -> list:
+        return conn.execute(
+            "SELECT handle, secret, expires FROM invites WHERE community = %s "
+            "AND used IS NULL AND revoked IS NULL AND expires > now() AND secret IS NOT NULL "
+            "ORDER BY handle",
+            (community,),
+        ).fetchall()
+
     def consume_invite(self, conn, digest: str, community: str, handle: str) -> bool:
-        """Spend an invite: valid only once, for its own handle and community, before expiry."""
+        """Spend an invite: valid only once, for its own handle and community, before expiry
+        and unless revoked. Its secret is erased as it is used."""
         row = conn.execute(
-            "UPDATE invites SET used = now() WHERE hash = %s AND community = %s AND handle = %s "
-            "AND used IS NULL AND expires > now() RETURNING hash",
+            "UPDATE invites SET used = now(), secret = NULL WHERE hash = %s AND community = %s "
+            "AND handle = %s AND used IS NULL AND revoked IS NULL AND expires > now() "
+            "RETURNING hash",
             (digest, community, handle),
         ).fetchone()
         return row is not None
+
+    def forget_expired_invites(self, conn) -> int:
+        """The janitor erases the secret of every invite that expired unused."""
+        return conn.execute(
+            "UPDATE invites SET secret = NULL WHERE secret IS NOT NULL AND expires <= now()"
+        ).rowcount
 
     def register(self, conn, community: str, handle: str, kid: str, jwk: dict):
         conn.execute(
@@ -663,7 +700,7 @@ class Records:
     def release_reservation(self, conn, fid):
         conn.execute("DELETE FROM files WHERE id = %s AND state = 'reserved'", (fid,))
 
-    def stale_reservations(self, conn, older_than_seconds: int) -> list:
+    def stale_reservations(self, conn, older_than_seconds: float) -> list:
         return conn.execute(
             "DELETE FROM files WHERE state = 'reserved' "
             "AND reserved_at < now() - %s * interval '1 second' RETURNING id",
@@ -935,7 +972,7 @@ class Records:
             (pid,),
         )
 
-    def stale_pending(self, conn, older_than_seconds: int) -> list:
+    def stale_pending(self, conn, older_than_seconds: float) -> list:
         return conn.execute(
             "SELECT id FROM payloads WHERE state = 'pending' "
             "AND created < now() - %s * interval '1 second'",

@@ -1,7 +1,10 @@
-"""Integration harness: runs the image under test and drives it over HTTP and `docker exec`.
+"""Integration harness: one data-server container for the whole session, driven over HTTP and
+`docker exec`.
 
 The Makefile sets SYMPOSIUM_DATA_TEST_IMAGE (and SYMPOSIUM_DATA_TEST_VERSION) after building
-the image; every container and volume a test creates is named sdtest-* and removed afterwards.
+the image. The session starts one container (named sdtest-*, removed with its volume at the
+end) with every duration shortened for tests, binds the admin once, and resets the data before
+each test; the container is never restarted.
 """
 
 from __future__ import annotations
@@ -22,6 +25,40 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 IMAGE = os.environ.get("SYMPOSIUM_DATA_TEST_IMAGE", "")
 VERSION = os.environ.get("SYMPOSIUM_DATA_TEST_VERSION", "")
 
+# Every duration the server exposes, shortened so no test waits more than about a second. The
+# test hooks act only while a test has created their file: S3 delete faults (the fault file)
+# and a quota (the quota file, set_quota()); the reset before each test removes both.
+TEST_ENV = {
+    "SYMPOSIUM_DATA_PENDING_TTL": "1",
+    "SYMPOSIUM_DATA_JANITOR_INTERVAL": "0.5",
+    "SYMPOSIUM_DATA_SCRUB_INTERVAL": "0.5",
+    "SYMPOSIUM_DATA_TEST_HOOKS": "1",
+}
+ADMIN = "demo-admin"
+
+# Run inside the container: empty every data table and the bucket, keeping the admin binding.
+RESET = """
+import os, psycopg
+from symposium_data.runtime import PayloadStore, Settings
+settings = Settings()
+store = PayloadStore(settings)
+with psycopg.connect(settings.database_url) as conn:
+    conn.execute(
+        "TRUNCATE communities, owners, owner_keys, challenges, roster, grants, invites, "
+        "collections, files, versions, payloads, read_keys CASCADE"
+    )
+for page in store.s3.get_paginator("list_objects_v2").paginate(Bucket=store.bucket):
+    for item in page.get("Contents", []):
+        store.s3.delete_object(Bucket=store.bucket, Key=item["Key"])
+for upload in store.s3.list_multipart_uploads(Bucket=store.bucket).get("Uploads", []):
+    store.s3.abort_multipart_upload(
+        Bucket=store.bucket, Key=upload["Key"], UploadId=upload["UploadId"]
+    )
+for hook in (store.FAULT_FILE, Settings.QUOTA_FILE):
+    if os.path.exists(hook):
+        os.remove(hook)
+"""
+
 
 def docker(*args, check=True, input=None, timeout=600):
     result = subprocess.run(
@@ -33,7 +70,7 @@ def docker(*args, check=True, input=None, timeout=600):
 
 
 class Server:
-    """One running data-server container and the volume holding its state."""
+    """The session's data-server container and the volume holding its state."""
 
     def __init__(self, env: dict):
         self.env = env
@@ -41,23 +78,20 @@ class Server:
         self.volume = f"{self.name}-vol"
         self.url = ""
 
-    def start(self, wait=True):
+    def start(self):
         # Docker assigns the host port itself: picking a "free" port first races with
-        # anything else that grabs it before the container binds.
+        # anything else that grabs it before the container binds. The host alias lets the
+        # server reach a stub a test runs on this machine.
         cmd = ["run", "-d", "--name", self.name, "-p", "127.0.0.1::8080"]
+        cmd += ["--add-host=host.docker.internal:host-gateway"]
         cmd += ["-v", f"{self.volume}:/apps"]
         for key, value in self.env.items():
             cmd += ["-e", f"{key}={value}"]
         docker(*cmd, IMAGE)
-        self.locate()
-        if wait:
-            self.wait()
-        return self
-
-    def locate(self):
-        """Read the host port Docker assigned; it changes on every start and restart."""
         mapped = docker("port", self.name, "8080").stdout.splitlines()[0].strip()
         self.url = f"http://127.0.0.1:{mapped.rsplit(':', 1)[1]}"
+        self.wait()
+        return self
 
     def wait(self, timeout=180):
         deadline = time.time() + timeout
@@ -68,7 +102,7 @@ class Server:
                     return r.json()
             except httpx.HTTPError:
                 pass
-            time.sleep(1)
+            time.sleep(0.2)
         raise RuntimeError(f"{self.name} never became healthy:\n{self.logs()[-2000:]}")
 
     def status(self) -> dict:
@@ -84,42 +118,47 @@ class Server:
         result = docker("logs", self.name, check=False)
         return result.stdout + result.stderr
 
-    def restart(self):
-        docker("restart", self.name)
-        self.locate()
-        self.wait()
-
-    def recreate(self):
-        """Remove the container and start a new one on the same volume."""
-        docker("rm", "-f", "-v", self.name)
-        self.start()
+    def reset(self):
+        """Empty every community, file and payload; the admin binding stays."""
+        result = self.exec("/opt/venv/bin/python", "-c", RESET)
+        assert result.returncode == 0, result.stderr[-2000:]
 
     def remove(self):
         docker("rm", "-f", "-v", self.name, check=False)
         docker("volume", "rm", "-f", self.volume, check=False)
 
 
-@pytest.fixture
-def make_server():
+@pytest.fixture(scope="session")
+def server():
+    """The one container. Before binding the admin it checks what a fresh server does:
+    it reports itself uninitialized, and registration's first step answers 503."""
     if not IMAGE:
         pytest.fail(
             "SYMPOSIUM_DATA_TEST_IMAGE is not set; run through `make -C data-server test`"
         )
-    servers = []
-
-    def factory(start=True, **env):
-        server = Server({"SYMPOSIUM_DATA_REGISTRATION": "open", **env})
-        servers.append(server)
-        return server.start() if start else server
-
-    yield factory
-    for server in servers:
+    server = Server(TEST_ENV)
+    try:
+        server.start()
+        assert server.status()["initialized"] is False
+        challenge = httpx.post(
+            server.url + "/v1/demo/auth/challenge", json={"handle": "lyra"}
+        )
+        assert challenge.status_code == 503, challenge.text
+        server.admin_key = OwnerKey()
+        bound = server.admin(
+            "init", "--admin", ADMIN, "--pubkey", "-", input=server.admin_key.jwk_text()
+        )
+        assert bound.returncode == 0, bound.stdout + bound.stderr
+        yield server
+    finally:
         server.remove()
 
 
-@pytest.fixture
-def server(make_server):
-    return make_server()
+@pytest.fixture(autouse=True)
+def clean_slate(server):
+    """Every test starts from an empty, initialized server."""
+    server.reset()
+    yield
 
 
 class OwnerKey:
@@ -303,6 +342,14 @@ def file_headers(data: bytes, metadata=None) -> dict:
     return headers
 
 
+def set_quota(server: Server, quota_bytes: int):
+    """The per-member quota, through the test hook, until the next test's reset."""
+    result = server.exec(
+        "sh", "-c", f"echo {quota_bytes} > /apps/data/config/test-quota"
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def psql(server: Server, sql: str) -> str:
     return server.exec(
         "gosu", "postgres", "psql", "-tA", "-d", "symposium_data", "-c", sql
@@ -310,26 +357,37 @@ def psql(server: Server, sql: str) -> str:
 
 
 def community_with(server: Server, members=("lyra", "vega", "rigel")):
-    """An initialized open server: the demo roster, each member registered. -> (admin, {h: Owner})."""
+    """An initialized server: the demo roster, each member enrolled by invite.
+    -> (admin, {handle: Owner})."""
     admin = init_admin(server)
     set_roster(server, admin, "demo", list(members))
     owners = {}
     for handle in members:
         owner = Owner(server, handle)
-        r = owner.register("demo")
+        r = enroll(admin, owner, "demo")
         assert r.status_code == 201, r.text
         owners[handle] = owner
     return admin, owners
 
 
-def init_admin(server: Server, handle: str = "demo-admin") -> Admin:
-    """Bind the admin's public key through data-admin, as the operator does."""
-    admin = Admin(server, handle)
-    result = server.admin(
-        "init", "--admin", handle, "--pubkey", "-", input=admin.key.jwk_text()
+def invite(admin: Admin, community: str, handle: str, hours: int | None = None):
+    """The admin issues an invite through the API, as bootstrap does. -> the response."""
+    body = {"handle": handle} if hours is None else {"handle": handle, "hours": hours}
+    return httpx.post(
+        f"{admin.server.url}/v1/{community}/invites", json=body, headers=admin.headers()
     )
-    assert result.returncode == 0, result.stdout + result.stderr
-    return admin
+
+
+def enroll(admin: Admin, owner: Owner, community: str):
+    """Invite a roster handle and register it with that invite: the only way to join."""
+    r = invite(admin, community, owner.handle)
+    assert r.status_code == 201, r.text
+    return owner.register(community, invite=r.json()["invite"])
+
+
+def init_admin(server: Server) -> Admin:
+    """The session's admin, bound once when the server started."""
+    return Admin(server, ADMIN, server.admin_key)
 
 
 def create_community(server: Server, admin: Admin, community: str):
@@ -343,15 +401,21 @@ def create_community(server: Server, admin: Admin, community: str):
 
 
 def set_roster(server: Server, admin: Admin, community: str, handles: list) -> dict:
-    """Create the community if it does not exist yet, then set its roster."""
+    """Create the community if it does not exist yet, then make its roster exactly `handles`,
+    one handle at a time. -> {"added": [...], "removed": [...]}."""
     create_community(server, admin, community)
-    r = httpx.put(
-        f"{server.url}/v1/{community}/roster",
-        json={"handles": handles},
-        headers=admin.headers(),
-    )
-    assert r.status_code == 200, r.text
-    return r.json()
+    url = f"{server.url}/v1/{community}/roster"
+    current = {
+        m["handle"] for m in httpx.get(url, headers=admin.headers()).json()["roster"]
+    }
+    added, removed = sorted(set(handles) - current), sorted(current - set(handles))
+    for handle in added:
+        r = httpx.post(f"{url}/{handle}", headers=admin.headers())
+        assert r.status_code == 201, r.text
+    for handle in removed:
+        r = httpx.delete(f"{url}/{handle}", headers=admin.headers())
+        assert r.status_code == 200, r.text
+    return {"added": added, "removed": removed}
 
 
 def store_counts(server: Server) -> tuple[int, int]:
@@ -423,5 +487,5 @@ def assert_consistent(server: Server, timeout: float = 30):
         state = consistency(server)
         if not any(state.values()) or time.time() > deadline:
             break
-        time.sleep(1)
+        time.sleep(0.2)
     assert not any(state.values()), state

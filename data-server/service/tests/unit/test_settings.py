@@ -17,19 +17,50 @@ def test_settings_read_service_env_and_operator_variables(tmp_path):
     s = Settings(
         str(path),
         environ={
-            "SYMPOSIUM_DATA_REGISTRATION": "open",
-            "SYMPOSIUM_DATA_PUBLIC_BASE_URL": "https://data.example.org",
+            "SYMPOSIUM_DATA_INVITE_HOURS": "24",
+            "SYMPOSIUM_DATA_QUOTA_BYTES": "1000",
         },
     )
     assert s.database_url.startswith("postgresql://u:p@")
     assert s.s3_secret_key == "sk=with=equals"
     assert s.s3_bucket == "symposium-data"
     assert s.server_id == "6f1c"
-    assert s.registration == "open"
-    assert s.public_base_url == "https://data.example.org"
+    assert s.invite_hours == 24 and s.quota_bytes == 1000
 
 
-def test_registration_defaults_to_invite(tmp_path):
+def test_operator_variables_have_defaults(tmp_path):
     path = tmp_path / "service.env"
     path.write_text(SERVICE_ENV)
-    assert Settings(str(path), environ={}).registration == "invite"
+    s = Settings(str(path), environ={})
+    assert s.invite_hours == 72 and s.quota_bytes == 0 and s.token_ttl == 900
+
+
+def test_durations_accept_fractions_of_a_second(tmp_path):
+    path = tmp_path / "service.env"
+    path.write_text(SERVICE_ENV)
+    s = Settings(
+        str(path),
+        environ={
+            "SYMPOSIUM_DATA_PENDING_TTL": "1",
+            "SYMPOSIUM_DATA_JANITOR_INTERVAL": "0.5",
+            "SYMPOSIUM_DATA_SCRUB_INTERVAL": "0.5",
+        },
+    )
+    assert (s.pending_ttl, s.janitor_interval, s.scrub_interval) == (1.0, 0.5, 0.5)
+    assert s.heartbeat == 1 / 3  # the upload heartbeat follows the pending TTL
+
+
+def test_the_quota_file_overrides_the_quota_only_with_test_hooks(tmp_path, monkeypatch):
+    path = tmp_path / "service.env"
+    path.write_text(SERVICE_ENV)
+    override = tmp_path / "test-quota"
+    monkeypatch.setattr(Settings, "QUOTA_FILE", override)
+    hooked = Settings(
+        str(path),
+        environ={"SYMPOSIUM_DATA_TEST_HOOKS": "1", "SYMPOSIUM_DATA_QUOTA_BYTES": "500"},
+    )
+    plain = Settings(str(path), environ={"SYMPOSIUM_DATA_QUOTA_BYTES": "500"})
+    assert hooked.quota() == 500
+    override.write_text("1000")
+    assert hooked.quota() == 1000
+    assert plain.quota() == 500

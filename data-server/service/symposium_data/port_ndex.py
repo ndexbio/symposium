@@ -264,7 +264,8 @@ class Port:
         checks, then the sentinel. Nothing is visible until it commits."""
         conn.execute("INSERT INTO communities (name) VALUES (%s)", (self.community,))
         self.records.ensure_collections(conn, self.community, self.admin)
-        self.records.set_roster(conn, self.community, members)
+        for handle in members:
+            self.records.add_to_roster(conn, self.community, handle)
         for handle in members:
             conn.execute(
                 "INSERT INTO owners (community, handle, reserved) VALUES (%s, %s, true) "

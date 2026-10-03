@@ -3,7 +3,14 @@ ignoring case, identity per community, and the server-wide admin."""
 
 import httpx
 import pytest
-from conftest import Owner, create_community, init_admin, set_roster
+from conftest import (
+    Owner,
+    create_community,
+    enroll,
+    init_admin,
+    set_quota,
+    set_roster,
+)
 
 
 @pytest.fixture
@@ -43,7 +50,7 @@ def test_the_admin_creates_communities_idempotently(server, admin):
     )
     set_roster(server, admin, "comm1", ["lyra"])
     lyra = Owner(server, "lyra")
-    assert lyra.register("comm1").status_code == 201
+    assert enroll(admin, lyra, "comm1").status_code == 201
     assert (
         httpx.post(
             f"{server.url}/v1/communities",
@@ -80,7 +87,7 @@ def test_names_are_unique_and_matched_ignoring_case(server, admin):
 
     set_roster(server, admin, "Comm1", ["lyra"])
     lyra = Owner(server, "lyra", community="COMM1")  # any case reaches Comm1
-    assert lyra.register("COMM1").status_code == 201
+    assert enroll(admin, lyra, "COMM1").status_code == 201
     me = httpx.get(lyra.url("/whoami"), headers=lyra.headers()).json()
     assert me["community"] == "Comm1"
 
@@ -94,8 +101,8 @@ def test_one_handle_is_an_independent_identity_in_each_community(server, admin):
     set_roster(server, admin, "comm2", ["lyra"])
     lyra1 = Owner(server, "lyra")
     lyra2 = Owner(server, "lyra")  # another key: a different person, perhaps
-    assert lyra1.register("comm1").status_code == 201
-    assert lyra2.register("comm2").status_code == 201
+    assert enroll(admin, lyra1, "comm1").status_code == 201
+    assert enroll(admin, lyra2, "comm2").status_code == 201
 
     # each key signs in only to its own community, and each token works only there
     assert Owner(server, "lyra", lyra1.key, "comm2").token_response().status_code == 401
@@ -116,20 +123,17 @@ def test_the_admin_is_server_wide_and_never_a_member(server, admin):
         ).json()
         assert me["admin"] is True and me["community"] == community
 
-    refused = httpx.put(
-        f"{server.url}/v1/comm1/roster",
-        json={"handles": ["lyra", "demo-admin"]},
-        headers=admin.headers(),
+    refused = httpx.post(
+        f"{server.url}/v1/comm1/roster/demo-admin", headers=admin.headers()
     )
     assert refused.status_code == 400 and "admin's handle" in refused.json()["detail"]
 
 
-def test_the_admins_own_writes_are_exempt_from_quota(make_server):
-    server = make_server(SYMPOSIUM_DATA_QUOTA_BYTES="10")
-    admin = init_admin(server)
+def test_the_admins_own_writes_are_exempt_from_quota(server, admin):
+    set_quota(server, 10)
     set_roster(server, admin, "comm1", ["lyra"])
     lyra = Owner(server, "lyra")
-    lyra.register("comm1")
+    enroll(admin, lyra, "comm1")
     assert lyra.put("comm1", "files", "big.bin", b"x" * 100).status_code == 413
     assert (
         admin.at("comm1").put("comm1", "files", "big.bin", b"x" * 100).status_code

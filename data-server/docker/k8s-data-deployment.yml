@@ -52,8 +52,6 @@ spec:
           imagePullPolicy: Always
           args: ["--data-api", "--postgres", "--seaweed"]
           env:
-            - {name: SYMPOSIUM_DATA_REGISTRATION, value: invite}
-            - {name: SYMPOSIUM_DATA_PUBLIC_BASE_URL, value: "https://data.example.org"}
             - {name: SYMPOSIUM_DATA_TRUSTED_PROXY, value: "10.0.0.0/8"}
           ports:
             - {name: http, containerPort: 8080, protocol: TCP}

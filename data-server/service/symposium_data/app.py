@@ -94,7 +94,7 @@ def status(response: Response):
     readiness probe never routes traffic to a server that cannot serve it."""
     admin, postgres_ok = None, True
     try:
-        with db.connection(timeout=3) as conn:
+        with db.connection(timeout=0.5) as conn:  # inside the probe's 1 s
             admin = records.config(conn, "admin")
     except Exception:
         postgres_ok = False
@@ -106,10 +106,8 @@ def status(response: Response):
         "version": version(),
         "server_id": settings.server_id,
         "initialized": (admin is not None) if postgres_ok else None,
-        "registration": settings.registration,
         "postgres": "ok" if postgres_ok else "unavailable",
         "s3": "ok" if s3_ok else "unavailable",
-        "public_base_url": settings.public_base_url or None,
     }
 
 
@@ -143,8 +141,9 @@ class RotateIn(BaseModel):
     signature: str
 
 
-class RosterIn(BaseModel):
-    handles: list[str] = Field(max_length=10_000)
+class InviteIn(BaseModel):
+    handle: str = Field(pattern=NAME)
+    hours: int | None = Field(default=None, ge=1, le=24 * 366)
 
 
 class CommunityIn(BaseModel):
@@ -332,7 +331,7 @@ def register(community: str, body: RegisterIn):
             refuse(403, f"'{body.handle}' is not on the {community} roster", conn)
         if records.active_keys(conn, community, body.handle):
             refuse(409, f"'{body.handle}' is already registered in {community}", conn)
-        if settings.registration == "invite" and not records.consume_invite(
+        if not records.consume_invite(
             conn, secrets.digest(body.invite or ""), community, body.handle
         ):
             refuse(
@@ -390,25 +389,103 @@ def whoami(community: str, request: Request):
         }
 
 
-@app.put("/v1/{community}/roster")
-def roster(community: str, body: RosterIn, request: Request):
-    """Replace the community roster (admin only). Members get the default grants (R-D6); the
-    community must exist, and the admin's handle cannot be on it."""
-    if not all(re.match(NAME, h) for h in body.handles):
-        refuse(422, "handles must be plain names")
+@app.get("/v1/{community}/roster")
+def roster(community: str, request: Request):
+    """The roster, one entry per handle: whether it has registered, and when its pending
+    invite expires (admin only; R-D6)."""
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        require_admin(conn, request, community)
+        return {
+            "community": community,
+            "roster": [
+                {
+                    "handle": r["handle"],
+                    "registered": r["registered"],
+                    "invite_expires": iso(r["invite_expires"]),
+                }
+                for r in records.roster(conn, community)
+            ],
+        }
+
+
+def roster_handle(handle: str) -> str:
+    if not re.match(NAME, handle):
+        refuse(422, "a handle is a plain name")
+    return handle
+
+
+@app.post("/v1/{community}/roster/{handle}")
+def add_member(community: str, handle: str, request: Request, response: Response):
+    """Add one handle, with the default grants (admin only; R-D6). Idempotent: 201 when added,
+    200 when already there. Adding never removes anyone; the admin's handle is refused."""
+    handle = roster_handle(handle)
     with db.connection() as conn:
         community = community_of(conn, community)
         require_admin(conn, request, community)
         try:
-            added, removed = records.set_roster(conn, community, body.handles)
+            added = records.add_to_roster(conn, community, handle)
         except Forbidden as e:
             conn.rollback()
             refuse(400, str(e))
+        response.status_code = 201 if added else 200
+        return {"community": community, "handle": handle, "added": added}
+
+
+@app.delete("/v1/{community}/roster/{handle}")
+def remove_member(community: str, handle: str, request: Request):
+    """Remove one handle: its grants and pending invite go; its identity and attribution stay
+    (admin only)."""
+    handle = roster_handle(handle)
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        require_admin(conn, request, community)
+        removed = records.remove_from_roster(conn, community, handle)
+        if not removed:
+            refuse(404, f"'{handle}' is not on the {community} roster")
+        return {"community": community, "handle": handle, "removed": True}
+
+
+@app.post("/v1/{community}/invites", status_code=201)
+def create_invite(community: str, body: InviteIn, request: Request):
+    """A single-use invite for a roster handle, returned once (admin only; R-D5, R-D6). It
+    revokes any earlier unused invite for the handle, and stays retrievable from
+    GET .../invites only while pending."""
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        require_admin(conn, request, community)
+        if not records.on_roster(conn, community, body.handle):
+            refuse(403, f"'{body.handle}' is not on the {community} roster")
+        invite = secrets.new("sdi_")
+        hours = settings.invite_hours if body.hours is None else body.hours
+        expires = records.add_invite(
+            conn, secrets.digest(invite), invite, community, body.handle, hours
+        )
         return {
             "community": community,
-            "roster": sorted(set(body.handles)),
-            "added": added,
-            "removed": removed,
+            "handle": body.handle,
+            "invite": invite,
+            "expires": iso(expires),
+        }
+
+
+@app.get("/v1/{community}/invites")
+def list_invites(community: str, request: Request):
+    """Every pending invite of the community, with its secret, so the admin can hand it over
+    again (admin only). Used, expired and revoked invites are never listed."""
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        require_admin(conn, request, community)
+        return {
+            "community": community,
+            "invites": [
+                {
+                    "handle": r["handle"],
+                    "invite": r["secret"],
+                    "expires": iso(r["expires"]),
+                }
+                for r in records.pending_invites(conn, community)
+            ],
         }
 
 
@@ -434,7 +511,7 @@ class Upload:
 
 def quota_for(conn, handle: str) -> int:
     """The per-owner quota; the server admin's own writes are exempt (R-H2)."""
-    return 0 if records.is_admin(conn, handle) else settings.quota_bytes
+    return 0 if records.is_admin(conn, handle) else settings.quota()
 
 
 async def stream_upload(

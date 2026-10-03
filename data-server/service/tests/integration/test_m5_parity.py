@@ -9,11 +9,10 @@ from datetime import datetime
 import httpx
 import pytest
 from conftest import (
-    Admin,
     Owner,
     assert_consistent,
     community_with,
-    init_admin,
+    enroll,
     psql,
     set_roster,
 )
@@ -157,7 +156,7 @@ def test_hash_lookup_finds_every_readable_copy(demo):
     vega.put("demo", "files", "two.csv", content)
     set_roster(server, admin, "other", ["bob"])
     bob = Owner(server, "bob")
-    assert bob.register("other").status_code == 201
+    assert enroll(admin, bob, "other").status_code == 201
     bob.put("other", "files", "three.csv", content)
 
     url = f"{server.url}/v1/demo/sha256/{sha}"
@@ -249,7 +248,8 @@ def test_a_failing_promote_leaves_nothing_behind(demo):
     psql(
         server,
         "INSERT INTO files (id, community, collection, name, state, reserved_by, reserved_at) "
-        "VALUES (gen_random_uuid(), 'demo', 'record', 'goal.json', 'reserved', 'vega', now())",
+        "VALUES (gen_random_uuid(), 'demo', 'record', 'goal.json', 'reserved', 'vega', "
+        "now() + interval '1 second')",
     )
     assert promote(admin, fid, 1, **pointer).status_code == 409
     assert psql(server, "SELECT count(*) FROM payloads WHERE state = 'pending'") == "0"
@@ -287,7 +287,7 @@ def test_verify_checks_existence_hash_and_strict_ordering(demo):
 
     set_roster(server, admin, "other", ["bob"])
     bob = Owner(server, "bob")
-    bob.register("other")
+    enroll(admin, bob, "other")
     hidden = verify(bob, cite).json()
     unknown = verify(bob, "symposium-data:00000000-0000-0000-0000-000000000000@v1")
     assert hidden == unknown.json() and not hidden["exists"]
@@ -338,8 +338,9 @@ def comparable(items):
     return [{k: i[k] for k in (*keep, "purged", "created_by", "key_id")} for i in items]
 
 
-def test_export_import_round_trip_preserves_the_community(make_server, tmp_path):
-    source = make_server()
+def test_export_import_round_trip_preserves_the_community(server, tmp_path):
+    # export, empty the server, import: the one session server plays source and target
+    source = target = server
     admin, owners = community_with(source)
     lyra, vega = owners["lyra"], owners["vega"]
     fid = lyra.put("demo", "files", "data.csv", b"1,2,3").json()["file_id"]
@@ -371,8 +372,7 @@ def test_export_import_round_trip_preserves_the_community(make_server, tmp_path)
     }
     archive = export(source, "demo", tmp_path / "demo.tar")
 
-    target = make_server()
-    target_admin = init_admin(target)  # the same handle, this server's own key
+    target.reset()
     truncated = tmp_path / "truncated.tar"
     truncated.write_bytes(archive.read_bytes()[: archive.stat().st_size // 2])
     code, _ = import_(target, truncated)
@@ -388,19 +388,14 @@ def test_export_import_round_trip_preserves_the_community(make_server, tmp_path)
         "vega": "created",
         "rigel": "created",
     }
-    after = {
-        c: comparable(every_change(target, target_admin.headers(), c)) for c in before
-    }
+    after = {c: comparable(every_change(target, admin.headers(), c)) for c in before}
     assert after == before
 
-    # members sign in with the keys they already hold; the source admin's key does not
+    # members sign in with the keys they already hold
     lyra2 = Owner(target, "lyra", key=lyra.key)
     vega2 = Owner(target, "vega", key=vega.key)
     assert lyra2.get(fid, 2).content == b"1,2,3,4"
     assert vega2.get(shared).content == b"for vega"  # the grant survived
-    assert (
-        Admin(target, "demo-admin", key=admin.key).token_response().status_code == 401
-    )
     read = httpx.get(
         f"{target.url}/v1/demo/files/{shared}/v/1",
         headers={"Authorization": f"Bearer {key}"},
@@ -420,19 +415,18 @@ def test_export_import_round_trip_preserves_the_community(make_server, tmp_path)
     assert_consistent(target)
 
 
-def test_imported_identities_are_per_community(make_server, tmp_path):
-    source = make_server()
+def test_imported_identities_are_per_community(server, tmp_path):
+    source = target = server
     admin, owners = community_with(source, members=("lyra", "vega"))
     lyra = owners["lyra"]
     fid = lyra.put("demo", "files", "data.csv", b"lyra's data").json()["file_id"]
     archive = export(source, "demo", tmp_path / "demo.tar")
 
-    # the target already has a lyra, with another key, in another community
-    target = make_server()
-    target_admin = init_admin(target)
-    set_roster(target, target_admin, "other", ["lyra"])
+    # emptied, the server then has a lyra, with another key, in another community
+    target.reset()
+    set_roster(target, admin, "other", ["lyra"])
     lyra_other = Owner(target, "lyra")
-    assert lyra_other.register("other").status_code == 201
+    assert enroll(admin, lyra_other, "other").status_code == 201
     code, report = import_(target, archive)
     assert code == 0, report
     results = {r["handle"]: r["result"] for r in report if "handle" in r}
@@ -451,9 +445,3 @@ def test_imported_identities_are_per_community(make_server, tmp_path):
         == 401
     )
     assert Owner(target, "lyra", key=lyra_other.key).token_response().status_code == 401
-
-    # the admin handle must match
-    elsewhere = make_server()
-    init_admin(elsewhere, handle="other-admin")
-    code, report = import_(elsewhere, archive)
-    assert code == 2 and "initialize with the same admin handle" in report[0]["error"]

@@ -11,8 +11,7 @@
 #   4  PostgreSQL cluster and database (sentinel-guarded)
 #   5  SeaweedFS identity (sentinel-guarded)
 #   6  PORT_NDEX_URL set: the one-time port-ndex bootstrap, then exit with its code
-#   7  Registration-mode guard
-#   8  Assemble supervisord.conf and exec supervisord (PID 1)
+#   7  Assemble supervisord.conf and exec supervisord (PID 1)
 set -euo pipefail
 
 log() { echo "[start.sh] $*"; }
@@ -31,7 +30,6 @@ for flag in "$@"; do
     *) echo "unknown flag: $flag" >&2; exit 2 ;;
   esac
 done
-export SYMPOSIUM_DATA_REGISTRATION="${SYMPOSIUM_DATA_REGISTRATION:-invite}"
 export SYMPOSIUM_DATA_TRUSTED_PROXY="${SYMPOSIUM_DATA_TRUSTED_PROXY:-127.0.0.1}"
 
 # ── Phase 2: directories ──────────────────────────────────────────────────────────────────────
@@ -126,17 +124,11 @@ if [[ -n "${PORT_NDEX_URL:-}" ]]; then
   exit "$PORT_RC"
 fi
 
-# ── Phase 7: registration guard ───────────────────────────────────────────────────────────────
-if [[ "$SYMPOSIUM_DATA_REGISTRATION" == "invite" && -z "${SYMPOSIUM_DATA_PUBLIC_BASE_URL:-}" ]]; then
-  echo "ERROR: SYMPOSIUM_DATA_REGISTRATION=invite requires SYMPOSIUM_DATA_PUBLIC_BASE_URL" >&2
-  exit 1
-fi
-
-# ── Phase 8: supervisord ──────────────────────────────────────────────────────────────────────
+# ── Phase 7: supervisord ──────────────────────────────────────────────────────────────────────
 CONF=/tmp/supervisord.conf
 cat /opt/symposium-data/supervisord/header.conf > "$CONF"
 $ENABLE_PG  && cat /opt/symposium-data/supervisord/postgres.conf >> "$CONF"
 $ENABLE_SW  && cat /opt/symposium-data/supervisord/seaweed.conf  >> "$CONF"
 $ENABLE_API && cat /opt/symposium-data/supervisord/data-api.conf >> "$CONF"
-log "starting supervisord (api=$ENABLE_API postgres=$ENABLE_PG seaweed=$ENABLE_SW registration=$SYMPOSIUM_DATA_REGISTRATION)"
+log "starting supervisord (api=$ENABLE_API postgres=$ENABLE_PG seaweed=$ENABLE_SW)"
 exec supervisord -c "$CONF"

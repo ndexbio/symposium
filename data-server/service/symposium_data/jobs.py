@@ -37,7 +37,7 @@ class Jobs:
         for thread in self.threads:
             thread.join(timeout=10)
 
-    def _every(self, interval: int, job):
+    def _every(self, interval: float, job):
         while not self.stop.wait(interval):
             try:
                 job()
@@ -47,8 +47,10 @@ class Jobs:
     def sweep_pending(self) -> int:
         """Remove what a crash or a failed S3 delete left behind (R-A6): name reservations that
         never turned live, pending uploads (bytes first, then the row) and purged payloads
-        whose bytes are not yet freed. -> how many items are still waiting for a retry."""
+        whose bytes are not yet freed. It also erases the secret of every invite that expired
+        unused (R-D6). -> how many items are still waiting for a retry."""
         with self.db.connection() as conn:
+            self.records.forget_expired_invites(conn)
             self.records.stale_reservations(conn, self.settings.pending_ttl)
             stale = self.records.stale_pending(conn, self.settings.pending_ttl)
             purging = self.records.purging_payloads(conn)

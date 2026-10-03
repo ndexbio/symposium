@@ -86,7 +86,7 @@ ported admin handle:
 docker exec -i symposium-data data-admin init --admin demo-admin --pubkey - < admin.pub.jwk
 ```
 
-Members then register their reserved handles (an invite each on an `invite` server).
+Members then register their reserved handles, each with an invite from the admin (`POST /v1/<community>/invites`).
 
 ## Run it on Kubernetes
 

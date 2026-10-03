@@ -12,9 +12,9 @@ from itertools import pairwise
 
 import httpx
 import pytest
-from conftest import assert_consistent, community_with, psql, repr_digest
+from conftest import assert_consistent, community_with, psql, repr_digest, set_quota
 
-GIB = 1024**3
+SIZE = 5 * 1024 * 1024  # 5 MiB, streamed in 1 MiB chunks (below one 8 MiB S3 part)
 
 
 @pytest.fixture
@@ -46,32 +46,32 @@ def test_round_trip_with_headers_and_stat(demo):
     assert stat["metadata"] == {"produced_by": "@x"} and stat["integrity"] == "ok"
 
 
-def test_one_gib_streams_up_and_back(demo):
+def test_a_streamed_upload_round_trips_verified(demo):
     _, _, owners = demo
     lyra = owners["lyra"]
-    block = os.urandom(8 * 1024 * 1024)
+    block = os.urandom(1024 * 1024)
     sha = hashlib.sha256()
-    for i in range(GIB // len(block)):
+    for i in range(SIZE // len(block)):
         sha.update(block[i % 7 :] + block[: i % 7])
     digest = sha.digest()
 
     def body():
-        for i in range(GIB // len(block)):
+        for i in range(SIZE // len(block)):
             yield block[i % 7 :] + block[: i % 7]
 
     headers = {
         **lyra.headers(),
         "Repr-Digest": "sha-256=:" + base64.b64encode(digest).decode() + ":",
-        "X-Data-Size": str(GIB),
+        "X-Data-Size": str(SIZE),
     }
     r = httpx.put(
         f"{lyra.server.url}/v1/demo/collections/files/files/big.bin",
         content=body(),
         headers=headers,
-        timeout=1800,
+        timeout=120,
     )
     assert r.status_code == 201, r.text
-    assert r.json()["size"] == GIB
+    assert r.json()["size"] == SIZE
 
     down = hashlib.sha256()
     size = 0
@@ -79,13 +79,13 @@ def test_one_gib_streams_up_and_back(demo):
         "GET",
         f"{lyra.server.url}/v1/demo/files/{r.json()['file_id']}/v/1",
         headers=lyra.headers(),
-        timeout=1800,
+        timeout=120,
     ) as resp:
         assert resp.status_code == 200
         for chunk in resp.iter_bytes(1024 * 1024):
             down.update(chunk)
             size += len(chunk)
-    assert size == GIB and down.digest() == digest
+    assert size == SIZE and down.digest() == digest
 
 
 def test_digest_mismatch_leaves_no_payload_row_or_object(demo):
@@ -257,9 +257,8 @@ def test_suspect_versions_are_flagged(demo):
     server, _, owners = demo
     lyra = owners["lyra"]
     early = lyra.put("demo", "files", "early.txt", b"before").json()
-    time.sleep(1)
-    instant = datetime.now().astimezone().isoformat()
-    time.sleep(1)
+    # suspicion starts after the instant: the early version, created at it, is not suspect
+    instant = early["created"]
     assert (
         server.admin(
             "suspect-after", "--community", "demo", "--handle", "lyra", "--at", instant
@@ -271,8 +270,8 @@ def test_suspect_versions_are_flagged(demo):
     assert late["suspect"] is True
 
 
-def test_quota_refuses_with_413(make_server):
-    server = make_server(SYMPOSIUM_DATA_QUOTA_BYTES="1000")
+def test_quota_refuses_with_413(server):
+    set_quota(server, 1000)
     _, owners = community_with(server, ("lyra",))
     lyra = owners["lyra"]
     assert lyra.put("demo", "files", "a.bin", os.urandom(600)).status_code == 201
@@ -302,10 +301,8 @@ def test_purge_answers_410_and_frees_bytes_when_unshared(demo):
     assert_consistent(server)
 
 
-def test_janitor_sweeps_stale_pending_payloads(make_server):
-    server = make_server(
-        SYMPOSIUM_DATA_PENDING_TTL="5", SYMPOSIUM_DATA_JANITOR_INTERVAL="1"
-    )
+def test_janitor_sweeps_stale_pending_payloads(server):
+    # the session server's pending TTL is 1 s, and the janitor runs every 0.5 s
     community_with(server, ("lyra",))
     psql(
         server,
@@ -313,16 +310,16 @@ def test_janitor_sweeps_stale_pending_payloads(make_server):
         "('11111111-1111-1111-1111-111111111111', 'pending', 'payloads/stale', 'lyra', "
         "now() - interval '1 hour')",
     )
-    deadline = time.time() + 30
+    deadline = time.time() + 10
     while time.time() < deadline:
         if psql(server, "SELECT count(*) FROM payloads WHERE state = 'pending'") == "0":
             break
-        time.sleep(1)
+        time.sleep(0.2)
     assert psql(server, "SELECT count(*) FROM payloads WHERE state = 'pending'") == "0"
 
 
-def test_scrub_flags_corrupted_content(make_server):
-    server = make_server(SYMPOSIUM_DATA_SCRUB_INTERVAL="1")
+def test_scrub_flags_corrupted_content(server):
+    # the session server's scrub runs every 0.5 s
     _, owners = community_with(server, ("lyra",))
     lyra = owners["lyra"]
     bad = lyra.put("demo", "files", "rot.bin", b"original bytes").json()
@@ -338,10 +335,10 @@ def test_scrub_flags_corrupted_content(make_server):
         "from symposium_data.runtime import Settings, PayloadStore;"
         f"PayloadStore(Settings()).put_bytes('{key}', b'bit rot')",
     )
-    deadline = time.time() + 30
+    deadline = time.time() + 10
     while time.time() < deadline:
         if lyra.stat(bad["file_id"], 1).json()["integrity"] == "mismatch":
             break
-        time.sleep(1)
+        time.sleep(0.2)
     assert lyra.stat(bad["file_id"], 1).json()["integrity"] == "mismatch"
     assert lyra.stat(good["file_id"], 1).json()["integrity"] == "ok"

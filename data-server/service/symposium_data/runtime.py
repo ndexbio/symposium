@@ -47,20 +47,32 @@ class Settings:
         self.s3_bucket = values.get("S3_BUCKET", "symposium-data")
         self.server_id = values["SERVER_ID"]
         self.token_key_file = values["TOKEN_KEY_FILE"]
-        self.registration = env.get("SYMPOSIUM_DATA_REGISTRATION", "invite")
-        self.public_base_url = env.get("SYMPOSIUM_DATA_PUBLIC_BASE_URL", "")
         self.token_ttl = int(env.get("SYMPOSIUM_DATA_TOKEN_TTL", "900"))
         self.invite_hours = int(env.get("SYMPOSIUM_DATA_INVITE_HOURS", "72"))
-        # 0 means no quota. Counted per owner over the payload bytes they uploaded first.
+        # 0 means no quota. Counted per member, in each community, over the payload bytes
+        # they uploaded first.
         self.quota_bytes = int(env.get("SYMPOSIUM_DATA_QUOTA_BYTES", "0"))
-        self.pending_ttl = int(env.get("SYMPOSIUM_DATA_PENDING_TTL", "86400"))
-        self.janitor_interval = int(env.get("SYMPOSIUM_DATA_JANITOR_INTERVAL", "3600"))
-        self.scrub_interval = int(env.get("SYMPOSIUM_DATA_SCRUB_INTERVAL", "3600"))
+        # Durations in seconds; fractions are allowed, so tests can run them sub-second.
+        self.pending_ttl = float(env.get("SYMPOSIUM_DATA_PENDING_TTL", "86400"))
+        self.janitor_interval = float(
+            env.get("SYMPOSIUM_DATA_JANITOR_INTERVAL", "3600")
+        )
+        self.scrub_interval = float(env.get("SYMPOSIUM_DATA_SCRUB_INTERVAL", "3600"))
         self.scrub_batch = int(env.get("SYMPOSIUM_DATA_SCRUB_BATCH", "50"))
         # how often a streaming upload refreshes its reservation and pending payload
         self.heartbeat = max(0.2, min(60.0, self.pending_ttl / 3))
-        # Test-only: when enabled, S3 deletes fail while FAULT_FILE exists. Off by default.
-        self.fault_injection = env.get("SYMPOSIUM_DATA_FAULT_INJECTION") == "1"
+        # Test-only hooks, off by default: while enabled, S3 deletes fail while the fault
+        # file exists, and the quota file overrides the configured quota.
+        self.test_hooks = env.get("SYMPOSIUM_DATA_TEST_HOOKS") == "1"
+
+    QUOTA_FILE = Path("/apps/data/config/test-quota")
+
+    def quota(self) -> int:
+        """The per-member quota in bytes (0: none), read at each check so a test hook can
+        change it while the server runs."""
+        if self.test_hooks and self.QUOTA_FILE.exists():
+            return int(self.QUOTA_FILE.read_text())
+        return self.quota_bytes
 
 
 class Database:
@@ -133,19 +145,27 @@ class PayloadStore:
     FAULT_FILE = Path("/apps/data/config/fault-s3-delete")
 
     def __init__(self, settings: Settings):
-        self.fault_injection = settings.fault_injection
+        self.test_hooks = settings.test_hooks
         self.bucket = settings.s3_bucket
-        self.s3 = boto3.client(
+        self.s3 = self._client(settings, BotoConfig(retries={"max_attempts": 5}))
+        # The health check answers the readiness probe (1 s timeout), so it never retries.
+        self.probe = self._client(
+            settings,
+            BotoConfig(
+                retries={"total_max_attempts": 1}, connect_timeout=0.5, read_timeout=0.5
+            ),
+        )
+
+    def _client(self, settings, config):
+        return boto3.client(
             "s3",
             endpoint_url=settings.s3_endpoint,
             region_name="us-east-1",
             aws_access_key_id=settings.s3_access_key,
             aws_secret_access_key=settings.s3_secret_key,
             config=BotoConfig(
-                signature_version="s3v4",
-                s3={"addressing_style": "path"},
-                retries={"max_attempts": 5},
-            ),
+                signature_version="s3v4", s3={"addressing_style": "path"}
+            ).merge(config),
         )
 
     def ensure_bucket(self, attempts: int = 60):
@@ -165,7 +185,7 @@ class PayloadStore:
 
     def healthy(self) -> bool:
         try:
-            self.s3.head_bucket(Bucket=self.bucket)
+            self.probe.head_bucket(Bucket=self.bucket)
             return True
         except Exception:
             return False
@@ -174,7 +194,7 @@ class PayloadStore:
         self.s3.put_object(Bucket=self.bucket, Key=key, Body=data)
 
     def _fault(self):
-        if self.fault_injection and self.FAULT_FILE.exists():
+        if self.test_hooks and self.FAULT_FILE.exists():
             raise RuntimeError("injected S3 delete fault")
 
     def delete(self, key: str):

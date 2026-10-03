@@ -15,6 +15,7 @@ from conftest import (
     community_with,
     psql,
     repr_digest,
+    set_quota,
     untracked_objects,
 )
 
@@ -59,11 +60,11 @@ def test_a_concurrent_duplicate_name_is_refused_before_it_uploads(demo):
     first = {}
 
     def slow_create():
-        first["r"] = put_stream(lyra, "contested.bin", data, slow_body(data, 20, 0.25))
+        first["r"] = put_stream(lyra, "contested.bin", data, slow_body(data, 10, 0.1))
 
     thread = threading.Thread(target=slow_create)
     thread.start()
-    time.sleep(1.5)  # lyra's upload is under way and holds the name
+    time.sleep(0.3)  # lyra's upload is under way and holds the name
     started = time.time()
     second = vega.put("demo", "files", "contested.bin", os.urandom(4 * 1024 * 1024))
     assert second.status_code == 409, second.text
@@ -108,8 +109,8 @@ def test_a_client_disconnect_mid_upload_leaves_nothing(demo):
     assert_consistent(server)
 
 
-def test_concurrent_uploads_cannot_jointly_exceed_the_quota(make_server):
-    server = make_server(SYMPOSIUM_DATA_QUOTA_BYTES="1000")
+def test_concurrent_uploads_cannot_jointly_exceed_the_quota(server):
+    set_quota(server, 1000)
     _, owners = community_with(server, ("lyra",))
     lyra = owners["lyra"]
     lyra.headers()
@@ -126,7 +127,7 @@ def test_concurrent_uploads_cannot_jointly_exceed_the_quota(make_server):
     threads = [threading.Thread(target=upload, args=(i,)) for i in range(2)]
     for t in threads:
         t.start()
-    time.sleep(1.5)
+    time.sleep(0.5)  # both have passed the early quota check and wait at the gate
     gate.set()
     for t in threads:
         t.join(60)
@@ -247,34 +248,28 @@ def test_racing_writers_with_the_same_if_match_produce_exactly_one_version(demo)
     assert_consistent(server)
 
 
-def test_the_janitor_expires_stale_reservations(make_server):
-    server = make_server(
-        SYMPOSIUM_DATA_PENDING_TTL="5", SYMPOSIUM_DATA_JANITOR_INTERVAL="1"
-    )
+def test_the_janitor_expires_stale_reservations(server):
     _, owners = community_with(server, ("lyra",))
-    # a crash's leftover, still fresh: it holds the name until the 5 s TTL runs out (inserting
-    # it already stale would race the janitor, which sweeps every second)
+    # a crash's leftover, still fresh: it holds the name until the 1 s pending TTL (of the
+    # session server) runs out; stamped a second ahead so it outlives the next request
     psql(
         server,
         "INSERT INTO files (id, community, collection, name, state, reserved_by, reserved_at) "
         "VALUES ('22222222-2222-2222-2222-222222222222', 'demo', 'files', 'crashed.bin', "
-        "'reserved', 'lyra', now())",
+        "'reserved', 'lyra', now() + interval '1 second')",
     )
     assert owners["lyra"].put("demo", "files", "crashed.bin", b"x").status_code == 409
     assert_consistent(server)  # polls until the janitor has expired the reservation
     assert owners["lyra"].put("demo", "files", "crashed.bin", b"x").status_code == 201
 
 
-def test_a_long_upload_outlives_the_ttl_because_it_heartbeats(make_server):
-    # The janitor reaps work older than 3 s every second; this upload streams for ~8 s. Its
-    # heartbeat keeps its reservation and pending payload fresh, so it must still commit.
-    server = make_server(
-        SYMPOSIUM_DATA_PENDING_TTL="3", SYMPOSIUM_DATA_JANITOR_INTERVAL="1"
-    )
+def test_a_long_upload_outlives_the_ttl_because_it_heartbeats(server):
+    # The session server's janitor reaps work older than 1 s every 0.5 s; this upload streams
+    # for ~2 s. Its heartbeat keeps its reservation and pending payload fresh, so it commits.
     _, owners = community_with(server, ("lyra",))
     lyra = owners["lyra"]
     data = os.urandom(2 * 1024 * 1024)
-    r = put_stream(lyra, "patient.bin", data, slow_body(data, 16, 0.5))
+    r = put_stream(lyra, "patient.bin", data, slow_body(data, 8, 0.25))
     assert r.status_code == 201, r.text
     assert lyra.get(r.json()["file_id"], 1).content == data
     assert_consistent(server)
@@ -285,12 +280,8 @@ FAULT = "/apps/data/config/fault-s3-delete"
 
 
 @pytest.fixture
-def faulty(make_server):
-    server = make_server(
-        SYMPOSIUM_DATA_FAULT_INJECTION="1",
-        SYMPOSIUM_DATA_PENDING_TTL="5",
-        SYMPOSIUM_DATA_JANITOR_INTERVAL="1",
-    )
+def faulty(server):
+    # the session server has test hooks on; faults act only while the fault file exists
     _, owners = community_with(server, ("lyra", "vega"))
     return server, owners
 

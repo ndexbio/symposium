@@ -1,19 +1,16 @@
-"""The one-time bootstrap of a fresh server from a Symposium community on NDEx (R-M).
+"""The NDEx port (R-M1): copies a Symposium community's record from an NDEx server into an
+existing, empty community on this server.
 
-This is the only NDEx client code in the server, and only `data-admin port-ndex` imports it.
-It runs once, on a fresh server, and never again: it is not a sync. Configured by environment:
-
-    PORT_NDEX_URL               base URL of the NDEx server
-    PORT_NDEX_CREDENTIALS_FILE  JSON {"username": ..., "password": ...}: the community admin's
-                                account, a bound pair, read from a file (never env or argv)
-    PORT_COMMUNITY              the community to create here
-    PORT_ADMIN_HANDLE           the admin handle; `data-admin init` must later use the same one
-    PORT_NDEX_PAGE_SIZE         listing page size (default 100)
+This is the only NDEx client code in the server, and only the service's port route (app.py)
+imports it. The admin starts a port with `POST /v1/{community}/port-ndex`; it runs in a
+background thread of the service and its outcome is recorded in `ports`. It is not a sync: a
+community that holds files is refused.
 
 It ports the admin-owned networks marked `symposium_record` into `record` and those marked
 `symposium_reply` into `inbox`, keeping each artifact's exact canonical bytes, name, original
-`created` and author. Everything is written in one transaction (R-A6): any failure writes
-nothing and removes the bytes again.
+`created` and author. The NDEx admin account becomes this server's admin. Everything is written
+in one transaction (R-A6): any failure writes nothing and removes the bytes again. The NDEx
+password is held in memory only, for the length of the port.
 """
 
 from __future__ import annotations
@@ -25,10 +22,11 @@ import logging
 import re
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 
 from .cleanup import Cleanup
 from .records import COLLECTIONS, Conflict, Records
-from .runtime import Database, PayloadStore
+from .runtime import Database, PayloadStore, Settings
 from .wire import NAME
 
 CANONICAL = "symposium_canonical"
@@ -36,12 +34,13 @@ RECORD_MARK = "symposium_record"
 REPLY_MARK = "symposium_reply"
 IN_REPLY_TO = "symposium_in_reply_to"
 HANDLE = re.compile(NAME)
+PAGE_SIZE = 100  # NDEx truncates listings silently, so every page is read
 
 log = logging.getLogger("symposium_data.port_ndex")
 
 
 class PortRefused(Exception):
-    """The port does not apply to this server or this source; nothing was written."""
+    """The port does not apply to this community or this source; nothing was written."""
 
 
 class NdexClient:
@@ -97,71 +96,54 @@ class NdexClient:
 
 
 class Port:
+    # Under SYMPOSIUM_DATA_TEST_HOOKS this file overrides the listing page size, so a test
+    # reads a small recorded listing over several pages.
+    PAGE_SIZE_FILE = Path("/apps/data/config/test-port-page-size")
+
     def __init__(
         self,
         db: Database,
         store: PayloadStore,
         records: Records,
         cleanup: Cleanup,
-        environ: dict,
+        settings: Settings,
+        community: str,
+        url: str,
+        username: str,
+        password: str,
     ):
         self.db, self.store, self.records, self.cleanup = db, store, records, cleanup
-        self.url = environ["PORT_NDEX_URL"].rstrip("/")
-        self.community = environ["PORT_COMMUNITY"]
-        self.admin = environ["PORT_ADMIN_HANDLE"]
-        self.page_size = int(environ.get("PORT_NDEX_PAGE_SIZE", "100"))
-        self.credentials_file = environ["PORT_NDEX_CREDENTIALS_FILE"]
+        self.settings = settings
+        self.community = community
+        self.url = url.rstrip("/")
+        self.username, self.password = username, password
+        self.admin = None
 
-    def emit(self, **fields):
-        print(json.dumps({"event": "port-ndex", **fields}), flush=True)
+    def page_size(self) -> int:
+        if self.settings.test_hooks and self.PAGE_SIZE_FILE.exists():
+            return int(self.PAGE_SIZE_FILE.read_text())
+        return PAGE_SIZE
 
-    def run(self) -> int:
+    def run(self, port_id):
+        """Port, then record the outcome on the port's row; never raises."""
         try:
-            with self.db.connection() as conn:
-                if self.check_fresh(conn):
-                    self.emit(status="already-ported", source=self.url)
-                    return 0
-            self.store.ensure_bucket()
-            summary = self.port()
+            state, result = "ok", {"source": self.url, **self.port()}
         except PortRefused as e:
-            self.emit(status="refused", reason=str(e))
-            return 1
+            state, result = "refused", {"reason": str(e)}
         except Exception as e:
             log.exception("port-ndex failed")
-            self.emit(status="failed", reason=f"{type(e).__name__}: {e}")
-            return 1
-        self.emit(status="ok", source=self.url, **summary)
-        return 0
-
-    def check_fresh(self, conn) -> bool:
-        """-> True when this exact source was already ported (a no-op). Refuses anything
-        but a fresh server: the port is a one-time bootstrap (R-M)."""
-        source = self.records.config(conn, "port_source")
-        if source == self.url:
-            return True
-        if source is not None:
-            raise PortRefused(f"this server was already ported from {source}")
-        if self.records.config(conn, "admin") is not None:
-            raise PortRefused(
-                "the server is initialized; the port runs only on a fresh one"
-            )
-        if conn.execute("SELECT 1 FROM communities LIMIT 1").fetchone():
-            raise PortRefused("the server already holds a community")
-        for name, value in (
-            ("PORT_COMMUNITY", self.community),
-            ("PORT_ADMIN_HANDLE", self.admin),
-        ):
-            if not HANDLE.match(value):
-                raise PortRefused(f"{name} '{value}' is not a valid name")
-        return False
+            state, result = "failed", {"reason": f"{type(e).__name__}: {e}"}
+        finally:
+            self.password = None
+        with self.db.connection() as conn:
+            self.records.finish_port(conn, port_id, state, result)
+        log.info(
+            json.dumps({"event": "port-ndex", "id": str(port_id), "status": state})
+        )
 
     # ── reading NDEx ────────────────────────────────────────────────────────────────────────
     def read_source(self) -> tuple[NdexClient, dict]:
-        with open(self.credentials_file) as fh:
-            credentials = json.load(fh)
-        client = NdexClient(
-            self.url, credentials["username"], credentials["password"], self.page_size
-        )
+        client = NdexClient(self.url, self.username, self.password, self.page_size())
         me = client.whoami()
         owned = client.owned_networks(me["externalId"])
         found = {"record": [], "inbox": [], "networks": len(owned), "skipped": 0}
@@ -204,11 +186,15 @@ class Port:
         }
 
     def handle(self, user: str, admin_user: str) -> str:
-        """An NDEx account as a handle here: the admin account becomes PORT_ADMIN_HANDLE."""
-        handle = self.admin if user == admin_user else user
-        if not HANDLE.match(handle):
+        """An NDEx account as a handle here: the admin account becomes this server's admin;
+        any other account named like the admin collides with it."""
+        if user == admin_user:
+            return self.admin
+        if user == self.admin:
+            raise PortRefused(f"NDEx user '{user}' has this server's admin handle")
+        if not HANDLE.match(user):
             raise PortRefused(f"'{user}' cannot be a handle here")
-        return handle
+        return user
 
     def check_order(self, collection: str, items: list):
         for before, after in zip(items, items[1:], strict=False):
@@ -220,6 +206,8 @@ class Port:
 
     # ── writing ─────────────────────────────────────────────────────────────────────────────
     def port(self) -> dict:
+        with self.db.connection() as conn:
+            self.admin = self.records.config(conn, "admin")
         client, found = self.read_source()
         items = [("record", x) for x in found["record"]] + [
             ("inbox", x) for x in found["inbox"]
@@ -260,10 +248,13 @@ class Port:
         }
 
     def write(self, conn, items: list, members: list, duplicates: list):
-        """The one transaction: the community, its roster, every file and version, then the
-        checks, then the sentinel. Nothing is visible until it commits."""
-        conn.execute("INSERT INTO communities (name) VALUES (%s)", (self.community,))
-        self.records.ensure_collections(conn, self.community, self.admin)
+        """The one transaction: the roster, every file and version, then the checks. Nothing
+        is visible until it commits."""
+        conn.execute(
+            "SELECT 1 FROM communities WHERE name = %s FOR UPDATE", (self.community,)
+        )
+        if self.records.holds_files(conn, self.community):
+            raise PortRefused(f"community '{self.community}' holds files")
         for handle in members:
             self.records.add_to_roster(conn, self.community, handle)
         for handle in members:
@@ -316,5 +307,3 @@ class Port:
             ).fetchone()["n"]
             if count != expected:
                 raise RuntimeError(f"{collection}: {count} files, expected {expected}")
-        self.records.set_config(conn, "port_source", self.url)
-        self.records.set_config(conn, "port_admin", self.admin)

@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -63,6 +64,8 @@ cleanup = jobs.cleanup
 async def lifespan(_app: FastAPI):
     db.migrate()
     db.open()
+    with db.connection() as conn:
+        records.fail_running_ports(conn)
     store.ensure_bucket()
     jobs.start()
     yield
@@ -1236,3 +1239,65 @@ def verify(
         if not records.can_read(conn, handle, row):
             return missing
         return records.verify(row, when, sha256)
+
+
+# ── the port (R-M1, see PORT_NDEX.md) ──────────────────────────────────────────────────────────
+class PortIn(BaseModel):
+    """The source of a port-ndex: its URL, and the admin account's bound pair (port-ndex)."""
+
+    url: str = Field(pattern=r"^https?://")
+    username: str
+    password: str
+
+
+def port_view(row) -> dict:
+    return {
+        "id": str(row["id"]),
+        "community": row["community"],
+        "source": row["source"],
+        "state": row["state"],
+        "result": row["result"],
+        "started": iso(row["started"]),
+        "finished": iso(row["finished"]),
+    }
+
+
+@app.post("/v1/{community}/port-ndex", status_code=202)
+def start_port(community: str, body: PortIn, request: Request):
+    """Start a port-ndex into this empty community, in the background; one at a time,
+    server-wide. Poll GET /v1/{community}/port-ndex/{id} for its outcome."""
+    from . import port_ndex  # the port feature, isolated: imported only here
+
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        require_admin(conn, request, community)
+        if records.holds_files(conn, community):
+            refuse(
+                400, f"community '{community}' holds files; a port-ndex needs it empty"
+            )
+        port_id = records.start_port(conn, community, body.url.rstrip("/"))
+    run = port_ndex.Port(
+        db,
+        store,
+        records,
+        cleanup,
+        settings,
+        community,
+        body.url,
+        body.username,
+        body.password,
+    ).run
+    threading.Thread(target=run, args=(port_id,), name="port-ndex", daemon=True).start()
+    with db.connection() as conn:
+        return port_view(records.port(conn, community, port_id))
+
+
+@app.get("/v1/{community}/port-ndex/{port_id}")
+def port_status(community: str, port_id: uuid.UUID, request: Request):
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        require_admin(conn, request, community)
+        row = records.port(conn, community, port_id)
+        if row is None:
+            refuse(404, f"no port-ndex {port_id} in {community}")
+        return port_view(row)

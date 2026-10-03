@@ -10,8 +10,7 @@
 #   3  First-boot secrets (owner-only files; never in the image, never on stdout)
 #   4  PostgreSQL cluster and database (sentinel-guarded)
 #   5  SeaweedFS identity (sentinel-guarded)
-#   6  PORT_NDEX_URL set: the one-time port-ndex bootstrap, then exit with its code
-#   7  Assemble supervisord.conf and exec supervisord (PID 1)
+#   6  Assemble supervisord.conf and exec supervisord (PID 1)
 set -euo pipefail
 
 log() { echo "[start.sh] $*"; }
@@ -101,30 +100,7 @@ if [[ ! -f /apps/seaweed/config/.initialized ]]; then
   log "first boot: SeaweedFS identity ready"
 fi
 
-# ── Phase 6: one-time bootstrap (PORT_NDEX_URL, see PORT_NDEX.md) ────────────────────────────
-if [[ -n "${PORT_NDEX_URL:-}" ]]; then
-  log "PORT_NDEX_URL set: running the one-time port-ndex bootstrap"
-  gosu postgres pg_ctl -D /apps/postgres/data -o "-c listen_addresses=127.0.0.1" -w start >/dev/null
-  gosu symposium weed server -dir=/apps/seaweed/data -ip=127.0.0.1 -ip.bind=127.0.0.1 \
-      -volume.port=18080 -master.volumeSizeLimitMB=1024 -volume.max=0 -s3 -s3.port=8333 \
-      -s3.config=/apps/seaweed/config/s3.json >/tmp/weed.log 2>&1 &
-  WEED=$!
-  # A mounted file keeps its host ownership: copy it, as root, into a 0600 file the service
-  # user owns for the port-ndex run, and remove the copy afterwards.
-  PORT_CREDENTIALS=/tmp/port-credentials.json
-  install -m 600 -o symposium -g symposium "${PORT_NDEX_CREDENTIALS_FILE:?PORT_NDEX_CREDENTIALS_FILE is required}" "$PORT_CREDENTIALS"
-  set +e
-  gosu symposium env PORT_NDEX_CREDENTIALS_FILE="$PORT_CREDENTIALS" /opt/venv/bin/data-admin port-ndex
-  PORT_RC=$?
-  set -e
-  rm -f "$PORT_CREDENTIALS"
-  kill "$WEED"; wait "$WEED" 2>/dev/null || true
-  gosu postgres pg_ctl -D /apps/postgres/data -m fast -w stop >/dev/null
-  log "port-ndex finished with exit code $PORT_RC"
-  exit "$PORT_RC"
-fi
-
-# ── Phase 7: supervisord ──────────────────────────────────────────────────────────────────────
+# ── Phase 6: supervisord ──────────────────────────────────────────────────────────────────────
 CONF=/tmp/supervisord.conf
 cat /opt/symposium-data/supervisord/header.conf > "$CONF"
 $ENABLE_PG  && cat /opt/symposium-data/supervisord/postgres.conf >> "$CONF"

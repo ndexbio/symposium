@@ -15,11 +15,10 @@ The design and requirements are in the spike on ndexbio/symposium#13. Its sectio
 | `service/` | The `symposium_data` Python package: the HTTP API, `data-admin` and the Alembic migrations, plus the tests. Locked with `uv.lock`. |
 | `docker/Dockerfile` | Multi-stage build: `runtime-base` (PostgreSQL, supervisor, gosu, SeaweedFS with a pinned sha256), then `builder` (installs the locked wheel into `/opt/venv`), then `deploy`. |
 | `docker/supervisord/` | One config snippet per service. `start.sh` assembles them. |
-| `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, the one-time port when `PORT_NDEX_URL` is set, then `exec supervisord`. |
+| `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, then `exec supervisord`. |
 | `docker/k8s-data-deployment.yml` | Kubernetes or Podman deployment on a single ReadWriteOnce PVC. |
-| `docker/k8s-data-port-job.yml` | The one-time port-ndex bootstrap as a Kubernetes Job (`PORT_NDEX.md`). |
 | `RUNBOOK.md` | How to run, initialize, verify and tear down. |
-| `PORT_NDEX.md` | The one-time port-ndex bootstrap of a fresh server from an NDEx community. |
+| `PORT_NDEX.md` | The port-ndex: copying a community's record from NDEx into an empty community here. |
 
 ## Make targets
 
@@ -50,6 +49,8 @@ A community name is 1–20 letters, digits or underscores; `status`, `communitie
 |---|---|
 | `POST /v1/communities {name}` | Admin only. Creates a community and its default collections. Idempotent: `201` when created, `200` when exactly that name exists; `400` for a name that is not a slug, is reserved, or differs only in case from an existing one. |
 | `GET /v1/communities` | Admin only. Every community, with when it was created. |
+| `POST /v1/{community}/port-ndex {url, username, password}` | Admin only. Starts a port-ndex into this empty community in the background (`PORT_NDEX.md`) and answers `202` with its id. `400` if the community holds files, `409` while another port-ndex runs anywhere on the server. |
+| `GET /v1/{community}/port-ndex/{id}` | Admin only. A port-ndex's state (`running`, `ok`, `refused` or `failed`) and its result. |
 
 ## Identity
 

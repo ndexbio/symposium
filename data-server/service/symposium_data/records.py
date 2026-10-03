@@ -119,6 +119,46 @@ class Records:
             "SELECT name, created FROM communities ORDER BY lower(name)"
         ).fetchall()
 
+    def holds_files(self, conn, community: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM files WHERE community = %s LIMIT 1", (community,)
+        ).fetchone()
+        return row is not None
+
+    # ── ports (R-M1) ────────────────────────────────────────────────────────────────────────
+    def start_port(self, conn, community: str, source: str) -> uuid.UUID:
+        """Record a running port. -> its id. A Conflict while another port runs anywhere."""
+        try:
+            with conn.transaction():
+                row = conn.execute(
+                    "INSERT INTO ports (community, source) VALUES (%s, %s) RETURNING id",
+                    (community, source),
+                ).fetchone()
+        except psycopg.errors.UniqueViolation:
+            raise Conflict("another port is running") from None
+        return row["id"]
+
+    def finish_port(self, conn, port_id, state: str, result: dict):
+        conn.execute(
+            "UPDATE ports SET state = %s, result = %s, finished = now() WHERE id = %s",
+            (state, json.dumps(result), port_id),
+        )
+
+    def port(self, conn, community: str, port_id) -> dict | None:
+        return conn.execute(
+            "SELECT id, community, source, state, result, started, finished FROM ports "
+            "WHERE community = %s AND id = %s",
+            (community, port_id),
+        ).fetchone()
+
+    def fail_running_ports(self, conn) -> int:
+        """At start-up, a port still marked running was cut off by the restart."""
+        return conn.execute(
+            "UPDATE ports SET state = 'failed', finished = now(), "
+            'result = \'{"reason": "the service restarted while the port ran"}\' '
+            "WHERE state = 'running'"
+        ).rowcount
+
     # ── identity, per community ─────────────────────────────────────────────────────────────
     def add_challenge(
         self, conn, community: str | None, handle: str, nonce: str, ttl: int = 300
@@ -343,7 +383,7 @@ class Records:
         return row["seq"], row["last_created"]
 
     def allocate_at(self, conn, community: str, collection: str, created: datetime):
-        """-> (seq, created) for an instant the caller supplies. Only the one-time port does
+        """-> (seq, created) for an instant the caller supplies. Only the port does
         this (R-M2): each instant must be strictly later than the collection's last one, so
         the clock still never runs backwards, and later writes continue after it."""
         row = conn.execute(

@@ -1,0 +1,816 @@
+"""symposium-data: the command-line client of a Symposium Data server, and its only client
+(R-I1). Every command prints one JSON object on stdout, errors included, and exits non-zero on
+an error. Nothing secret is ever printed or taken from the command line (R-I4): keys stay in
+the keystore, and invites and read keys move only as files.
+
+Every command but `status`, `admin-config` and `context set` works on the context set in this
+directory (R-I3): `./.symposium/context.json`, written by `context set --community-file`
+(admins) or `context set --invite-file` (members).
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import re
+import sys
+import tarfile
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+import port_ndex  # the port-ndex command: all of the CLI's NDEx code is in port_ndex.py
+from keystore import ADMIN_SCOPE, Keystore, KeystoreError, thumbprint
+
+API_VERSION = "1"
+HERE = Path(__file__).resolve().parent
+CHUNK = 1 << 20
+CITATION = re.compile(r"^symposium-data:([0-9a-fA-F-]{36})@v(\d+)$")
+FILE_ID = re.compile(r"^[0-9a-fA-F-]{36}$")
+NO_CONTEXT = (
+    "no context in this directory: run `/symposium setup --invite-file <file>` (members) or "
+    "`/symposium bootstrap --community <file>` (admins) first"
+)
+
+
+class CommandError(Exception):
+    def __init__(self, message: str, status: int | None = None, **extra):
+        super().__init__(message)
+        self.status, self.extra = status, extra
+
+    def report(self) -> dict:
+        out = {"error": str(self)}
+        if self.status is not None:
+            out["status"] = self.status
+        out.update(self.extra)
+        return out
+
+
+class JsonArgumentParser(argparse.ArgumentParser):
+    """Usage errors are reported as JSON too, like every other error. Help is formatted at a
+    fixed width, so reference/COMMANDS.md is the same on every machine."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault(
+            "formatter_class", lambda prog: argparse.HelpFormatter(prog, width=100)
+        )
+        super().__init__(*args, **kwargs)
+
+    def error(self, message):
+        raise CommandError(message, usage=self.format_usage().strip())
+
+
+def image_version() -> str:
+    """The data-server image this bundle was built for (R-I5), from the build's stamp."""
+    try:
+        return json.loads((HERE / "compat.json").read_text())["data_server_version"]
+    except (OSError, ValueError, KeyError):
+        return "development checkout"
+
+
+def write_secret(path: Path, content: dict):
+    """A file only its owner can read (R-E3): an invite or a read key. Never printed."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump(content, fh)
+    os.chmod(path, 0o600)
+
+
+def read_json_file(path, what: str) -> dict:
+    try:
+        content = json.loads(Path(path).read_text())
+    except OSError as e:
+        raise CommandError(f"cannot read the {what} {path}: {e.strerror}") from None
+    except ValueError:
+        raise CommandError(f"the {what} {path} is not JSON") from None
+    if not isinstance(content, dict):
+        raise CommandError(f"the {what} {path} is not a JSON object")
+    return content
+
+
+def parse_ref(ref: str, version: str | None) -> tuple[str, str]:
+    """A citation (`symposium-data:<id>@v<n>`) or a file id -> (file id, version ref)."""
+    cited = CITATION.match(ref)
+    if cited:
+        if version is not None:
+            raise CommandError("a citation already names its version: drop --version")
+        return cited.group(1), cited.group(2)
+    if FILE_ID.match(ref):
+        return ref, version or "latest"
+    raise CommandError(f"'{ref}' is neither a citation nor a file id")
+
+
+class DataServer:
+    """The one client of a data server's REST API. Constructed for a community, so every
+    community route is `/v1/{community}/…` without naming it again; the server-wide calls
+    (`status`, `communities`, the admin's sign-in, import) are here too."""
+
+    def __init__(self, base_url: str, community: str | None = None):
+        self.base_url = base_url.rstrip("/")
+        self.community = community
+        self.token = None
+        self.checked = False
+
+    # ── transport ──────────────────────────────────────────────────────────────────────────
+    def request(
+        self,
+        method: str,
+        path: str,
+        body=None,
+        data=None,
+        headers: dict | None = None,
+        auth: bool = True,
+        stream: bool = False,
+    ):
+        """-> the parsed JSON body, or the open response when `stream`."""
+        if not self.checked:
+            self.check_api()
+        headers = dict(headers or {})
+        if body is not None:
+            data = json.dumps(body).encode()
+            headers["Content-Type"] = "application/json"
+        if auth and self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        request = urllib.request.Request(
+            self.base_url + path, data=data, headers=headers, method=method
+        )
+        try:
+            response = urllib.request.urlopen(request, timeout=600)
+        except urllib.error.HTTPError as e:
+            raise self.refusal(e) from None
+        except urllib.error.URLError as e:
+            raise CommandError(
+                f"the data server at {self.base_url} does not answer: {e.reason}"
+            ) from None
+        if stream:
+            return response
+        with response:
+            raw = response.read()
+        return json.loads(raw) if raw else {}
+
+    def refusal(self, error: urllib.error.HTTPError) -> CommandError:
+        raw = error.read()
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = {"detail": raw.decode(errors="replace")[:500]}
+        detail = body.get("detail", body) if isinstance(body, dict) else body
+        if not isinstance(detail, str):
+            detail = json.dumps(detail)
+        if error.code == 501:
+            return CommandError(
+                f"{detail}. Run `/symposium admin-config` and place the admin key file as it "
+                "prints, then restart the server",
+                501,
+            )
+        if error.code == 410 and isinstance(body, dict):
+            metadata = {k: v for k, v in body.items() if k != "detail"}
+            return CommandError("the version's content was purged", 410, **metadata)
+        return CommandError(detail, error.code)
+
+    def status(self) -> dict:
+        """`/v1/status`, answered in either mode; a 503 (a dependency down) still carries the
+        status body, which says which."""
+        try:
+            with urllib.request.urlopen(self.base_url + "/v1/status", timeout=30) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 503:
+                return json.loads(e.read())
+            raise self.refusal(e) from None
+        except (urllib.error.URLError, ValueError) as e:
+            reason = getattr(e, "reason", e)
+            raise CommandError(
+                f"the data server at {self.base_url} does not answer: {reason}"
+            ) from None
+
+    def check_api(self):
+        self.checked = True
+        status = self.status()
+        if status.get("api") != API_VERSION:
+            raise CommandError(
+                f"this CLI speaks the data server's API version {API_VERSION}, but the server "
+                f"at {self.base_url} speaks version {status.get('api')}; this bundle was built "
+                f"for data-server image {image_version()}"
+            )
+
+    def c(self, path: str) -> str:
+        if not self.community:
+            raise CommandError(NO_CONTEXT)
+        return f"/v1/{urllib.parse.quote(self.community)}{path}"
+
+    # ── sign-in ────────────────────────────────────────────────────────────────────────────
+    def sign_in_admin(self, keystore: Keystore, handle: str):
+        nonce = self.request("POST", "/v1/admin/challenge", auth=False)["nonce"]
+        signature = keystore.sign(ADMIN_SCOPE, handle, nonce.encode())
+        self.token = self.request(
+            "POST",
+            "/v1/admin/token",
+            body={"nonce": nonce, "signature": signature},
+            auth=False,
+        )["token"]
+
+    def sign_in_member(self, keystore: Keystore, handle: str):
+        nonce = self.request(
+            "POST", self.c("/auth/challenge"), body={"handle": handle}, auth=False
+        )["nonce"]
+        signature = keystore.sign(self.community, handle, nonce.encode())
+        self.token = self.request(
+            "POST",
+            self.c("/auth/token"),
+            body={"handle": handle, "nonce": nonce, "signature": signature},
+            auth=False,
+        )["token"]
+
+    # ── server-wide ────────────────────────────────────────────────────────────────────────
+    def communities(self) -> dict:
+        return self.request("GET", "/v1/communities")
+
+    def create_community(self, name: str) -> dict:
+        return self.request("POST", "/v1/communities", body={"name": name})
+
+    def import_community(self, path: Path) -> dict:
+        with open(path, "rb") as source:
+            return self.request(
+                "POST",
+                "/v1/communities/import",
+                data=source,
+                headers={
+                    "Content-Type": "application/x-tar",
+                    "Content-Length": str(path.stat().st_size),
+                },
+            )
+
+    # ── the community's roster, invites and members ────────────────────────────────────────
+    def roster(self) -> dict:
+        return self.request("GET", self.c("/roster"))
+
+    def add_to_roster(self, handle: str) -> dict:
+        return self.request("POST", self.c(f"/roster/{handle}"))
+
+    def remove_from_roster(self, handle: str) -> dict:
+        return self.request("DELETE", self.c(f"/roster/{handle}"))
+
+    def invite(self, handle: str, hours: int | None) -> dict:
+        body = (
+            {"handle": handle} if hours is None else {"handle": handle, "hours": hours}
+        )
+        return self.request("POST", self.c("/invites"), body=body)
+
+    def pending_invites(self) -> dict:
+        return self.request("GET", self.c("/invites"))
+
+    def rebind(self, handle: str, hours: int | None) -> dict:
+        body = {} if hours is None else {"hours": hours}
+        return self.request("POST", self.c(f"/owners/{handle}/rebind"), body=body)
+
+    def suspect_after(self, handle: str, at: str) -> dict:
+        return self.request(
+            "PUT", self.c(f"/owners/{handle}/suspect-after"), body={"at": at}
+        )
+
+    # ── files ──────────────────────────────────────────────────────────────────────────────
+    def purge(self, file_id: str, n: str) -> dict:
+        return self.request("POST", self.c(f"/files/{file_id}/v/{n}/purge"))
+
+    def stat(self, file_id: str, ref: str) -> dict:
+        return self.request("GET", self.c(f"/files/{file_id}/v/{ref}/stat"))
+
+    def versions(self, file_id: str) -> dict:
+        return self.request("GET", self.c(f"/files/{file_id}/versions"))
+
+    def content(self, file_id: str, ref: str):
+        return self.request("GET", self.c(f"/files/{file_id}/v/{ref}"), stream=True)
+
+    def changes(self, collection: str, since: int, limit: int) -> dict:
+        query = urllib.parse.urlencode({"since": since, "limit": limit})
+        return self.request("GET", self.c(f"/collections/{collection}/changes?{query}"))
+
+    def export(self):
+        return self.request("GET", self.c("/export"), stream=True)
+
+    # ── the port (R-M1) ────────────────────────────────────────────────────────────────────
+    def start_port(self, body: dict) -> dict:  # port-ndex
+        return self.request("POST", self.c("/port-ndex"), body=body)
+
+    def port(self, port_id: str) -> dict:  # port-ndex
+        return self.request("GET", self.c(f"/port-ndex/{port_id}"))
+
+
+class Context:
+    """`./.symposium/context.json`: the community, the data-server URL and the handle this
+    directory works as (R-I3). It holds no secret: a member's invite stays in its file."""
+
+    PATH = Path(".symposium") / "context.json"
+
+    def load(self) -> dict:
+        if not self.PATH.exists():
+            raise CommandError(NO_CONTEXT)
+        return json.loads(self.PATH.read_text())
+
+    def save(self, context: dict):
+        self.PATH.parent.mkdir(exist_ok=True)
+        self.PATH.write_text(json.dumps(context, indent=2) + "\n")
+
+
+class Commands:
+    def __init__(self):
+        self.context = Context()
+
+    # ── shared ─────────────────────────────────────────────────────────────────────────────
+    def server_for(self, url: str, community: str | None = None) -> DataServer:
+        return DataServer(url, community)
+
+    def keystore(self, server_id: str) -> Keystore:
+        return Keystore(server_id)
+
+    def signed_in(self, context: dict | None = None) -> DataServer:
+        """A client for the context's community, signed in as the context's handle."""
+        context = context or self.context.load()
+        server = self.server_for(context["data-server-url"], context["community"])
+        keystore = self.keystore(context["server_id"])
+        if context["role"] == "admin":
+            server.sign_in_admin(keystore, context["handle"])
+        else:
+            server.sign_in_member(keystore, context["handle"])
+        return server
+
+    def admin(self) -> DataServer:
+        context = self.context.load()
+        if context["role"] != "admin":
+            raise CommandError(
+                f"this is an admin command, but this directory's context is the member "
+                f"'{context['handle']}': run it where `/symposium bootstrap` set the context"
+            )
+        return self.signed_in(context)
+
+    def admin_handle(self, server_id: str, url: str) -> str:
+        handles = self.keystore(server_id).handles(ADMIN_SCOPE)
+        if not handles:
+            raise CommandError(
+                f"this machine holds no admin key for the data server at {url}: run "
+                "`/symposium admin-config --handle <admin> --data-server-url <url>` first"
+            )
+        return handles[0]
+
+    # ── status and context ─────────────────────────────────────────────────────────────────
+    def status(self, args) -> dict:
+        url = args.data_server_url or self.context.load()["data-server-url"]
+        return self.server_for(url).status()
+
+    def context_set(self, args) -> dict:
+        if args.community_file:
+            spec = read_json_file(args.community_file, "community file")
+            community, url = spec.get("community"), spec.get("data-server-url")
+            if not community or not url:
+                raise CommandError(
+                    f"{args.community_file} needs `community` and `data-server-url`"
+                )
+            status = self.server_for(url).status()
+            handle = self.admin_handle(status["server_id"], url)
+            role = "admin"
+            extra = {}
+        else:
+            invite = read_json_file(args.invite_file, "invite file")
+            missing = [
+                k
+                for k in ("invite", "handle", "community", "data-server-url")
+                if not invite.get(k)
+            ]
+            if missing:
+                raise CommandError(f"{args.invite_file} lacks {', '.join(missing)}")
+            community, url, handle = (
+                invite["community"],
+                invite["data-server-url"],
+                invite["handle"],
+            )
+            status = self.server_for(url).status()
+            role = "member"
+            extra = {"invite_file": str(Path(args.invite_file).resolve())}
+        context = {
+            "community": community,
+            "data-server-url": url.rstrip("/"),
+            "handle": handle,
+            "role": role,
+            "server_id": status["server_id"],
+            **extra,
+        }
+        self.context.save(context)
+        return {"context": context}
+
+    def context_show(self, _args) -> dict:
+        return {"context": self.context.load()}
+
+    # ── the server admin ───────────────────────────────────────────────────────────────────
+    def admin_config(self, args) -> dict:
+        """Manage the server-wide admin key (R-D4): idempotent; a key pair is generated only
+        when this machine holds none for the server, or with --new-key."""
+        url = args.data_server_url.rstrip("/")
+        server_id = self.server_for(url).status()["server_id"]
+        keystore = self.keystore(server_id)
+        held = keystore.handles(ADMIN_SCOPE)
+        if held and held[0] != args.handle:
+            raise CommandError(
+                f"this machine holds the admin key of '{held[0]}' for this server, and the "
+                "admin's handle never changes: run admin-config with that handle"
+            )
+        created = args.new_key or not held
+        jwk = (
+            keystore.create(ADMIN_SCOPE, args.handle, replace=args.new_key)
+            if created
+            else keystore.public_jwk(ADMIN_SCOPE, args.handle)
+        )
+        key_file = Path(f"admin_pub_{args.handle}.key").resolve()
+        key_file.write_text(json.dumps(jwk))
+        os.chmod(key_file, 0o644)
+        out = {
+            "handle": args.handle,
+            "server_id": server_id,
+            "fingerprint": thumbprint(jwk),
+            "public_key_file": str(key_file),
+            "created": created,
+            "steps": [
+                f"place {key_file.name} on the server as /apps/{key_file.name}: for a local "
+                f"container, `docker cp {key_file.name} <container>:/apps/`; on Kubernetes, "
+                "the Secret that k8s-data-deployment.yml mounts at that path",
+                "restart the server (`docker restart <container>`, or `kubectl rollout "
+                "restart deploy/symposium-data`)",
+                f"check that GET {url}/v1/status reports this fingerprint, then run "
+                "`/symposium bootstrap`",
+            ],
+        }
+        if args.new_key and held:
+            out["warning"] = (
+                "a new key: placing this file rebinds the server's admin, and the old key is "
+                "refused from then on"
+            )
+        return out
+
+    def communities_create(self, args) -> dict:
+        return self.admin().create_community(args.name)
+
+    def communities_list(self, _args) -> dict:
+        return self.admin().communities()
+
+    def roster_list(self, _args) -> dict:
+        return self.admin().roster()
+
+    def roster_add(self, args) -> dict:
+        return self.admin().add_to_roster(args.handle)
+
+    def roster_remove(self, args) -> dict:
+        return self.admin().remove_from_roster(args.handle)
+
+    def invite_file(self, server: DataServer, issued: dict) -> dict:
+        return {
+            "invite": issued["invite"],
+            "handle": issued["handle"],
+            "community": issued["community"],
+            "data-server-url": server.base_url,
+        }
+
+    def invite(self, args) -> dict:
+        if args.action == "list":
+            return self.invite_list(args)
+        if not args.handle or not args.out:
+            raise CommandError(
+                "invite needs --handle and --out (or: invite list --out-dir)"
+            )
+        server = self.admin()
+        issued = server.invite(args.handle, args.hours)
+        write_secret(Path(args.out), self.invite_file(server, issued))
+        return {
+            "community": issued["community"],
+            "handle": issued["handle"],
+            "expires": issued["expires"],
+            "invite_file": str(Path(args.out).resolve()),
+        }
+
+    def invite_list(self, args) -> dict:
+        """Every pending invite as `<community>-<handle>.invite` (0600) in --out-dir; only
+        the paths are printed, because invites are secrets."""
+        server = self.admin()
+        pending = server.pending_invites()
+        directory = Path(args.out_dir)
+        written = []
+        for item in pending["invites"]:
+            path = directory / f"{pending['community']}-{item['handle']}.invite"
+            write_secret(
+                path,
+                self.invite_file(server, {**item, "community": pending["community"]}),
+            )
+            written.append(
+                {
+                    "handle": item["handle"],
+                    "expires": item["expires"],
+                    "invite_file": str(path.resolve()),
+                }
+            )
+        return {"community": pending["community"], "invites": written}
+
+    def rebind_key(self, args) -> dict:
+        server = self.admin()
+        issued = server.rebind(args.handle, args.hours)
+        write_secret(Path(args.out), self.invite_file(server, issued))
+        return {
+            "community": issued["community"],
+            "handle": issued["handle"],
+            "retired_keys": issued["retired_keys"],
+            "expires": issued["expires"],
+            "invite_file": str(Path(args.out).resolve()),
+        }
+
+    def suspect_after(self, args) -> dict:
+        return self.admin().suspect_after(args.handle, args.at)
+
+    def purge(self, args) -> dict:
+        cited = CITATION.match(args.cite)
+        if not cited:
+            raise CommandError("--cite takes a citation: symposium-data:<file-id>@v<n>")
+        return self.admin().purge(cited.group(1), cited.group(2))
+
+    def export(self, args) -> dict:
+        server = self.admin()
+        out = Path(args.out)
+        size = 0
+        partial = out.with_name(out.name + ".partial")
+        with server.export() as response:
+            fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                while chunk := response.read(CHUNK):
+                    fh.write(chunk)
+                    size += len(chunk)
+        os.replace(partial, out)
+        return {"exported": server.community, "file": str(out.resolve()), "bytes": size}
+
+    def import_(self, args) -> dict:
+        """Create the exported community on this server (R-J6), then set the context."""
+        source = Path(args.from_)
+        spec = read_json_file(args.community_file, "community file")
+        exported = self.exported_community(source)
+        if exported != spec.get("community"):
+            raise CommandError(
+                f"{source} holds the community '{exported}', but {args.community_file} names "
+                f"'{spec.get('community')}': use the community file of the exported community"
+            )
+        url = spec.get("data-server-url")
+        if not url:
+            raise CommandError(f"{args.community_file} needs `data-server-url`")
+        status = self.server_for(url).status()
+        context = {
+            "community": exported,
+            "data-server-url": url.rstrip("/"),
+            "handle": self.admin_handle(status["server_id"], url),
+            "role": "admin",
+            "server_id": status["server_id"],
+        }
+        report = self.signed_in(context).import_community(source)
+        self.context.save(context)
+        return report
+
+    def exported_community(self, source: Path) -> str:
+        try:
+            with tarfile.open(source, mode="r|") as tar:
+                for member in tar:
+                    if member.name == "manifest.json":
+                        return json.loads(tar.extractfile(member).read())["community"]
+                    break
+        except (OSError, tarfile.TarError, ValueError, KeyError) as e:
+            raise CommandError(f"{source} is not a community export: {e}") from None
+        raise CommandError(
+            f"{source} is not a community export: no manifest.json first"
+        )
+
+    # ── reading ────────────────────────────────────────────────────────────────────────────
+    def changes(self, args) -> dict:
+        return self.signed_in().changes(args.collection, args.since, args.limit)
+
+    def stat(self, args) -> dict:
+        return self.signed_in().stat(*parse_ref(args.ref, args.version))
+
+    def versions(self, args) -> dict:
+        file_id, _ = parse_ref(args.file_id, None)
+        return self.signed_in().versions(file_id)
+
+    def get(self, args) -> dict:
+        file_id, ref = parse_ref(args.ref, args.version)
+        return self.download(self.signed_in().content(file_id, ref), Path(args.out))
+
+    def download(self, response, out: Path) -> dict:
+        """Stream the content to `out`, checking it against the server's Repr-Digest."""
+        digest = hashlib.sha256()
+        size = 0
+        partial = out.with_name(out.name + ".partial")
+        with response, open(partial, "wb") as fh:
+            headers = response.headers
+            while chunk := response.read(CHUNK):
+                fh.write(chunk)
+                digest.update(chunk)
+                size += len(chunk)
+        expected = re.search(r"sha-256=:([^:]+):", headers.get("Repr-Digest", ""))
+        if expected and base64.b64decode(expected.group(1)) != digest.digest():
+            partial.unlink()
+            raise CommandError(
+                "the content does not match its Repr-Digest; nothing kept"
+            )
+        os.replace(partial, out)
+        return {
+            "citation": headers.get("X-Data-Citation"),
+            "version": headers.get("X-Data-Version"),
+            "sha256": digest.hexdigest(),
+            "size": size,
+            "file": str(out.resolve()),
+            "deleted": headers.get("X-Data-Deleted") == "true",
+        }
+
+
+def build_parser(commands: Commands) -> argparse.ArgumentParser:
+    parser = JsonArgumentParser(
+        prog="symposium-data",
+        description="The command-line client of a Symposium Data server. Every command "
+        "prints one JSON object.",
+    )
+    parser.add_argument(
+        "--reference",
+        action="store_true",
+        help="write reference/COMMANDS.md from this parser, and exit",
+    )
+    sub = parser.add_subparsers(dest="command", metavar="<command>")
+
+    def command(group, name, func, help_text):
+        p = group.add_parser(name, help=help_text, description=help_text)
+        p.set_defaults(func=func)
+        return p
+
+    p = command(
+        sub, "status", commands.status, "the data server's status, in either mode"
+    )
+    p.add_argument("--data-server-url", help="default: the context's server")
+
+    context = sub.add_parser("context", help="this directory's context (R-I3)")
+    actions = context.add_subparsers(dest="action", metavar="<action>", required=True)
+    p = command(actions, "set", commands.context_set, "set the context from a file")
+    which = p.add_mutually_exclusive_group(required=True)
+    which.add_argument("--community-file", help="community.json (admins)")
+    which.add_argument("--invite-file", help="an invite file (members)")
+    command(actions, "show", commands.context_show, "print the context")
+
+    p = command(
+        sub,
+        "admin-config",
+        commands.admin_config,
+        "manage this server's admin key (R-D4)",
+    )
+    p.add_argument("--handle", required=True)
+    p.add_argument("--data-server-url", required=True)
+    p.add_argument(
+        "--new-key",
+        action="store_true",
+        help="replace the key: placing the new file rebinds the server's admin",
+    )
+
+    communities = sub.add_parser("communities", help="the server's communities (admin)")
+    actions = communities.add_subparsers(
+        dest="action", metavar="<action>", required=True
+    )
+    p = command(actions, "create", commands.communities_create, "create a community")
+    p.add_argument("--name", required=True)
+    command(actions, "list", commands.communities_list, "list the communities")
+
+    roster = sub.add_parser("roster", help="the community's roster (admin)")
+    actions = roster.add_subparsers(dest="action", metavar="<action>", required=True)
+    command(actions, "list", commands.roster_list, "list the roster")
+    for name, func, text in (
+        ("add", commands.roster_add, "add a handle"),
+        ("remove", commands.roster_remove, "remove a handle"),
+    ):
+        command(actions, name, func, text).add_argument("--handle", required=True)
+
+    p = command(
+        sub,
+        "invite",
+        commands.invite,
+        "write a single-use invite file for a roster handle (admin); "
+        "`invite list --out-dir <dir>` writes every pending invite",
+    )
+    p.add_argument("--handle")
+    p.add_argument("--out", help="the invite file to write (0600)")
+    p.add_argument("--hours", type=int)
+    actions = p.add_subparsers(dest="action", metavar="list")
+    q = actions.add_parser("list", help="write every pending invite as a file (admin)")
+    q.add_argument("--out-dir", required=True)
+
+    p = command(
+        sub,
+        "rebind-key",
+        commands.rebind_key,
+        "retire a member's keys and write a fresh invite file (admin)",
+    )
+    p.add_argument("--handle", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--hours", type=int)
+
+    p = command(
+        sub,
+        "suspect-after",
+        commands.suspect_after,
+        "flag a member's writes after an instant (admin)",
+    )
+    p.add_argument("--handle", required=True)
+    p.add_argument("--at", required=True, help="ISO 8601, with a timezone")
+
+    p = command(sub, "purge", commands.purge, "free one version's content (admin)")
+    p.add_argument("--cite", required=True, help="symposium-data:<file-id>@v<n>")
+
+    p = command(sub, "export", commands.export, "export the community as a tar (admin)")
+    p.add_argument("--out", required=True)
+
+    p = command(
+        sub,
+        "import",
+        commands.import_,
+        "create a community from an export, then set the context (admin)",
+    )
+    p.add_argument("--from", dest="from_", required=True)
+    p.add_argument("--community-file", required=True)
+
+    p = command(sub, "changes", commands.changes, "a page of a collection's changes")
+    p.add_argument("--collection", required=True)
+    p.add_argument("--since", type=int, default=0)
+    p.add_argument("--limit", type=int, default=100)
+
+    for name, func, text in (
+        ("stat", commands.stat, "a version's metadata"),
+        (
+            "get",
+            commands.get,
+            "download a version to a file, checked against its digest",
+        ),
+    ):
+        p = command(sub, name, func, text)
+        p.add_argument("ref", help="a citation, or a file id")
+        p.add_argument("--version", help="with a file id: n or latest (default)")
+        if name == "get":
+            p.add_argument("--out", required=True)
+    p = command(sub, "versions", commands.versions, "every version of a file")
+    p.add_argument("file_id")
+
+    port_ndex.add_command(sub, command, commands, CommandError)  # port-ndex
+    return parser
+
+
+def reference(parser: argparse.ArgumentParser) -> str:
+    """reference/COMMANDS.md: every command's usage and help, from the parser itself."""
+    lines = [
+        "# symposium-data commands",
+        "",
+        "Generated by `symposium-data --reference`. Every command prints one JSON object.",
+        "",
+    ]
+
+    def walk(p, prefix):
+        actions = [a for a in p._actions if isinstance(a, argparse._SubParsersAction)]
+        if p is not parser and p.description:
+            lines.extend([f"## `{prefix}`", "", p.description, "", "```"])
+            lines.append(p.format_usage().strip().replace("usage: ", ""))
+            lines.extend(["```", ""])
+        for action in actions:
+            for name, child in action.choices.items():
+                walk(child, f"{prefix} {name}".strip())
+
+    walk(parser, "")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def main(argv=None) -> int:
+    commands = Commands()
+    parser = build_parser(commands)
+    try:
+        args = parser.parse_args(argv)
+        if args.reference:
+            path = HERE / "reference" / "COMMANDS.md"
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(reference(parser))
+            result = {"written": str(path)}
+        elif not getattr(args, "func", None):
+            raise CommandError("name a command", usage=parser.format_usage().strip())
+        else:
+            result = args.func(args)
+    except CommandError as e:
+        print(json.dumps(e.report()))
+        return 1
+    except KeystoreError as e:
+        print(json.dumps({"error": str(e)}))
+        return 1
+    print(json.dumps(result))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

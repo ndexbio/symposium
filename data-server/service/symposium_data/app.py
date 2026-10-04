@@ -3,17 +3,26 @@
 Communities are tenants (R-G8): every community-dependent route is under /v1/{community}/...,
 with collection-scoped routes under collections/{collection}/ and file routes under files/{id}/.
 Only /v1/status, /v1/communities and the server admin's sign-in (/v1/admin/...) are server-wide.
+
+Nobody has a shell on the server (R-D7): every admin operation is an admin-only route, and the
+admin's key comes from the key file on the volume (R-D4). Without a usable one the server is
+non-operational: every route but /v1/status answers 501.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import logging
+import os
 import re
 import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -21,6 +30,8 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from . import API_VERSION, version
+from .admin_key import AdminKeyFile, AdminMode
+from .archive import Archive, Malformed, Refused
 from .auth import PublicKeys, Secrets, Tokens
 from .jobs import Jobs
 from .records import (
@@ -58,15 +69,21 @@ secrets = Secrets()
 tokens = Tokens(settings.token_key_file, settings.server_id, settings.token_ttl)
 jobs = Jobs(settings, db, store, records)
 cleanup = jobs.cleanup
+archive = Archive(db, store, records, cleanup, settings.heartbeat)
+log = logging.getLogger("symposium_data.app")
+admin_key_file = AdminKeyFile(Path("/apps"), db, records, keys)
+admin_mode = AdminMode(False, reason="starting")
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    global admin_mode
     db.migrate()
     db.open()
     with db.connection() as conn:
         records.fail_running_ports(conn)
     store.ensure_bucket()
+    admin_mode = admin_key_file.resolve()
     jobs.start()
     yield
     jobs.shutdown()
@@ -74,6 +91,17 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Symposium Data", version=version(), lifespan=lifespan)
+
+
+@app.middleware("http")
+async def operational_only(request: Request, call_next):
+    """Non-operational mode (R-D4): only /v1/status answers; the jobs keep running."""
+    if not admin_mode.operational and request.url.path != "/v1/status":
+        return JSONResponse(
+            {"detail": f"the server is not operational: {admin_mode.reason}"},
+            status_code=501,
+        )
+    return await call_next(request)
 
 
 @app.exception_handler(NotFound)
@@ -93,25 +121,31 @@ async def _conflict(_request, error):
 
 @app.get("/v1/status")
 def status(response: Response):
-    """Version and health. Answers 503 while PostgreSQL or the S3 store is unavailable, so a
-    readiness probe never routes traffic to a server that cannot serve it."""
-    admin, postgres_ok = None, True
+    """Version, mode and health. Answers 503 while PostgreSQL or the S3 store is unavailable,
+    so a readiness probe never routes traffic to a server that cannot serve it. In both modes it
+    reports the server's id; once operational, the admin's handle and key fingerprint."""
+    postgres_ok = True
     try:
         with db.connection(timeout=0.5) as conn:  # inside the probe's 1 s
-            admin = records.config(conn, "admin")
+            conn.execute("SELECT 1")
     except Exception:
         postgres_ok = False
     s3_ok = store.healthy()
     if not (postgres_ok and s3_ok):
         response.status_code = 503
-    return {
+    body = {
         "api": API_VERSION,
         "version": version(),
         "server_id": settings.server_id,
-        "initialized": (admin is not None) if postgres_ok else None,
+        "mode": "operational" if admin_mode.operational else "non-operational",
         "postgres": "ok" if postgres_ok else "unavailable",
         "s3": "ok" if s3_ok else "unavailable",
     }
+    if admin_mode.operational:
+        body.update(admin=admin_mode.handle, fingerprint=admin_mode.fingerprint)
+    else:
+        body["reason"] = admin_mode.reason
+    return body
 
 
 # ── identity ────────────────────────────────────────────────────────────────────────────────
@@ -237,8 +271,6 @@ def admin_challenge():
     nonce = secrets.new("n_")
     with db.connection() as conn:
         admin = records.config(conn, "admin")
-        if admin is None:
-            refuse(503, "the server is not initialized")
         records.add_challenge(conn, None, admin, nonce)
     return {"nonce": nonce, "expires_in": 300}
 
@@ -248,7 +280,7 @@ def admin_token(body: AdminTokenIn):
     """The server admin's token: signed by the admin's key, valid in every community."""
     with db.connection() as conn:
         admin = records.config(conn, "admin")
-        if admin is None or not records.take_challenge(conn, None, admin, body.nonce):
+        if not records.take_challenge(conn, None, admin, body.nonce):
             refuse(401, "the challenge is unknown, spent or expired", conn)
         for key in records.admin_keys(conn):
             if keys.verify(key["jwk"], body.nonce.encode(), body.signature):
@@ -298,8 +330,6 @@ def list_communities(request: Request):
 def challenge(community: str, body: ChallengeIn):
     nonce = secrets.new("n_")
     with db.connection() as conn:
-        if records.config(conn, "admin") is None:
-            refuse(503, "the server is not initialized")
         community = community_of(conn, community)
         records.add_challenge(conn, community, body.handle, nonce)
     return {"nonce": nonce, "expires_in": 300}
@@ -326,8 +356,6 @@ def register(community: str, body: RegisterIn):
     """Register a handle in this community with a key generated on the member's machine
     (R-D1, R-D5). Identity is per community."""
     with db.connection() as conn:
-        if records.config(conn, "admin") is None:
-            refuse(503, "the server is not initialized")
         community = community_of(conn, community)
         kid, jwk = checked_new_key(conn, community, body.handle, body)
         if not records.on_roster(conn, community, body.handle):
@@ -459,17 +487,21 @@ def create_invite(community: str, body: InviteIn, request: Request):
         require_admin(conn, request, community)
         if not records.on_roster(conn, community, body.handle):
             refuse(403, f"'{body.handle}' is not on the {community} roster")
-        invite = secrets.new("sdi_")
-        hours = settings.invite_hours if body.hours is None else body.hours
-        expires = records.add_invite(
-            conn, secrets.digest(invite), invite, community, body.handle, hours
-        )
-        return {
-            "community": community,
-            "handle": body.handle,
-            "invite": invite,
-            "expires": iso(expires),
-        }
+        return mint_invite(conn, community, body.handle, body.hours)
+
+
+def mint_invite(conn, community: str, handle: str, hours: int | None) -> dict:
+    invite = secrets.new("sdi_")
+    hours = settings.invite_hours if hours is None else hours
+    expires = records.add_invite(
+        conn, secrets.digest(invite), invite, community, handle, hours
+    )
+    return {
+        "community": community,
+        "handle": handle,
+        "invite": invite,
+        "expires": iso(expires),
+    }
 
 
 @app.get("/v1/{community}/invites")
@@ -490,6 +522,131 @@ def list_invites(community: str, request: Request):
                 for r in records.pending_invites(conn, community)
             ],
         }
+
+
+class RebindIn(BaseModel):
+    hours: int | None = Field(default=None, ge=1, le=24 * 366)
+
+
+@app.post("/v1/{community}/owners/{handle}/rebind")
+def rebind(community: str, handle: str, request: Request, body: RebindIn | None = None):
+    """A lost or compromised key (admin only): retire the member's keys and return a fresh
+    invite, so they register a new key under the same handle. Attribution is untouched."""
+    handle = roster_handle(handle)
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        require_admin(conn, request, community)
+        if not records.on_roster(conn, community, handle):
+            refuse(404, f"'{handle}' is not on the {community} roster")
+        retired = records.retire_keys(conn, community, handle)
+        hours = body.hours if body else None
+        return {"retired_keys": retired, **mint_invite(conn, community, handle, hours)}
+
+
+class SuspectIn(BaseModel):
+    at: datetime
+
+
+@app.put("/v1/{community}/owners/{handle}/suspect-after")
+def suspect_after(community: str, handle: str, body: SuspectIn, request: Request):
+    """Flag everything the handle writes after an instant (admin only); nothing is deleted."""
+    if body.at.tzinfo is None:
+        refuse(400, "the instant needs a timezone, e.g. 2026-10-01T12:00:00+00:00")
+    handle = roster_handle(handle)
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        require_admin(conn, request, community)
+        if not records.set_suspect_after(conn, community, handle, body.at):
+            refuse(404, f"no owner '{handle}' in {community}")
+    return {
+        "community": community,
+        "handle": handle,
+        "suspect_after": iso(body.at),
+    }
+
+
+# ── export and import (R-J6) ────────────────────────────────────────────────────────────────
+def pipe() -> tuple:
+    reader, writer = os.pipe()
+    return os.fdopen(reader, "rb"), os.fdopen(writer, "wb")
+
+
+def close_quietly(stream):
+    try:
+        stream.close()
+    except OSError:
+        pass  # the other end is gone already
+
+
+@app.get("/v1/{community}/export")
+def export(community: str, request: Request):
+    """The community as a tar stream (admin only): one consistent snapshot of its rows, then
+    every stored payload. Written by a thread into a pipe, so no copy lands on disk."""
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        require_admin(conn, request, community)
+    reader, writer = pipe()
+
+    def produce():
+        try:
+            archive.export(community, writer)
+        except BrokenPipeError:
+            pass  # the client went away; the snapshot's transaction just ends
+        except Exception:
+            log.exception("export of %s failed", community)
+        finally:
+            close_quietly(writer)
+
+    threading.Thread(target=produce, name="export", daemon=True).start()
+
+    def chunks():
+        try:
+            while chunk := reader.read(1 << 16):
+                yield chunk
+        finally:
+            reader.close()
+
+    return StreamingResponse(
+        iterate_in_threadpool(chunks()),
+        media_type="application/x-tar",
+        headers={"Content-Disposition": f'attachment; filename="{community}.tar"'},
+    )
+
+
+@app.post("/v1/communities/import", status_code=201)
+async def import_community(request: Request):
+    """Create a community from an export (admin only), in one transaction (R-J6): refused if
+    the community exists here (there is no merge), and nothing is written on any failure. What
+    the exported admin owned becomes this server's admin's."""
+
+    def authorize():
+        with db.connection() as conn:
+            require_admin(conn, request)
+
+    await run_in_threadpool(authorize)
+    reader, writer = pipe()
+
+    def consume():
+        try:
+            return archive.import_(reader)
+        finally:
+            reader.close()  # an import that stops early ends the upload below
+
+    imported = asyncio.create_task(asyncio.to_thread(consume))
+    try:
+        async for chunk in request.stream():
+            try:
+                await run_in_threadpool(writer.write, chunk)
+            except BrokenPipeError:
+                break
+    finally:
+        await run_in_threadpool(close_quietly, writer)
+    try:
+        return await imported
+    except Refused as e:
+        refuse(409, str(e))
+    except Malformed as e:
+        refuse(400, str(e))
 
 
 # ── files and versions ──────────────────────────────────────────────────────────────────────
@@ -763,6 +920,25 @@ def delete_file(
             mapped(e)
         conn.commit()
         return written(conn, community, file_id, n, status_code=200)
+
+
+@app.post("/v1/{community}/files/{file_id}/v/{n}/purge")
+def purge(community: str, file_id: uuid.UUID, n: int, request: Request):
+    """Free one version's content (admin only; R-B3). The version stays addressable and
+    answers 410 with its metadata; the bytes go only when no other live version shares them.
+    When S3 refuses, the payload stays purging and the janitor finishes the job."""
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        require_admin(conn, request, community)
+        records.version(
+            conn, community, file_id, n
+        )  # 404 unless it is this community's
+        pid = records.purge(conn, file_id, n)
+    freed = pid is not None and cleanup.finish_purge(pid)
+    result = {"purged": f"symposium-data:{file_id}@v{n}", "bytes_freed": freed}
+    if pid is not None and not freed:
+        result["note"] = "the bytes could not be removed yet; the janitor will retry"
+    return result
 
 
 def reader_of(conn, request: Request, community: str) -> tuple[str | None, dict | None]:
@@ -1293,6 +1469,7 @@ def start_port(community: str, body: PortIn, request: Request):
         body.credentials.username,
         body.credentials.password,
         body.page_size,
+        settings.heartbeat,
     ).run
     threading.Thread(target=run, args=(port_id,), name="port-ndex", daemon=True).start()
     with db.connection() as conn:

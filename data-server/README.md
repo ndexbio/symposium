@@ -12,7 +12,7 @@ The design and requirements are in the spike on ndexbio/symposium#13. Its sectio
 
 | Path | What it is |
 |---|---|
-| `service/` | The `symposium_data` Python package: the HTTP API, `data-admin` and the Alembic migrations, plus the tests. Locked with `uv.lock`. |
+| `service/` | The `symposium_data` Python package: the HTTP API, its background jobs and the Alembic migrations, plus the tests. Locked with `uv.lock`. |
 | `docker/Dockerfile` | Multi-stage build: `runtime-base` (PostgreSQL, supervisor, gosu, SeaweedFS with a pinned sha256), then `builder` (installs the locked wheel into `/opt/venv`), then `deploy`. |
 | `docker/supervisord/` | One config snippet per service. `start.sh` assembles them. |
 | `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, then `exec supervisord`. |
@@ -31,13 +31,31 @@ These four targets are the only ones. Run them from this folder, or from the rep
 | `build-docker` | `test`, then confirms that the tested image `ndexbio/symposium-data:$(TAG)` exists. |
 | `push-docker` | `build-docker`, then a buildx multi-arch (`linux/amd64`, `linux/arm64`) push of `:$(TAG)` and `:latest`. It is used by the release workflow. |
 
-`TAG` defaults to the version in `service/pyproject.toml`; override it with `make build-docker TAG=1.2.3`. The image is built with `DATA_VERSION=$(TAG)`. The container prints `symposium-data <version>` as its first line of output, and `GET /v1/status` reports the same version. `/v1/status` also reports health: it answers **503**, with `"postgres"` or `"s3"` set to `"unavailable"`, whenever either dependency is down. The Kubernetes readiness probe relies on this.
+`TAG` defaults to the version in `service/pyproject.toml`; override it with `make build-docker TAG=1.2.3`. The image is built with `DATA_VERSION=$(TAG)`. The container prints `symposium-data <version>` as its first line of output, and `GET /v1/status` reports the same version. `/v1/status` also reports health: it answers **503**, with `"postgres"` or `"s3"` set to `"unavailable"`, whenever either dependency is down. The Kubernetes readiness probe relies on this. It reports the server's `mode` too (see "The admin key file").
 
 **Requirements:** Docker and [uv](https://docs.astral.sh/uv/). `uv` installs Python 3.11 and the locked dependencies itself.
 
 ## Releases
 
 Pushing a tag `data-server-v<version>` from the `data-store` branch runs `.github/workflows/release.yml`. That workflow runs `make push-docker TAG=<version>`, which publishes `ndexbio/symposium-data:<version>` and `:latest`. It needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
+
+## The admin key file
+
+Nobody has a shell on the server (R-D7): every admin operation is an admin-only route. The admin's **public** key is a file on the volume, `/apps/admin_pub_<handle>.key`, holding the public JWK that Symposium's `admin-config` writes (mode 0644). The API reads it at every start-up (R-D4):
+
+| At start-up | Result |
+|---|---|
+| Not yet initialized, exactly one key file | Binds that handle and key, and saves a backup, `/apps/data/config/admin_pub.backup`. |
+| Initialized, the admin's file holds the bound key | Starts normally. |
+| Initialized, the admin's file holds a different key | **Rebinds**: the old admin keys are retired, the new one is bound, the backup is updated, and it is logged. |
+| Initialized, the admin's file missing, the backup present | Starts normally from the backup and logs a warning. Nothing is written to `/apps`. |
+| A key file naming another handle | Ignored, with an error naming both handles: the admin handle never changes. |
+| No key file, not initialized | Non-operational: `admin key not provided`. |
+| Several key files, not initialized | Non-operational: `ambiguous admin key files`. |
+| The key file is not a usable public key (not JSON, not an Ed25519 public JWK, or a private key) | Non-operational: `admin key invalid`, with an error on the console saying why. Nothing is bound or rebound. |
+| Initialized, with neither the file nor the backup | Non-operational: `admin key missing`, with an error on the console. |
+
+**Non-operational mode:** every route except `GET /v1/status` answers **501**. `/v1/status` answers 200 with `mode` (`operational` or `non-operational`), the `reason` and the `server_id`; once operational it reports the admin's handle (`admin`) and key `fingerprint` (its RFC 7638 thumbprint) instead of a reason. The services keep running and the data stays intact: fix the key file and restart the server.
 
 ## Communities
 
@@ -49,6 +67,8 @@ A community name is 1–20 letters, digits or underscores; `status`, `communitie
 |---|---|
 | `POST /v1/communities {name}` | Admin only. Creates a community and its default collections. Idempotent: `201` when created, `200` when exactly that name exists; `400` for a name that is not a slug, is reserved, or differs only in case from an existing one. |
 | `GET /v1/communities` | Admin only. Every community, with when it was created. |
+| `POST /v1/communities/import` (body: an export) | Admin only. Creates the exported community in one transaction (R-J6): `201` with one entry per member, `409` when the community already exists here (there is no merge) or a member's handle is this server's admin, `400` for a damaged stream or a name that is not a slug. Collections the exported admin owned become this server's admin's; versions keep their recorded `created_by`. |
+| `GET /v1/{community}/export` | Admin only. The community as a tar stream: one consistent snapshot of its rows, read keys (hashes only) and members' public keys, then every stored payload. Invites are not included. |
 | `POST /v1/{community}/port-ndex {ndex_url, credentials: {username, password}, page_size?}` | Admin only. Starts a port-ndex into this empty community in the background (`PORT_NDEX.md`) and answers `202` with its id. `400` if the community holds files, `409` while another port-ndex runs anywhere on the server. |
 | `GET /v1/{community}/port-ndex/{id}` | Admin only. A port-ndex's state (`running`, `ok`, or `failed` with a reason), who requested it, and its summary. |
 
@@ -58,9 +78,9 @@ The server provisions no accounts. Each member generates an Ed25519 key on their
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /v1/{community}/auth/challenge {handle}` | A single-use nonce, valid for 5 minutes. `503` before the server is initialized. |
+| `POST /v1/{community}/auth/challenge {handle}` | A single-use nonce, valid for 5 minutes. |
 | `POST /v1/{community}/auth/token {handle, nonce, signature}` | Sign the nonce with an active key to receive an EdDSA access token (15 minutes by default), valid only in this community. |
-| `POST /v1/{community}/owners {handle, public_jwk, nonce, signature, invite?}` | Register. Members join only by invite: a valid, unused invite bound to this handle and community is required. Returns `503` before `data-admin init`, `403` for a handle not on the community's roster or without a valid invite, `409` for a handle already registered in it, and `401` when the signature fails proof of possession. |
+| `POST /v1/{community}/owners {handle, public_jwk, nonce, signature, invite?}` | Register. Members join only by invite: a valid, unused invite bound to this handle and community is required. Returns `403` for a handle not on the community's roster or without a valid invite, `409` for a handle already registered in it, and `401` when the signature fails proof of possession. |
 | `POST /v1/{community}/owners/{handle}/keys {public_jwk, nonce, signature}` | Rotate your own key: authorized with your current token, proven by the new key. The old key is retired, not deleted, so attribution survives. |
 | `GET /v1/{community}/whoami` | The caller's handle, key id, community, admin flag, grants in this community, and `suspect_after`. |
 | `GET /v1/{community}/roster` | Admin only. Each member with `registered` and `invite_expires` (its pending invite, or null). |
@@ -68,8 +88,10 @@ The server provisions no accounts. Each member generates an Ed25519 key on their
 | `DELETE /v1/{community}/roster/{handle}` | Admin only. Removes one member: its grants and pending invite go, its identity and attribution stay. `404` when not on the roster. |
 | `POST /v1/{community}/invites {handle, hours?}` | Admin only. A single-use invite for a roster member (`403` otherwise), returned with its expiry. It revokes the handle's earlier unused invite. |
 | `GET /v1/{community}/invites` | Admin only. The pending invites, secret included, so one can be handed over again. Used, expired and revoked invites are never listed, and their secrets are erased. |
+| `POST /v1/{community}/owners/{handle}/rebind {hours?}` | Admin only. A lost or compromised key: retires the member's keys and returns a fresh invite, so they register a new key under the same handle. Attribution is untouched. `404` when the handle is not on the roster. |
+| `PUT /v1/{community}/owners/{handle}/suspect-after {at}` | Admin only. Flags every version the member writes after the instant (ISO 8601, with a timezone): `stat` reports `"suspect": true`, and `whoami` reports the instant. Nothing is deleted. `404` for an unknown member. |
 
-**The server admin** is server-wide, not a member of any community. It signs in with `POST /v1/admin/challenge` and `POST /v1/admin/token {nonce, signature}`, signing with the key bound by `data-admin init`; its token works in every community.
+**The server admin** is server-wide, not a member of any community. It signs in with `POST /v1/admin/challenge` and `POST /v1/admin/token {nonce, signature}`, signing with the key from the admin key file; its token works in every community, and every admin route needs it (no token `401`, a member's token or a read key `403`).
 
 Requests authenticate with `Authorization: Bearer <token>`.
 
@@ -85,6 +107,7 @@ Every community has three collections: `inbox` (submissions), `files` (stored da
 | `GET /v1/{community}/files/{id}/v/{n}` | Stream one version, with Range support. Headers: `Repr-Digest`, `X-Data-Citation`, `X-Data-Version`, `X-Data-Deleted`, `X-Data-File-Deleted`, and a `Link` header with `latest`, `prev` and `next`. A purged version answers `410` with its metadata. `latest` is the newest version that isn't a tombstone. |
 | `GET /v1/{community}/files/{id}/v/{n}/stat` | Metadata only, never the content. Includes `sha256`, `size`, `created`, `seq`, `created_by`, `key_id`, `deleted`, `purged`, `suspect` and `integrity`. |
 | `GET /v1/{community}/files/{id}/versions` | Every version of the file. |
+| `POST /v1/{community}/files/{id}/v/{n}/purge` | Admin only. Frees one version's content (R-B3): the version stays addressable and answers `410` with its metadata. The bytes go only when no other live version shares them (`bytes_freed`); if S3 refuses, the janitor finishes the job. |
 
 - **Citations** take the form `symposium-data:<file-id>@v<n>`. Every file response carries `ETag: "v<n>"`.
 - **Atomic writes (R-A6):** every write either fully happens or leaves nothing behind.

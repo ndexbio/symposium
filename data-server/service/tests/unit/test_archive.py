@@ -4,7 +4,7 @@ import pytest
 
 from symposium_data.archive import FORMAT, FORMAT_VERSION, Archive, Malformed
 
-archive = Archive(None, None, None, None)
+archive = Archive(None, None, None, None, 1.0)
 
 
 def test_a_manifest_must_name_this_format_and_version():

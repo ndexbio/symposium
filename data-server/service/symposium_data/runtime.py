@@ -23,8 +23,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 
 DEFAULT_CONFIG = "/apps/data/config/service.env"
-# Arbitrary but fixed: every process that migrates takes this lock first, so a starting API
-# and a concurrent `data-admin` never run the migrations at the same time.
+# Arbitrary but fixed: every process that migrates takes this lock first, so two never run the
+# migrations at the same time (a restarted API and one still shutting down, say).
 MIGRATION_LOCK_ID = 7_301_014
 
 

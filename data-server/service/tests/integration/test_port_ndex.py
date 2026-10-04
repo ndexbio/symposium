@@ -210,7 +210,7 @@ def everything(server, headers, collection) -> list:
 def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
     server, admin = demo
     outcome = run_port(server, admin, stub.url)
-    assert outcome["state"] == "ok", outcome
+    assert outcome["state"] == "ok", outcome["result"]
     result = outcome["result"]
     assert (result["networks"], result["record"], result["replies"]) == (10, 9, 1)
     assert (
@@ -453,10 +453,23 @@ def test_a_port_is_refused_before_any_ndex_call(demo, stub):
     lyra = Owner(server, "lyra")
     enroll(admin, lyra, "demo")
     assert start_port(server, lyra.headers(), stub.url).status_code == 403
-    unknown = httpx.get(
-        f"{server.url}/v1/demo/port-ndex/{uuid.uuid4()}", headers=admin.headers()
+    status_url = f"{server.url}/v1/demo/port-ndex/{uuid.uuid4()}"
+    assert httpx.get(status_url, headers=admin.headers()).status_code == 404
+    assert httpx.get(status_url).status_code == 401
+    assert httpx.get(status_url, headers=lyra.headers()).status_code == 403
+    httpx.post(
+        f"{server.url}/v1/demo/collections",
+        json={"name": "project"},
+        headers=lyra.headers(),
     )
-    assert unknown.status_code == 404
+    read_key = httpx.post(
+        f"{server.url}/v1/demo/collections/project/keys",
+        json={"label": "reviewer"},
+        headers=lyra.headers(),
+    ).json()["key"]
+    by_key = {"Authorization": f"Bearer {read_key}"}
+    assert start_port(server, by_key, stub.url).status_code == 403
+    assert httpx.get(status_url, headers=by_key).status_code == 403
 
     create_community(server, admin, "full")
     admin.put("full", "files", "data.csv", b"already here")

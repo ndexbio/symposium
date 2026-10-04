@@ -2,41 +2,47 @@
 
 ## Run with Docker
 
+Every server needs the admin's **public** key file, `admin_pub_<handle>.key`, which Symposium's `admin-config` writes on the operator's machine. The private key never leaves that machine. Copy the file into the container before its first start: the server binds that admin when it starts (README, "The admin key file").
+
 **Ephemeral.** The data is lost when the container is removed. Suitable for a local server on one machine:
 
 ```bash
-docker run -d --name symposium-data -p 127.0.0.1:8790:8080 \
+docker create --name symposium-data -p 127.0.0.1:8790:8080 \
   ndexbio/symposium-data:<version>
+docker cp admin_pub_<handle>.key symposium-data:/apps/
+docker start symposium-data
 ```
 
 **Persistent.** All state lives in one named volume:
 
 ```bash
-docker run -d --name symposium-data --restart unless-stopped \
+docker create --name symposium-data --restart unless-stopped \
   -p 127.0.0.1:8790:8080 -v symposium-data:/apps \
   ndexbio/symposium-data:<version>
+docker cp admin_pub_<handle>.key symposium-data:/apps/
+docker start symposium-data
 ```
 
 **Reachable by other machines.** Put a TLS-terminating proxy in front, and name it in `SYMPOSIUM_DATA_TRUSTED_PROXY`. Members join the same way as on a local server: by invite.
 
 ```bash
-docker run -d --name symposium-data --restart unless-stopped \
+docker create --name symposium-data --restart unless-stopped \
   -p 8790:8080 -v symposium-data:/apps \
   -e SYMPOSIUM_DATA_TRUSTED_PROXY=<proxy address> \
   ndexbio/symposium-data:<version>
+docker cp admin_pub_<handle>.key symposium-data:/apps/
+docker start symposium-data
 ```
 
 The first line of the container log is `symposium-data <version>`.
 
-## Initialize the admin
+## The admin key file
 
-A new server starts **uninitialized**: `GET /v1/status` reports `"initialized": false`. Only the admin's **public** key goes to the server host. The private key stays on the operator's machine.
+`GET /v1/status` reports the server's `mode`. Once operational it reports the admin's handle and key `fingerprint`, its RFC 7638 thumbprint: compare it with the fingerprint `admin-config` showed on the operator's machine.
 
-```bash
-docker exec -i symposium-data data-admin init --admin <admin-handle> --pubkey - < admin.pub.jwk
-```
-
-`init` prints the key's fingerprint, which is its RFC 7638 thumbprint. Compare it with the fingerprint shown on the operator's machine. `init` works only once; a second call exits with status 2 and changes nothing.
+- **Non-operational** (`"mode": "non-operational"`, with a `reason`): every other route answers `501`. The console says why: no key file (`admin key not provided`), several (`ambiguous admin key files`), a file that is not a usable public key (`admin key invalid`), or, on an initialized server, neither the file nor its backup (`admin key missing`). Fix the file in `/apps`, then `docker restart symposium-data`. The data is untouched.
+- **Changing the admin's key:** copy the new `admin_pub_<handle>.key` over the old one and restart. The server rebinds: the old key is refused from then on. The admin's handle never changes; a file naming another handle is ignored, with an error.
+- **A missing key file** on an initialized server is not an outage: the server runs from the backup it saved at the first bind, and logs a warning.
 
 ## Communities, rosters and invites
 
@@ -48,16 +54,9 @@ One server hosts many communities. The admin creates each with `POST /v1/communi
 - Issuing a new invite for a handle revokes its earlier unused one, so only the newest works. Removing a handle from the roster revokes its pending invite too.
 - `GET /v1/<community>/invites` lists the pending invites, secret included, so the admin can hand one over again. An invite stops being retrievable, and its secret is erased, the moment it is used, expires or is revoked. Export never includes invites.
 
-The member registers with it (Symposium's `setup.py --invite-file`). On the server host, `data-admin invite --community demo --handle lyra > lyra.invite` issues one the same way.
+The member registers with it (Symposium's `setup.py --invite-file`).
 
-**Lost or compromised key:**
-
-```bash
-docker exec symposium-data data-admin rebind-key --community demo --handle lyra > lyra.invite
-docker exec symposium-data data-admin suspect-after --community demo --handle lyra --at 2026-10-01T12:00:00+00:00
-```
-
-`rebind-key` retires the handle's keys and prints a fresh invite, so the member registers a new key under the same handle. `suspect-after` flags every version the handle writes after that instant: `stat` reports `"suspect": true`, and `GET /v1/<community>/whoami` reports the instant. Nothing is deleted, and attribution is kept.
+**A member's lost or compromised key:** `POST /v1/<community>/owners/<handle>/rebind` retires the handle's keys and returns a fresh invite, so the member registers a new key under the same handle. `PUT /v1/<community>/owners/<handle>/suspect-after {"at": "2026-10-01T12:00:00+00:00"}` flags every version the handle writes after that instant: `stat` reports `"suspect": true`, and `GET /v1/<community>/whoami` reports the instant. Nothing is deleted, and attribution is kept. Both are admin only.
 
 ## Read keys
 
@@ -73,10 +72,10 @@ Removing an owner from the roster ends their control of their collections; the a
 
 ## Purge, the janitor and the scrub
 
-**Purge** frees one version's content (R-B3). The version stays addressable and answers `410` with its metadata. The bytes are deleted only when no other live version shares them. The payload is marked `purging` before its bytes are touched and becomes `purged` only after they are gone; if S3 refuses, the command reports `"bytes_freed": false` and the janitor finishes the job:
+**Purge** frees one version's content (R-B3). The version stays addressable and answers `410` with its metadata. The bytes are deleted only when no other live version shares them. The payload is marked `purging` before its bytes are touched and becomes `purged` only after they are gone; if S3 refuses, the route reports `"bytes_freed": false` and the janitor finishes the job. It is admin only:
 
 ```bash
-docker exec symposium-data data-admin purge --cite symposium-data:<file-id>@v<n>
+curl -X POST -H "Authorization: Bearer <admin token>" https://data.example.org/v1/<community>/files/<file-id>/v/<n>/purge
 ```
 
 **Janitor.** It runs in the background and removes what a crash mid-write leaves behind: uploads that never completed, and name reservations that never turned into a file. Both are removed after `SYMPOSIUM_DATA_PENDING_TTL`. Normal failures are cleaned up immediately; the janitor covers a crash, and retries any S3 delete that failed. Bytes are always deleted before the row that tracks them, so every object in the bucket stays accounted for. An upload that is still streaming refreshes its timestamps (a heartbeat every TTL/3, at most every 60 s), so the janitor never expires live work.
@@ -90,11 +89,12 @@ A community that already lives on NDEx is copied into a new, empty community on 
 ## Kubernetes or Podman
 
 ```bash
+kubectl create secret generic symposium-data-admin-key --from-file=admin_pub.key=admin_pub_<handle>.key
 kubectl apply -f docker/k8s-data-deployment.yml        # or: podman play kube docker/k8s-data-deployment.yml
 kubectl wait --for=condition=Ready pod -l app=symposium-data --timeout=420s
-kubectl exec -i deploy/symposium-data -- data-admin init --admin <admin-handle> --pubkey - < admin.pub.jwk
 ```
 
+- **The admin key** comes from that Secret, mounted as the file `/apps/admin_pub_<handle>.key`: set the handle in the manifest's mount path before applying. To change the key, replace the Secret, then `kubectl rollout restart deploy/symposium-data`: the key is read at start-up.
 - **Storage:** the manifest uses one ReadWriteOnce PVC, so the Deployment runs a single replica with the `Recreate` strategy.
 - **Before applying:** edit the PVC size, and the Ingress host and TLS secret. Pin the image to a released version.
 - **Validating the manifests:** `docker run --rm -v "$PWD/docker:/m:ro" ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary /m/k8s-data-deployment.yml`. The `make test` integration suite runs this same check.
@@ -102,26 +102,26 @@ kubectl exec -i deploy/symposium-data -- data-admin init --admin <admin-handle> 
 ## Verify
 
 ```bash
-curl -s http://127.0.0.1:8790/v1/status
-docker exec symposium-data data-admin status
+curl -s http://127.0.0.1:8790/v1/status    # mode, admin, fingerprint, postgres, s3
 docker exec symposium-data supervisorctl -c /tmp/supervisord.conf status    # data-api, postgres, seaweed RUNNING
 ```
 
 ## Back up and tear down
 
 - **Back up:** everything is in the `/apps` volume (or PVC). Stop the container, then copy or snapshot the volume.
-- **Export one community** while the server runs. The export is one consistent snapshot: rows, read keys (hashes only), the members' public keys, and every stored payload. Invites are not included.
+- **Export one community** while the server runs (admin only). The export is one consistent snapshot: rows, read keys (hashes only), the members' public keys, and every stored payload. Invites are not included.
 
   ```bash
-  docker exec symposium-data data-admin export --community demo > demo.tar
+  curl -fsS -H "Authorization: Bearer <admin token>" -o demo.tar https://data.example.org/v1/demo/export
   ```
 
-- **Import it** into an initialized server whose admin has the **same handle** (its own key is fine: this server's admin keys always win). The community must not exist there yet. The import is one transaction: on any failure nothing is written (exit 2 when refused, 1 when the stream is damaged).
+- **Import it** into an operational server (admin only). The community must not exist there yet, and no member may have this server's admin's handle. What the exported admin owned becomes this server's admin's. The import is one transaction: on any failure nothing is written (`409` when refused, `400` when the stream is damaged).
 
   ```bash
-  docker exec -i symposium-data data-admin import < demo.tar
+  curl -fsS -X POST -H "Authorization: Bearer <admin token>" --data-binary @demo.tar \
+    https://data.example.org/v1/communities/import
   ```
 
-  It prints one line per handle: every member is `created` in the new community and signs in with the key they already hold. Identity is per community, so a member of another community on this server, even with the same handle, is unaffected.
+  It answers with one entry per handle: every member is `created` in the new community and signs in with the key they already hold. Identity is per community, so a member of another community on this server, even with the same handle, is unaffected.
 - **Tear down without losing data:** `docker rm -f symposium-data`. The volume is kept, and the next `docker run` on that volume skips first-boot setup.
 - **Delete everything:** `docker rm -f symposium-data && docker volume rm symposium-data`.

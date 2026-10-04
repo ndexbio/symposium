@@ -2,8 +2,9 @@
 and export/import."""
 
 import hashlib
+import io
 import json
-import subprocess
+import tarfile
 from datetime import datetime
 
 import httpx
@@ -14,6 +15,7 @@ from conftest import (
     community_with,
     enroll,
     psql,
+    purge,
     set_roster,
 )
 
@@ -260,7 +262,7 @@ def test_a_failing_promote_leaves_nothing_behind(demo):
     assert promote(admin, fid, 1, collection="nowhere").status_code == 404
     assert promote(admin, fid, 1).status_code == 201
     assert promote(admin, fid, 1).status_code == 409  # the name is taken
-    server.admin("purge", "--cite", f"symposium-data:{text}@v1")
+    assert purge(admin, text, 1).status_code == 200
     assert promote(admin, text, 1).status_code == 410
 
     record = every_change(server, admin.headers(), "record")
@@ -296,37 +298,49 @@ def test_verify_checks_existence_hash_and_strict_ordering(demo):
     anonymous = httpx.get(f"{server.url}/v1/demo/verify", params={"cite": cite})
     assert anonymous.status_code == 401
 
-    server.admin("purge", "--cite", cite)
+    assert purge(admin, data["file_id"], 1).status_code == 200
     purged = verify(admin, cite).json()
     assert purged["exists"] and not purged["ok"]
     assert purged["reason"] == "content purged"
 
 
 # ── export and import ───────────────────────────────────────────────────────────────────────
-def export(server, community, path):
-    with open(path, "wb") as out:
-        result = subprocess.run(
-            ["docker", "exec", server.name, "data-admin", "export"]
-            + ["--community", community],
-            stdout=out,
-            stderr=subprocess.PIPE,
-            text=False,
-            timeout=600,
-        )
-    assert result.returncode == 0, result.stderr.decode()
+def export(admin, community, path):
+    """Stream the community's export through the route into `path`."""
+    url = f"{admin.server.url}/v1/{community}/export"
+    with httpx.stream("GET", url, headers=admin.headers(), timeout=600) as r:
+        assert r.status_code == 200, r.read()
+        with open(path, "wb") as out:
+            for chunk in r.iter_bytes():
+                out.write(chunk)
     return path
 
 
-def import_(server, path):
+def import_(admin, path):
+    """Upload an export through the route. -> the response."""
     with open(path, "rb") as source:
-        result = subprocess.run(
-            ["docker", "exec", "-i", server.name, "data-admin", "import"],
-            stdin=source,
-            capture_output=True,
+        return httpx.post(
+            f"{admin.server.url}/v1/communities/import",
+            content=source.read(),
+            headers=admin.headers(),
             timeout=600,
         )
-    lines = result.stdout.decode().splitlines()
-    return result.returncode, [json.loads(line) for line in lines if line]
+
+
+def rewritten(path, out, *replacements):
+    """A copy of an export with text replaced in its rows (not its payloads), as if it came
+    from another server."""
+    with tarfile.open(path) as src, tarfile.open(out, "w") as dst:
+        for member in src.getmembers():
+            data = src.extractfile(member).read()
+            if not member.name.startswith("payloads/"):
+                text = data.decode()
+                for old, new in replacements:
+                    text = text.replace(old, new)
+                data = text.encode()
+                member.size = len(data)
+            dst.addfile(member, io.BytesIO(data))
+    return out
 
 
 def instant(value: str) -> datetime:
@@ -346,8 +360,9 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
     fid = lyra.put("demo", "files", "data.csv", b"1,2,3").json()["file_id"]
     lyra.version(fid, b"1,2,3,4")
     lyra.delete(fid, reason="superseded")
-    purged = lyra.put("demo", "files", "secret.csv", b"remove me").json()["citation"]
-    source.admin("purge", "--cite", purged)
+    secret = lyra.put("demo", "files", "secret.csv", b"remove me").json()
+    purged = secret["citation"]
+    assert purge(admin, secret["file_id"], 1).status_code == 200
     httpx.post(
         f"{source.url}/v1/demo/collections",
         json={"name": "project"},
@@ -370,19 +385,18 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
         c: comparable(every_change(source, admin.headers(), c))
         for c in ("files", "inbox", "record", "project")
     }
-    archive = export(source, "demo", tmp_path / "demo.tar")
+    archive = export(admin, "demo", tmp_path / "demo.tar")
 
     target.reset()
     truncated = tmp_path / "truncated.tar"
     truncated.write_bytes(archive.read_bytes()[: archive.stat().st_size // 2])
-    code, _ = import_(target, truncated)
-    assert code == 1
+    assert import_(admin, truncated).status_code == 400
     assert psql(target, "SELECT count(*) FROM collections") == "0"
     assert_consistent(target)
 
-    code, report = import_(target, archive)
-    assert code == 0, report
-    results = {r["handle"]: r["result"] for r in report if "handle" in r}
+    imported = import_(admin, archive)
+    assert imported.status_code == 201, imported.text
+    results = {r["handle"]: r["result"] for r in imported.json()["handles"]}
     assert results == {
         "lyra": "created",
         "vega": "created",
@@ -410,8 +424,9 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
     assert new["seq"] == last["seq"] + 1
     assert instant(new["created"]) > instant(last["created"])
 
-    code, report = import_(target, archive)
-    assert code == 2 and "already exists" in report[0]["error"]
+    again = import_(admin, archive)
+    assert again.status_code == 409 and "already exists" in again.json()["detail"]
+    assert import_(lyra2, archive).status_code == 403  # admin only
     assert_consistent(target)
 
 
@@ -420,16 +435,16 @@ def test_imported_identities_are_per_community(server, tmp_path):
     admin, owners = community_with(source, members=("lyra", "vega"))
     lyra = owners["lyra"]
     fid = lyra.put("demo", "files", "data.csv", b"lyra's data").json()["file_id"]
-    archive = export(source, "demo", tmp_path / "demo.tar")
+    archive = export(admin, "demo", tmp_path / "demo.tar")
 
     # emptied, the server then has a lyra, with another key, in another community
     target.reset()
     set_roster(target, admin, "other", ["lyra"])
     lyra_other = Owner(target, "lyra")
     assert enroll(admin, lyra_other, "other").status_code == 201
-    code, report = import_(target, archive)
-    assert code == 0, report
-    results = {r["handle"]: r["result"] for r in report if "handle" in r}
+    imported = import_(admin, archive)
+    assert imported.status_code == 201, imported.text
+    results = {r["handle"]: r["result"] for r in imported.json()["handles"]}
     assert results == {
         "lyra": "created",
         "vega": "created",
@@ -445,3 +460,33 @@ def test_imported_identities_are_per_community(server, tmp_path):
         == 401
     )
     assert Owner(target, "lyra", key=lyra_other.key).token_response().status_code == 401
+
+
+def test_an_export_from_another_admin_is_imported_under_this_one(server, tmp_path):
+    admin, owners = community_with(server, members=("lyra",))
+    goal = owners["lyra"].put("demo", "inbox", "goal.json", submission()).json()
+    promote(admin, goal["file_id"], 1, stamp_json_pointer="/artifact/created")
+    archive = export(admin, "demo", tmp_path / "demo.tar")
+    server.reset()
+
+    # the same community, exported from a server whose admin is old-admin
+    elsewhere = rewritten(
+        archive, tmp_path / "elsewhere.tar", ('"demo-admin"', '"old-admin"')
+    )
+    imported = import_(admin, elsewhere)
+    assert imported.status_code == 201, imported.text
+    owners_now = psql(server, "SELECT DISTINCT owner FROM collections")
+    assert owners_now == "demo-admin"  # what old-admin owned is this server's admin's
+
+    # a member whose handle is this server's admin cannot be imported
+    server.reset()
+    collision = rewritten(
+        archive,
+        tmp_path / "collision.tar",
+        ('"demo-admin"', '"old-admin"'),
+        ('"lyra"', '"demo-admin"'),
+    )
+    refused = import_(admin, collision)
+    assert refused.status_code == 409 and "handle collision" in refused.json()["detail"]
+    assert psql(server, "SELECT count(*) FROM communities") == "0"
+    assert_consistent(server)

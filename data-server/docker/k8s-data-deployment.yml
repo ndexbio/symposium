@@ -3,9 +3,15 @@
 #   kubectl apply -f k8s-data-deployment.yml        (or: podman play kube k8s-data-deployment.yml)
 #
 # All state (PostgreSQL, SeaweedFS, service secrets) lives under /apps on one ReadWriteOnce
-# PVC, so the Deployment runs one replica with the Recreate strategy. The server starts
-# uninitialized; bind the admin with:
-#   kubectl exec -i deploy/symposium-data -- data-admin init --admin <handle> --pubkey - < admin.pub.jwk
+# PVC, so the Deployment runs one replica with the Recreate strategy.
+#
+# The admin's public key (R-D4) comes from a Secret, mounted as the file
+# /apps/admin_pub_<handle>.key. Before applying, create it from the file `admin-config` wrote,
+# and set the mount path below to your admin handle:
+#   kubectl create secret generic symposium-data-admin-key \
+#     --from-file=admin_pub.key=admin_pub_<handle>.key
+# To change the admin's key, replace the Secret and restart the pod
+# (kubectl rollout restart deploy/symposium-data): the key is read at start-up.
 #
 # Pin the image to a released version (ndexbio/symposium-data:<version>) for production.
 ---
@@ -62,9 +68,15 @@ spec:
             failureThreshold: 6
           volumeMounts:
             - {name: symposium-data-storage, mountPath: /apps}
+            - name: symposium-data-admin-key
+              mountPath: /apps/admin_pub_demo-admin.key   # admin_pub_<your admin handle>.key
+              subPath: admin_pub.key
+              readOnly: true
       volumes:
         - name: symposium-data-storage
           persistentVolumeClaim: {claimName: symposium-data-pvc}
+        - name: symposium-data-admin-key
+          secret: {secretName: symposium-data-admin-key}
 ---
 apiVersion: v1
 kind: Service

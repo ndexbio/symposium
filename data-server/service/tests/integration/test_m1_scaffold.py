@@ -1,7 +1,6 @@
-"""M1: the image, its first boot and initialization. The session fixture has already checked
-that a fresh server reports itself uninitialized and refuses registration with 503."""
+"""M1: the image and its first boot. Binding the admin is the key file's (R-D4), checked in
+test_admin_key_file.py and the unit tests."""
 
-import json
 import time
 from pathlib import Path
 
@@ -32,26 +31,6 @@ def test_banner_reports_the_built_version(server):
     first_line = server.logs().splitlines()[0]
     assert first_line == f"symposium-data {VERSION}"
     assert server.status()["version"] == VERSION
-
-
-def test_init_works_exactly_once(server, owner_key):
-    status = server.status()
-    assert status["initialized"] is True and status["api"] == "1"
-    second = server.admin(
-        "init", "--admin", "intruder", "--pubkey", "-", input=owner_key().jwk_text()
-    )
-    assert second.returncode == 2
-    assert "already initialized" in second.stdout
-    assert json.loads(server.admin("status").stdout)["admin"] == "demo-admin"
-
-
-def test_init_refuses_a_private_key(server, owner_key):
-    jwk = {**owner_key().jwk, "d": "nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A"}
-    result = server.admin(
-        "init", "--admin", "demo-admin", "--pubkey", "-", input=json.dumps(jwk)
-    )
-    assert result.returncode == 1
-    assert "expected a public" in result.stdout
 
 
 def test_first_boot_secrets_are_owner_only_and_sentinels_exist(server):

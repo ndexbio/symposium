@@ -23,7 +23,7 @@ import re
 import urllib.request
 from datetime import datetime
 
-from .cleanup import Cleanup
+from .cleanup import Cleanup, PendingBatch
 from .records import COLLECTIONS, Conflict, Records
 from .runtime import Database, PayloadStore
 from .wire import NAME
@@ -107,6 +107,7 @@ class Port:
         username: str,
         password: str,
         page_size: int,
+        heartbeat: float,
     ):
         self.db, self.store, self.records, self.cleanup = db, store, records, cleanup
         self.community = community
@@ -114,6 +115,7 @@ class Port:
         self.username, self.password = username, password
         # NDEx truncates listings silently, so every page of this size is read
         self.page_size = page_size
+        self.heartbeat = heartbeat  # how often the pending payloads are touched
         self.admin = None
 
     def run(self, port_id):
@@ -209,21 +211,24 @@ class Port:
             | {h for x in found["inbox"] for h in x["metadata"]["recipients"]}
         )
         members = [h for h in members if h != self.admin]
-        pending, duplicates = [], []
+        pending = PendingBatch(self.db, self.records, self.heartbeat)
+        duplicates = []
         try:
             for _, item in items:
                 with self.db.connection() as conn:
                     pid, key = self.records.begin_payload(
                         conn, self.community, item["author"]
                     )
-                pending.append(pid)
+                pending.add(pid)
                 self.store.put_bytes(key, item["bytes"])
                 item["pid"] = pid
                 item["sha256"] = hashlib.sha256(item["bytes"]).hexdigest()
+                pending.beat()
+            pending.beat(now=True)
             with self.db.connection() as conn:
                 self.write(conn, items, members, duplicates)
         except BaseException:
-            for pid in pending:
+            for pid in pending.pids:
                 self.cleanup.discard_pending(pid)
             raise
         for pid in duplicates:

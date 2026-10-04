@@ -1,7 +1,8 @@
 """The server's records: configuration, communities, identities, rosters, grants, invites, files
 and versions. Every community-dependent record is scoped by its community (R-G8).
 
-Shared by the HTTP service and data-admin, so every invariant has one implementation.
+Used by the HTTP service, its jobs, export and import, and the port, so every invariant has one
+implementation.
 """
 
 from __future__ import annotations
@@ -79,6 +80,20 @@ class Records:
             (kid, handle, json.dumps(jwk)),
         )
         self.set_config(conn, "admin", handle)
+
+    def rebind_admin(self, conn, handle: str, kid: str, jwk: dict):
+        """Make `kid` the admin's only active key; the old keys are retired, never deleted. A
+        key that was the admin's before becomes active again."""
+        conn.execute(
+            "UPDATE admin_keys SET active = false, retired = now() "
+            "WHERE active AND kid <> %s",
+            (kid,),
+        )
+        conn.execute(
+            "INSERT INTO admin_keys (kid, handle, jwk) VALUES (%s, %s, %s) "
+            "ON CONFLICT (kid) DO UPDATE SET active = true, retired = NULL",
+            (kid, handle, json.dumps(jwk)),
+        )
 
     def admin_keys(self, conn) -> list:
         return conn.execute("SELECT kid, jwk FROM admin_keys WHERE active").fetchall()
@@ -666,6 +681,13 @@ class Records:
                 "UPDATE files SET reserved_at = now() WHERE id = %s AND state = 'reserved'",
                 (file_id,),
             )
+
+    def touch_pending_many(self, conn, pids: list):
+        """Heartbeat of a batch still waiting for its commit (an import, a port)."""
+        conn.execute(
+            "UPDATE payloads SET created = now() WHERE id = ANY(%s) AND state = 'pending'",
+            (list(pids),),
+        )
 
     def pending_payload(self, conn, pid):
         return conn.execute(

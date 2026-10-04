@@ -9,11 +9,32 @@ object in the bucket is therefore always accounted for by a row.
 from __future__ import annotations
 
 import logging
+import time
 
 from .records import Records
 from .runtime import Database, PayloadStore
 
 log = logging.getLogger("symposium_data.cleanup")
+
+
+class PendingBatch:
+    """Payloads uploaded ahead of the one transaction that commits them all (an import, a
+    port). Their heartbeat keeps the janitor away while the work goes on: it expires only work
+    that has stopped (R-A6)."""
+
+    def __init__(self, db: Database, records: Records, interval: float):
+        self.db, self.records, self.interval = db, records, interval
+        self.pids, self.last = [], time.monotonic()
+
+    def add(self, pid):
+        self.pids.append(pid)
+
+    def beat(self, now: bool = False):
+        """Touch every payload of the batch, at most once per interval unless `now`."""
+        if self.pids and (now or time.monotonic() - self.last >= self.interval):
+            with self.db.connection() as conn:
+                self.records.touch_pending_many(conn, self.pids)
+            self.last = time.monotonic()
 
 
 class Cleanup:

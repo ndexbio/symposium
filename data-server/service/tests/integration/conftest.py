@@ -3,8 +3,9 @@
 
 The Makefile sets SYMPOSIUM_DATA_TEST_IMAGE (and SYMPOSIUM_DATA_TEST_VERSION) after building
 the image. The session starts one container (named sdtest-*, removed with its volume at the
-end) with every duration shortened for tests, binds the admin once, and resets the data before
-each test; the container is never restarted.
+end) with every duration shortened for tests and the admin's key file copied onto its volume
+before it starts, as an operator places it (R-D4). It resets the data before each test; the
+container is never restarted.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ import os
 import subprocess
 import time
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -60,6 +62,17 @@ for hook in (store.FAULT_FILE, Settings.QUOTA_FILE):
 """
 
 
+# Run inside the container once it is healthy: SeaweedFS takes seconds over its first write
+# (it allocates storage then), which would race the 1 s pending TTL of whichever test wrote
+# first. One throwaway object, written and removed before any test runs.
+WARM_UP = """
+from symposium_data.runtime import PayloadStore, Settings
+store = PayloadStore(Settings())
+store.put_bytes("warm-up", b"warm-up")
+store.s3.delete_object(Bucket=store.bucket, Key="warm-up")
+"""
+
+
 def docker(*args, check=True, input=None, timeout=600):
     result = subprocess.run(
         ["docker", *args], capture_output=True, text=True, input=input, timeout=timeout
@@ -78,19 +91,23 @@ class Server:
         self.volume = f"{self.name}-vol"
         self.url = ""
 
-    def start(self):
+    def start(self, key_file: Path):
         # Docker assigns the host port itself: picking a "free" port first races with
         # anything else that grabs it before the container binds. The host alias lets the
         # server reach a stub a test runs on this machine.
-        cmd = ["run", "-d", "--name", self.name, "-p", "127.0.0.1::8080"]
+        cmd = ["create", "--name", self.name, "-p", "127.0.0.1::8080"]
         cmd += ["--add-host=host.docker.internal:host-gateway"]
         cmd += ["-v", f"{self.volume}:/apps"]
         for key, value in self.env.items():
             cmd += ["-e", f"{key}={value}"]
         docker(*cmd, IMAGE)
+        docker("cp", str(key_file), f"{self.name}:/apps/{key_file.name}")
+        docker("start", self.name)
         mapped = docker("port", self.name, "8080").stdout.splitlines()[0].strip()
         self.url = f"http://127.0.0.1:{mapped.rsplit(':', 1)[1]}"
         self.wait()
+        warmed = self.exec("/opt/venv/bin/python", "-c", WARM_UP)
+        assert warmed.returncode == 0, warmed.stderr[-2000:]
         return self
 
     def wait(self, timeout=180):
@@ -111,9 +128,6 @@ class Server:
     def exec(self, *args, input=None):
         return docker("exec", "-i", self.name, *args, input=input, check=False)
 
-    def admin(self, *args, input=None):
-        return self.exec("data-admin", *args, input=input)
-
     def logs(self) -> str:
         result = docker("logs", self.name, check=False)
         return result.stdout + result.stderr
@@ -129,29 +143,29 @@ class Server:
 
 
 @pytest.fixture(scope="session")
-def server():
-    """The one container. Before binding the admin it checks what a fresh server does:
-    it reports itself uninitialized, and registration's first step answers 503."""
+def server(tmp_path_factory):
+    """The one container, started with the admin's key file in place: the admin is bound at
+    its first start (R-D4)."""
     if not IMAGE:
         pytest.fail(
             "SYMPOSIUM_DATA_TEST_IMAGE is not set; run through `make -C data-server test`"
         )
     server = Server(TEST_ENV)
+    server.admin_key = OwnerKey()
+    key_file = place_key(tmp_path_factory.mktemp("admin"), ADMIN, server.admin_key)
     try:
-        server.start()
-        assert server.status()["initialized"] is False
-        challenge = httpx.post(
-            server.url + "/v1/demo/auth/challenge", json={"handle": "lyra"}
-        )
-        assert challenge.status_code == 503, challenge.text
-        server.admin_key = OwnerKey()
-        bound = server.admin(
-            "init", "--admin", ADMIN, "--pubkey", "-", input=server.admin_key.jwk_text()
-        )
-        assert bound.returncode == 0, bound.stdout + bound.stderr
+        server.start(key_file)
         yield server
     finally:
         server.remove()
+
+
+def place_key(directory: Path, handle: str, key: OwnerKey) -> Path:
+    """The public key file as `admin-config` writes it: admin_pub_<handle>.key, mode 0644."""
+    path = directory / f"admin_pub_{handle}.key"
+    path.write_text(key.jwk_text())
+    path.chmod(0o644)
+    return path
 
 
 @pytest.fixture(autouse=True)
@@ -348,6 +362,14 @@ def set_quota(server: Server, quota_bytes: int):
         "sh", "-c", f"echo {quota_bytes} > /apps/data/config/test-quota"
     )
     assert result.returncode == 0, result.stderr
+
+
+def purge(admin: Admin, file_id, n: int, community: str = "demo"):
+    """The admin frees one version's content through the purge route. -> the response."""
+    return httpx.post(
+        f"{admin.server.url}/v1/{community}/files/{file_id}/v/{n}/purge",
+        headers=admin.headers(),
+    )
 
 
 def psql(server: Server, sql: str) -> str:

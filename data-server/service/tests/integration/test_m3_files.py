@@ -12,7 +12,14 @@ from itertools import pairwise
 
 import httpx
 import pytest
-from conftest import assert_consistent, community_with, psql, repr_digest, set_quota
+from conftest import (
+    assert_consistent,
+    community_with,
+    psql,
+    purge,
+    repr_digest,
+    set_quota,
+)
 
 SIZE = 5 * 1024 * 1024  # 5 MiB, streamed in 1 MiB chunks (below one 8 MiB S3 part)
 
@@ -254,17 +261,16 @@ def test_range_requests_return_206(demo):
 
 
 def test_suspect_versions_are_flagged(demo):
-    server, _, owners = demo
+    server, admin, owners = demo
     lyra = owners["lyra"]
     early = lyra.put("demo", "files", "early.txt", b"before").json()
     # suspicion starts after the instant: the early version, created at it, is not suspect
-    instant = early["created"]
-    assert (
-        server.admin(
-            "suspect-after", "--community", "demo", "--handle", "lyra", "--at", instant
-        ).returncode
-        == 0
+    flagged = httpx.put(
+        f"{server.url}/v1/demo/owners/lyra/suspect-after",
+        json={"at": early["created"]},
+        headers=admin.headers(),
     )
+    assert flagged.status_code == 200, flagged.text
     late = lyra.put("demo", "files", "late.txt", b"after").json()
     assert lyra.stat(early["file_id"], 1).json()["suspect"] is False
     assert late["suspect"] is True
@@ -280,24 +286,25 @@ def test_quota_refuses_with_413(server):
 
 
 def test_purge_answers_410_and_frees_bytes_when_unshared(demo):
-    server, _, owners = demo
+    server, admin, owners = demo
     lyra = owners["lyra"]
     v1 = lyra.put("demo", "files", "secret.txt", b"to be purged", {"k": 1}).json()
     fid = v1["file_id"]
     lyra.version(fid, metadata={"k": 2})  # v2 shares v1's payload
 
-    first = server.admin("purge", "--cite", v1["citation"])
-    assert first.returncode == 0 and '"bytes_freed": false' in first.stdout
+    first = purge(admin, fid, 1)
+    assert first.status_code == 200, first.text
+    assert first.json() == {"purged": v1["citation"], "bytes_freed": False}
     gone = lyra.get(fid, 1)
     assert gone.status_code == 410 and gone.json()["metadata"] == {"k": 1}
     assert lyra.get(fid, 2).content == b"to be purged"  # still shared, still served
 
-    second = server.admin("purge", "--cite", f"symposium-data:{fid}@v2")
-    assert second.returncode == 0 and '"bytes_freed": true' in second.stdout
+    second = purge(admin, fid, 2)
+    assert second.status_code == 200 and second.json()["bytes_freed"] is True
     assert lyra.get(fid, 2).status_code == 410
     assert lyra.stat(fid, 2).json()["purged"] is True
-    bad = f"symposium-data:{fid}@v9"
-    assert server.admin("purge", "--cite", bad).returncode == 2
+    assert purge(admin, fid, 9).status_code == 404
+    assert purge(lyra, fid, 2).status_code == 403  # admin only
     assert_consistent(server)
 
 

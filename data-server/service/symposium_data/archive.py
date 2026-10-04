@@ -21,10 +21,10 @@ from datetime import datetime
 
 import psycopg
 
-from .cleanup import Cleanup
+from .cleanup import Cleanup, PendingBatch
 from .records import Records
 from .runtime import Database, MultipartWriter, PayloadStore
-from .wire import valid_sha256
+from .wire import valid_community, valid_sha256
 
 FORMAT = "symposium-data-export"
 FORMAT_VERSION = 1
@@ -50,9 +50,15 @@ def encode(value):
 
 class Archive:
     def __init__(
-        self, db: Database, store: PayloadStore, records: Records, cleanup: Cleanup
+        self,
+        db: Database,
+        store: PayloadStore,
+        records: Records,
+        cleanup: Cleanup,
+        heartbeat: float,
     ):
         self.db, self.store, self.records, self.cleanup = db, store, records, cleanup
+        self.heartbeat = heartbeat  # how often an import's pending payloads are touched
 
     def community_exists(self, conn, community: str) -> bool:
         return self.records.community_name(conn, community) is not None
@@ -163,11 +169,13 @@ class Archive:
         """Read an export from `source` and write it as one transaction. -> a report with one
         entry per handle. Raises Refused or Malformed, having written nothing."""
         tables, pending = {}, {}
+        batch = PendingBatch(self.db, self.records, self.heartbeat)
         try:
             try:
-                manifest = self.read_stream(source, tables, pending)
+                manifest = self.read_stream(source, tables, pending, batch)
             except (tarfile.TarError, EOFError) as e:
                 raise Malformed(f"the stream is not a complete tar: {e}") from None
+            batch.beat(now=True)
             report, duplicates = self.commit(manifest, tables, pending)
         except BaseException:
             for pid in pending.values():
@@ -177,7 +185,7 @@ class Archive:
             self.cleanup.discard_pending(pid)
         return report
 
-    def read_stream(self, source, tables: dict, pending: dict) -> dict:
+    def read_stream(self, source, tables: dict, pending: dict, batch) -> dict:
         """Read every entry: the rows into `tables`, each payload into S3 as a pending
         payload recorded in `pending`. -> the manifest."""
         manifest = None
@@ -197,7 +205,9 @@ class Archive:
                         json.loads(line) for line in data.read().splitlines()
                     ]
                 elif member.name.startswith("payloads/"):
-                    self.receive(tables, pending, member, data, manifest["community"])
+                    self.receive(
+                        tables, pending, batch, member, data, manifest["community"]
+                    )
                 else:
                     raise Malformed(f"unexpected entry {member.name}")
         if manifest is None or set(tables) != set(TABLES):
@@ -217,19 +227,28 @@ class Archive:
             or manifest.get("format_version") != FORMAT_VERSION
         ):
             raise Malformed(f"not a {FORMAT} v{FORMAT_VERSION} stream")
+        if not valid_community(str(manifest.get("community", ""))):
+            raise Malformed(
+                f"'{manifest.get('community')}' is not a community name: 1-20 letters, "
+                "digits or underscores, and not 'status', 'communities' or 'admin'"
+            )
         return manifest
 
-    def check_target(self, conn, manifest: dict):
-        admin = self.records.config(conn, "admin")
-        if admin is None:
-            raise Refused("the server is not initialized")
-        if admin != manifest["admin"]:
-            raise Refused(
-                f"the export's admin is '{manifest['admin']}' but this server's is "
-                f"'{admin}'; initialize with the same admin handle"
-            )
+    def check_target(self, conn, manifest: dict) -> str:
+        """-> this server's admin, which takes over what the exported admin owned. Refused when
+        the community exists here: checked from the manifest, before any bytes move, and again
+        in the commit."""
         if self.community_exists(conn, manifest["community"]):
             raise Refused(f"community '{manifest['community']}' already exists here")
+        return self.records.config(conn, "admin")
+
+    def check_members(self, admin: str, tables: dict):
+        """The admin's handle is reserved in every community: no member may have it."""
+        members = {o["handle"] for o in tables["owners"]} | {
+            r["handle"] for r in tables["roster"]
+        }
+        if admin in members:
+            raise Refused(f"handle collision: '{admin}' is this server's admin")
 
     def stored(self, tables: dict) -> dict:
         """sha256 -> the version row describing its bytes, for every payload that travels."""
@@ -237,7 +256,7 @@ class Archive:
             raise Malformed("payloads arrive before versions.jsonl")
         return {v["sha256"]: v for v in tables["versions"] if v["stored"]}
 
-    def receive(self, tables: dict, pending: dict, member, data, community: str):
+    def receive(self, tables: dict, pending: dict, batch, member, data, community: str):
         """Stream one payload into S3 as a pending payload, checking its sha256 and size."""
         sha = member.name[len("payloads/") :]
         expected = self.stored(tables).get(sha)
@@ -248,6 +267,7 @@ class Archive:
                 conn, community, expected["first_owner"]
             )
         pending[sha] = pid
+        batch.add(pid)
 
         def started(upload_id):
             with self.db.connection() as conn:
@@ -257,6 +277,7 @@ class Archive:
         try:
             while chunk := data.read(CHUNK):
                 writer.write(chunk)
+                batch.beat()
             if writer.hexdigest() != sha or writer.size != expected["size"]:
                 raise Malformed(f"payload {sha} does not match its sha256 or size")
             writer.finish()
@@ -269,12 +290,14 @@ class Archive:
         duplicates = []
         try:
             with self.db.connection() as conn:
-                self.check_target(conn, manifest)
+                admin = self.check_target(conn, manifest)
+                self.check_members(admin, tables)
                 conn.execute("INSERT INTO communities (name) VALUES (%s)", (community,))
                 handles = [
                     self.create_owner(conn, community, o) for o in tables["owners"]
                 ]
-                self.write_rows(conn, community, tables, pending, duplicates)
+                owners = {manifest["admin"]: admin}  # the exported admin's collections
+                self.write_rows(conn, community, tables, pending, duplicates, owners)
         except psycopg.errors.UniqueViolation as e:
             raise Refused(
                 f"part of the export already exists here: {e.diag.message_detail}"
@@ -314,7 +337,7 @@ class Archive:
             )
         return {"handle": handle, "result": "created"}
 
-    def write_rows(self, conn, community, tables, pending, duplicates):
+    def write_rows(self, conn, community, tables, pending, duplicates, owners: dict):
         q = conn.execute
         for row in tables["roster"]:
             q(
@@ -328,7 +351,7 @@ class Archive:
                 (
                     community,
                     row["name"],
-                    row["owner"],
+                    owners.get(row["owner"], row["owner"]),
                     row["seq"],
                     row["last_created"],
                     row["public"],

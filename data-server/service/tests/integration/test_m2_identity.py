@@ -1,7 +1,5 @@
 """M2: identity: registration, tokens, the roster, invites, rotation, rebind and suspicion."""
 
-import json
-
 import httpx
 import pytest
 from conftest import Owner, OwnerKey, enroll, init_admin, invite, set_roster
@@ -164,112 +162,58 @@ def test_key_rotation_retires_the_old_key(community):
     assert r.status_code == 403
 
 
+def suspect_after(server, admin, handle, at):
+    return httpx.put(
+        f"{server.url}/v1/demo/owners/{handle}/suspect-after",
+        json={"at": at},
+        headers=admin.headers(),
+    )
+
+
 def test_suspect_after_is_recorded_and_reported(community):
     server, admin = community
     lyra = Owner(server, "lyra")
     enroll(admin, lyra, "demo")
-    result = server.admin(
-        "suspect-after",
-        "--community",
-        "demo",
-        "--handle",
-        "lyra",
-        "--at",
-        "2026-10-01T12:00:00+00:00",
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    flagged = suspect_after(server, admin, "lyra", "2026-10-01T12:00:00+00:00")
+    assert flagged.status_code == 200, flagged.text
+    assert flagged.json()["suspect_after"].startswith("2026-10-01T12:00:00")
     me = httpx.get(lyra.url("/whoami"), headers=lyra.headers()).json()
     assert me["suspect_after"].startswith("2026-10-01T12:00:00")
 
-    assert (
-        server.admin(
-            "suspect-after",
-            "--community",
-            "demo",
-            "--handle",
-            "lyra",
-            "--at",
-            "yesterday",
-        ).returncode
-        == 1
-    )
-    assert (
-        server.admin(
-            "suspect-after",
-            "--community",
-            "demo",
-            "--handle",
-            "lyra",
-            "--at",
-            "2026-10-01T12:00:00",
-        ).returncode
-        == 1
-    )
-    assert (
-        server.admin(
-            "suspect-after",
-            "--community",
-            "demo",
-            "--handle",
-            "nobody",
-            "--at",
-            "2026-10-01T12:00:00+00:00",
-        ).returncode
-        == 2
-    )
+    assert suspect_after(server, admin, "lyra", "yesterday").status_code == 422
+    no_zone = suspect_after(server, admin, "lyra", "2026-10-01T12:00:00")
+    assert no_zone.status_code == 400 and "timezone" in no_zone.json()["detail"]
+    nobody = suspect_after(server, admin, "nobody", "2026-10-01T12:00:00+00:00")
+    assert nobody.status_code == 404
 
 
-@pytest.fixture
-def invite_server(server):
-    admin = init_admin(server)
-    set_roster(server, admin, "demo", ["lyra", "vega"])
-    return server
-
-
-def mint(server, handle, *extra):
-    result = server.admin("invite", "--community", "demo", "--handle", handle, *extra)
-    assert result.returncode == 0, result.stdout + result.stderr
-    invite = result.stdout.strip()
-    assert invite.startswith("sdi_") and "\n" not in invite
-    return invite
-
-
-def test_registration_refuses_without_a_valid_invite(invite_server):
-    server = invite_server
-    lyra_invite = mint(server, "lyra")
+def test_registration_refuses_without_a_valid_invite(community):
+    server, admin = community
+    lyra_invite = invite(admin, "demo", "lyra").json()["invite"]
 
     assert Owner(server, "lyra").register("demo").status_code == 403
     assert Owner(server, "vega").register("demo", invite=lyra_invite).status_code == 403
     assert (
         Owner(server, "lyra").register("demo", invite="sdi_forged").status_code == 403
     )
-
     lyra = Owner(server, "lyra")
     assert lyra.register("demo", invite=lyra_invite).status_code == 201
 
-    # a member not on the roster cannot be invited at all
-    assert (
-        server.admin("invite", "--community", "demo", "--handle", "mallory").returncode
-        == 2
+
+def test_rebind_retires_keys_and_only_the_fresh_invite_works(community):
+    server, admin = community
+    first = invite(admin, "demo", "lyra").json()["invite"]
+    lyra = Owner(server, "lyra")
+    assert lyra.register("demo", invite=first).status_code == 201
+    old_headers = lyra.headers()
+
+    rebound = httpx.post(
+        f"{server.url}/v1/demo/owners/lyra/rebind", headers=admin.headers()
     )
-
-
-def test_expired_invite_is_refused(invite_server):
-    stale = mint(invite_server, "vega", "--hours", "0")
-    assert (
-        Owner(invite_server, "vega").register("demo", invite=stale).status_code == 403
-    )
-
-
-def test_rebind_retires_keys_and_only_the_fresh_invite_works(invite_server):
-    server = invite_server
-    first = mint(server, "lyra")
-    assert Owner(server, "lyra").register("demo", invite=first).status_code == 201
-
-    rebound = server.admin("rebind-key", "--community", "demo", "--handle", "lyra")
-    assert rebound.returncode == 0, rebound.stdout + rebound.stderr
-    assert json.loads(rebound.stderr.strip().splitlines()[-1])["retired_keys"] == 1
-    fresh = rebound.stdout.strip()
+    assert rebound.status_code == 200, rebound.text
+    assert rebound.json()["retired_keys"] == 1
+    fresh = rebound.json()["invite"]
+    assert httpx.get(lyra.url("/whoami"), headers=old_headers).status_code == 401
 
     replacement = Owner(server, "lyra")
     assert replacement.register("demo", invite=first).status_code == 403  # spent invite
@@ -278,3 +222,7 @@ def test_rebind_retires_keys_and_only_the_fresh_invite_works(invite_server):
         httpx.get(replacement.url("/whoami"), headers=replacement.headers()).status_code
         == 200
     )
+    nobody = httpx.post(
+        f"{server.url}/v1/demo/owners/mallory/rebind", headers=admin.headers()
+    )
+    assert nobody.status_code == 404

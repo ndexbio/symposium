@@ -13,7 +13,9 @@ from conftest import (
     assert_consistent,
     b64u_json,
     community_with,
+    init_admin,
     psql,
+    purge,
     repr_digest,
     set_quota,
     untracked_objects,
@@ -334,12 +336,10 @@ def test_a_purge_whose_bytes_cannot_be_freed_stays_purging_until_the_janitor_fre
     server, owners = faulty
     v1 = owners["lyra"].put("demo", "files", "secret.bin", b"purge me").json()
     s3_deletes_fail(server, True)
-    result = server.admin("purge", "--cite", v1["citation"])
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert (
-        '"bytes_freed": false' in result.stdout
-        and "janitor will retry" in result.stdout
-    )
+    result = purge(init_admin(server), v1["file_id"], 1)
+    assert result.status_code == 200, result.text
+    assert result.json()["bytes_freed"] is False
+    assert "janitor will retry" in result.json()["note"]
     assert owners["lyra"].get(v1["file_id"], 1).status_code == 410  # purged regardless
     assert (
         psql(server, "SELECT state FROM payloads WHERE state <> 'ready'") == "purging"

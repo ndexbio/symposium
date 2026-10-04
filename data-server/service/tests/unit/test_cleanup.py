@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import pytest
 from botocore.exceptions import ClientError
 
-from symposium_data.cleanup import Cleanup
+from symposium_data.cleanup import Cleanup, PendingBatch
 from symposium_data.runtime import PayloadStore
 
 
@@ -123,3 +123,29 @@ def test_remove_raises_on_any_other_abort_error():
     with pytest.raises(ClientError):
         _store(s3).remove("k", "u1")
     assert s3.calls == ["abort"]
+
+
+class TouchRecords:
+    def __init__(self):
+        self.touched = []
+
+    def touch_pending_many(self, _conn, pids):
+        self.touched.append(list(pids))
+
+
+def test_a_pending_batch_beats_at_most_once_per_interval_unless_forced():
+    records = TouchRecords()
+    batch = PendingBatch(FakeDb(), records, interval=3600)
+    batch.beat(now=True)
+    assert records.touched == []  # nothing to keep alive yet
+    batch.add("p1")
+    batch.add("p2")
+    batch.beat()
+    assert records.touched == []  # the interval has not passed
+    batch.beat(now=True)
+    assert records.touched == [["p1", "p2"]]
+
+    eager = PendingBatch(FakeDb(), records, interval=0)
+    eager.add("p3")
+    eager.beat()
+    assert records.touched[-1] == ["p3"]

@@ -17,8 +17,8 @@ For each one it keeps:
 - its original **`created`**, as the version's `created`. Within each collection these instants
   must be strictly increasing, or the port refuses. Later writes continue after the last one;
 - its **author**: the version's `created_by` is the artifact's `published_by`. The NDEx admin
-  account becomes this server's admin. Any other NDEx account with the admin's handle is a
-  collision, and the port refuses.
+  account becomes this server's admin. Any other NDEx author or reply recipient with the
+  admin's handle fails the port with the reason `handle collision`.
 
 Metadata is Symposium's marks only. A record carries `{"symposium_record": true}`; a reply
 carries `{"symposium_reply": true, "symposium_in_reply_to": <name>, "recipients": [...]}`.
@@ -39,23 +39,26 @@ invite from the admin, as in any community.
 1. Create the community, empty: `POST /v1/communities {name}`.
 2. Start the port-ndex, signed in as the admin:
 
-   `POST /v1/<community>/port-ndex {"url": ..., "username": ..., "password": ...}`
+   `POST /v1/<community>/port-ndex {"ndex_url": ..., "credentials": {"username": ..., "password": ...}, "page_size": 100}`
 
-   `url` is the NDEx server's base URL; `username` and `password` are the NDEx community admin's
-   account, a bound pair. The password is held in memory only, for the length of the port, and
-   is never stored or logged. It answers `202` with the port-ndex's `id` and `"state": "running"`.
+   `ndex_url` is the NDEx server's base URL; `credentials` is the NDEx community admin's account,
+   a bound pair. The password is held in memory only, for the length of the port, and is never
+   stored or logged. `page_size` is optional (default 100). It answers `202` with the
+   port-ndex's `id`, `"state": "running"` and `requested_by`, the admin who started it.
 3. Poll `GET /v1/<community>/port-ndex/<id>` until `state` is no longer `running`:
 
    ```json
-   {"id": "…", "community": "demo", "source": "https://ndex.example.org", "state": "ok",
+   {"id": "…", "community": "demo", "requested_by": "demo-admin",
+    "source": "https://ndex.example.org", "state": "ok",
     "result": {"source": "https://ndex.example.org", "community": "demo", "admin": "demo-admin",
                "pages": 1, "networks": 10, "skipped": 0, "record": 9, "replies": 1,
                "reserved_roster": ["lyra", "vega"]},
     "started": "…", "finished": "…"}
    ```
 
-   `state` is `ok`, `refused` (the source or the community does not qualify; `result.reason`
-   says why) or `failed` (an error; `result.reason` names it).
+   `state` is `ok`, or `failed` with `result.reason` saying why: the source does not qualify
+   (a repeated name, `created` not strictly increasing, `handle collision`), a file landed in
+   the community while the port ran, or an error.
 
 The start is refused at once, before NDEx is contacted, when:
 - the community does not exist (`404`);
@@ -75,7 +78,7 @@ The start is refused at once, before NDEx is contacted, when:
 - **A restart ends it.** A port-ndex cut off by a service restart reads back as `failed`; it
   wrote nothing, and can be started again.
 - **Every page is read.** NDEx truncates listings silently, so the port reads the admin's
-  networks page by page (100 at a time) until a short page.
+  networks page by page (`page_size` at a time) until a short page.
 
 ## After the port
 

@@ -28,6 +28,7 @@ from conftest import (
     init_admin,
     invite,
     psql,
+    store_counts,
 )
 
 FIXTURES = Path(__file__).parents[1] / "fixtures" / "ndex_port"
@@ -139,11 +140,9 @@ def stub():
 
 @pytest.fixture
 def demo(server):
-    """The admin and an empty `demo` community; the port reads 4 networks per page."""
+    """The admin and an empty `demo` community."""
     admin = init_admin(server)
     create_community(server, admin, "demo")
-    hook = server.exec("sh", "-c", "echo 4 > /apps/data/config/test-port-page-size")
-    assert hook.returncode == 0, hook.stderr
     return server, admin
 
 
@@ -167,7 +166,8 @@ def recorded_artifacts() -> list:
 def start_port(server, headers, url, community="demo"):
     return httpx.post(
         f"{server.url}/v1/{community}/port-ndex",
-        json={"url": url, **CREDENTIALS},
+        # 4 networks per page, so the 10 recorded networks take 3 listing pages
+        json={"ndex_url": url, "credentials": CREDENTIALS, "page_size": 4},
         headers=headers,
     )
 
@@ -188,7 +188,8 @@ def port_outcome(server, admin, port_id, community="demo", timeout=30) -> dict:
 def run_port(server, admin, url, community="demo") -> dict:
     started = start_port(server, admin.headers(), url, community)
     assert started.status_code == 202, started.text
-    assert started.json()["state"] in ("running", "ok", "refused", "failed")
+    assert started.json()["state"] in ("running", "ok", "failed")
+    assert started.json()["requested_by"] == admin.handle
     return port_outcome(server, admin, started.json()["id"], community)
 
 
@@ -292,7 +293,7 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
 
 
 def test_a_failing_port_writes_nothing(demo):
-    # an eleventh network repeats a record's name: refused inside the commit transaction,
+    # an eleventh network repeats a record's name: it fails inside the commit transaction,
     # after every payload was uploaded
     server, admin = demo
     records = [r for r in recorded_artifacts() if r[3].get("symposium_record") is True]
@@ -305,7 +306,7 @@ def test_a_failing_port_writes_nothing(demo):
         outcome = run_port(server, admin, stub.url)
     finally:
         stub.close()
-    assert outcome["state"] == "refused", outcome
+    assert outcome["state"] == "failed", outcome
     reason = outcome["result"]["reason"]
     assert name in reason and "already exists" in reason
 
@@ -322,6 +323,126 @@ def test_a_failing_port_writes_nothing(demo):
         assert run_port(server, admin, stub.url)["state"] == "ok"
     finally:
         stub.close()
+
+
+def test_an_author_with_the_admins_handle_fails_the_port(demo):
+    # a record published by an NDEx account named like this server's admin, which is not
+    # the NDEx admin account: known only once NDEx is read, so reported in the port's status
+    server, admin = demo
+    records = [r for r in recorded_artifacts() if r[3].get("symposium_record") is True]
+    _created, _name, raw, na = records[0]
+    artifact = json.loads(raw)
+    artifact["artifact"].update(
+        name="admin_handle_note_v1",
+        created="2026-10-02T23:00:00+00:00",
+        published_by=f"@{admin.handle}",
+    )
+    copy = {**na, "symposium_canonical": json.dumps(artifact)}
+    stub = NdexStub(extra_networks={"admin-handle": [{"networkAttributes": [copy]}]})
+    try:
+        outcome = run_port(server, admin, stub.url)
+    finally:
+        stub.close()
+    assert outcome["state"] == "failed", outcome
+    assert outcome["result"]["reason"] == "handle collision"
+    for table in ("files", "versions", "payloads", "roster"):
+        assert psql(server, f"SELECT count(*) FROM {table}") == "0", table
+    assert_consistent(server)
+
+
+def test_a_file_that_lands_while_the_port_runs_fails_it(demo):
+    server, admin = demo
+    stub = NdexStub(hold=True)
+    try:
+        started = start_port(server, admin.headers(), stub.url)
+        assert started.status_code == 202, started.text
+        assert stub.held.wait(timeout=10), "the port never reached the listing"
+        landed = admin.put("demo", "files", "landed.csv", b"written mid-port")
+        assert landed.status_code == 201, landed.text
+        stub.released.set()
+        outcome = port_outcome(server, admin, started.json()["id"])
+    finally:
+        stub.close()
+    assert outcome["state"] == "failed" and "holds files" in outcome["result"]["reason"]
+    assert (
+        psql(server, "SELECT name FROM files") == "landed.csv"
+    )  # only the member's file
+    assert psql(server, "SELECT count(*) FROM roster") == "0"
+    assert_consistent(server)
+
+
+def test_a_port_cut_off_by_a_restart_leaves_no_bytes(demo, stub):
+    # a second session holds a lock on the community's collections, as a member's write does,
+    # so the real port uploads every payload and then waits at its commit; the API process is
+    # killed there
+    server, admin = demo
+    lock = subprocess.Popen(
+        ["docker", "exec", "-e", "PGAPPNAME=port-lock", server.name]
+        + ["gosu", "postgres", "psql", "-d", "symposium_data", "-c"]
+        + [
+            "SELECT 1 FROM collections WHERE community = 'demo' FOR NO KEY UPDATE; "
+            "SELECT pg_sleep(60)"
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        waiting = (
+            "SELECT count(*) FROM pg_stat_activity "
+            "WHERE application_name = 'port-lock' AND wait_event = 'PgSleep'"
+        )
+        poll_until(lambda: psql(server, waiting) == "1", "the lock was never taken")
+        started = start_port(server, admin.headers(), stub.url)
+        assert started.status_code == 202, started.text
+        blocked = "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
+        poll_until(
+            lambda: psql(server, blocked) == "1", "the port never reached its commit"
+        )
+        pending = "SELECT count(*) FROM payloads WHERE state = 'pending'"
+        assert psql(server, pending) == "10"  # every artifact's bytes are uploaded
+        assert store_counts(server)[0] == 10
+
+        ctl = ("supervisorctl", "-c", "/tmp/supervisord.conf")
+        assert server.exec(*ctl, "signal", "KILL", "data-api").returncode == 0
+        view = poll_until(
+            lambda: port_view_after_restart(server, admin, started.json()["id"]),
+            "the restarted service never marked the port",
+        )
+        assert view["state"] == "failed" and "restarted" in view["result"]["reason"]
+    finally:
+        psql(
+            server,
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            "WHERE application_name = 'port-lock'",
+        )
+        lock.wait(timeout=30)
+    server.wait()
+    # the transaction never committed, and the janitor removes the pending bytes
+    assert psql(server, "SELECT count(*) FROM files") == "0"
+    assert_consistent(server)
+    assert store_counts(server)[0] == 0
+
+
+def poll_until(probe, message, timeout=30):
+    """Poll every 0.2 s until `probe` returns something truthy. -> that value."""
+    deadline = time.time() + timeout
+    while True:
+        value = probe()
+        if value:
+            return value
+        assert time.time() < deadline, message
+        time.sleep(0.2)
+
+
+def port_view_after_restart(server, admin, port_id) -> dict | None:
+    """The port's view once it is no longer running; None while the API restarts."""
+    try:
+        view = httpx.get(
+            f"{server.url}/v1/demo/port-ndex/{port_id}", headers=admin.headers()
+        ).json()
+    except httpx.HTTPError:
+        return None
+    return view if view.get("state") not in (None, "running") else None
 
 
 def test_a_port_is_refused_before_any_ndex_call(demo, stub):
@@ -363,33 +484,6 @@ def test_one_port_runs_at_a_time(demo):
         assert run_port(server, admin, stub.url, "other")["state"] == "ok"
     finally:
         stub.close()
-
-
-def test_a_restart_marks_a_running_port_failed(demo):
-    server, admin = demo
-    port_id = psql(
-        server,
-        "INSERT INTO ports (community, source) VALUES ('demo', 'http://cut.example') "
-        "RETURNING id",
-    ).splitlines()[0]
-    # end the API process only; supervisord starts it again, the container keeps running
-    ctl = ("supervisorctl", "-c", "/tmp/supervisord.conf")
-    assert server.exec(*ctl, "signal", "TERM", "data-api").returncode == 0
-    deadline = time.time() + 30
-    while True:
-        try:
-            view = httpx.get(
-                f"{server.url}/v1/demo/port-ndex/{port_id}", headers=admin.headers()
-            ).json()
-            if view["state"] != "running":
-                break
-        except httpx.HTTPError:
-            pass  # the API is starting again
-        assert time.time() < deadline, "the restarted service never marked the port"
-        time.sleep(0.2)
-    assert view["state"] == "failed" and "restarted" in view["result"]["reason"]
-    assert view["finished"] is not None
-    server.wait()
 
 
 # ── the port feature holds every NDEx reference (R-S1, R-S3 scoped to data-server/) ─────────

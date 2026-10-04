@@ -1242,18 +1242,24 @@ def verify(
 
 
 # ── the port (R-M1, see PORT_NDEX.md) ──────────────────────────────────────────────────────────
-class PortIn(BaseModel):
-    """The source of a port-ndex: its URL, and the admin account's bound pair (port-ndex)."""
+class PortCredentials(BaseModel):
+    """The source's admin account for a port-ndex: a bound pair, held in memory only."""
 
-    url: str = Field(pattern=r"^https?://")
     username: str
     password: str
+
+
+class PortIn(BaseModel):
+    ndex_url: str = Field(pattern=r"^https?://")  # the source server of a port-ndex
+    credentials: PortCredentials
+    page_size: int = Field(default=100, ge=1, le=10000)
 
 
 def port_view(row) -> dict:
     return {
         "id": str(row["id"]),
         "community": row["community"],
+        "requested_by": row["requested_by"],
         "source": row["source"],
         "state": row["state"],
         "result": row["result"],
@@ -1270,22 +1276,23 @@ def start_port(community: str, body: PortIn, request: Request):
 
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        admin = require_admin(conn, request, community)
         if records.holds_files(conn, community):
             refuse(
                 400, f"community '{community}' holds files; a port-ndex needs it empty"
             )
-        port_id = records.start_port(conn, community, body.url.rstrip("/"))
+        source = body.ndex_url.rstrip("/")  # the port-ndex source
+        port_id = records.start_port(conn, community, admin, source)
     run = port_ndex.Port(
         db,
         store,
         records,
         cleanup,
-        settings,
         community,
-        body.url,
-        body.username,
-        body.password,
+        source,
+        body.credentials.username,
+        body.credentials.password,
+        body.page_size,
     ).run
     threading.Thread(target=run, args=(port_id,), name="port-ndex", daemon=True).start()
     with db.connection() as conn:

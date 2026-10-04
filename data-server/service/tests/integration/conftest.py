@@ -26,9 +26,8 @@ IMAGE = os.environ.get("SYMPOSIUM_DATA_TEST_IMAGE", "")
 VERSION = os.environ.get("SYMPOSIUM_DATA_TEST_VERSION", "")
 
 # Every duration the server exposes, shortened so no test waits more than about a second. The
-# test hooks act only while a test has created their file: S3 delete faults (the fault file),
-# a quota (the quota file, set_quota()) and the port's listing page size; the reset before
-# each test removes them.
+# test hooks act only while a test has created their file: S3 delete faults (the fault file)
+# and a quota (the quota file, set_quota()); the reset before each test removes both.
 TEST_ENV = {
     "SYMPOSIUM_DATA_PENDING_TTL": "1",
     "SYMPOSIUM_DATA_JANITOR_INTERVAL": "0.5",
@@ -41,7 +40,6 @@ ADMIN = "demo-admin"
 RESET = """
 import os, psycopg
 from symposium_data.runtime import PayloadStore, Settings
-PORT_PAGE_SIZE_FILE = "/apps/data/config/test-port-page-size"
 settings = Settings()
 store = PayloadStore(settings)
 with psycopg.connect(settings.database_url) as conn:
@@ -56,7 +54,7 @@ for upload in store.s3.list_multipart_uploads(Bucket=store.bucket).get("Uploads"
     store.s3.abort_multipart_upload(
         Bucket=store.bucket, Key=upload["Key"], UploadId=upload["UploadId"]
     )
-for hook in (store.FAULT_FILE, Settings.QUOTA_FILE, PORT_PAGE_SIZE_FILE):
+for hook in (store.FAULT_FILE, Settings.QUOTA_FILE):
     if os.path.exists(hook):
         os.remove(hook)
 """

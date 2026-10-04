@@ -126,13 +126,16 @@ class Records:
         return row is not None
 
     # ── ports (R-M1) ────────────────────────────────────────────────────────────────────────
-    def start_port(self, conn, community: str, source: str) -> uuid.UUID:
+    def start_port(
+        self, conn, community: str, requested_by: str, source: str
+    ) -> uuid.UUID:
         """Record a running port. -> its id. A Conflict while another port runs anywhere."""
         try:
             with conn.transaction():
                 row = conn.execute(
-                    "INSERT INTO ports (community, source) VALUES (%s, %s) RETURNING id",
-                    (community, source),
+                    "INSERT INTO ports (community, requested_by, source) "
+                    "VALUES (%s, %s, %s) RETURNING id",
+                    (community, requested_by, source),
                 ).fetchone()
         except psycopg.errors.UniqueViolation:
             raise Conflict("another port is running") from None
@@ -146,7 +149,8 @@ class Records:
 
     def port(self, conn, community: str, port_id) -> dict | None:
         return conn.execute(
-            "SELECT id, community, source, state, result, started, finished FROM ports "
+            "SELECT id, community, requested_by, source, state, result, started, finished "
+            "FROM ports "
             "WHERE community = %s AND id = %s",
             (community, port_id),
         ).fetchone()

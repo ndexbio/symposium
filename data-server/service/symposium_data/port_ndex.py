@@ -22,11 +22,10 @@ import logging
 import re
 import urllib.request
 from datetime import datetime
-from pathlib import Path
 
 from .cleanup import Cleanup
 from .records import COLLECTIONS, Conflict, Records
-from .runtime import Database, PayloadStore, Settings
+from .runtime import Database, PayloadStore
 from .wire import NAME
 
 CANONICAL = "symposium_canonical"
@@ -34,13 +33,14 @@ RECORD_MARK = "symposium_record"
 REPLY_MARK = "symposium_reply"
 IN_REPLY_TO = "symposium_in_reply_to"
 HANDLE = re.compile(NAME)
-PAGE_SIZE = 100  # NDEx truncates listings silently, so every page is read
+HANDLE_COLLISION = "handle collision"
 
 log = logging.getLogger("symposium_data.port_ndex")
 
 
 class PortRefused(Exception):
-    """The port does not apply to this community or this source; nothing was written."""
+    """The port does not apply to this community or this source; nothing was written. It
+    ends the port as failed, with this reason."""
 
 
 class NdexClient:
@@ -96,40 +96,32 @@ class NdexClient:
 
 
 class Port:
-    # Under SYMPOSIUM_DATA_TEST_HOOKS this file overrides the listing page size, so a test
-    # reads a small recorded listing over several pages.
-    PAGE_SIZE_FILE = Path("/apps/data/config/test-port-page-size")
-
     def __init__(
         self,
         db: Database,
         store: PayloadStore,
         records: Records,
         cleanup: Cleanup,
-        settings: Settings,
         community: str,
         url: str,
         username: str,
         password: str,
+        page_size: int,
     ):
         self.db, self.store, self.records, self.cleanup = db, store, records, cleanup
-        self.settings = settings
         self.community = community
         self.url = url.rstrip("/")
         self.username, self.password = username, password
+        # NDEx truncates listings silently, so every page of this size is read
+        self.page_size = page_size
         self.admin = None
-
-    def page_size(self) -> int:
-        if self.settings.test_hooks and self.PAGE_SIZE_FILE.exists():
-            return int(self.PAGE_SIZE_FILE.read_text())
-        return PAGE_SIZE
 
     def run(self, port_id):
         """Port, then record the outcome on the port's row; never raises."""
         try:
             state, result = "ok", {"source": self.url, **self.port()}
         except PortRefused as e:
-            state, result = "refused", {"reason": str(e)}
+            state, result = "failed", {"reason": str(e)}
         except Exception as e:
             log.exception("port-ndex failed")
             state, result = "failed", {"reason": f"{type(e).__name__}: {e}"}
@@ -143,7 +135,7 @@ class Port:
 
     # ── reading NDEx ────────────────────────────────────────────────────────────────────────
     def read_source(self) -> tuple[NdexClient, dict]:
-        client = NdexClient(self.url, self.username, self.password, self.page_size())
+        client = NdexClient(self.url, self.username, self.password, self.page_size)
         me = client.whoami()
         owned = client.owned_networks(me["externalId"])
         found = {"record": [], "inbox": [], "networks": len(owned), "skipped": 0}
@@ -191,7 +183,7 @@ class Port:
         if user == admin_user:
             return self.admin
         if user == self.admin:
-            raise PortRefused(f"NDEx user '{user}' has this server's admin handle")
+            raise PortRefused(HANDLE_COLLISION)
         if not HANDLE.match(user):
             raise PortRefused(f"'{user}' cannot be a handle here")
         return user
@@ -250,8 +242,11 @@ class Port:
     def write(self, conn, items: list, members: list, duplicates: list):
         """The one transaction: the roster, every file and version, then the checks. Nothing
         is visible until it commits."""
+        # Lock the community's collections, as every write's clock does, so no file can land
+        # between this check and the commit.
         conn.execute(
-            "SELECT 1 FROM communities WHERE name = %s FOR UPDATE", (self.community,)
+            "SELECT 1 FROM collections WHERE community = %s FOR NO KEY UPDATE",
+            (self.community,),
         )
         if self.records.holds_files(conn, self.community):
             raise PortRefused(f"community '{self.community}' holds files")

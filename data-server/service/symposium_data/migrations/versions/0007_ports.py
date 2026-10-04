@@ -17,14 +17,15 @@ depends_on = None
 def upgrade():
     op.execute("""
         CREATE TABLE ports (
-            id        uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-            community text NOT NULL REFERENCES communities (name),
-            source    text NOT NULL,
-            state     text NOT NULL DEFAULT 'running'
-                      CHECK (state IN ('running', 'ok', 'refused', 'failed')),
-            result    jsonb,
-            started   timestamptz NOT NULL DEFAULT now(),
-            finished  timestamptz
+            id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            community    text NOT NULL REFERENCES communities (name),
+            requested_by text NOT NULL,
+            source       text NOT NULL,
+            state        text NOT NULL DEFAULT 'running'
+                         CHECK (state IN ('running', 'ok', 'failed')),
+            result       jsonb,
+            started      timestamptz NOT NULL DEFAULT now(),
+            finished     timestamptz
         );
         CREATE UNIQUE INDEX ports_one_running ON ports ((true)) WHERE state = 'running';
         DELETE FROM server_config WHERE k IN ('port_source', 'port_admin');

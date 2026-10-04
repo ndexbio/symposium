@@ -49,8 +49,8 @@ A community name is 1–20 letters, digits or underscores; `status`, `communitie
 |---|---|
 | `POST /v1/communities {name}` | Admin only. Creates a community and its default collections. Idempotent: `201` when created, `200` when exactly that name exists; `400` for a name that is not a slug, is reserved, or differs only in case from an existing one. |
 | `GET /v1/communities` | Admin only. Every community, with when it was created. |
-| `POST /v1/{community}/port-ndex {url, username, password}` | Admin only. Starts a port-ndex into this empty community in the background (`PORT_NDEX.md`) and answers `202` with its id. `400` if the community holds files, `409` while another port-ndex runs anywhere on the server. |
-| `GET /v1/{community}/port-ndex/{id}` | Admin only. A port-ndex's state (`running`, `ok`, `refused` or `failed`) and its result. |
+| `POST /v1/{community}/port-ndex {ndex_url, credentials: {username, password}, page_size?}` | Admin only. Starts a port-ndex into this empty community in the background (`PORT_NDEX.md`) and answers `202` with its id. `400` if the community holds files, `409` while another port-ndex runs anywhere on the server. |
+| `GET /v1/{community}/port-ndex/{id}` | Admin only. A port-ndex's state (`running`, `ok`, or `failed` with a reason), who requested it, and its summary. |
 
 ## Identity
 

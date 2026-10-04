@@ -24,7 +24,9 @@ from harness import IMAGE, TEST_ENV, Server, docker
 
 REPO = Path(__file__).resolve().parents[1]
 CLI_DIR = REPO / "tools" / "symposium-data"
-CLI = CLI_DIR / "symposium-data"
+# the CLI's Python entry, run with the suite's interpreter (the `symposium-data` launcher would
+# reach for uv and resolve the dependencies itself)
+CLI = CLI_DIR / "cli.py"
 SKILL = REPO / "skills" / "symposium" / "scripts" / "main.py"
 ADMIN = "demo-admin"
 

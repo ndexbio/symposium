@@ -1,0 +1,22 @@
+name: release symposium bundle
+
+# Only a GitHub release tagged symposium-v<version>, cut from data-store, publishes the bundle:
+# make build, then the release gets dist/Symposium_skill.zip. The data-server image the bundle
+# expects (its compat.json) must already be published by a data-server-v* release.
+on:
+  release:
+    types: [published]
+
+jobs:
+  attach-bundle:
+    if: startsWith(github.event.release.tag_name, 'symposium-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: make build
+      - run: gh release upload "${{ github.event.release.tag_name }}" dist/Symposium_skill.zip --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

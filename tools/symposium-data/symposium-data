@@ -1,19 +1,19 @@
-#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.9"
-# dependencies = ["cryptography>=42", "keyring>=24"]
-# ///
-"""symposium-data: the command-line client of a Symposium Data server (see main.py).
-
-Run directly with uv (`uv run --script` reads the dependencies above), or with any Python 3.9+
-that has the packages in requirements.txt: `python3 symposium-data <command>`.
-"""
-
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
-from main import main  # noqa: E402
-
-sys.exit(main())
+#!/bin/sh
+# symposium-data: the command-line client of a Symposium Data server. This launcher runs the
+# Python entry beside it, cli.py: with `uv run --script` (which reads its PEP 723 dependencies)
+# when uv is on PATH, and with python3 otherwise, which then needs
+# `pip install -r requirements.txt`. It follows the link `make deploy-local` puts on PATH to
+# find its own directory.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+dir=$(cd "$(dirname "$self")" && pwd)
+if command -v uv >/dev/null 2>&1; then
+  exec uv run --quiet --script "$dir/cli.py" "$@"
+fi
+exec python3 "$dir/cli.py" "$@"

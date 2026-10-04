@@ -94,6 +94,21 @@ def read_json_file(path, what: str) -> dict:
     return content
 
 
+def json_object(text: str) -> dict:
+    """A JSON object given on the command line (metadata, a query)."""
+    try:
+        value = json.loads(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError("not JSON") from None
+    if not isinstance(value, dict):
+        raise argparse.ArgumentTypeError("not a JSON object")
+    return value
+
+
+def b64u_json(value: dict) -> str:
+    return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
+
+
 def parse_ref(ref: str, version: str | None) -> tuple[str, str]:
     """A citation (`symposium-data:<id>@v<n>`) or a file id -> (file id, version ref)."""
     cited = CITATION.match(ref)
@@ -275,7 +290,123 @@ class DataServer:
             "PUT", self.c(f"/owners/{handle}/suspect-after"), body={"at": at}
         )
 
+    def challenge(self, handle: str) -> str:
+        return self.request(
+            "POST", self.c("/auth/challenge"), body={"handle": handle}, auth=False
+        )["nonce"]
+
+    def register(self, handle: str, jwk: dict, nonce: str, signature: str, invite: str):
+        return self.request(
+            "POST",
+            self.c("/owners"),
+            body={
+                "handle": handle,
+                "public_jwk": jwk,
+                "nonce": nonce,
+                "signature": signature,
+                "invite": invite,
+            },
+            auth=False,
+        )
+
+    def rotate(self, handle: str, jwk: dict, nonce: str, signature: str) -> dict:
+        return self.request(
+            "POST",
+            self.c(f"/owners/{handle}/keys"),
+            body={"public_jwk": jwk, "nonce": nonce, "signature": signature},
+        )
+
+    def whoami(self) -> dict:
+        return self.request("GET", self.c("/whoami"))
+
     # ── files ──────────────────────────────────────────────────────────────────────────────
+    def upload(
+        self, method: str, path: str, source: Path | None, headers: dict
+    ) -> dict:
+        """Stream a file's bytes, declaring its sha-256 as Repr-Digest; the server hashes the
+        body as it arrives and refuses a mismatch."""
+        if source is None:
+            return self.request(method, path, data=b"", headers=headers)
+        digest = hashlib.sha256()
+        with open(source, "rb") as fh:
+            while chunk := fh.read(CHUNK):
+                digest.update(chunk)
+        headers = {
+            **headers,
+            "Repr-Digest": "sha-256=:"
+            + base64.b64encode(digest.digest()).decode()
+            + ":",
+            "Content-Length": str(source.stat().st_size),
+        }
+        with open(source, "rb") as fh:
+            return self.request(method, path, data=fh, headers=headers)
+
+    def put(self, collection: str, name: str, source: Path, headers: dict) -> dict:
+        path = self.c(
+            f"/collections/{collection}/files/{urllib.parse.quote(name, safe='')}"
+        )
+        return self.upload("PUT", path, source, headers)
+
+    def add_version(self, file_id: str, source: Path | None, headers: dict) -> dict:
+        return self.upload(
+            "POST", self.c(f"/files/{file_id}/versions"), source, headers
+        )
+
+    def delete(self, file_id: str, reason: str | None) -> dict:
+        query = "?" + urllib.parse.urlencode({"reason": reason}) if reason else ""
+        return self.request("DELETE", self.c(f"/files/{file_id}{query}"))
+
+    def promote(self, file_id: str, n: str, body: dict) -> dict:
+        return self.request(
+            "POST", self.c(f"/files/{file_id}/v/{n}/promote"), body=body
+        )
+
+    def find(self, collection: str, name: str) -> dict:
+        query = urllib.parse.urlencode({"name": name})
+        return self.request("GET", self.c(f"/collections/{collection}/find?{query}"))
+
+    def by_hash(self, sha256: str) -> dict:
+        return self.request("GET", self.c(f"/sha256/{sha256}"))
+
+    def query(self, collection: str, contains: dict, since: int, limit: int) -> dict:
+        return self.request(
+            "POST",
+            self.c(f"/collections/{collection}/query"),
+            body={"contains": contains, "since": since, "limit": limit},
+        )
+
+    def verify(self, cite: str, before: str | None, sha256: str | None) -> dict:
+        params = {"cite": cite}
+        params.update({k: v for k, v in (("before", before), ("sha256", sha256)) if v})
+        return self.request("GET", self.c("/verify?" + urllib.parse.urlencode(params)))
+
+    # ── collections and read keys ──────────────────────────────────────────────────────────
+    def create_collection(self, name: str) -> dict:
+        return self.request("POST", self.c("/collections"), body={"name": name})
+
+    def grant_write(self, collection: str, handle: str) -> dict:
+        return self.request(
+            "PUT",
+            self.c(f"/collections/{collection}/grants"),
+            body={"handle": handle, "perm": "write"},
+        )
+
+    def set_public(self, collection: str, public: bool) -> dict:
+        return self.request(
+            "PUT", self.c(f"/collections/{collection}/public"), body={"public": public}
+        )
+
+    def mint_key(self, collection: str, body: dict) -> dict:
+        return self.request(
+            "POST", self.c(f"/collections/{collection}/keys"), body=body
+        )
+
+    def keys(self, collection: str) -> dict:
+        return self.request("GET", self.c(f"/collections/{collection}/keys"))
+
+    def revoke_key(self, key_id: str) -> dict:
+        return self.request("DELETE", self.c(f"/keys/{key_id}"))
+
     def purge(self, file_id: str, n: str) -> dict:
         return self.request("POST", self.c(f"/files/{file_id}/v/{n}/purge"))
 
@@ -587,7 +718,184 @@ class Commands:
             f"{source} is not a community export: no manifest.json first"
         )
 
+    # ── a member's identity ────────────────────────────────────────────────────────────────
+    def member_context(self) -> dict:
+        context = self.context.load()
+        if context["role"] != "member":
+            raise CommandError(
+                "this is a member's command: set the context from an invite file "
+                "(`/symposium setup --invite-file <file>`)"
+            )
+        return context
+
+    def owner_register(self, _args) -> dict:
+        """Register this handle with a key made on this machine (R-D1, R-D5). Idempotent: a
+        handle already registered with this machine's key is reported, not registered again."""
+        context = self.member_context()
+        community, handle = context["community"], context["handle"]
+        keystore = self.keystore(context["server_id"])
+        server = self.server_for(context["data-server-url"], community)
+        out = {"community": community, "handle": handle}
+        if keystore.exists(community, handle):
+            try:
+                server.sign_in_member(keystore, handle)
+                jwk = keystore.public_jwk(community, handle)
+                return {**out, "registered": False, "fingerprint": thumbprint(jwk)}
+            except CommandError as e:
+                if e.status != 401:
+                    raise  # 401: this key is not (or no longer) registered; register anew
+        invite = read_json_file(context["invite_file"], "invite file").get("invite")
+        jwk = keystore.stage(community, handle)
+        try:
+            nonce = server.challenge(handle)
+            signature = keystore.sign_staged(community, handle, nonce.encode())
+            server.register(handle, jwk, nonce, signature, invite)
+        except CommandError as e:
+            keystore.discard(community, handle)
+            if e.status == 409:
+                raise CommandError(
+                    f"'{handle}' is already registered in {community} with another key: ask "
+                    "the admin for `/symposium rebind-key`, then set up with its invite",
+                    409,
+                ) from None
+            raise
+        keystore.commit(community, handle)
+        return {**out, "registered": True, "fingerprint": thumbprint(jwk)}
+
+    def owner_whoami(self, _args) -> dict:
+        return self.signed_in().whoami()
+
+    def owner_pubkey(self, _args) -> dict:
+        context = self.context.load()
+        scope = ADMIN_SCOPE if context["role"] == "admin" else context["community"]
+        jwk = self.keystore(context["server_id"]).public_jwk(scope, context["handle"])
+        return {
+            "handle": context["handle"],
+            "public_jwk": jwk,
+            "fingerprint": thumbprint(jwk),
+        }
+
+    def owner_rotate(self, _args) -> dict:
+        """A new key for this handle, proven by the new key and authorized by the current one;
+        the current key is replaced only once the server has accepted the new one."""
+        context = self.member_context()
+        community, handle = context["community"], context["handle"]
+        keystore = self.keystore(context["server_id"])
+        server = self.signed_in(context)
+        jwk = keystore.stage(community, handle)
+        try:
+            nonce = server.challenge(handle)
+            signature = keystore.sign_staged(community, handle, nonce.encode())
+            rotated = server.rotate(handle, jwk, nonce, signature)
+        except CommandError:
+            keystore.discard(community, handle)
+            raise
+        keystore.commit(community, handle)
+        return {**rotated, "fingerprint": thumbprint(jwk)}
+
+    # ── writing ────────────────────────────────────────────────────────────────────────────
+    def file_headers(self, metadata: dict | None, content_type: str | None) -> dict:
+        headers = {"Content-Type": content_type or "application/octet-stream"}
+        if metadata is not None:
+            headers["X-Data-Metadata"] = b64u_json(metadata)
+        return headers
+
+    def put(self, args) -> dict:
+        headers = self.file_headers(args.metadata, args.content_type)
+        return self.signed_in().put(
+            args.collection, args.name, Path(args.file), headers
+        )
+
+    def version(self, args) -> dict:
+        file_id, _ = parse_ref(args.file_id, None)
+        if args.file is None and args.metadata is None:
+            raise CommandError(
+                "a version needs new content (a file), new --metadata, or both"
+            )
+        headers = self.file_headers(args.metadata, args.content_type)
+        if args.file is None:
+            headers["X-Data-Metadata-Only"] = "1"
+        if args.if_match is not None:
+            headers["If-Match"] = f'"v{args.if_match}"'
+        source = Path(args.file) if args.file else None
+        return self.signed_in().add_version(file_id, source, headers)
+
+    def delete(self, args) -> dict:
+        file_id, _ = parse_ref(args.file_id, None)
+        return self.signed_in().delete(file_id, args.reason)
+
+    def promote(self, args) -> dict:
+        file_id, n = parse_ref(args.ref, None)
+        if n == "latest":
+            raise CommandError(
+                "promote takes a citation: symposium-data:<file-id>@v<n>"
+            )
+        body = {"collection": args.collection}
+        for key, value in (
+            ("name", args.name),
+            ("metadata", args.metadata),
+            ("stamp_json_pointer", args.stamp_json_pointer),
+        ):
+            if value is not None:
+                body[key] = value
+        return self.admin().promote(file_id, n, body)
+
+    # ── collections and read keys ──────────────────────────────────────────────────────────
+    def collection_create(self, args) -> dict:
+        return self.signed_in().create_collection(args.name)
+
+    def collection_grant_write(self, args) -> dict:
+        return self.signed_in().grant_write(args.collection, args.handle)
+
+    def collection_set_public(self, args) -> dict:
+        return self.signed_in().set_public(args.collection, args.public)
+
+    def keys_mint(self, args) -> dict:
+        """A read key for a non-member (R-E2), written to a file (0600) with its scope, the
+        community and the server's URL, so it reads with no context. Never printed."""
+        context = self.context.load()
+        body = {"label": args.label}
+        if args.file_id:
+            body["file_id"] = parse_ref(args.file_id, None)[0]
+        if args.hours:
+            body["expires_hours"] = args.hours
+        minted = self.signed_in(context).mint_key(args.collection, body)
+        secret = minted.pop("key")
+        write_secret(
+            Path(args.out),
+            {
+                "key": secret,
+                "scope": {
+                    "collection": minted["collection"],
+                    "file_id": minted["file_id"],
+                },
+                "community": context["community"],
+                "data-server-url": context["data-server-url"],
+            },
+        )
+        return {**minted, "read_key_file": str(Path(args.out).resolve())}
+
+    def keys_list(self, args) -> dict:
+        return self.signed_in().keys(args.collection)
+
+    def keys_revoke(self, args) -> dict:
+        return self.signed_in().revoke_key(args.key_id)
+
     # ── reading ────────────────────────────────────────────────────────────────────────────
+    def find_name(self, args) -> dict:
+        return self.signed_in().find(args.collection, args.name)
+
+    def find_hash(self, args) -> dict:
+        return self.signed_in().by_hash(args.sha256)
+
+    def find_meta(self, args) -> dict:
+        return self.signed_in().query(
+            args.collection, args.contains, args.since, args.limit
+        )
+
+    def verify(self, args) -> dict:
+        return self.signed_in().verify(args.cite, args.before, args.sha256)
+
     def changes(self, args) -> dict:
         return self.signed_in().changes(args.collection, args.since, args.limit)
 
@@ -600,7 +908,21 @@ class Commands:
 
     def get(self, args) -> dict:
         file_id, ref = parse_ref(args.ref, args.version)
-        return self.download(self.signed_in().content(file_id, ref), Path(args.out))
+        if args.read_key_file:
+            server = self.with_read_key(args.read_key_file)
+        else:
+            server = self.signed_in()
+        return self.download(server.content(file_id, ref), Path(args.out))
+
+    def with_read_key(self, path) -> DataServer:
+        """A client that reads with a read key file, with no context (R-E3)."""
+        key = read_json_file(path, "read key file")
+        missing = [k for k in ("key", "community", "data-server-url") if not key.get(k)]
+        if missing:
+            raise CommandError(f"{path} lacks {', '.join(missing)}")
+        server = self.server_for(key["data-server-url"], key["community"])
+        server.token = key["key"]
+        return server
 
     def download(self, response, out: Path) -> dict:
         """Stream the content to `out`, checking it against the server's Repr-Digest."""
@@ -758,8 +1080,155 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         p.add_argument("--version", help="with a file id: n or latest (default)")
         if name == "get":
             p.add_argument("--out", required=True)
+            p.add_argument(
+                "--read-key-file",
+                help="read with a read key file instead of the context (needs no context)",
+            )
     p = command(sub, "versions", commands.versions, "every version of a file")
     p.add_argument("file_id")
+
+    owner = sub.add_parser("owner", help="this member's identity")
+    actions = owner.add_subparsers(dest="action", metavar="<action>", required=True)
+    command(
+        actions,
+        "register",
+        commands.owner_register,
+        "register with the context's invite and a key made here (idempotent)",
+    )
+    command(actions, "whoami", commands.owner_whoami, "who the server says this is")
+    command(
+        actions,
+        "pubkey",
+        commands.owner_pubkey,
+        "this handle's public key and fingerprint",
+    )
+    command(
+        actions,
+        "rotate",
+        commands.owner_rotate,
+        "replace this handle's key; the old one is retired, never deleted",
+    )
+
+    p = command(
+        sub, "put", commands.put, "create a file from a local file; it becomes v1"
+    )
+    p.add_argument("file")
+    p.add_argument("--collection", required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--metadata", type=json_object, help="a JSON object")
+    p.add_argument("--content-type")
+
+    p = command(
+        sub,
+        "version",
+        commands.version,
+        "add a version: new content, new metadata (alone it reuses the content), or both",
+    )
+    p.add_argument("file_id")
+    p.add_argument(
+        "file", nargs="?", help="the new content (omit for a metadata-only version)"
+    )
+    p.add_argument("--metadata", type=json_object, help="a JSON object")
+    p.add_argument("--content-type")
+    p.add_argument(
+        "--if-match", type=int, metavar="N", help="refuse unless the head is vN"
+    )
+
+    p = command(sub, "delete", commands.delete, "delete a file (a tombstone version)")
+    p.add_argument("file_id")
+    p.add_argument("--reason")
+
+    p = command(
+        sub,
+        "promote",
+        commands.promote,
+        "copy a version into a collection as a new file (admin)",
+    )
+    p.add_argument("ref", help="symposium-data:<file-id>@v<n>")
+    p.add_argument("--collection", required=True)
+    p.add_argument("--name")
+    p.add_argument("--metadata", type=json_object, help="a JSON object")
+    p.add_argument(
+        "--stamp-json-pointer", help="where to write the server's clock in the JSON"
+    )
+
+    collection = sub.add_parser("collection", help="collections and their sharing")
+    actions = collection.add_subparsers(
+        dest="action", metavar="<action>", required=True
+    )
+    p = command(
+        actions, "create", commands.collection_create, "create a collection you own"
+    )
+    p.add_argument("--name", required=True)
+    p = command(
+        actions,
+        "grant-write",
+        commands.collection_grant_write,
+        "let a roster member write to your collection",
+    )
+    p.add_argument("--collection", required=True)
+    p.add_argument("--handle", required=True)
+    p = command(
+        actions,
+        "set-public",
+        commands.collection_set_public,
+        "make your collection readable by anyone, or not",
+    )
+    p.add_argument("--collection", required=True)
+    visibility = p.add_mutually_exclusive_group(required=True)
+    visibility.add_argument("--public", dest="public", action="store_true")
+    visibility.add_argument("--private", dest="public", action="store_false")
+
+    find = sub.add_parser("find", help="find files and versions")
+    actions = find.add_subparsers(dest="action", metavar="<action>", required=True)
+    p = command(actions, "name", commands.find_name, "the file holding a name")
+    p.add_argument("--collection", required=True)
+    p.add_argument("--name", required=True)
+    p = command(
+        actions,
+        "hash",
+        commands.find_hash,
+        "every version you may read with this content",
+    )
+    p.add_argument("--sha256", required=True)
+    p = command(
+        actions,
+        "meta",
+        commands.find_meta,
+        "versions whose metadata contains a JSON object",
+    )
+    p.add_argument("--collection", required=True)
+    p.add_argument("--contains", type=json_object, required=True)
+    p.add_argument("--since", type=int, default=0)
+    p.add_argument("--limit", type=int, default=100)
+
+    p = command(sub, "verify", commands.verify, "check a citation (R-G9)")
+    p.add_argument("--cite", required=True)
+    p.add_argument("--before", help="it must be strictly earlier than this instant")
+    p.add_argument("--sha256")
+
+    keys = sub.add_parser("keys", help="read keys for non-members (R-E2)")
+    actions = keys.add_subparsers(dest="action", metavar="<action>", required=True)
+    p = command(
+        actions,
+        "mint",
+        commands.keys_mint,
+        "mint a read key into a file (0600); it is never printed",
+    )
+    p.add_argument("--collection", required=True)
+    p.add_argument("--label", required=True)
+    p.add_argument("--file-id", help="scope it to one file")
+    p.add_argument("--hours", type=int, help="expire after this many hours")
+    p.add_argument("--out", required=True)
+    p = command(
+        actions,
+        "list",
+        commands.keys_list,
+        "a collection's read keys, never their secret",
+    )
+    p.add_argument("--collection", required=True)
+    p = command(actions, "revoke", commands.keys_revoke, "revoke a read key at once")
+    p.add_argument("key_id")
 
     port_ndex.add_command(sub, command, commands, CommandError)  # port-ndex
     return parser

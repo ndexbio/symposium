@@ -135,3 +135,16 @@ def admin_dir(tmp_path, server, cli) -> Path:
     )
     cli.ok(tmp_path, "communities", "create", "--name", "demo")
     return tmp_path
+
+
+def enroll(cli: Cli, admin_dir: Path, handle: str) -> Path:
+    """A member, entirely through the CLI: the admin adds the handle and writes its invite
+    file; the member sets its context from the file, in its own directory, and registers."""
+    cli.ok(admin_dir, "roster", "add", "--handle", handle)
+    invite = admin_dir / f"{handle}.invite"
+    cli.ok(admin_dir, "invite", "--handle", handle, "--out", invite)
+    member = admin_dir / handle
+    member.mkdir()
+    cli.ok(member, "context", "set", "--invite-file", invite)
+    assert cli.ok(member, "owner", "register")["registered"] is True
+    return member

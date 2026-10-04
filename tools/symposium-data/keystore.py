@@ -113,9 +113,23 @@ class Keystore:
     def create(self, scope: str, handle: str, replace: bool = False) -> dict:
         """A new key pair for (scope, handle). -> its public JWK. An existing key is kept
         unless `replace`."""
-        private_path, public_path = self.paths(scope, handle)
-        if private_path.exists() and not replace:
+        if self.exists(scope, handle) and not replace:
             return self.public_jwk(scope, handle)
+        jwk = self.stage(scope, handle)
+        self.commit(scope, handle)
+        return jwk
+
+    def staged_paths(self, scope: str, handle: str) -> tuple[Path, Path]:
+        private_path, public_path = self.paths(scope, handle)
+        return private_path.with_name(
+            private_path.name + ".new"
+        ), public_path.with_name(public_path.name + ".new")
+
+    def stage(self, scope: str, handle: str) -> dict:
+        """A new key pair beside the current one, for a change the server must accept first
+        (registration, rotation). -> its public JWK. `commit` makes it the key; `discard`
+        drops it, and the current key is untouched either way until then."""
+        private_path, public_path = self.staged_paths(scope, handle)
         private_path.parent.mkdir(parents=True, exist_ok=True)
         for directory in (private_path.parent, self.root, self.root.parent):
             os.chmod(directory, 0o700)
@@ -126,8 +140,7 @@ class Keystore:
             serialization.PrivateFormat.PKCS8,
             serialization.BestAvailableEncryption(passphrase),
         )
-        partial = private_path.with_suffix(".partial")
-        fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(private_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "wb") as fh:
             fh.write(pem)
         raw = key.public_key().public_bytes(
@@ -135,8 +148,22 @@ class Keystore:
         )
         jwk = {"kty": "OKP", "crv": "Ed25519", "x": b64u(raw)}
         public_path.write_text(json.dumps(jwk))
-        os.replace(partial, private_path)
         return jwk
+
+    def commit(self, scope: str, handle: str):
+        staged_private, staged_public = self.staged_paths(scope, handle)
+        private_path, public_path = self.paths(scope, handle)
+        os.replace(staged_public, public_path)
+        os.replace(staged_private, private_path)
+
+    def discard(self, scope: str, handle: str):
+        for path in self.staged_paths(scope, handle):
+            path.unlink(missing_ok=True)
+
+    def sign_staged(self, scope: str, handle: str, message: bytes) -> str:
+        return b64u(
+            self.load(self.staged_paths(scope, handle)[0], scope, handle).sign(message)
+        )
 
     def public_jwk(self, scope: str, handle: str) -> dict:
         path = self.paths(scope, handle)[1]
@@ -148,7 +175,9 @@ class Keystore:
         return b64u(self.private_key(scope, handle).sign(message))
 
     def private_key(self, scope: str, handle: str) -> Ed25519PrivateKey:
-        private_path = self.paths(scope, handle)[0]
+        return self.load(self.paths(scope, handle)[0], scope, handle)
+
+    def load(self, private_path: Path, scope: str, handle: str) -> Ed25519PrivateKey:
         if not private_path.exists():
             raise KeystoreError(f"no key for '{handle}' ({scope}) on this machine")
         passphrase = Passphrase(self.account(scope, handle)).get()

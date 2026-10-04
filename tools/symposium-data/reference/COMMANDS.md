@@ -144,7 +144,7 @@ symposium-data stat [-h] [--version VERSION] ref
 download a version to a file, checked against its digest
 
 ```
-symposium-data get [-h] [--version VERSION] --out OUT ref
+symposium-data get [-h] [--version VERSION] --out OUT [--read-key-file READ_KEY_FILE] ref
 ```
 
 ## `versions`
@@ -153,6 +153,158 @@ every version of a file
 
 ```
 symposium-data versions [-h] file_id
+```
+
+## `owner register`
+
+register with the context's invite and a key made here (idempotent)
+
+```
+symposium-data owner register [-h]
+```
+
+## `owner whoami`
+
+who the server says this is
+
+```
+symposium-data owner whoami [-h]
+```
+
+## `owner pubkey`
+
+this handle's public key and fingerprint
+
+```
+symposium-data owner pubkey [-h]
+```
+
+## `owner rotate`
+
+replace this handle's key; the old one is retired, never deleted
+
+```
+symposium-data owner rotate [-h]
+```
+
+## `put`
+
+create a file from a local file; it becomes v1
+
+```
+symposium-data put [-h] --collection COLLECTION --name NAME [--metadata METADATA]
+                          [--content-type CONTENT_TYPE]
+                          file
+```
+
+## `version`
+
+add a version: new content, new metadata (alone it reuses the content), or both
+
+```
+symposium-data version [-h] [--metadata METADATA] [--content-type CONTENT_TYPE]
+                              [--if-match N]
+                              file_id [file]
+```
+
+## `delete`
+
+delete a file (a tombstone version)
+
+```
+symposium-data delete [-h] [--reason REASON] file_id
+```
+
+## `promote`
+
+copy a version into a collection as a new file (admin)
+
+```
+symposium-data promote [-h] --collection COLLECTION [--name NAME] [--metadata METADATA]
+                              [--stamp-json-pointer STAMP_JSON_POINTER]
+                              ref
+```
+
+## `collection create`
+
+create a collection you own
+
+```
+symposium-data collection create [-h] --name NAME
+```
+
+## `collection grant-write`
+
+let a roster member write to your collection
+
+```
+symposium-data collection grant-write [-h] --collection COLLECTION --handle HANDLE
+```
+
+## `collection set-public`
+
+make your collection readable by anyone, or not
+
+```
+symposium-data collection set-public [-h] --collection COLLECTION (--public | --private)
+```
+
+## `find name`
+
+the file holding a name
+
+```
+symposium-data find name [-h] --collection COLLECTION --name NAME
+```
+
+## `find hash`
+
+every version you may read with this content
+
+```
+symposium-data find hash [-h] --sha256 SHA256
+```
+
+## `find meta`
+
+versions whose metadata contains a JSON object
+
+```
+symposium-data find meta [-h] --collection COLLECTION --contains CONTAINS [--since SINCE]
+                                [--limit LIMIT]
+```
+
+## `verify`
+
+check a citation (R-G9)
+
+```
+symposium-data verify [-h] --cite CITE [--before BEFORE] [--sha256 SHA256]
+```
+
+## `keys mint`
+
+mint a read key into a file (0600); it is never printed
+
+```
+symposium-data keys mint [-h] --collection COLLECTION --label LABEL [--file-id FILE_ID]
+                                [--hours HOURS] --out OUT
+```
+
+## `keys list`
+
+a collection's read keys, never their secret
+
+```
+symposium-data keys list [-h] --collection COLLECTION
+```
+
+## `keys revoke`
+
+revoke a read key at once
+
+```
+symposium-data keys revoke [-h] key_id
 ```
 
 ## `port-ndex`

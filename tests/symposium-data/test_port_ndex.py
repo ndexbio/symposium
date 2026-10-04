@@ -9,8 +9,8 @@ import sys
 import tarfile
 from pathlib import Path
 
-from conftest import CLI, community_file
 from fixtures.ndex_port.stub import CREDENTIALS, NdexStub
+from suite import CLI, community_file
 
 
 def credentials_file(directory: Path, mode: int = 0o600) -> Path:

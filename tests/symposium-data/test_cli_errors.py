@@ -11,7 +11,7 @@ from pathlib import Path
 import keystore
 import main
 import pytest
-from conftest import CLI_DIR
+from suite import CLI_DIR
 from symposium_data.auth import PublicKeys
 
 

@@ -8,17 +8,17 @@ UV := uv run --project data-server/service --frozen
 # The image `make -C data-server test` builds: the top-level suites run against the same one.
 IMAGE := ndexbio/symposium-data
 TAG := $(shell sed -n 's/^version = "\(.*\)"/\1/p' data-server/service/pyproject.toml)
-# The CLI and skill suites import the shared harness and fixtures from the data server's tests.
-SUITES := tools/symposium-data/tests
+# The top-level suite (tests/): the CLI's tests, then the skill's, on one container.
+SUITES := tests/symposium-data tests/skills
 
 .PHONY: lint test
 
 lint:
 	$(UV) ruff check .
-	$(UV) ruff format --check data-server tools/symposium-data
+	$(UV) ruff format --check data-server tools/symposium-data tests skills
 	cd tools && python3 conformance.py
 
 test: lint
 	$(MAKE) -C data-server test
 	SYMPOSIUM_DATA_TEST_IMAGE=$(IMAGE):$(TAG) SYMPOSIUM_DATA_TEST_VERSION=$(TAG) \
-		PYTHONPATH=data-server/service/tests $(UV) pytest $(SUITES)
+		$(UV) pytest -c tests/pytest.ini $(SUITES)

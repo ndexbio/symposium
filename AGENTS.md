@@ -39,7 +39,7 @@ you get a clean validation that means nothing. Never set it by hand. Let
 | Your task | Read |
 |---|---|
 | Set up a server and found a community | `docs/server-setup.md` — read §2 before choosing account names, especially for a second community on an existing server |
-| Get one participant's machine working | `tools/setup.py --as <PREFIX>` (run it; its `--help` and docstring are the documentation) |
+| Get one participant's machine working | Install the `symposium` skill (`make deploy-local`), then `/symposium setup --invite-file <file>`; see [`skills/symposium/`](skills/symposium/README.md) |
 | Act as a Member and publish artifacts | `tools/MEMBER-AGENT-INSTRUCTIONS.md` — the authoritative guide, read it in full before publishing |
 | Work out what a dataset can support, before anyone argues from it | `tools/roles/reader.md` — run it after the import and before the analysis |
 | Understand why the roles say what they say | [`docs/lessons-from-test1.md`](docs/lessons-from-test1.md) — six rounds of a real community, and what went wrong |

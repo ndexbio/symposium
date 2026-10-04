@@ -8,7 +8,7 @@ import json
 import stat
 from pathlib import Path
 
-from conftest import enroll
+from suite import enroll
 
 
 def write(directory: Path, name: str, content: bytes) -> Path:

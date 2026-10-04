@@ -5,7 +5,7 @@ import json
 import stat
 from pathlib import Path
 
-from conftest import ADMIN, community_file, place_admin_key
+from suite import ADMIN, community_file, place_admin_key
 
 
 def mode(path) -> int:

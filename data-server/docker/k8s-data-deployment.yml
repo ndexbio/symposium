@@ -1,6 +1,6 @@
-# Symposium Data: Kubernetes / Podman deployment.
+# Symposium Data: Kubernetes deployment.
 #
-#   kubectl apply -f k8s-data-deployment.yml        (or: podman play kube k8s-data-deployment.yml)
+#   kubectl apply -f k8s-data-deployment.yml
 #
 # All state (PostgreSQL, SeaweedFS, service secrets) lives under /apps on one ReadWriteOnce
 # PVC, so the Deployment runs one replica with the Recreate strategy.

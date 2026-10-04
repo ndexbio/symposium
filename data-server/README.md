@@ -8,6 +8,8 @@ A single Docker image that runs Symposium Data, the versioned file store Symposi
 
 The design and requirements are in the spike on ndexbio/symposium#13. Its sections are referred to here as R-*.
 
+**To run a server**, start with `RUNBOOK.md`: `docker run` (or the Kubernetes manifest), then place the admin's key file. This README covers the build, the make targets and the API.
+
 ## Layout
 
 | Path | What it is |
@@ -15,9 +17,9 @@ The design and requirements are in the spike on ndexbio/symposium#13. Its sectio
 | `service/` | The `symposium_data` Python package: the HTTP API, its background jobs and the Alembic migrations, plus the tests. Locked with `uv.lock`. |
 | `docker/Dockerfile` | Multi-stage build: `runtime-base` (PostgreSQL, supervisor, gosu, SeaweedFS with a pinned sha256), then `builder` (installs the locked wheel into `/opt/venv`), then `deploy`. |
 | `docker/supervisord/` | One config snippet per service. `start.sh` assembles them. |
-| `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, then `exec supervisord`. |
-| `docker/k8s-data-deployment.yml` | Kubernetes or Podman deployment on a single ReadWriteOnce PVC. |
-| `RUNBOOK.md` | How to run, initialize, verify and tear down. |
+| `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, then starts supervisord. |
+| `docker/k8s-data-deployment.yml` | Kubernetes deployment on a single ReadWriteOnce PVC, with the admin key from a Secret. |
+| `RUNBOOK.md` | How to deploy (Docker or Kubernetes), place the admin key, host many communities, port, export and import, verify and tear down. |
 | `PORT_NDEX.md` | The port-ndex: copying a community's record from NDEx into an empty community here. |
 
 ## Make targets

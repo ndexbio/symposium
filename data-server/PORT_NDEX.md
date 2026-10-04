@@ -36,6 +36,10 @@ invite from the admin, as in any community.
 
 ## Run it
 
+The server must be operational, with its admin key in place (`RUNBOOK.md`). The data server
+itself, not the operator's machine, connects to NDEx, so it needs outbound access to the NDEx
+server.
+
 1. Create the community, empty: `POST /v1/communities {name}`.
 2. Start the port-ndex, signed in as the admin:
 
@@ -62,7 +66,7 @@ invite from the admin, as in any community.
 
 The start is refused at once, before NDEx is contacted, when:
 - the community does not exist (`404`);
-- the caller is not the admin (`403`);
+- the caller is not the admin (`403`, or `401` without a token);
 - the community holds files (`400`);
 - another port-ndex is running anywhere on the server (`409`).
 
@@ -76,7 +80,7 @@ The start is refused at once, before NDEx is contacted, when:
   never ported over.
 - **One at a time.** At most one port-ndex runs on a server.
 - **A restart ends it.** A port-ndex cut off by a service restart reads back as `failed`; it
-  wrote nothing, and can be started again.
+  wrote nothing, the janitor removes the bytes it had uploaded, and it can be started again.
 - **Every page is read.** NDEx truncates listings silently, so the port reads the admin's
   networks page by page (`page_size` at a time) until a short page.
 

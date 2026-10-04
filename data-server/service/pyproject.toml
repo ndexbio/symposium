@@ -28,3 +28,6 @@ packages = ["symposium_data"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/harness.py and tests/fixtures are shared by the data server's suites and the
+# top-level CLI and skill suites, which import them from here
+pythonpath = ["tests"]

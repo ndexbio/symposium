@@ -12,5 +12,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: make test
-      - run: make -C data-server test
+      - run: make test    # includes the data server's suites, with one image build

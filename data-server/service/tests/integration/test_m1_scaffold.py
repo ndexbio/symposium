@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 import httpx
-from conftest import IMAGE, VERSION, docker
+from harness import IMAGE, VERSION, docker
 
 DOCKER_DIR = Path(__file__).resolve().parents[3] / "docker"
 

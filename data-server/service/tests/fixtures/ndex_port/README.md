@@ -23,5 +23,5 @@ NDEx tooling:
 | `network_permissions/{uuid}.json` | `GET /v2/network/{uuid}/permission?type=user`, for the reply |
 | `users/{uuid}.json` | `GET /v2/user/{uuid}`, for each user holding a permission on the reply |
 
-The test's stub serves these files and pages the listings itself (`start` is a page index,
+`stub.py` serves these files, for the data server's port test and the CLI's, and pages the listings itself (`start` is a page index,
 `size` the page size), the way NDEx does, so the port can be run at any page size.

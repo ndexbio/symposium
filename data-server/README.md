@@ -24,14 +24,14 @@ The design and requirements are in the spike on ndexbio/symposium#13. Its sectio
 
 ## Make targets
 
-These four targets are the only ones. Run them from this folder, or from the repository root with `make -C data-server <target>`.
+These four targets are the only ones. Run them from this folder, or from the repository root with `make -C data-server <target>`. The repository's top-level `make test` runs this `test` as part of its single gate. Image targets run no tests.
 
 | Target | What it does |
 |---|---|
 | `lint` | `ruff check` and `ruff format --check` on `service/`. |
-| `test` | `lint`, then the unit suites, then builds the image `ndexbio/symposium-data:$(TAG)`, then runs the integration suites against that image in throwaway `sdtest-*` containers. |
-| `build-docker` | `test`, then confirms that the tested image `ndexbio/symposium-data:$(TAG)` exists. |
-| `push-docker` | `build-docker`, then a buildx multi-arch (`linux/amd64`, `linux/arm64`) push of `:$(TAG)` and `:latest`. It is used by the release workflow. |
+| `test` | `lint` and `build-docker`, then the unit suites, then the integration suites against that image, on one `sdtest-*` container for the whole session. |
+| `build-docker` | Builds and tags the image `ndexbio/symposium-data:$(TAG)`. |
+| `push-docker` | A buildx multi-arch (`linux/amd64`, `linux/arm64`) build and push of `:$(TAG)` and `:latest`. It is used by the release workflow, on a tag cut from a `data-store` commit that CI has tested. |
 
 `TAG` defaults to the version in `service/pyproject.toml`; override it with `make build-docker TAG=1.2.3`. The image is built with `DATA_VERSION=$(TAG)`. The container prints `symposium-data <version>` as its first line of output, and `GET /v1/status` reports the same version. `/v1/status` also reports health: it answers **503**, with `"postgres"` or `"s3"` set to `"unavailable"`, whenever either dependency is down. The Kubernetes readiness probe relies on this. It reports the server's `mode` too (see "The admin key file").
 

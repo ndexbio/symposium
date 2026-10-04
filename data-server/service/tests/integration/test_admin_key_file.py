@@ -7,13 +7,13 @@ import time
 
 import httpx
 import pytest
-from conftest import ADMIN, Admin, OwnerKey, docker, init_admin, place_key
+from conftest import ADMIN, Admin, OwnerKey, init_admin, place_key
+from harness import docker
 
 from symposium_data.auth import PublicKeys
 
 KEY_FILE = f"/apps/admin_pub_{ADMIN}.key"
 BACKUP = "/apps/data/config/admin_pub.backup"
-CTL = ("supervisorctl", "-c", "/tmp/supervisord.conf")
 
 
 def status_until(server, predicate, message, timeout=30) -> dict:
@@ -31,7 +31,7 @@ def status_until(server, predicate, message, timeout=30) -> dict:
 
 
 def restart_api(server, predicate, message) -> dict:
-    assert server.exec(*CTL, "signal", "TERM", "data-api").returncode == 0
+    server.restart_api()
     # the old process may still answer for a moment: wait for the state the new one reports
     return status_until(server, predicate, message)
 

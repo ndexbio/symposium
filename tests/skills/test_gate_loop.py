@@ -1,14 +1,18 @@
-"""#21 stage 2: the gate on the data server. It reads the members' submissions from `inbox`,
+"""The gate on the data server. It reads the members' submissions from `inbox`,
 validates them in a serial order, promotes each accepted one into `record` (the server stamps
 `created`) or replies to its submitter, verifies every `download` held on the data server, and
 keeps no decision only it knows: the record version or the reply names the submission it
 decided, so a lost state file is rebuilt from the server."""
 
 import json
+import signal
+import subprocess
+import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from skills.test_workflow import note, submissions, tool
+from skills.test_workflow import TOOLS, note, submissions, tool
 from suite import enroll
 
 
@@ -268,3 +272,33 @@ def test_the_gate_rebuilds_its_state_from_the_server(suite, admin_dir, cli):
     (admin_dir / "record" / "lyra_note_next_v1.json").unlink()
     code, out = tool(suite, admin_dir, "gate.py", "--verify")
     assert code == 1 and "missing from the copy: ['lyra_note_next_v1']" in out
+
+
+def test_the_gate_watches_inbox_until_stopped(suite, admin_dir, cli):
+    lyra = enroll(cli, admin_dir, "lyra")
+    watching = subprocess.Popen(
+        [sys.executable, str(TOOLS / "gate.py"), "--watch"],
+        cwd=admin_dir,
+        env={**suite.env, "SYMPOSIUM_POLL": "1"},
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        # submitted after the gate started: a later pass accepts it
+        assert tool(suite, lyra, "publish.py", note(lyra, "lyra", "watched"))[0] == 0
+        deadline = time.monotonic() + 60
+        while not records(cli, admin_dir) and time.monotonic() < deadline:
+            time.sleep(0.5)
+        assert [i["name"] for i in records(cli, admin_dir)] == ["lyra_note_watched_v1"]
+    finally:
+        watching.send_signal(signal.SIGINT)
+        out, _ = watching.communicate(timeout=30)
+    assert watching.returncode == 0, out
+    assert "watching inbox (every 1s)" in out and "ACCEPTED" in out
+
+
+def test_watch_does_not_combine_with_verify_or_rebuild(suite, admin_dir):
+    for mode in ("--verify", "--rebuild"):
+        code, out = tool(suite, admin_dir, "gate.py", "--watch", mode)
+        assert code == 2 and "does not combine" in out

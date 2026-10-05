@@ -59,10 +59,8 @@ def method_of(name):
     return None
 
 # ---------------------------------------------------------------- embedded payload size
-# The server ceiling is between 814 KB and 1.5 MB (measured; above it the upload is a 413),
-# but that is not the limit that matters. In this profile embedded content lives in a string
-# property, NOT in the CX2 nodes, so nothing can query it — an agent reading one row loads the
-# whole artifact into context. The binding limit is therefore what a reader can actually read.
+# In this profile embedded content lives in a string property, so nothing can query it — an
+# agent reading one row loads the whole artifact into context. The binding limit is therefore what a reader can actually read.
 #
 # 50 KB is roughly 12k tokens: a few hundred rows, or the Results section of a paper. Past it,
 # the honest fix is almost never a bigger payload — it is a narrower analysis.
@@ -329,7 +327,7 @@ def check_structure(a):
         if NAME_FORBIDDEN.search(name) or name.startswith("@"):
             f.append(finding("STRUCT", "FAIL", f"name '{name}' contains a delimiter (. # @)"))
         # A Member-name prefix segment must be present. Hyphens are permitted in it because
-        # NDEx account names may contain them — `ndex-admin` is one — and excluding them
+        # account handles may contain them — `symposium-admin` is one — and excluding them
         # would bar the admin from naming its own artifacts after its own account. This
         # check is structural only: that the NAME MATCHES THE PUBLISHING ACCOUNT is enforced
         # where the account is actually known, in publish.py and at the gate.

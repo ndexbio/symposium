@@ -1,7 +1,7 @@
-"""#20 stage 4: the `symposium` skill as people use it (R-I7): `/symposium bootstrap` (admins)
-and `/symposium setup` (members) over the CLI, the context they set, and what the skill says
-when something is missing. #21 stage 3: the workflow commands (`publish`, `validate`, `sync`,
-`gate`, `serve`) through the skill."""
+"""The `symposium` skill as people use it (R-I7): `/symposium bootstrap` (admins) and
+`/symposium setup` (members) over the CLI, the context they set, and what the skill says when
+something is missing; and the workflow commands (`publish`, `validate`, `sync`, `gate`,
+`serve`) through the skill."""
 
 import json
 import os

@@ -1,4 +1,4 @@
-"""M1: the image and its first boot. Binding the admin is the key file's (R-D4), checked in
+"""The image and its first boot. Binding the admin is the key file's (R-D4), checked in
 test_admin_key_file.py and the unit tests."""
 
 import time

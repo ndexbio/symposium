@@ -22,7 +22,7 @@ DEFAULT_GRANTS = (
 )
 
 
-# The collections every community has (Part 4 of the spike): submissions, stored files and the
+# The collections every community has: submissions, stored files and the
 # accepted record.
 COLLECTIONS = ("inbox", "files", "record")
 

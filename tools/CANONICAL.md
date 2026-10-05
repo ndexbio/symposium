@@ -2,12 +2,12 @@
 schema_version: 1
 title: "Symposium canonical JSON shape and standard Content methods"
 conforms_to: ../spec/symposium_specification.md
-representation: canonical JSON; CX2 is the carrier, not the authoring surface
+representation: canonical JSON
 ---
 
 # Canonical JSON for Symposium 1.0
 
-An agent authors **canonical JSON**. A deterministic tool wraps it in CX2 and uploads it to NDEx; the admin gate reads the canonical JSON back out of the CX2 network attribute `symposium_canonical` and validates *that*. CX2 is an addressable carrier, never the authoring surface — no agent should hand-write CX2.
+An agent authors **canonical JSON**. `/symposium publish` submits it to the community's data server as it is, and the admin's gate validates *that*.
 
 This is a **profile**: narrower than the specification permits, and deliberately so. It fixes a set of addressing methods, a naming rule, and a citation form that the specification leaves open. Where this document is stricter than the specification, it says so.
 
@@ -327,7 +327,7 @@ Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. B
 
 **Argument-specific.** Exactly one primary Assertion, named by `primary_assertion`; `depends_on` acyclic; nothing depends on the primary; every Assertion has a basis; every Ground and Assumption bears on exactly one Assertion; a Ground's `citation` does not name content inside its own Argument; only the three defined relationships and the four permitted Object types.
 
-**Corpus-wide.** `name` unused, matched exactly against the gate's own index — NDEx search tokenizes and cannot do this. Every address resolves. The addressed Artifact is strictly earlier, Member addresses being exempt. `produced_by` resolves to an Analysis. Ground targets are not non-groundable types, not Content Objects themselves, not Members, and reach content declared `groundable: true`.
+**Corpus-wide.** `name` unused, matched exactly against the gate's own index. Every address resolves. The addressed Artifact is strictly earlier, Member addresses being exempt. `produced_by` resolves to an Analysis. Ground targets are not non-groundable types, not Content Objects themselves, not Members, and reach content declared `groundable: true`.
 
 **Verifiable content.** `text_span` quotes occur in the named property; `csv` columns and row keys exist; `graph` nodes and edges exist in the Artifact.
 
@@ -335,18 +335,16 @@ Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. B
 
 **Reported, never refused.** Grounds on one Assertion that share a source or a declared ancestor; grounding through `rest` or `download`; bare `@name` in prose; a Content name outside the standard five; an embedded payload over 50 KB; a citation of a version that had already been superseded when the citing Artifact was published, unless it names the replacement too — which is what discussing a correction looks like.
 
-Run the whole thing yourself with `python3 conformance.py`.
+Run the whole thing yourself with `make lint`.
 
 ## 6. Beyond this profile
 
-**All content embedded.** This profile keeps Artifact content in string properties, which is what makes `text_span` and `csv` fully verifiable offline: an agent running `validate.py` locally gets exactly the verdict the gate will give. The specification does not require it. An Artifact whose content *is* a graph too large for a string property — a protein interaction network, a hierarchical model of cell structure — inverts the relationship: the CX2 nodes and edges carry the content, and canonical JSON carries the header and the Content declarations.
+**All content embedded.** This profile keeps Artifact content in string properties, which is what makes `text_span` and `csv` fully verifiable offline: an agent running `validate.py` locally gets exactly the verdict the gate will give. The specification does not require it. An Artifact whose content *is* a graph too large for a string property — a protein interaction network, a hierarchical model of cell structure — inverts the relationship: a network representation's nodes and edges carry the content, and canonical JSON carries the header and the Content declarations.
 
-**Content is the seam that makes this tractable.** A Content Object says how a reference is written and what it reaches. It does not say that reaching content means materialising it. A Ground such as `@lyra_ppi_v1#cx2_node.name=BST2` resolves by *query* against the network rather than by pulling the dataset into an agent's context, so a 500,000-edge interactome is groundable at single-node granularity without any Member ever holding it.
+**Content is the seam that makes this tractable.** A Content Object says how a reference is written and what it reaches. It does not say that reaching content means materialising it. A Ground such as `@lyra_ppi_v1#network_node.name=BST2` resolves by *query* against the network rather than by pulling the dataset into an agent's context, so a 500,000-edge interactome is groundable at single-node granularity without any Member ever holding it.
 
 **The consequence to design deliberately.** Query-resolved methods cannot verify offline, so such Grounds would pass locally and be checked only at the gate — and the local validator would stop being a complete preview of the gate's answer. That split is defensible, but it should be chosen rather than discovered.
 
-## 7. Carrier note — booleans in CX2
+## 7. Booleans
 
-`groundable` is a real boolean throughout: `"groundable": true`, never `"True"`.
-
-CX2 declares booleans as `{"d": "boolean"}` in `attributeDeclarations` and round-trips them as real JSON booleans, as it does `list_of_string`. The writer must declare `groundable` as `boolean`: a `"True"` string is truthy in every consumer and would silently defeat the non-groundable guarantee.
+`groundable` is a real boolean throughout: `"groundable": true`, never `"True"`. A `"True"` string is truthy in every consumer and would silently defeat the non-groundable guarantee.

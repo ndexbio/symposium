@@ -1,4 +1,4 @@
-"""M3, R-A6: write atomicity and concurrency. Every racing or failing write either fully
+"""Write atomicity and concurrency (R-A6). Every racing or failing write either fully
 happens or leaves nothing behind: no pending or unreferenced payload, no orphaned S3 object,
 no open multipart upload and no stale name reservation."""
 

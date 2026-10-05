@@ -1,4 +1,4 @@
-"""M2: identity: registration, tokens, the roster, invites, rotation, rebind and suspicion."""
+"""Identity: registration, tokens, the roster, invites, rotation, rebind and suspicion."""
 
 import httpx
 import pytest

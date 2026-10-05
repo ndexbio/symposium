@@ -1,4 +1,4 @@
-"""Post-M6 stage 4: every admin operation is an admin-only route (R-D7). Without a token each
+"""Every admin operation is an admin-only route (R-D7). Without a token each
 answers 401; a member's token or a read key gets 403."""
 
 import httpx

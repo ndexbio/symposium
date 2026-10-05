@@ -1,4 +1,4 @@
-"""Post-M6 stage 2: onboarding (R-D5, R-D6): the roster one handle at a time, retrievable
+"""Onboarding (R-D5, R-D6): the roster one handle at a time, retrievable
 pending invites, and registration by invite only."""
 
 import time

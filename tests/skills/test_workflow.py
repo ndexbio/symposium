@@ -1,7 +1,7 @@
-"""#21 stage 1: the member's side of the workflow on the data server: `publish.py` submits into
-the community's `inbox` (R-G3), and `sync.py` keeps the session's copy of the record (`./record`)
+"""The member's side of the workflow on the data server: `publish.py` submits into the
+community's `inbox` (R-G3), and `sync.py` keeps the session's copy of the record (`./record`)
 current from the `record` feed and lists the gate's replies. The gate's part (promote, reply)
-is done here by the admin through the CLI, as stage 2's gate will do it."""
+is done here by the admin through the CLI, as the gate does it."""
 
 import json
 import subprocess
@@ -235,3 +235,43 @@ def test_an_address_to_a_member_who_has_not_published_resolves(suite, admin_dir,
     code, out = tool(suite, lyra, "publish.py", "--check", message)
     assert code == 0, out  # the live roster names vega; nothing is kept for offline use
     assert not (lyra / "record" / ".roster.json").exists()
+
+
+def test_the_admin_publishes_as_operator_unless_it_lifts_the_limit(
+    suite, admin_dir, cli
+):
+    lyra = enroll(cli, admin_dir, "lyra")
+    admin = cli.ok(admin_dir, "context", "show")["context"]["handle"]
+
+    def goal(directory: Path, handle: str) -> Path:
+        path = directory / f"{handle}_goal_{directory.name}_v1.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "artifact": {
+                        "name": path.stem,
+                        "type": "ResearchGoal",
+                        "specification_version": "1.0",
+                        "published_by": f"@{handle}",
+                        "created": None,
+                        "title": "A goal",
+                        "text": "Find what the community needs to know.",
+                    },
+                    "objects": [],
+                    "relationships": [],
+                }
+            )
+        )
+        return path
+
+    # the admin's default role is operator, which does not publish a ResearchGoal
+    code, out = tool(suite, admin_dir, "publish.py", goal(admin_dir, admin))
+    assert code == 1 and "role 'operator' may not publish a ResearchGoal" in out
+    assert submissions(cli, admin_dir) == []
+    code, out = tool(
+        suite, admin_dir, "publish.py", "--role", "none", goal(admin_dir, admin)
+    )
+    assert code == 0 and "submitted  symposium-data:" in out, out
+    # a member with no --role publishes with no type limit
+    code, out = tool(suite, lyra, "publish.py", goal(lyra, "lyra"))
+    assert code == 0 and "submitted  symposium-data:" in out, out

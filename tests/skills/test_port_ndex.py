@@ -1,4 +1,4 @@
-"""#20 stage 4: `/symposium port` (port-ndex) as the skill's README describes it: bootstrap, port,
+"""`/symposium port` (port-ndex) as the skill's README describes it: bootstrap, port,
 bootstrap again for the authors' invites; and the refusals it reports, against the recorded
 NDEx 3.0.0 responses served by the shared stub."""
 

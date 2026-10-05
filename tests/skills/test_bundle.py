@@ -1,7 +1,7 @@
-"""#20 stage 5: the bundle (R-I8) and `make deploy-local` (R-J4): the zip holds the skill with its
-toolchain and the stamped CLI, and nothing else; deploy-local installs exactly that; and the
-installed skill works with no repository, through the installed CLI's launcher. #21 stage 3:
-the workflow tools in the toolchain, and `validate` from the installed skill."""
+"""The bundle (R-I8) and `make deploy-local` (R-J4): the zip holds the root README, the skill
+with its toolchain (the workflow tools included) and the stamped CLI, and nothing else;
+deploy-local installs exactly that; and the installed skill works with no repository, through
+the installed CLI's launcher, including `validate` against a data server."""
 
 import json
 import os
@@ -44,10 +44,14 @@ def test_the_bundle_holds_the_skill_its_toolchain_and_the_stamped_cli(installed)
         names = set(zf.namelist())
         skill_md = zf.read("skills/symposium/SKILL.md").decode()
         compat = json.loads(zf.read("tools/symposium-data/compat.json"))
+        readme = zf.read("README.md")
     assert all(
-        n.startswith(("skills/symposium/", "tools/symposium-data/")) for n in names
+        n == "README.md" or n.startswith(("skills/symposium/", "tools/symposium-data/"))
+        for n in names
     )
-    assert "README.md" not in names  # the bundle's own README arrives with #21
+    assert (
+        readme == (REPO / "README.md").read_bytes()
+    )  # the repository's README, at the root
     for required in (
         "skills/symposium/SKILL.md",
         "skills/symposium/README.md",

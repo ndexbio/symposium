@@ -6,8 +6,6 @@ A single Docker image that runs Symposium Data, the versioned file store Symposi
 - **PostgreSQL 16**: the server's records: configuration, owner identities, rosters, grants, invites, collections, files, versions, metadata and read keys. All of it is managed by Alembic migrations;
 - **SeaweedFS**: the internal S3 store for file contents. It is never exposed; the data service streams every byte.
 
-The design and requirements are in the spike on ndexbio/symposium#13. Its sections are referred to here as R-*.
-
 **To run a server**, start with `RUNBOOK.md`: `docker run` (or the Kubernetes manifest), then place the admin's key file. This README covers the build, the make targets and the API.
 
 ## Layout
@@ -76,7 +74,7 @@ A community name is 1–20 letters, digits or underscores; `status`, `communitie
 
 ## Identity
 
-The server provisions no accounts. Each member generates an Ed25519 key on their own machine, and the private key never leaves it. Registration binds a handle to the public key **within one community** (R-D, Part 2 of the spike): the same handle in another community is a separate identity, with its own key.
+The server provisions no accounts. Each member generates an Ed25519 key on their own machine, and the private key never leaves it. Registration binds a handle to the public key **within one community** (R-D): the same handle in another community is a separate identity, with its own key.
 
 | Endpoint | Purpose |
 |---|---|

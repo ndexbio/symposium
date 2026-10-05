@@ -1,4 +1,4 @@
-"""M4: sharing: member-owned collections, grants, public collections, read keys for
+"""Sharing: member-owned collections, grants, public collections, read keys for
 non-members, inbox privacy, and per-community isolation."""
 
 import httpx

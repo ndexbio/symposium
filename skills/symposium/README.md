@@ -33,11 +33,11 @@ context is this session's copy of the community's record.
 
 | Command | What it does |
 |---|---|
-| `/symposium publish [--role <role>] <artifact.json>` | Submit one artifact to the gate. It syncs first, validates against the record as it stands (the same checks the gate runs), and submits only what passes; a rejection comes back as a reply that `sync` lists. `--roles` lists the roles, `--roles <name>` prints one. Needs the data server: nothing validates offline. |
+| `/symposium publish [--role <role>] <artifact.json>` | Submit one artifact to the gate. It syncs first, validates against the record as it stands (the same checks the gate runs), and submits only what passes; a rejection comes back as a reply that `sync` lists. `--roles` lists the roles, `--roles <name>` prints one. The admin publishes as `operator` unless it gives `--role`; `--role none` lifts the limit. Needs the data server: nothing validates offline. |
 | `/symposium validate [--role <role>] <artifact.json>` | The same checks as `publish`, submitting nothing (`publish --check`). |
 | `/symposium sync [--watch]` | Bring `./record` up to date from the record, in the server's order, and list the gate's replies addressed to you. `--watch` repeats every `SYMPOSIUM_POLL` seconds (default 30). |
-| `/symposium gate [--dry-run\|--verify\|--rebuild]` | Admin: decide every submission waiting in `inbox`: accept it into the record, where the server stamps its `created`, or reply to its submitter. Every `download` held on the data server is verified. `--dry-run` decides and changes nothing; `--verify` compares `./record` with the record; `--rebuild` rebuilds `./record`'s cursor and the gate's state from the server. |
-| `/symposium serve [--port N]` | Browse `./record` at `http://localhost:8760` (or `--port`), rebuilt whenever it changes. It stops with an error when there is no `./record`: run `sync` first. |
+| `/symposium gate [--dry-run\|--verify\|--rebuild\|--watch]` | Admin: decide every submission waiting in `inbox`: accept it into the record, where the server stamps its `created`, or reply to its submitter. Every `download` held on the data server is verified. `--dry-run` decides and changes nothing; `--verify` compares `./record` with the record; `--rebuild` rebuilds `./record`'s cursor and the gate's state from the server; `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30), reporting each one that accepts or rejects something, until stopped. |
+| `/symposium serve [<record dir>] [--port N]` | Browse `./record` (or the record directory given) at `http://localhost:8760` (or `--port`), rebuilt whenever it changes. It stops with an error when there is no `./record`: run `sync` first. |
 | `/symposium data <command> …` | Direct data work through the CLI: `put`, `get`, `version`, `delete`, `stat`, `versions`, `changes`, `find name\|hash\|meta`, `verify`, `collection create\|grant-write\|set-public`, `keys mint\|list\|revoke`, `owner whoami\|rotate`. `/symposium data <command> --help` shows its options. |
 | `/symposium roster list` | Any member: the community's roster, every handle on it, registered or not yet. |
 | `/symposium roster add --handle <h>\|remove --handle <h>` | Admin: change the roster, one handle at a time. |
@@ -49,7 +49,7 @@ context is this session's copy of the community's record.
 | `/symposium admin-config …` | Admin: see section 2. |
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit code
-is the result (0 = done; `serve` and `sync --watch` run until stopped). Every other command
+is the result (0 = done; `serve`, `sync --watch` and `gate --watch` run until stopped). Every other command
 prints one JSON object: `setup`, `bootstrap`, `port`, the admin commands (`admin-config`,
 `roster`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import`) and `data …`.
 

@@ -37,11 +37,11 @@ Several agents on one machine each work in their own directory, with their own c
 |---|---|---|
 | `setup --invite-file <file>` | member | join the community |
 | `bootstrap --community <file>` | admin | bring the community up; write invite files |
-| `publish [--role <role>] <artifact.json>` | member, admin | sync, validate against the record as it stands, then submit to the gate; `--roles` lists the roles |
+| `publish [--role <role>] <artifact.json>` | member, admin | sync, validate against the record as it stands, then submit to the gate; `--roles` lists the roles; the admin publishes as `operator` unless it gives `--role` (`--role none`: no limit) |
 | `validate [--role <role>] <artifact.json>` | member, admin | the same checks as `publish`, submitting nothing (`publish --check`) |
 | `sync [--watch]` | member, admin | bring `./record`, this session's copy of the record, up to date; list the gate's replies to you |
-| `gate [--dry-run\|--verify\|--rebuild]` | admin | accept or reject the submissions waiting in `inbox`; `--verify` compares `./record` with the record, `--rebuild` rebuilds the gate's caches from the server |
-| `serve [--port N]` | anyone | browse `./record` at `http://localhost:8760`, rebuilt as it changes |
+| `gate [--dry-run\|--verify\|--rebuild\|--watch]` | admin | accept or reject the submissions waiting in `inbox`; `--verify` compares `./record` with the record, `--rebuild` rebuilds the gate's caches from the server, `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30) until stopped |
+| `serve [<record dir>] [--port N]` | anyone | browse `./record` (or the record directory given) at `http://localhost:8760`, rebuilt as it changes |
 | `admin-config --handle <h> --data-server-url <url> [--new-key]` | admin | make or reuse the server's admin key, and print where to place it |
 | `roster list` | member, admin | the community's roster |
 | `roster add\|remove`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import` | admin | manage members and data |

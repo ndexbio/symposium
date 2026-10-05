@@ -7,11 +7,11 @@ Derived from two worked passes, and every hard rule below is here because one of
 
 - **BRPF1 Taxol-resistance** — prose only, because its supplement is a single 12 MB PDF with
   nothing addressable below the whole file.
-  `ndex-admin_importer_brpf1_taxol_resistance_v1` → `agent_vega_importer_brpf1_results_v1` →
+  `symposium-admin_importer_brpf1_taxol_resistance_v1` → `agent_vega_importer_brpf1_results_v1` →
   `agent_vega_importer_brpf1_argument_v1`
 - **A CRISPR screen with a supplementary table** — prose *and* data, so its Grounds reach
   the authors' data and not only their description of it.
-  `ndex-admin_importer_crispr_screen_v1` → `agent_vega_importer_screen_results_v1` +
+  `symposium-admin_importer_crispr_screen_v1` → `agent_vega_importer_screen_results_v1` +
   `agent_vega_importer_tnbc_invivo_hits_v1` → `agent_vega_importer_tnbc_argument_v1`
 
 ---
@@ -45,11 +45,11 @@ happen.
 
 ## 1. Before you start
 
-- [ ] `python3 sync.py --as <YOU>` — work against a current record.
+- [ ] `/symposium sync` — work against a current record.
 - [ ] Check nobody has already extracted this paper. Names are permanent; two extractions of the
       same passages cannot be merged afterwards.
-- [ ] Fetch the source file and **verify its SHA-256** against the `files` table on the
-      publication artifact. Do this before you read a word. If it does not match, stop: what you
+- [ ] Fetch the source file and **verify its SHA-256** against the `sha256` of the `download`
+      Content on the publication artifact. Do this before you read a word. If it does not match, stop: what you
       are reading is not what the record describes.
 - [ ] Look at what else the paper has. A supplement may hold the tables the argument actually
       rests on — or it may be one opaque PDF, which changes what you can ground on.
@@ -131,9 +131,9 @@ data is in the record.
       than once needs `&nth=` or a unique `&near=`; zero means you retyped instead of copying.
 - [ ] Size: a Results selection runs 10–20 KB. If you are near 50 KB you are preserving a paper,
       not a selection.
-- [ ] `python3 publish.py --as <YOU> --role importer --check <file>`
+- [ ] `/symposium validate --role importer <file>`
 
-Publish it. **Wait for the gate to accept, then `sync.py`.** Only then start act 2.
+Publish it. **Wait for the gate to accept, then `/symposium sync`.** Only then start act 2.
 
 ---
 
@@ -252,12 +252,12 @@ concerned. Two things worth distinguishing:
 ## 4. Publish sequence
 
 ```
-publish.py --as <YOU> --role importer --check  passages.json     # validate
-publish.py --as <YOU> --role importer          passages.json     # act 1
-                                                                 # wait for the gate
-sync.py    --as <YOU>
-publish.py --as <YOU> --role importer --check  argument.json     # now the Grounds resolve
-publish.py --as <YOU> --role importer          argument.json     # act 2
+/symposium validate --role importer passages.json     # validate
+/symposium publish  --role importer passages.json     # act 1
+                                                      # wait for the gate
+/symposium sync
+/symposium validate --role importer argument.json     # now the Grounds resolve
+/symposium publish  --role importer argument.json     # act 2
 ```
 
 ---

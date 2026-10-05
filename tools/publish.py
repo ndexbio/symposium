@@ -20,6 +20,9 @@ every artifact is attributed to the Member either way (roles/). --role limits wh
 Artifact types this session may publish. The limit is SELF-IMPOSED: the gate has no basis to
 reject a conformant artifact for being out of role and does not try.
 
+The admin publishes as `operator`, the narrowest role, when no --role is given; `--role none`
+lifts the limit. A member with no --role publishes with no type limit.
+
 It syncs first, every time, `--check` included: validation is only as good as the record it
 sees, and a stale copy can miss a name collision or an address that has not landed yet. So the
 data server must be reachable; when it is not, nothing is checked and nothing is submitted.
@@ -125,7 +128,7 @@ def main(argv):
               f"({ROLES_DIR.name}/<name>.md)")
         return 0
     role = argv[argv.index("--role") + 1] if "--role" in argv else None
-    if role is not None and role not in roles:
+    if role not in (None, "none") and role not in roles:
         print(f"! unknown role '{role}'. Known: {', '.join(roles)}")
         return 2
     check_only = "--check" in argv
@@ -154,10 +157,17 @@ def main(argv):
     # roster and the admin, fetched live), exactly as the gate will.
     data = SymposiumData()
     try:
-        account = data.context()["handle"]
+        context = data.context()
     except DataError as e:
         print(f"! {e}")            # no context here: it names setup and bootstrap
         return 1
+    account = context["handle"]
+    # The admin holds the narrowest role unless it says otherwise: `operator` by default, and
+    # `--role none` lifts the limit. A member with no --role has no limit.
+    if role is None and context.get("role") == "admin":
+        role = "operator"
+    if role == "none":
+        role = None
     sync = Sync(data, quiet=True)
     if sync.once(sync.load_state()) is None:
         print("! the data server could not be reached — nothing was checked and nothing was "

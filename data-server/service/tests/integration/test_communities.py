@@ -1,4 +1,4 @@
-"""Post-M6 stage 1: communities as tenants (R-G8): explicit creation, slug names that are unique
+"""Communities as tenants (R-G8): explicit creation, slug names that are unique
 ignoring case, identity per community, and the server-wide admin."""
 
 import httpx

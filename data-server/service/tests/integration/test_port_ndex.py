@@ -1,4 +1,4 @@
-"""Post-M6 stage 3: the NDEx port as a route (R-M1), against recorded NDEx 3.0.0 responses
+"""The NDEx port as a route (R-M1), against recorded NDEx 3.0.0 responses
 served by a stub on this machine. Every port runs on the shared session container, into an
 empty community, and is polled until it finishes.
 """

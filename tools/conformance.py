@@ -36,7 +36,7 @@ import sys
 from validate import passed, validate
 
 HERE = pathlib.Path(__file__).resolve().parent
-MEMBERS = {"agent_lyra", "agent_vega", "ndex-admin"}
+MEMBERS = {"agent_lyra", "agent_vega", "symposium-admin"}
 V = "1.0"
 
 # --------------------------------------------------------------------------- corpus
@@ -338,8 +338,8 @@ CASES = [
     ("a name without the account prefix", mut(
         lambda a: a["artifact"].update(name="arid1a")), False, "NAMING"),
     ("a hyphenated account prefix is accepted", mut(
-        lambda a: a["artifact"].update(name="ndex-admin_arid1a_v1",
-                                       published_by="@ndex-admin")), True, None),
+        lambda a: a["artifact"].update(name="symposium-admin_arid1a_v1",
+                                       published_by="@symposium-admin")), True, None),
     ("a name carrying an address delimiter", mut(
         lambda a: a["artifact"].update(name="agent_lyra_arid1a.v1")), False, "STRUCT"),
     ("the wrong specification version", mut(

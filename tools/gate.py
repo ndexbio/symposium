@@ -27,17 +27,23 @@ is sent twice.
   python gate.py --dry-run    decide and report; promote, reply and save nothing
   python gate.py --verify     compare the copy's artifacts with the `record` feed; change nothing
   python gate.py --rebuild    discard the copy's and the gate's caches, rebuild them, then exit
+  python gate.py --watch      a pass every SYMPOSIUM_POLL seconds (default 30) until stopped,
+                              reporting each pass that accepts or rejects something
 
 Everything goes through the `symposium-data` CLI (R-I1). Exit 0 = the pass ran; 1 = no context
 in this directory (the message names `/symposium setup` and `bootstrap`), the data server could
-not be reached, or the copy differs from the record (`--verify`).
+not be reached, or the copy differs from the record (`--verify`); 2 = `--watch` given with
+`--verify` or `--rebuild`.
 """
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import re
 import sys
+import time
 from datetime import timedelta
 
 import telemetry
@@ -51,8 +57,8 @@ from data_io import (
     Mirror,
     SymposiumData,
 )
+from sync import POLL, Sync
 from sync import STATE as SYNC_STATE
-from sync import Sync
 from validate import finding, method_of, parse_instant, passed, validate
 
 # the feed cursors, the submissions waiting for their Analysis, and a decision per submission
@@ -139,6 +145,7 @@ class Gate:
         self.data = data or SymposiumData()
         self.mirror = mirror or Mirror()
         self.dry = dry
+        self.decided = 0  # submissions accepted or rejected since the last look
 
     # ── state: a cache of what the server says ────────────────────────────────────────────
     def load_state(self):
@@ -225,6 +232,7 @@ class Gate:
                 record.append(stored)
                 names.add(sub["name"])
                 state["decisions"][sub["citation"]] = f"accepted as {sub['name']}"
+                self.decided += 1
                 telemetry.emit("gate", "gate_accept", "accepted", artifact=sub["name"],
                                atype=canonical["artifact"].get("type"),
                                submitter=sub["owner"], findings=findings)
@@ -232,6 +240,7 @@ class Gate:
                 if not self.reject(sub, findings, admin):
                     continue
                 state["decisions"][sub["citation"]] = "rejected"
+                self.decided += 1
                 telemetry.emit("gate", "gate_reject", "rejected", artifact=sub["name"],
                                atype=canonical["artifact"].get("type"),
                                submitter=sub["owner"], findings=findings, refusal=["spec"])
@@ -359,6 +368,32 @@ class Gate:
         print(f"    reply sent to {sub['owner']}")
         return True
 
+    def watch(self) -> int:
+        """A pass every POLL seconds until stopped. A pass's report is printed when it accepted
+        or rejected something; a pass that fails is reported on the 1st, 5th and every 20th
+        failure in a row."""
+        print(f"watching inbox (every {POLL}s) — ctrl-c to stop", flush=True)
+        misses = 0
+        while True:
+            try:
+                report = io.StringIO()
+                with contextlib.redirect_stdout(report):
+                    code = self.once()
+                if code:
+                    misses += 1
+                    if misses in (1, 5) or misses % 20 == 0:
+                        print(report.getvalue().rstrip(), flush=True)
+                        print(f"  ({misses} consecutive failed pass(es) — nothing is being "
+                              f"decided)", flush=True)
+                else:
+                    misses = 0
+                    if self.decided:
+                        print(report.getvalue().rstrip(), flush=True)
+                self.decided = 0
+                time.sleep(POLL)
+            except KeyboardInterrupt:
+                return 0
+
     # ── the other modes ───────────────────────────────────────────────────────────────────
     def verify(self) -> int:
         """The copy's artifact names against the `record` feed. Changes nothing."""
@@ -408,6 +443,11 @@ def main(argv) -> int:
     except DataError as e:
         print(f"! {e}")
         return 1
+    if "--watch" in argv:
+        if "--verify" in argv or "--rebuild" in argv:
+            print("! --watch runs passes; it does not combine with --verify or --rebuild")
+            return 2
+        return gate.watch()
     if "--rebuild" in argv:
         return gate.rebuild()
     if "--verify" in argv:

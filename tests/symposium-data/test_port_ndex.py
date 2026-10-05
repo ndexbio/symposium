@@ -1,6 +1,6 @@
-"""#20 stage 2: `port-ndex` through the CLI (R-M1), against the recorded NDEx 3.0.0 responses
-served by the shared stub, and what an admin does with a ported community: read it, purge a
-version, export it and import it again (R-J6)."""
+"""`port-ndex` through the CLI (R-M1), against the recorded NDEx 3.0.0 responses served by
+the shared stub, and what an admin does with a ported community: read it, purge a version,
+export it and import it again (R-J6)."""
 
 import io
 import json

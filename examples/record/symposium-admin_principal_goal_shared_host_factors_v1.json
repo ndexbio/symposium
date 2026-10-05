@@ -1,9 +1,9 @@
 {
   "artifact": {
-    "name": "ndex-admin_principal_goal_shared_host_factors_v1",
+    "name": "symposium-admin_principal_goal_shared_host_factors_v1",
     "type": "ResearchGoal",
     "specification_version": "1.0",
-    "published_by": "@ndex-admin",
+    "published_by": "@symposium-admin",
     "created": "2026-01-01T00:00:00+00:00",
     "groundable": false,
     "title": "Find host mechanisms shared across viruses",

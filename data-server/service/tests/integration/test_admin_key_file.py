@@ -1,4 +1,4 @@
-"""Post-M6 stage 4: the admin key file (R-D4) on a real server. Every start-up case is decided
+"""The admin key file (R-D4) on a real server. Every start-up case is decided
 in `AdminKeyFile` and unit-tested; these check the first bind, the non-operational wiring and
 the rebind end to end, restarting only the API process: the container keeps running."""
 

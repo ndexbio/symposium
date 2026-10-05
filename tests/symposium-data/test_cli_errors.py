@@ -1,5 +1,5 @@
-"""#20 stage 2: what the CLI reports when the server is not the one it speaks to (R-I5) or is
-not operational (R-D4), against a small local server that answers like one; and the CLI's own
+"""What the CLI reports when the server is not the one it speaks to (R-I5) or is not
+operational (R-D4), against a small local server that answers like one; and the CLI's own
 pieces: keys, citations, secret files and the generated reference."""
 
 import json

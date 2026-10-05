@@ -4,6 +4,7 @@
     python3 tools/bundle.py dist/Symposium_skill.zip
 
 The zip holds:
+  README.md                  the repository's README: Symposium, the bundle, and installing it
   skills/symposium/          the `symposium` skill, with toolchain/: the tool files and context
                              its dispatch and SKILL.md need, so an installed skill needs no repo
   tools/symposium-data/      the CLI, stamped with compat.json: the data-server version this
@@ -73,7 +74,7 @@ class Bundle:
 
     def entries(self) -> dict:
         """zip path -> source path (or bytes, for the generated stamp)."""
-        out = {}
+        out = {"README.md": self.repo / "README.md"}
         for path, relative in self.files(SKILL):
             out[f"skills/symposium/{relative.as_posix()}"] = path
         for item in TOOLCHAIN:

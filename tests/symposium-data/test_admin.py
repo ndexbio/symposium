@@ -1,5 +1,5 @@
-"""#20 stage 2: the CLI's admin side against a real data server: the admin key (R-D4), the
-context (R-I3), communities, the roster and invites (R-D6), rebind-key and suspect-after."""
+"""The CLI's admin side against a real data server: the admin key (R-D4), the context
+(R-I3), communities, the roster and invites (R-D6), rebind-key and suspect-after."""
 
 import json
 import stat

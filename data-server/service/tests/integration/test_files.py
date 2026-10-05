@@ -1,4 +1,4 @@
-"""M3: files and versions: streaming, integrity, versions, tombstones, the clock, quota,
+"""Files and versions: streaming, integrity, versions, tombstones, the clock, quota,
 purge, the janitor and the scrub."""
 
 import base64

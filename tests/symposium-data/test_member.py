@@ -1,7 +1,7 @@
-"""#20 stage 3: the CLI's member side against a real data server, with every setup step done
-through the CLI's own admin commands: registration (R-D1, R-D5), files and versions (R-A,
-R-B), collections and read keys (R-E), lookups, verify and promote (R-G), and what rebind-key
-and suspect-after do to a registered member."""
+"""The CLI's member side against a real data server, with every setup step done through
+the CLI's own admin commands: registration (R-D1, R-D5), files and versions (R-A, R-B),
+collections and read keys (R-E), lookups, verify and promote (R-G), and what rebind-key and
+suspect-after do to a registered member."""
 
 import hashlib
 import json

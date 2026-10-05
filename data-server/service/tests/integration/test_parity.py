@@ -1,4 +1,4 @@
-"""M5: Symposium parity: the change feed, find, metadata query, hash lookup, promote, verify,
+"""Symposium parity: the change feed, find, metadata query, hash lookup, promote, verify,
 and export/import."""
 
 import hashlib

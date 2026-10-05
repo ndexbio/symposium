@@ -4,13 +4,14 @@
     python3 tools/bundle.py dist/Symposium_skill.zip
 
 The zip holds:
-  README.md                  the repository's README: Symposium, the bundle, and installing it
+  README.md                  the repository's README: Symposium, installing it, and participating
   skills/symposium/          the `symposium` skill, with toolchain/: the tool files and context
-                             its dispatch and SKILL.md need, so an installed skill needs no repo
-  tools/symposium-data/      the CLI, stamped with compat.json: the data-server version this
-                             bundle was built for (R-I5)
+                             its dispatch and SKILL.md need, the CLI (tools/symposium-data/,
+                             stamped with compat.json: the data-server version this bundle was
+                             built for, R-I5), and the data server's RUNBOOK.md and Kubernetes
+                             manifest, so an installed skill needs nothing else
 
-Never tests, caches or editor leftovers. Entries are sorted and dated alike, so the same tree
+Never tests, caches, the skill's own Python environment (.venv) or editor leftovers. Entries are sorted and dated alike, so the same tree
 always builds the same zip. Standard library only, Python 3.9+.
 """
 
@@ -25,7 +26,6 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SKILL = REPO / "skills" / "symposium"
-CLI = REPO / "tools" / "symposium-data"
 # The toolchain the skill's dispatch and SKILL.md reach, kept at its repository path under
 # skills/symposium/toolchain/.
 TOOLCHAIN = (
@@ -43,7 +43,10 @@ TOOLCHAIN = (
     "tools/vendor/cytoscape.min.js",
     "tools/vendor/cytoscape-svg.js",
     "tools/CANONICAL.md",
+    "tools/symposium-data",
     "server/bootstrap.py",
+    "data-server/RUNBOOK.md",
+    "data-server/docker/k8s-data-deployment.yml",
     "tools/MEMBER-AGENT-INSTRUCTIONS.md",
     "tools/roles",
     "tools/policy",
@@ -68,6 +71,7 @@ class Bundle:
             if (
                 path.is_file()
                 and not SKIPPED & set(relative.parts)
+                and not any(part.startswith(".venv") for part in relative.parts)
                 and path.suffix != ".pyc"
             ):
                 yield path, relative
@@ -82,9 +86,7 @@ class Bundle:
             for path, relative in self.files(source):
                 inner = Path(item) if source.is_file() else Path(item) / relative
                 out[f"skills/symposium/toolchain/{inner.as_posix()}"] = path
-        for path, relative in self.files(CLI):
-            out[f"tools/symposium-data/{relative.as_posix()}"] = path
-        out["tools/symposium-data/compat.json"] = (
+        out["skills/symposium/toolchain/tools/symposium-data/compat.json"] = (
             json.dumps({"data_server_version": self.data_server_version()}, indent=2)
             + "\n"
         ).encode()

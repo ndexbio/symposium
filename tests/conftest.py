@@ -3,6 +3,7 @@ once after the last, and the fixtures its tests share."""
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -55,8 +56,11 @@ def skill(suite):
 
 @pytest.fixture(autouse=True)
 def clean_slate(suite):
-    """Every test starts from an empty, operational server; the admin binding stays."""
+    """Every test starts from an empty, operational server and no skill sessions on the suite's
+    machine; the admin binding and the keystore stay."""
     suite.server.reset()
+    for sessions in ("admin", "member"):
+        shutil.rmtree(suite.home / ".symposium" / sessions, ignore_errors=True)
     yield
 
 

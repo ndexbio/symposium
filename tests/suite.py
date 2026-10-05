@@ -2,8 +2,8 @@
 use to run the CLI and the skill.
 
 One suite run is one pytest session: setUp creates one directory under /tmp for everything the
-run needs (`HOME` and its keystore, the CLI on `PATH`, the operator's and every test's working
-directory) and one data-server container, onboarded the way an operator does it; the tests run
+run needs (`HOME` and its keystore, the operator's and every test's working directory) and one
+data-server container, onboarded the way an operator does it; the tests run
 (`tests/symposium-data/`, then `tests/skills/`); tearDown removes the container and its volume
 and deletes the directory, failures included. The data server's own suites run on their own
 container (`make -C data-server test`); this suite imports their shared harness and port stub.
@@ -24,8 +24,7 @@ from harness import IMAGE, TEST_ENV, Server, docker
 
 REPO = Path(__file__).resolve().parents[1]
 CLI_DIR = REPO / "tools" / "symposium-data"
-# the CLI's Python entry, run with the suite's interpreter (the `symposium-data` launcher would
-# reach for uv and resolve the dependencies itself)
+# the CLI's Python entry, run with the suite's interpreter, which has the CLI's packages
 CLI = CLI_DIR / "cli.py"
 SKILL = REPO / "skills" / "symposium" / "scripts" / "main.py"
 ADMIN = "demo-admin"
@@ -67,13 +66,14 @@ class Suite:
     def __init__(self, root: Path):
         self.root = root
         self.home = root / "home"
-        self.bin = root / "bin"
         self.operator = root / "operator"
         self.server: Server | None = None
         self.env = {
             **os.environ,
             "HOME": str(self.home),
-            "PATH": f"{self.bin}{os.pathsep}{os.environ.get('PATH', '')}",
+            # the CLI command the skill hands its tools: the tools the suite runs directly use
+            # the repository's CLI with the suite's interpreter
+            "SYMPOSIUM_DATA_CLI": json.dumps([sys.executable, str(CLI)]),
             # no OS keychain in a test run: the keys' passphrase comes from the environment
             "SYMPOSIUM_KEY_PASSPHRASE": "suite-passphrase",
         }
@@ -81,12 +81,8 @@ class Suite:
         self.skill = Cli(SKILL, self.env)
 
     def set_up(self):
-        for directory in (self.home, self.bin, self.operator):
+        for directory in (self.home, self.operator):
             directory.mkdir(parents=True)
-        # the CLI on PATH, as `make deploy-local` installs it, running the repo's copy
-        wrapper = self.bin / "symposium-data"
-        wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{CLI}" "$@"\n')
-        wrapper.chmod(0o755)
         if not IMAGE:
             raise RuntimeError(
                 "SYMPOSIUM_DATA_TEST_IMAGE is not set; run through the top-level make test"

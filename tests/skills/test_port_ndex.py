@@ -46,19 +46,29 @@ def test_bootstrap_then_port_then_bootstrap_invites_the_authors(
     assert len(record) == 9
 
 
-def test_port_refusals_are_reported_with_their_reasons(server, skill, tmp_path):
+def test_port_refusals_are_reported_with_their_reasons(
+    server, skill, cli, suite, tmp_path
+):
     stub = NdexStub()
     try:
-        nowhere = tmp_path / "nowhere"
-        nowhere.mkdir()
-        spec = community_file(nowhere, server, "nowhere")
-        skill.ok(nowhere, "data", "context", "set", "--community-file", spec)
-        code, out = skill(nowhere, "port", credentials_file(nowhere), stub.url)
+        # a session for a community the server does not hold (one since removed)
+        nowhere = suite.home / ".symposium" / "admin" / "nowhere"
+        nowhere.mkdir(parents=True)
+        cli.ok(
+            nowhere,
+            "context",
+            "set",
+            "--community-file",
+            community_file(tmp_path, server, "nowhere"),
+        )
+        code, out = skill(tmp_path, "port", credentials_file(tmp_path), stub.url)
         assert code == 1 and out["status"] == 404
 
         bootstrap(skill, tmp_path, server)
-        assert skill(tmp_path, "port", credentials_file(tmp_path), stub.url)[0] == 0
-        code, out = skill(tmp_path, "port", credentials_file(tmp_path), stub.url)
+        demo = ("--community", "demo")
+        port = ("port", *demo, credentials_file(tmp_path), stub.url)
+        assert skill(tmp_path, *port)[0] == 0
+        code, out = skill(tmp_path, *port)
         assert code == 1 and out["status"] == 400 and "holds files" in out["error"]
     finally:
         stub.close()
@@ -75,6 +85,8 @@ def test_a_port_while_another_runs_is_refused(server, skill, tmp_path):
             sys.executable,
             str(SKILL),
             "port",
+            "--community",
+            "demo",
             str(credentials_file(first_dir)),
             stub.url,
         ],
@@ -85,7 +97,14 @@ def test_a_port_while_another_runs_is_refused(server, skill, tmp_path):
     )
     try:
         assert stub.held.wait(timeout=30), "the first port never reached the listing"
-        code, out = skill(other_dir, "port", credentials_file(other_dir), stub.url)
+        code, out = skill(
+            other_dir,
+            "port",
+            "--community",
+            "other",
+            credentials_file(other_dir),
+            stub.url,
+        )
         assert code == 1 and out["status"] == 409
         stub.released.set()
         stdout, _ = first.communicate(timeout=60)

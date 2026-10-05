@@ -4,6 +4,7 @@ the rebind end to end, restarting only the API process: the container keeps runn
 
 import json
 import time
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -120,6 +121,47 @@ def test_a_new_key_file_rebinds_the_admin(server, tmp_path):
             lambda s: s.get("fingerprint") == fingerprint(server.admin_key),
             "the session's admin key was never restored",
         )
+
+
+def restarted(server) -> str:
+    """Restart the API and wait for the new process, not the old one, to finish starting; the
+    old one can still answer for a moment, with the state it had. -> the new process's log.
+
+    It first waits for supervisord to count the current process as RUNNING (up for its first
+    5 s): a process ended before that is a failed start, and after a few supervisord gives up."""
+    ctl = ("supervisorctl", "-c", "/tmp/supervisord.conf", "status", "data-api")
+    deadline = time.time() + 30
+    while "RUNNING" not in server.exec(*ctl).stdout:
+        assert time.time() < deadline, "the API never reached RUNNING"
+        time.sleep(0.2)
+    since = datetime.now(UTC).isoformat()
+    server.restart_api()
+    deadline = time.time() + 30
+    while True:
+        logs = docker("logs", "--since", since, server.name)
+        log = logs.stdout + logs.stderr
+        if "Application startup complete." in log:
+            return log
+        assert time.time() < deadline, f"the API never started again:\n{log[-3000:]}"
+        time.sleep(0.2)
+
+
+def test_the_key_file_is_read_from_the_mounted_directory_too(server):
+    # where the Kubernetes manifest mounts the Secret holding it: /apps/admin-key/
+    mounted = f"/apps/admin-key/admin_pub_{ADMIN}.key"
+    try:
+        assert server.exec("mkdir", "-p", "/apps/admin-key").returncode == 0
+        assert server.exec("mv", KEY_FILE, mounted).returncode == 0
+        log = restarted(server)
+        # read from the file itself: without it the server would run from its backup and say so
+        assert "running from the backup" not in log
+        status = server.status()
+        assert status["mode"] == "operational" and status["admin"] == ADMIN
+        assert status["fingerprint"] == fingerprint(server.admin_key)
+    finally:
+        server.exec("mv", mounted, KEY_FILE)
+        server.exec("rmdir", "/apps/admin-key")
+        restarted(server)
 
 
 @pytest.fixture(autouse=True)

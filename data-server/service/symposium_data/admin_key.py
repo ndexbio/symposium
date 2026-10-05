@@ -1,5 +1,6 @@
 """The admin key file (R-D4): who the server admin is, decided at every start-up from
-`/apps/admin_pub_<handle>.key` and the backup of the established admin.
+`admin_pub_<handle>.key`, in `/apps/` or in `/apps/admin-key/` (where Kubernetes mounts it from
+a Secret), and the backup of the established admin.
 
 Nobody has a shell on the server, so the key file is the only way the admin's key is given or
 changed. The API reads it when it starts and never writes to the apps directory itself; the
@@ -51,24 +52,36 @@ class AdminKeyFile:
     def __init__(self, apps: Path, db: Database, records: Records, keys: PublicKeys):
         self.apps = Path(apps)
         self.backup = self.apps / "data" / "config" / "admin_pub.backup"
+        self.places = (self.apps, self.apps / "admin-key")
         self.db, self.records, self.keys = db, records, keys
 
     def resolve(self) -> AdminMode:
         files = {}
-        for path in sorted(self.apps.glob("admin_pub_*.key")):
-            files[KEY_FILE.match(path.name).group(1)] = path
+        for place in self.places:
+            for path in sorted(place.glob("admin_pub_*.key")):
+                handle = KEY_FILE.match(path.name).group(1)
+                if handle in files:
+                    return self.non_operational(
+                        AMBIGUOUS,
+                        f"two key files for '{handle}', keep exactly one: "
+                        f"{files[handle]} and {path}",
+                    )
+                files[handle] = path
         with self.db.connection() as conn:
             bound = self.records.config(conn, "admin")
             if bound is None:
                 return self.first_bind(conn, files)
             return self.established(conn, bound, files)
 
+    def where(self) -> str:
+        return " or ".join(str(place) for place in self.places)
+
     # ── not initialized ─────────────────────────────────────────────────────────────────────
     def first_bind(self, conn, files: dict) -> AdminMode:
         if not files:
             return self.non_operational(
                 NOT_PROVIDED,
-                f"no admin key file: place admin_pub_<handle>.key in {self.apps}",
+                f"no admin key file: place admin_pub_<handle>.key in {self.where()}",
             )
         if len(files) > 1:
             names = ", ".join(path.name for path in files.values())
@@ -110,7 +123,7 @@ class AdminKeyFile:
             return self.non_operational(
                 MISSING,
                 f"admin_pub_{bound}.key is missing and there is no backup of the admin's "
-                f"key; place admin_pub_{bound}.key in {self.apps}",
+                f"key; place admin_pub_{bound}.key in {self.where()}",
             )
         log.warning(
             "admin_pub_%s.key is missing: running from the backup of the admin's key",

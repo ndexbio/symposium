@@ -72,8 +72,11 @@ def apps(tmp_path):
     return tmp_path
 
 
-def place(apps, handle, content):
-    path = apps / f"admin_pub_{handle}.key"
+def place(apps, handle, content, where="."):
+    """A key file in /apps (where `docker cp` puts it) or in /apps/admin-key (the directory
+    Kubernetes mounts from the Secret)."""
+    (apps / where).mkdir(exist_ok=True)
+    path = apps / where / f"admin_pub_{handle}.key"
     path.write_text(content if isinstance(content, str) else json.dumps(content))
     return path
 
@@ -170,6 +173,34 @@ def test_two_key_files_are_ambiguous(apps):
     place(apps, "lyra", new_jwk())
     place(apps, "vega", new_jwk())
     records = FakeRecords()
+    mode = resolve(apps, records)
+    assert not mode.operational and mode.reason == "ambiguous admin key files"
+    assert records.events == []
+
+
+def test_a_key_file_in_the_mounted_directory_binds(apps):
+    jwk = new_jwk()
+    place(apps, "lyra", jwk, "admin-key")
+    records = FakeRecords()
+    mode = resolve(apps, records)
+    assert (mode.operational, mode.action, mode.handle) == (True, "bound", "lyra")
+    assert backup_of(apps) == {"handle": "lyra", "jwk": jwk}
+
+
+def test_one_key_file_in_each_place_is_ambiguous(apps):
+    place(apps, "lyra", new_jwk())
+    place(apps, "vega", new_jwk(), "admin-key")
+    records = FakeRecords()
+    mode = resolve(apps, records)
+    assert not mode.operational and mode.reason == "ambiguous admin key files"
+    assert records.events == []
+
+
+def test_the_same_handle_in_both_places_is_ambiguous_even_once_bound(apps):
+    jwk = new_jwk()
+    place(apps, "lyra", jwk)
+    place(apps, "lyra", jwk, "admin-key")
+    records = FakeRecords("lyra", jwk)
     mode = resolve(apps, records)
     assert not mode.operational and mode.reason == "ambiguous admin key files"
     assert records.events == []

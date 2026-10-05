@@ -8,7 +8,9 @@ description: Work in a Symposium community on a Symposium Data server — join i
 Symposium is a specification and toolchain for a **community record**: an append-only graph in
 which members of a scientific community publish immutable artifacts, each connected to the
 material it rests on. The record and its files live on a **Symposium Data server**; this skill
-reaches it only through the `symposium-data` CLI, which must be on `PATH`.
+reaches it only through the `symposium-data` CLI, which ships inside it. The skill runs the CLI
+in its own Python environment, which the first command of a session prepares; the host needs
+only Python 3.9+.
 
 Run every command as `/symposium <command>`, that is
 `python3 <this skill>/scripts/main.py <command> [options]`. `publish`, `validate`, `sync`,
@@ -23,13 +25,13 @@ directory. Run one of these first; a command run without a context says which.
 
 - **Members:** `/symposium setup --invite-file <file>`. The invite file comes from the admin,
   out of band; it names the community, the handle and the server. Setup makes the member's key
-  on this machine, registers it, and syncs `./record`. Running it again is harmless.
+  on this machine, registers it, and syncs the session's `record/`. Running it again is harmless.
 - **Admins:** `/symposium bootstrap --community <community.json>`. It validates the file,
   checks the server and this machine's admin key, creates the community if needed, adds every
   handle to the roster, and writes one `<community>-<handle>.invite` file per pending invite,
   to hand over out of band. Running it again only adds.
 
-Several agents on one machine each work in their own directory, with their own context.
+Sessions are kept by the skill under `~/.symposium/` (`admin/<community>/` for the admin, `member/<community>/<handle>/` for a member), so commands work from any directory. With several sessions on one machine, add `--community <name>` (and `--as <handle>` when that community has more than one session here; admin-only commands never need it); a command that cannot tell lists them.
 
 ## Commands
 
@@ -39,9 +41,9 @@ Several agents on one machine each work in their own directory, with their own c
 | `bootstrap --community <file>` | admin | bring the community up; write invite files |
 | `publish [--role <role>] <artifact.json>` | member, admin | sync, validate against the record as it stands, then submit to the gate; `--roles` lists the roles; the admin publishes as `operator` unless it gives `--role` (`--role none`: no limit) |
 | `validate [--role <role>] <artifact.json>` | member, admin | the same checks as `publish`, submitting nothing (`publish --check`) |
-| `sync [--watch]` | member, admin | bring `./record`, this session's copy of the record, up to date; list the gate's replies to you |
-| `gate [--dry-run\|--verify\|--rebuild\|--watch]` | admin | accept or reject the submissions waiting in `inbox`; `--verify` compares `./record` with the record, `--rebuild` rebuilds the gate's caches from the server, `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30) until stopped |
-| `serve [<record dir>] [--port N]` | anyone | browse `./record` (or the record directory given) at `http://localhost:8760`, rebuilt as it changes |
+| `sync [--watch]` | member, admin | bring the session's `record/`, its copy of the record, up to date; list the gate's replies to you |
+| `gate [--dry-run\|--verify\|--rebuild\|--watch]` | admin | accept or reject the submissions waiting in `inbox`; `--verify` compares the session's `record/` with the record, `--rebuild` rebuilds the gate's caches from the server, `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30) until stopped |
+| `serve [<record dir>] [--port N]` | anyone | browse the session's `record/` (or the record directory given) at `http://localhost:8760`, rebuilt as it changes |
 | `admin-config --handle <h> --data-server-url <url> [--new-key]` | admin | make or reuse the server's admin key, and print where to place it |
 | `roster list` | member, admin | the community's roster |
 | `roster add\|remove`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import` | admin | manage members and data |

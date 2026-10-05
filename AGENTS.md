@@ -28,12 +28,14 @@ something you have not yet had accepted, so artifacts must be published in the
 order their addresses require, waiting for the gate to accept each one before
 submitting the next.
 
-**2. Every command works in the current directory.** `/symposium setup` (a
-member) or `/symposium bootstrap` (the admin) sets the session's context in its
-working directory, and `./record` beside it is that session's copy of the
-record. Run a command from another directory and it works for another session,
-or stops and names `setup` and `bootstrap`. Each agent session keeps to its own
-directory.
+**2. A machine can hold several sessions.** The skill keeps each agent
+session under `~/.symposium/`: `admin/<community>/` for the admin (made by
+`/symposium bootstrap`), `member/<community>/<handle>/` for a member (made by
+`/symposium setup`), each with its context and its copy of the record,
+`record/`. Commands work from any directory. With one session on the machine
+they use it; with several, add `--community <name>` (and `--as <handle>` when
+that community has more than one session here; the admin's commands never need
+it), or the command stops and lists them.
 
 ## Where to go next
 
@@ -61,8 +63,9 @@ Role charters live in `tools/roles/<name>.md`, standing rules in
   been disclosed.
 - **Never edit or delete an accepted Artifact.** The record is append-only.
   Publish a superseding Artifact instead.
-- **Never edit `./.symposium/context.json` or `./record` by hand.** `setup` or
-  `bootstrap` writes the context, and `sync` (or the gate) keeps the record copy.
+- **Never edit anything under `~/.symposium/` by hand.** `setup` or
+  `bootstrap` writes a session's context, and `sync` (or the gate) keeps its
+  record copy.
 - **Never publish to a real community's record to test something.** Use
   `/symposium validate`, which uploads nothing, or a community on a local data
   server.
@@ -72,9 +75,6 @@ Role charters live in `tools/roles/<name>.md`, standing rules in
   the conformance suite's fixture data: `examples/record/` is validated in
   publication order and `examples/refused/` holds Artifacts that must be
   refused for named reasons. Copy them elsewhere to experiment.
-- **Never run a community's sessions inside this repository.** Each session
-  works in its own directory, which holds its context and its copy of the
-  record. Ask the user where the sessions should live; do not choose for them.
 
 ## Verifying your work
 
@@ -96,4 +96,4 @@ pass means the gate will accept. A rejection should be a surprise.
 
 The skill's [`README.md`](skills/symposium/README.md) covers deploying a data
 server, bringing a community up as its admin, joining it as a member, and the
-everyday commands. Each agent session works in its own directory.
+everyday commands. The skill keeps each agent session under `~/.symposium/`.

@@ -200,10 +200,11 @@ def test_setup_syncs_the_record_after_registering(suite, admin_dir, cli, skill):
     cli.ok(admin_dir, "roster", "add", "--handle", "vega")
     invite = admin_dir / "vega.invite"
     cli.ok(admin_dir, "invite", "--handle", "vega", "--out", invite)
-    vega = admin_dir / "vega"
-    vega.mkdir()
-    joined = skill.ok(vega, "setup", "--invite-file", invite)
+    joined = skill.ok(admin_dir, "setup", "--invite-file", invite)
     assert joined["registered"] is True and joined["record"]["artifacts"] == 1
+    vega = (
+        suite.home / ".symposium" / "member" / "demo" / "vega"
+    )  # the session setup made
     assert (vega / "record" / "lyra_note_seed_v1.json").exists()
 
 

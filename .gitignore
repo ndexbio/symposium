@@ -14,8 +14,9 @@ tools/dist/
 # the community's own roster; community.example.json is the template
 server/community.json
 
-# python tooling
+# python tooling (the skill builds its own .venv; .venv-* only while it does)
 .venv/
+.venv-*/
 .ruff_cache/
 .pytest_cache/
 

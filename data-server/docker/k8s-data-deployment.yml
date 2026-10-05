@@ -5,13 +5,14 @@
 # All state (PostgreSQL, SeaweedFS, service secrets) lives under /apps on one ReadWriteOnce
 # PVC, so the Deployment runs one replica with the Recreate strategy.
 #
-# The admin's public key (R-D4) comes from a Secret, mounted as the file
-# /apps/admin_pub_<handle>.key. Before applying, create it from the file `admin-config` wrote,
-# and set the mount path below to your admin handle:
-#   kubectl create secret generic symposium-data-admin-key \
-#     --from-file=admin_pub.key=admin_pub_<handle>.key
-# To change the admin's key, replace the Secret and restart the pod
-# (kubectl rollout restart deploy/symposium-data): the key is read at start-up.
+# The admin's public key (R-D4) comes from the Secret symposium-data-admin-key, mounted as the
+# directory /apps/admin-key/. The Secret is optional: without it the pod starts non-operational,
+# so the order is: apply this file, run `/symposium admin-config` against the server, then
+# create the Secret from the key file it wrote and restart the pod:
+#   kubectl create secret generic symposium-data-admin-key --from-file=admin_pub_<handle>.key
+#   kubectl rollout restart deploy/symposium-data
+# To change the admin's key, replace the Secret and restart the pod the same way: the key is
+# read at start-up.
 #
 # Pin the image to a released version (ndexbio/symposium-data:<version>) for production.
 ---
@@ -69,14 +70,13 @@ spec:
           volumeMounts:
             - {name: symposium-data-storage, mountPath: /apps}
             - name: symposium-data-admin-key
-              mountPath: /apps/admin_pub_demo-admin.key   # admin_pub_<your admin handle>.key
-              subPath: admin_pub.key
+              mountPath: /apps/admin-key
               readOnly: true
       volumes:
         - name: symposium-data-storage
           persistentVolumeClaim: {claimName: symposium-data-pvc}
         - name: symposium-data-admin-key
-          secret: {secretName: symposium-data-admin-key}
+          secret: {secretName: symposium-data-admin-key, optional: true}
 ---
 apiVersion: v1
 kind: Service
@@ -89,23 +89,25 @@ spec:
   ports:
     - {name: http, port: 8080, targetPort: 8080, protocol: TCP}
 ---
-# Example Ingress with TLS. Only the API port is ever exposed; SeaweedFS and PostgreSQL stay
-# inside the pod.
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: symposium-data
-spec:
-  tls:
-    - hosts: [data.example.org]
-      secretName: symposium-data-tls
-  rules:
-    - host: data.example.org
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: symposium-data
-                port: {number: 8080}
+# Example Ingress with TLS, commented out: uncomment it when the server needs a public HTTPS
+# URL, and set its host and TLS secret. Only the API port is ever exposed; SeaweedFS and
+# PostgreSQL stay inside the pod. Without it the server is reachable inside the cluster through
+# the Service, or from your machine with `kubectl port-forward svc/symposium-data 8790:8080`.
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: symposium-data
+# spec:
+#   tls:
+#     - hosts: [data.example.org]
+#       secretName: symposium-data-tls
+#   rules:
+#     - host: data.example.org
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: symposium-data
+#                 port: {number: 8080}

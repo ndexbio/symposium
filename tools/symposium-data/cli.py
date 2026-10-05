@@ -1,10 +1,5 @@
-# /// script
-# requires-python = ">=3.9"
-# dependencies = ["cryptography>=42", "keyring>=24"]
-# ///
-"""The Python entry of the symposium-data CLI (see main.py), run by the `symposium-data` launcher:
-with `uv run --script`, which reads the dependencies above, when uv is on PATH; otherwise with
-`python3`, which then needs the packages in requirements.txt.
+"""The Python entry of the symposium-data CLI (see main.py). The skill runs it with the
+interpreter of its own environment, which holds the packages in requirements.txt.
 """
 
 import sys

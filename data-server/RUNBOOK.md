@@ -8,15 +8,15 @@ Every server needs the admin's **public** key file, `admin_pub_<handle>.key`, wh
 
 1. **Run the server.** It starts **non-operational**: `GET /v1/status` answers with `"mode": "non-operational"` and the `reason`, and every other route answers `501` until the key is in place.
 
-   **Persistent.** All state lives in one named volume:
+   **Persistent.** All state lives in one directory of your machine, mounted on `/apps`:
 
    ```bash
    docker run -d --name symposium-data --restart unless-stopped \
-     -p 127.0.0.1:8790:8080 -v symposium-data:/apps \
+     -p 127.0.0.1:8790:8080 -v /path/to/your/machine/symposium-storage:/apps \
      ndexbio/symposium-data:<version>
    ```
 
-   **Ephemeral.** Without the volume, the data is lost when the container is removed. Suitable for trying it on one machine:
+   **Ephemeral.** Without the mount, the data is lost when the container is removed. Suitable for trying it on one machine:
 
    ```bash
    docker run -d --name symposium-data -p 127.0.0.1:8790:8080 \
@@ -27,7 +27,7 @@ Every server needs the admin's **public** key file, `admin_pub_<handle>.key`, wh
 
    ```bash
    docker run -d --name symposium-data --restart unless-stopped \
-     -p 8790:8080 -v symposium-data:/apps \
+     -p 8790:8080 -v /path/to/your/machine/symposium-storage:/apps \
      -e SYMPOSIUM_DATA_TRUSTED_PROXY=<proxy address> \
      ndexbio/symposium-data:<version>
    ```
@@ -35,37 +35,48 @@ Every server needs the admin's **public** key file, `admin_pub_<handle>.key`, wh
 2. **Place the admin key file and restart:**
 
    ```bash
-   docker cp admin_pub_<handle>.key symposium-data:/apps/
+   cp ~/.symposium/admin/admin_pub_<handle>.key /path/to/your/machine/symposium-storage/
    docker restart symposium-data
    ```
 
 3. **Check it:** `GET /v1/status` reports `"mode": "operational"`, the admin's handle and its key `fingerprint`. Compare the fingerprint with the one `admin-config` showed.
 
-The first line of the container log is `symposium-data <version>`. The key file stays on the volume, so later restarts, and a new container on the same volume, need nothing more.
+The first line of the container log is `symposium-data <version>`. The key file stays in the mounted directory, so later restarts, and a new container on the same directory, need nothing more. (For an ephemeral server, `docker cp ~/.symposium/admin/admin_pub_<handle>.key symposium-data:/apps/` places it.)
 
 ## Deploy remotely (Kubernetes)
 
-`docker/k8s-data-deployment.yml` holds the PVC, the Deployment, a Service and an example TLS Ingress. The admin's key comes from a Secret, mounted as the file `/apps/admin_pub_<handle>.key`.
+`docker/k8s-data-deployment.yml` holds the PVC, the Deployment, a Service and an example TLS Ingress, commented out: uncomment it when the server needs a public HTTPS URL. The admin's key comes from the Secret `symposium-data-admin-key`, mounted as the directory `/apps/admin-key/`. The Secret is optional, so the server starts **non-operational** until it exists, as a `docker run` server does until its key file is placed.
 
-```bash
-kubectl create secret generic symposium-data-admin-key --from-file=admin_pub.key=admin_pub_<handle>.key
-kubectl apply -f docker/k8s-data-deployment.yml
-kubectl wait --for=condition=Ready pod -l app=symposium-data --timeout=420s
-```
+1. **Run the server:**
 
-- **Before applying:** set your admin handle in the manifest's key mount path, edit the PVC size and the Ingress host and TLS secret, and pin the image to a released version.
+   ```bash
+   kubectl apply -f docker/k8s-data-deployment.yml
+   kubectl wait --for=condition=Ready pod -l app=symposium-data --timeout=420s
+   ```
+
+2. **Make the admin key** against it: `/symposium admin-config --handle <handle> --data-server-url <url>`, which writes `admin_pub_<handle>.key`.
+3. **Place it and restart:**
+
+   ```bash
+   kubectl create secret generic symposium-data-admin-key --from-file=admin_pub_<handle>.key
+   kubectl rollout restart deploy/symposium-data
+   ```
+
+4. **Check it:** `GET /v1/status` reports `"mode": "operational"`, the admin's handle and the `fingerprint` `admin-config` showed.
+
+- **Before applying:** edit the PVC size, pin the image to a released version, and, for a public URL, uncomment the Ingress and set its host and TLS secret. Without it, `kubectl port-forward svc/symposium-data 8790:8080` reaches the server from your machine.
 - **Storage:** one ReadWriteOnce PVC, so the Deployment runs a single replica with the `Recreate` strategy.
 - **Changing the admin's key:** replace the Secret, then `kubectl rollout restart deploy/symposium-data`. The key is read at start-up.
 - **Validating the manifest:** `docker run --rm -v "$PWD/docker:/m:ro" ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary /m/k8s-data-deployment.yml`. The `make test` integration suite runs this same check.
 
 ## The admin key file and the modes
 
-The server reads `/apps/admin_pub_<handle>.key` at every start-up (the README's "The admin key file" lists every case):
+The server reads `admin_pub_<handle>.key`, in `/apps/` or `/apps/admin-key/`, at every start-up (the README's "The admin key file" lists every case):
 
 - **First start with the file:** it binds that handle and key, and saves a backup of them under `/apps/data/config`.
 - **Operational:** `/v1/status` reports `"mode": "operational"`, the admin's handle and key `fingerprint` (its RFC 7638 thumbprint).
 - **Non-operational** (`"mode": "non-operational"`, with a `reason`): every route but `/v1/status` answers `501`, and the console says why. The reasons are no key file (`admin key not provided`), several (`ambiguous admin key files`), a file that is not a usable public key (`admin key invalid`), or, on a server already bound, neither the file nor its backup (`admin key missing`). Put the right file in place and restart; the data is untouched.
-- **Changing the admin's key:** replace the file (with Docker, `docker cp` the new one over it; on Kubernetes, replace the Secret) and restart. The server rebinds, and the old key is refused from then on. The admin's handle never changes: a file naming another handle is ignored, with an error.
+- **Changing the admin's key:** replace the file (with Docker, copy the new one over it in the mounted directory; on Kubernetes, replace the Secret) and restart. The server rebinds, and the old key is refused from then on. The admin's handle never changes: a file naming another handle is ignored, with an error.
 - **A missing key file** on a server already bound is not an outage: it runs from the backup and logs a warning.
 
 ## Many communities on one server
@@ -116,7 +127,7 @@ A community that already lives on NDEx is copied into a new, empty community on 
 
 ## Back up, export and import
 
-- **Back up:** everything is in the `/apps` volume (or PVC). Stop the server, then copy or snapshot the volume.
+- **Back up:** everything is in the directory mounted on `/apps` (or the PVC). Stop the server, then copy or snapshot it.
 - **Export one community** while the server runs (admin only). The export is one consistent snapshot: rows, read keys (hashes only), the members' public keys, and every stored payload. Invites are not included.
 
   ```bash

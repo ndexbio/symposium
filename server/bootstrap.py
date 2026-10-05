@@ -17,8 +17,9 @@ Bootstrap:
   3. creates the community if it does not exist, sets this directory's context, and adds every
      handle to the roster (only adding: nobody is ever removed);
   4. writes the invite files: it mints an invite for every roster handle that is neither
-     registered nor already invited, then writes every pending invite into this directory as
-     `<community>-<handle>.invite` (0600), and prints each path. Hand each one to its member
+     registered nor already invited, then writes every pending invite into the directory it
+     runs in (the admin's session, `~/.symposium/admin/<community>/`, when the skill runs it) as
+     `<community>-<handle>.invite` (0600), and prints each full path. Hand each one to its member
      out of band. It keeps no state about invites: a lost file is recovered by running it
      again.
 
@@ -103,7 +104,8 @@ class Bootstrap:
             if not member["registered"] and member["invite_expires"] is None:
                 path = Path(f"{community}-{member['handle']}.invite")
                 self.data.run("invite", "--handle", member["handle"], "--out", path)
-        written = self.data.run("invite", "list", "--out-dir", ".")["invites"]
+        # full paths: the invite files are in the session's directory, not the caller's
+        written = self.data.run("invite", "list", "--out-dir", Path.cwd())["invites"]
         return {
             "community": community,
             "data-server-url": context["data-server-url"],

@@ -147,6 +147,4 @@ def test_secret_files_are_owner_only(tmp_path):
 def test_the_committed_reference_is_current():
     generated = main.reference(main.build_parser(main.Commands()))
     committed = (CLI_DIR / "reference" / "COMMANDS.md").read_text()
-    assert generated == committed, (
-        "run `symposium-data --reference` and commit the result"
-    )
+    assert generated == committed, "run `cli.py --reference` and commit the result"

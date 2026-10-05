@@ -41,7 +41,7 @@ Pushing a tag `data-server-v<version>` from the `data-store` branch runs `.githu
 
 ## The admin key file
 
-Nobody has a shell on the server (R-D7): every admin operation is an admin-only route. The admin's **public** key is a file on the volume, `/apps/admin_pub_<handle>.key`, holding the public JWK that Symposium's `admin-config` writes (mode 0644). The API reads it at every start-up (R-D4):
+Nobody has a shell on the server (R-D7): every admin operation is an admin-only route. The admin's **public** key is a file, `admin_pub_<handle>.key`, holding the public JWK that Symposium's `admin-config` writes (mode 0644). It goes in `/apps/` (copied into the host directory mounted there) or in `/apps/admin-key/` (where the Kubernetes manifest mounts the Secret holding it). The API reads it at every start-up (R-D4):
 
 | At start-up | Result |
 |---|---|
@@ -51,7 +51,7 @@ Nobody has a shell on the server (R-D7): every admin operation is an admin-only 
 | Initialized, the admin's file missing, the backup present | Starts normally from the backup and logs a warning. Nothing is written to `/apps`. |
 | A key file naming another handle | Ignored, with an error naming both handles: the admin handle never changes. |
 | No key file, not initialized | Non-operational: `admin key not provided`. |
-| Several key files, not initialized | Non-operational: `ambiguous admin key files`. |
+| Several key files, not initialized, or two for one handle (one in each place) | Non-operational: `ambiguous admin key files`. |
 | The key file is not a usable public key (not JSON, not an Ed25519 public JWK, or a private key) | Non-operational: `admin key invalid`, with an error on the console saying why. Nothing is bound or rebound. |
 | Initialized, with neither the file nor the backup | Non-operational: `admin key missing`, with an error on the console. |
 

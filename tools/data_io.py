@@ -1,7 +1,9 @@
 """The toolchain's one way to the data server, and its local copy of the record.
 
 `SymposiumData` runs the `symposium-data` CLI and reads the one JSON object each command prints
-(R-I1): nothing in the toolchain makes an HTTP request to the server itself. `Mirror` is the
+(R-I1): nothing in the toolchain makes an HTTP request to the server itself. It runs the CLI
+with the command the skill prepared for the session and passed in SYMPOSIUM_DATA_CLI (a JSON
+list: the interpreter of the skill's own environment, then the CLI's `cli.py`). `Mirror` is the
 local copy of the community's record, `./record` beside the context in the session's working
 directory: sync writes it on a member's machine and the gate on the admin's, and validation
 reads it.
@@ -12,14 +14,14 @@ Standard library only, Python 3.9+, like the rest of tools/.
 from __future__ import annotations
 
 import json
-import shutil
+import os
 import subprocess
 import tempfile
 from pathlib import Path
 
-INSTALL = (
-    "the symposium-data CLI is not on PATH: install the Symposium bundle (`make deploy-local` "
-    "from a checkout, or the release's Symposium_skill.zip) and keep ~/.local/bin on PATH"
+NO_RUNTIME = (
+    "no CLI command in SYMPOSIUM_DATA_CLI: the toolchain's tools run only as /symposium "
+    "commands, which prepare it"
 )
 # The marks the toolchain finds artifacts by (shared with the port): what a member submits,
 # what the gate accepts, and what the gate replies. The gate also writes, on each version it
@@ -41,19 +43,18 @@ class DataError(Exception):
 
 
 class SymposiumData:
-    def __init__(self, program: str = "symposium-data"):
-        self.program = program
-
-    def available(self) -> bool:
-        return shutil.which(self.program) is not None
+    def __init__(self, command: list | None = None):
+        if command is None and os.environ.get("SYMPOSIUM_DATA_CLI"):
+            command = json.loads(os.environ["SYMPOSIUM_DATA_CLI"])
+        self.command = command
 
     def run(self, *args) -> dict:
         """Run one CLI command in the current directory. -> its JSON object. Raises
         DataError with the CLI's report when the command fails."""
-        if not self.available():
-            raise DataError({"error": INSTALL})
+        if not self.command:
+            raise DataError({"error": NO_RUNTIME})
         result = subprocess.run(
-            [self.program, *map(str, args)], capture_output=True, text=True
+            [*self.command, *map(str, args)], capture_output=True, text=True
         )
         try:
             out = json.loads(result.stdout)

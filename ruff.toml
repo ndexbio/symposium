@@ -7,8 +7,3 @@ extend-exclude = ["tools/vendor", "examples"]
 [lint]
 select = ["E", "F", "W", "I", "B", "UP"]
 ignore = ["E501"]
-
-[lint.per-file-ignores]
-# preflight.py must run on a broken, possibly ancient interpreter; it is deliberately
-# syntax-conservative, so its %-formatting stays.
-"tools/preflight.py" = ["UP031"]

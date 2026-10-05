@@ -22,11 +22,14 @@ INSTALL = (
     "from a checkout, or the release's Symposium_skill.zip) and keep ~/.local/bin on PATH"
 )
 # The marks the toolchain finds artifacts by (shared with the port): what a member submits,
-# what the gate accepts, and what the gate replies.
+# what the gate accepts, and what the gate replies. The gate also writes, on each version it
+# promotes and each reply it sends, the citation of the submission it decided, so the server
+# holds every decision (ported versions carry none).
 SUBMISSION_MARK = "symposium_submission"
 RECORD_MARK = "symposium_record"
 REPLY_MARK = "symposium_reply"
 IN_REPLY_TO = "symposium_in_reply_to"
+SUBMISSION_CITATION = "symposium_submission_citation"
 
 
 class DataError(Exception):

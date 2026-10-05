@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Compile a Symposium CommunityRecord into a static, navigable browser.
 
-    python browse.py ../examples/record --out dist
+    python browse.py --out dist             # ./record, this session's copy of the record
+    python browse.py <record dir> --out dist
+
+The record defaults to `./record`, the copy beside the session's context that sync (and the
+gate, on the admin's machine) keeps; it stops with an error when that is missing.
 
 This file produces the element sets the page templates consume; the presentation itself
 lives in `templates.py`.
@@ -44,7 +48,6 @@ import html
 import io
 import json
 import math
-import os
 import pathlib
 import re
 import shutil
@@ -1647,9 +1650,8 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("record_dir", nargs="?",
-                    default=os.environ.get("SYMPOSIUM_MIRROR", "../examples/record"),
-                    help="directory of canonical JSON (default: $SYMPOSIUM_MIRROR)")
+    ap.add_argument("record_dir", nargs="?", default="record",
+                    help="directory of canonical JSON (default: ./record)")
     ap.add_argument("--out", default="dist", help="output directory (default: dist)")
     ap.add_argument("--title", default=None, help="title shown on the overview")
     ap.add_argument("--quiet", action="store_true")
@@ -1657,6 +1659,10 @@ def main(argv=None):
                     help="also write one print-scaled SVG per Argument to DIR "
                          "(relative to --out): full labels, no chrome, preset layout")
     args = ap.parse_args(argv)
+    if not pathlib.Path(args.record_dir).is_dir():
+        raise SystemExit(f"ERROR: no record copy at {args.record_dir}/: run `/symposium sync` "
+                         f"here first\n  (on the admin's machine, `/symposium gate` writes the "
+                         f"gate's copy)")
     compile_record(args.record_dir, args.out, title=args.title, quiet=args.quiet,
                    figures_dir=args.figures)
     return 0

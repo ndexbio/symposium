@@ -1,6 +1,7 @@
 """#20 stage 5: the bundle (R-I8) and `make deploy-local` (R-J4): the zip holds the skill with its
 toolchain and the stamped CLI, and nothing else; deploy-local installs exactly that; and the
-installed skill works with no repository, through the installed CLI's launcher."""
+installed skill works with no repository, through the installed CLI's launcher. #21 stage 3:
+the workflow tools in the toolchain, and `validate` from the installed skill."""
 
 import json
 import os
@@ -12,6 +13,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from skills.test_workflow import note
 from suite import REPO
 
 BUNDLE = REPO / "dist" / "Symposium_skill.zip"
@@ -51,7 +53,19 @@ def test_the_bundle_holds_the_skill_its_toolchain_and_the_stamped_cli(installed)
         "skills/symposium/README.md",
         "skills/symposium/scripts/main.py",
         "skills/symposium/toolchain/tools/setup.py",
+        "skills/symposium/toolchain/tools/publish.py",
+        "skills/symposium/toolchain/tools/sync.py",
+        "skills/symposium/toolchain/tools/gate.py",
+        "skills/symposium/toolchain/tools/validate.py",
         "skills/symposium/toolchain/tools/data_io.py",
+        "skills/symposium/toolchain/tools/telemetry.py",
+        "skills/symposium/toolchain/tools/browse.py",
+        "skills/symposium/toolchain/tools/serve.py",
+        "skills/symposium/toolchain/tools/figures.py",
+        "skills/symposium/toolchain/tools/templates.py",
+        "skills/symposium/toolchain/tools/vendor/cytoscape.min.js",
+        "skills/symposium/toolchain/tools/vendor/cytoscape-svg.js",
+        "skills/symposium/toolchain/tools/CANONICAL.md",
         "skills/symposium/toolchain/server/bootstrap.py",
         "skills/symposium/toolchain/tools/MEMBER-AGENT-INSTRUCTIONS.md",
         "skills/symposium/toolchain/tools/roles/README.md",
@@ -98,8 +112,8 @@ def test_deploy_local_installs_exactly_the_bundle_and_says_so(installed):
     assert installed["output"].splitlines()[-3:] == [
         f"/symposium skill installed in {skills}/symposium; the symposium-data CLI it uses is in "
         f"{prefix}/bin (keep it on PATH)",
-        "  usage: /symposium <setup|bootstrap|port|admin-config|…> [options]    e.g. "
-        "/symposium setup --invite-file <file>",
+        "  usage: /symposium <setup|bootstrap|publish|sync|gate|validate|serve|port|"
+        "admin-config|…> [options]    e.g. /symposium setup --invite-file <file>",
         f"  full instructions: {skills}/symposium/README.md",
     ]
 
@@ -148,6 +162,23 @@ def test_the_installed_skill_sets_up_a_member_with_no_repository(
     joined = json.loads(result.stdout)
     assert result.returncode == 0, (joined, result.stderr)
     assert joined["registered"] is True and joined["handle"] == "lyra"
+    # the installed toolchain validates against the suite's server: `validate` is
+    # `publish --check`, which syncs first
+    checked = subprocess.run(
+        [
+            sys.executable,
+            str(skill),
+            "validate",
+            str(note(member, "lyra", "installed")),
+        ],
+        cwd=member,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert checked.returncode == 0, checked.stdout + checked.stderr
+    assert "--check: validation passed" in checked.stdout
     assert (
         stat.S_IMODE(
             (installed["prefix"] / "share" / "symposium-data" / "symposium-data")

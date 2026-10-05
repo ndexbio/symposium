@@ -156,8 +156,8 @@ def main(argv):
     try:
         account = data.context()["handle"]
     except DataError as e:
-        print(f"! {e}")
-        return 2
+        print(f"! {e}")            # no context here: it names setup and bootstrap
+        return 1
     sync = Sync(data, quiet=True)
     if sync.once(sync.load_state()) is None:
         print("! the data server could not be reached — nothing was checked and nothing was "

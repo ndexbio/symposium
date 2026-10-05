@@ -23,22 +23,35 @@ works in that context. A command run before either says which one to run.
   again at any time: it only adds, and it rewrites the invite files of everyone still waiting.
 - **Members:** `/symposium setup --invite-file <file>`. The invite carries the community, the
   handle and the server's URL; it is the only way to join, on a local server as on a remote
-  one. Setup makes your key on your machine (the private key never leaves it) and registers it.
+  one. Setup makes your key on your machine (the private key never leaves it), registers it, and
+  syncs `./record`, your copy of the community's record.
   Running it again is harmless.
 - **Several agents on one machine** each work in their own directory, with their own invite.
 
-Then:
+Then the everyday commands. Each works in the session's directory: `./record` beside the
+context is this session's copy of the community's record.
 
 | Command | What it does |
 |---|---|
+| `/symposium publish [--role <role>] <artifact.json>` | Submit one artifact to the gate. It syncs first, validates against the record as it stands (the same checks the gate runs), and submits only what passes; a rejection comes back as a reply that `sync` lists. `--roles` lists the roles, `--roles <name>` prints one. Needs the data server: nothing validates offline. |
+| `/symposium validate [--role <role>] <artifact.json>` | The same checks as `publish`, submitting nothing (`publish --check`). |
+| `/symposium sync [--watch]` | Bring `./record` up to date from the record, in the server's order, and list the gate's replies addressed to you. `--watch` repeats every `SYMPOSIUM_POLL` seconds (default 30). |
+| `/symposium gate [--dry-run\|--verify\|--rebuild]` | Admin: decide every submission waiting in `inbox`: accept it into the record, where the server stamps its `created`, or reply to its submitter. Every `download` held on the data server is verified. `--dry-run` decides and changes nothing; `--verify` compares `./record` with the record; `--rebuild` rebuilds `./record`'s cursor and the gate's state from the server. |
+| `/symposium serve [--port N]` | Browse `./record` at `http://localhost:8760` (or `--port`), rebuilt whenever it changes. It stops with an error when there is no `./record`: run `sync` first. |
 | `/symposium data <command> …` | Direct data work through the CLI: `put`, `get`, `version`, `delete`, `stat`, `versions`, `changes`, `find name\|hash\|meta`, `verify`, `collection create\|grant-write\|set-public`, `keys mint\|list\|revoke`, `owner whoami\|rotate`. `/symposium data <command> --help` shows its options. |
-| `/symposium roster list\|add --handle <h>\|remove --handle <h>` | Admin: the community's roster, one handle at a time. |
+| `/symposium roster list` | Any member: the community's roster, every handle on it, registered or not yet. |
+| `/symposium roster add --handle <h>\|remove --handle <h>` | Admin: change the roster, one handle at a time. |
 | `/symposium invite --handle <h> --out <file> [--hours N]` | Admin: one member's invite file. `invite list --out-dir <dir>` writes every pending one. |
 | `/symposium rebind-key --handle <h> --out <file>` | Admin: a member's key is lost or compromised. Their keys are retired, and the new invite file lets them register a new one. |
 | `/symposium suspect-after --handle <h> --at <instant>` | Admin: flag everything the member writes after an instant (ISO 8601 with a timezone). Nothing is deleted. |
 | `/symposium purge --cite <citation>` | Admin: free one version's content; it then answers that it was purged, with its metadata. |
 | `/symposium export`, `/symposium import` | Admin: see section 4. |
 | `/symposium admin-config …` | Admin: see section 2. |
+
+`publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit code
+is the result (0 = done; `serve` and `sync --watch` run until stopped). Every other command
+prints one JSON object: `setup`, `bootstrap`, `port`, the admin commands (`admin-config`,
+`roster`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import`) and `data …`.
 
 ## 2. Deploying a data server
 

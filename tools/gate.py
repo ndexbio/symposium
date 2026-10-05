@@ -28,8 +28,9 @@ is sent twice.
   python gate.py --verify     compare the copy's artifacts with the `record` feed; change nothing
   python gate.py --rebuild    discard the copy's and the gate's caches, rebuild them, then exit
 
-Everything goes through the `symposium-data` CLI (R-I1). Exit 0 = the pass ran; 1 = the data
-server could not be reached, or the copy differs from the record (`--verify`).
+Everything goes through the `symposium-data` CLI (R-I1). Exit 0 = the pass ran; 1 = no context
+in this directory (the message names `/symposium setup` and `bootstrap`), the data server could
+not be reached, or the copy differs from the record (`--verify`).
 """
 
 from __future__ import annotations
@@ -402,6 +403,11 @@ class Gate:
 
 def main(argv) -> int:
     gate = Gate(dry="--dry-run" in argv)
+    try:
+        gate.data.context()  # local: with none, the CLI's message names setup and bootstrap
+    except DataError as e:
+        print(f"! {e}")
+        return 1
     if "--rebuild" in argv:
         return gate.rebuild()
     if "--verify" in argv:

@@ -1,17 +1,34 @@
 """#20 stage 4: the `symposium` skill as people use it (R-I7): `/symposium bootstrap` (admins)
 and `/symposium setup` (members) over the CLI, the context they set, and what the skill says
-when something is missing."""
+when something is missing. #21 stage 3: the workflow commands (`publish`, `validate`, `sync`,
+`gate`, `serve`) through the skill."""
 
 import json
 import os
 import stat
+import subprocess
+import sys
 from pathlib import Path
 
-from suite import ADMIN, Cli, community_file
+from skills.test_workflow import note
+from suite import ADMIN, SKILL, Cli, community_file, enroll
 
 
 def invite_files(directory: Path) -> list:
     return sorted(p.name for p in directory.glob("*.invite"))
+
+
+def report(suite, cwd: Path, *args) -> tuple[int, str]:
+    """A workflow command through the skill: a free-text report, its exit code the result."""
+    result = subprocess.run(
+        [sys.executable, str(SKILL), *map(str, args)],
+        cwd=cwd,
+        env=suite.env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    return result.returncode, result.stdout + result.stderr
 
 
 def test_without_the_cli_on_path_the_skill_names_the_install_step(
@@ -24,11 +41,40 @@ def test_without_the_cli_on_path_the_skill_names_the_install_step(
 
 def test_usage_and_an_unknown_command(skill, tmp_path):
     usage = skill.ok(tmp_path, "--help")
-    assert usage["usage"].startswith("/symposium <setup|bootstrap|port|admin-config")
-    code, out = skill(
-        tmp_path, "publish"
-    )  # a workflow command: not part of the skill yet
-    assert code == 1 and "unknown command" in out["error"]
+    assert usage["usage"].startswith(
+        "/symposium <setup|bootstrap|publish|sync|gate|validate|serve|port|admin-config"
+    )
+    code, out = skill(tmp_path, "frobnicate")
+    assert code == 1 and "unknown command 'frobnicate'" in out["error"]
+
+
+def test_a_workflow_command_without_a_context_names_setup_and_bootstrap(
+    suite, tmp_path
+):
+    for command in (["publish", "a.json"], ["validate", "a.json"], ["sync"], ["gate"]):
+        code, out = report(suite, tmp_path, *command)
+        assert code == 1, (command, out)
+        assert "/symposium setup --invite-file" in out, (command, out)
+        assert "/symposium bootstrap --community" in out, (command, out)
+        assert "COULD NOT REACH" not in out and "could not be reached" not in out
+
+
+def test_serve_without_a_record_copy_says_to_sync(suite, tmp_path):
+    code, out = report(suite, tmp_path, "serve")
+    assert code == 1 and "no record copy at" in out and "/symposium sync" in out
+
+
+def test_the_workflow_through_the_skill(suite, admin_dir, cli):
+    lyra = enroll(cli, admin_dir, "lyra")
+    vega = enroll(cli, admin_dir, "vega")
+    code, out = report(suite, lyra, "validate", note(lyra, "lyra", "check"))
+    assert code == 0 and "--check: validation passed" in out, out
+    code, out = report(suite, lyra, "publish", note(lyra, "lyra", "seed"))
+    assert code == 0 and "submitted  symposium-data:" in out, out
+    code, out = report(suite, admin_dir, "gate")
+    assert code == 0 and "ACCEPTED" in out, out
+    code, out = report(suite, vega, "sync")
+    assert code == 0 and "+1: lyra_note_seed_v1" in out, out
 
 
 def test_a_command_without_a_context_names_setup_and_bootstrap(skill, tmp_path):

@@ -5,10 +5,19 @@ every data interaction runs the `symposium-data` CLI (R-I1).
 
     setup --invite-file <file>             members: join a community (run first in a session)
     bootstrap --community <file>           admins: bring a community up (run first in a session)
+    publish [--role <role>] <artifact.json>
+                                           submit an artifact to the gate (`--check`: validate only)
+    validate <artifact.json>               validate only: `publish --check`
+    sync [--watch]                         bring ./record, this session's copy of the record, up to date
+    gate [--dry-run|--verify|--rebuild]    admins: decide the submissions waiting in inbox
+    serve [--port N]                       browse ./record in a web browser, rebuilt as it changes
     port <ndex_credentials_file> <url>     admins: port a community's record (port-ndex)
     admin-config | roster | invite | rebind-key | suspect-after | purge | export | import
                                            admins: the server admin's commands
     data <symposium-data command …>        direct data work: put, get, keys, collection, find, …
+
+`publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit
+code is the result (0 = done); every other command prints one JSON object.
 
 Standard library only, Python 3.9+.
 """
@@ -36,9 +45,17 @@ ADMIN = (
     "export",
     "import",
 )
+# the workflow commands: each runs its tool from the toolchain
+WORKFLOW = {
+    "publish": "publish.py",
+    "sync": "sync.py",
+    "gate": "gate.py",
+    "serve": "serve.py",
+}
 USAGE = (
-    "/symposium <setup|bootstrap|port|admin-config|roster|invite|rebind-key|suspect-after|"
-    "purge|export|import|data> [options]    e.g. /symposium setup --invite-file <file>"
+    "/symposium <setup|bootstrap|publish|sync|gate|validate|serve|port|admin-config|roster|"
+    "invite|rebind-key|suspect-after|purge|export|import|data> [options]    "
+    "e.g. /symposium setup --invite-file <file>"
 )
 INSTALL = (
     "the symposium-data CLI is not on PATH: install the Symposium bundle (`make deploy-local` "
@@ -52,6 +69,15 @@ def command_line(command: str, rest: list) -> list | None:
         return [sys.executable, str(TOOLCHAIN / "tools" / "setup.py"), *rest]
     if command == "bootstrap":
         return [sys.executable, str(TOOLCHAIN / "server" / "bootstrap.py"), *rest]
+    if command in WORKFLOW:
+        return [sys.executable, str(TOOLCHAIN / "tools" / WORKFLOW[command]), *rest]
+    if command == "validate":
+        return [
+            sys.executable,
+            str(TOOLCHAIN / "tools" / "publish.py"),
+            "--check",
+            *rest,
+        ]
     if command == "port":  # port-ndex
         return [sys.executable, str(SKILL / "scripts" / "port_ndex.py"), *rest]
     if command in ADMIN:

@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Serve the record browser and rebuild it as the record grows.
 
-    python serve.py ../examples/record               # http://localhost:8760
-    SYMPOSIUM_MIRROR=./record python serve.py    # against a live mirror
+    python serve.py                  # ./record, this session's copy: http://localhost:8760
+    python serve.py <record dir>
+
+Run it as `/symposium serve`. The record defaults to `./record`, the copy beside the session's
+context that sync (and the gate, on the admin's machine) keeps; it stops with an error when
+that is missing.
 
 Deliberately a full recompile on every change, with no incremental patching. A
 twenty-artifact record compiles in about 70 ms and the whole thing is linear, so at any
@@ -19,7 +23,6 @@ from __future__ import annotations
 import argparse
 import http.server
 import json
-import os
 import pathlib
 import socketserver
 import sys
@@ -113,9 +116,8 @@ class Server(socketserver.ThreadingTCPServer):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("record_dir", nargs="?",
-                    default=os.environ.get("SYMPOSIUM_MIRROR", "../examples/record"),
-                    help="directory of canonical JSON (default: $SYMPOSIUM_MIRROR)")
+    ap.add_argument("record_dir", nargs="?", default="record",
+                    help="directory of canonical JSON (default: ./record)")
     ap.add_argument("--out", default="dist")
     ap.add_argument("--port", type=int, default=8760)
     ap.add_argument("--title", default=None)
@@ -126,7 +128,8 @@ def main(argv=None):
     record = pathlib.Path(args.record_dir).resolve()
     out = pathlib.Path(args.out).resolve()
     if not record.is_dir():
-        raise SystemExit(f"ERROR: no such record directory: {record}")
+        raise SystemExit(f"ERROR: no record copy at {record}: run `/symposium sync` here first\n"
+                         f"  (on the admin's machine, `/symposium gate` writes the gate's copy)")
 
     rebuild(str(record), str(out), args.title)
     threading.Thread(target=watch, args=(str(record), str(out), args.title, args.interval),

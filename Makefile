@@ -47,5 +47,5 @@ deploy-local: build
 		chmod 755 "$(PREFIX)/share/symposium-data/symposium-data" && \
 		ln -sfn "$(PREFIX)/share/symposium-data/symposium-data" "$(PREFIX)/bin/symposium-data"
 	@echo "/symposium skill installed in $(SKILLS)/symposium; the symposium-data CLI it uses is in $(PREFIX)/bin (keep it on PATH)"
-	@echo "  usage: /symposium <setup|bootstrap|port|admin-config|…> [options]    e.g. /symposium setup --invite-file <file>"
+	@echo "  usage: /symposium <setup|bootstrap|publish|sync|gate|validate|serve|port|admin-config|…> [options]    e.g. /symposium setup --invite-file <file>"
 	@echo "  full instructions: $(SKILLS)/symposium/README.md"

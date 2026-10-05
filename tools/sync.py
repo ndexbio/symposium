@@ -218,6 +218,11 @@ class Sync:
 
 def main(argv):
     sync = Sync()
+    try:
+        sync.data.context()  # local: with none, the CLI's message names setup and bootstrap
+    except DataError as e:
+        print(f"! {e}")
+        return 1
     sync.mirror.root.mkdir(parents=True, exist_ok=True)
     state = sync.load_state()
 

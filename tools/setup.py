@@ -8,14 +8,15 @@ handle and the data server's URL, so nothing else is needed, on a local server o
 one. Setup:
   1. sets this directory's context from the invite file (`symposium-data context set`);
   2. makes your key on this machine and registers it with the invite (`symposium-data owner
-     register`). Your private key never leaves this machine, and the invite works once.
+     register`). Your private key never leaves this machine, and the invite works once;
+  3. syncs: `./record`, beside the context, becomes your copy of the community's record.
 
 It is idempotent: run again with the same invite, it reports that you are already registered
 with this machine's key and changes nothing. Run it in another directory with another invite
 to join another community; every agent session works in its own directory.
 
 Everything goes through the `symposium-data` CLI (R-I1); this script never contacts the data
-server itself. It prints one JSON object. (Syncing the record after joining arrives with #21.)
+server itself. It prints one JSON object.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from data_io import DataError, SymposiumData  # noqa: E402
+from sync import Sync  # noqa: E402
 
 
 class Setup:
@@ -37,12 +39,18 @@ class Setup:
     def run(self, invite_file: str) -> dict:
         context = self.data.run("context", "set", "--invite-file", invite_file)["context"]
         registered = self.data.run("owner", "register")
+        sync = Sync(self.data, quiet=True)
+        synced = sync.once(sync.load_state())
+        if synced is None:
+            raise DataError({"error": "registered, but the record could not be synced: run "
+                             "`/symposium sync` once the server answers"})
         return {
             "community": context["community"],
             "handle": context["handle"],
             "data-server-url": context["data-server-url"],
             "registered": registered["registered"],
             "fingerprint": registered["fingerprint"],
+            "record": {"artifacts": synced["artifacts"], "replies": synced["replies"]},
         }
 
 

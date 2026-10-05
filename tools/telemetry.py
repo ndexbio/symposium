@@ -83,16 +83,15 @@ def session_id(actor, role=None):
 
     `SYMPOSIUM_SESSION` if it is set — set it when two sessions of one account share a role
     on one machine. Otherwise it is derived from the account, the role, the machine, and the
-    mirror directory, which the session template already tells you to give each session its
-    own copy of. Derived rather than generated, so every command in a session agrees on it
+    session's working directory, which every session has its own of (its context and its copy
+    of the record live there). Derived rather than generated, so every command in a session agrees on it
     without anything being passed around, and so a log collected from another machine keeps
     its own identity when it is pooled with the rest.
     """
     explicit = os.environ.get("SYMPOSIUM_SESSION")
     if explicit:
         return explicit
-    mirror = Path(os.environ.get("SYMPOSIUM_MIRROR", "./record")).resolve().name
-    return f"{actor or '?'}:{role or '-'}:{_host()}:{mirror}"
+    return f"{actor or '?'}:{role or '-'}:{_host()}:{Path.cwd().name}"
 
 
 def split_findings(findings):

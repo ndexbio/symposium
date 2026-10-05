@@ -53,7 +53,7 @@ symposium-data communities list [-h]
 
 ## `roster list`
 
-list the roster
+every handle on the roster, registered or not yet (any member)
 
 ```
 symposium-data roster list [-h]
@@ -61,7 +61,7 @@ symposium-data roster list [-h]
 
 ## `roster add`
 
-add a handle
+add a handle (admin)
 
 ```
 symposium-data roster add [-h] --handle HANDLE
@@ -69,7 +69,7 @@ symposium-data roster add [-h] --handle HANDLE
 
 ## `roster remove`
 
-remove a handle
+remove a handle (admin)
 
 ```
 symposium-data roster remove [-h] --handle HANDLE
@@ -125,10 +125,10 @@ symposium-data import [-h] --from FROM_ --community-file COMMUNITY_FILE
 
 ## `changes`
 
-a page of a collection's changes
+a collection's changes since a cursor: one page, or with --all every page
 
 ```
-symposium-data changes [-h] --collection COLLECTION [--since SINCE] [--limit LIMIT]
+symposium-data changes [-h] --collection COLLECTION [--since SINCE] [--limit LIMIT] [--all]
 ```
 
 ## `stat`

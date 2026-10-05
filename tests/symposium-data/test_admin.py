@@ -135,7 +135,7 @@ def test_invites_are_files_and_never_printed(server, admin_dir, cli, tmp_path):
     context = cli.ok(member, "context", "set", "--invite-file", out)["context"]
     assert context["role"] == "member" and context["handle"] == "lyra"
     assert "invite" not in context  # the secret stays in its file
-    code, admin_only = cli(member, "roster", "list")
+    code, admin_only = cli(member, "roster", "add", "--handle", "vega")
     assert code == 1 and "admin command" in admin_only["error"]
 
 

@@ -1,9 +1,8 @@
 """Conformance validator for the Symposium specification, canonical JSON profile.
 
-Pure functions over canonical JSON — no network, no NDEx. An agent runs this locally before
-submitting; the admin gate runs the identical code before accepting. Same verdict both times.
-
-  python validate.py <candidate.json> [record_dir/]
+Pure functions over canonical JSON, with no network: a library, with no command line of its own.
+`publish` runs it before submitting, against the record and the members it has just synced; the
+gate runs the identical code before accepting. Same verdict both times.
 
 Severity:
   FAIL   - a MUST is violated. The gate rejects.
@@ -17,9 +16,7 @@ import csv
 import io
 import json
 import re
-import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
 SPEC_VERSION = "1.0"
 ARTIFACT_TYPES = {"Argument", "Data", "ScientificPublication", "Analysis", "Model",
@@ -854,28 +851,3 @@ def validate(candidate, record=(), members=()):
 
 def passed(findings):
     return not any(x["level"] == "FAIL" for x in findings)
-
-
-def report(findings, name=""):
-    fails = [x for x in findings if x["level"] == "FAIL"]
-    revs = [x for x in findings if x["level"] == "REVIEW"]
-    print(f"{name}: {'ACCEPT' if not fails else f'REJECT ({len(fails)} failures)'}"
-          f"{f' +{len(revs)} review' if revs else ''}")
-    for x in fails + revs:
-        print(f"   [{x['level']:6} {x['check']:8}] {x['msg']}")
-    return not fails
-
-
-def main(argv):
-    if len(argv) < 2:
-        print(__doc__)
-        return 2
-    cand = json.loads(Path(argv[1]).read_text())
-    rec = [json.loads(p.read_text()) for p in Path(argv[2]).glob("*.json")] if len(argv) > 2 else []
-    members = {h["artifact"]["published_by"].lstrip("@") for h in rec if h.get("artifact", {}).get("published_by")}
-    members |= {cand.get("artifact", {}).get("published_by", "@").lstrip("@")}
-    return 0 if report(validate(cand, rec, members), cand.get("artifact", {}).get("name", argv[1])) else 1
-
-
-if __name__ == "__main__":
-    sys.exit(main(sys.argv))

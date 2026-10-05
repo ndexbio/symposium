@@ -8,7 +8,6 @@ ROUTES = [
     ("POST", "/v1/communities", {"name": "other"}),
     ("GET", "/v1/communities", None),
     ("POST", "/v1/communities/import", None),
-    ("GET", "/v1/demo/roster", None),
     ("POST", "/v1/demo/roster/vega", None),
     ("DELETE", "/v1/demo/roster/lyra", None),
     ("POST", "/v1/demo/invites", {"handle": "lyra"}),

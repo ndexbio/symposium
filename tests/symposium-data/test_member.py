@@ -30,6 +30,7 @@ def test_registration_by_invite_file_is_idempotent(admin_dir, cli):
     assert pubkey["fingerprint"] == me["kid"] == again["fingerprint"]
     roster = cli.ok(admin_dir, "roster", "list")["roster"]
     assert roster == [{"handle": "lyra", "registered": True, "invite_expires": None}]
+    assert cli.ok(lyra, "roster", "list")["roster"] == roster  # any member reads it too
 
 
 def test_a_member_context_cannot_run_admin_commands_nor_an_admin_member_ones(
@@ -326,3 +327,32 @@ def test_after_suspect_after_a_members_writes_are_flagged(admin_dir, cli):
     assert cli.ok(lyra, "owner", "whoami")["suspect_after"].startswith(
         early["created"][:19]
     )
+
+
+def test_changes_all_pages_through_the_whole_feed(admin_dir, cli):
+    lyra = enroll(cli, admin_dir, "lyra")
+    for i in range(3):
+        cli.ok(
+            lyra,
+            "put",
+            write(lyra, f"f{i}.txt", b"x%d" % i),
+            "--collection",
+            "files",
+            "--name",
+            f"f{i}.txt",
+        )
+    page = cli.ok(lyra, "changes", "--collection", "files", "--limit", 2)
+    assert len(page["items"]) == 2 and page["more"] is True
+    whole = cli.ok(lyra, "changes", "--collection", "files", "--limit", 2, "--all")
+    assert [i["name"] for i in whole["items"]] == ["f0.txt", "f1.txt", "f2.txt"]
+    assert whole["more"] is False and whole["next_since"] == whole["items"][-1]["seq"]
+    later = cli.ok(
+        lyra,
+        "changes",
+        "--collection",
+        "files",
+        "--since",
+        whole["next_since"],
+        "--all",
+    )
+    assert later["items"] == []

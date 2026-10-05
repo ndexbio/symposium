@@ -29,6 +29,8 @@ CLI = REPO / "tools" / "symposium-data"
 # skills/symposium/toolchain/.
 TOOLCHAIN = (
     "tools/setup.py",
+    "tools/sync.py",
+    "tools/validate.py",
     "tools/data_io.py",
     "server/bootstrap.py",
     "tools/MEMBER-AGENT-INSTRUCTIONS.md",

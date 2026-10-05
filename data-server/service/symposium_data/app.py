@@ -422,11 +422,12 @@ def whoami(community: str, request: Request):
 
 @app.get("/v1/{community}/roster")
 def roster(community: str, request: Request):
-    """The roster, one entry per handle: whether it has registered, and when its pending
-    invite expires (admin only; R-D6)."""
+    """The roster, one entry per handle, registered or not yet: whether it has registered,
+    and when its pending invite expires (R-D6). Any member of the community may read it, as
+    the admin may: members validate addresses to one another (`@handle`) against it."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        owner_of(conn, request, community)  # a member of this community, or the admin
         return {
             "community": community,
             "roster": [

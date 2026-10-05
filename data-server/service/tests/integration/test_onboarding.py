@@ -5,7 +5,15 @@ import time
 
 import httpx
 import pytest
-from conftest import Owner, create_community, init_admin, invite, psql
+from conftest import (
+    Owner,
+    create_community,
+    enroll,
+    init_admin,
+    invite,
+    psql,
+    set_roster,
+)
 
 
 @pytest.fixture
@@ -148,3 +156,52 @@ def test_registration_needs_an_invite(demo):
     assert Owner(server, "lyra").register("demo").status_code == 403
     status = httpx.get(f"{server.url}/v1/status").json()
     assert "registration" not in status and "public_base_url" not in status
+
+
+def test_any_member_reads_the_whole_roster(demo):
+    # members validate addresses to one another (`@handle`), so each may read every handle on
+    # its community's roster, registered or not yet; nobody outside the community can
+    server, admin = demo
+    for handle in ("lyra", "vega", "rigel"):
+        httpx.post(roster_url(server, handle), headers=admin.headers())
+    lyra = Owner(server, "lyra")
+    lyra.register("demo", invite=invite(admin, "demo", "lyra").json()["invite"])
+    invited = invite(admin, "demo", "vega").json()  # invited, not yet joined
+
+    listed = httpx.get(roster_url(server), headers=lyra.headers())
+    assert listed.status_code == 200, listed.text
+    members = {m["handle"]: m for m in listed.json()["roster"]}
+    assert sorted(members) == ["lyra", "rigel", "vega"]
+    assert members["lyra"]["registered"] is True
+    assert members["vega"] == {
+        "handle": "vega",
+        "registered": False,
+        "invite_expires": invited["expires"],
+    }
+    assert members["rigel"] == {
+        "handle": "rigel",
+        "registered": False,
+        "invite_expires": None,
+    }
+    assert "invite" not in listed.text.replace(
+        "invite_expires", ""
+    )  # no invite secrets
+
+    assert httpx.get(roster_url(server)).status_code == 401
+    httpx.post(
+        f"{server.url}/v1/demo/collections",
+        json={"name": "project"},
+        headers=lyra.headers(),
+    )
+    key = httpx.post(
+        f"{server.url}/v1/demo/collections/project/keys",
+        json={"label": "reviewer"},
+        headers=lyra.headers(),
+    ).json()["key"]
+    by_key = httpx.get(roster_url(server), headers={"Authorization": f"Bearer {key}"})
+    assert by_key.status_code == 403  # a read key only reads files
+    set_roster(server, admin, "other", ["bob"])
+    bob = Owner(server, "bob")
+    enroll(admin, bob, "other")
+    elsewhere = httpx.get(roster_url(server), headers=bob.headers())
+    assert elsewhere.status_code == 401  # a token is good only in its own community

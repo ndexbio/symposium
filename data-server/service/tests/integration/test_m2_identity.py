@@ -89,7 +89,9 @@ def test_only_the_admin_sets_the_roster(community):
     lyra = Owner(server, "lyra")
     enroll(admin, lyra, "demo")
     url = server.url + "/v1/demo/roster"
-    assert httpx.get(url, headers=lyra.headers()).status_code == 403
+    assert (
+        httpx.get(url, headers=lyra.headers()).status_code == 200
+    )  # any member lists it
     assert httpx.post(f"{url}/mallory", headers=lyra.headers()).status_code == 403
     assert httpx.delete(f"{url}/vega", headers=lyra.headers()).status_code == 403
     assert httpx.post(f"{url}/mallory").status_code == 401

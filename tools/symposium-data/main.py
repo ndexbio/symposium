@@ -590,7 +590,8 @@ class Commands:
         return self.admin().communities()
 
     def roster_list(self, _args) -> dict:
-        return self.admin().roster()
+        """Every handle on the roster, registered or not yet: any member may read it."""
+        return self.signed_in().roster()
 
     def roster_add(self, args) -> dict:
         return self.admin().add_to_roster(args.handle)
@@ -897,7 +898,16 @@ class Commands:
         return self.signed_in().verify(args.cite, args.before, args.sha256)
 
     def changes(self, args) -> dict:
-        return self.signed_in().changes(args.collection, args.since, args.limit)
+        server = self.signed_in()
+        page = server.changes(args.collection, args.since, args.limit)
+        if not args.all:
+            return page
+        # every page from --since on, as one object; never silently capped (R-G3)
+        items = list(page["items"])
+        while page["more"]:
+            page = server.changes(args.collection, page["next_since"], args.limit)
+            items.extend(page["items"])
+        return {"items": items, "next_since": page["next_since"], "more": False}
 
     def stat(self, args) -> dict:
         return self.signed_in().stat(*parse_ref(args.ref, args.version))
@@ -1005,12 +1015,20 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     p.add_argument("--name", required=True)
     command(actions, "list", commands.communities_list, "list the communities")
 
-    roster = sub.add_parser("roster", help="the community's roster (admin)")
+    roster = sub.add_parser(
+        "roster",
+        help="the community's roster: any member lists it, the admin changes it",
+    )
     actions = roster.add_subparsers(dest="action", metavar="<action>", required=True)
-    command(actions, "list", commands.roster_list, "list the roster")
+    command(
+        actions,
+        "list",
+        commands.roster_list,
+        "every handle on the roster, registered or not yet (any member)",
+    )
     for name, func, text in (
-        ("add", commands.roster_add, "add a handle"),
-        ("remove", commands.roster_remove, "remove a handle"),
+        ("add", commands.roster_add, "add a handle (admin)"),
+        ("remove", commands.roster_remove, "remove a handle (admin)"),
     ):
         command(actions, name, func, text).add_argument("--handle", required=True)
 
@@ -1062,10 +1080,16 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     p.add_argument("--from", dest="from_", required=True)
     p.add_argument("--community-file", required=True)
 
-    p = command(sub, "changes", commands.changes, "a page of a collection's changes")
+    p = command(
+        sub,
+        "changes",
+        commands.changes,
+        "a collection's changes since a cursor: one page, or with --all every page",
+    )
     p.add_argument("--collection", required=True)
     p.add_argument("--since", type=int, default=0)
-    p.add_argument("--limit", type=int, default=100)
+    p.add_argument("--limit", type=int, default=100, help="per page (at most 1000)")
+    p.add_argument("--all", action="store_true", help="every page from --since on")
 
     for name, func, text in (
         ("stat", commands.stat, "a version's metadata"),

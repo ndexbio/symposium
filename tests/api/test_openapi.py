@@ -55,12 +55,12 @@ SKILL_COMMANDS = [
 
 @pytest.fixture(scope="module")
 def spec() -> dict:
-    return yaml.safe_load((API / "openapi.yaml").read_text())
+    return yaml.safe_load((API / "openapi.yaml").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
 def design() -> str:
-    return (API / "DESIGN.md").read_text()
+    return (API / "DESIGN.md").read_text(encoding="utf-8")
 
 
 def operations(spec):

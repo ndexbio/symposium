@@ -51,6 +51,8 @@ ADMIN_ONLY = {
     "gate",
     "port",
 }
+# an admin-only command's subcommands that any member runs: they only read
+MEMBERS_TOO = {"roster": {"list"}}
 # options whose value is a path the caller gave, relative to the caller's directory
 PATH_OPTIONS = {
     "--invite-file",
@@ -222,16 +224,31 @@ class Sessions:
             directory.mkdir(parents=True, exist_ok=True)
             return directory, self.at(directory), rest
         session = self.chosen()
-        if command in ADMIN_ONLY and session.role != "admin":
+        if self.admin_only(command, rest) and session.role != "admin":
             raise SessionError(
                 {
-                    "error": f"`{command}` is the admin's, and this agent session works as "
+                    "error": f"`{self.named_command(command, rest)}` is the admin's, and this "
+                    "agent session works as "
                     f"{session.label()}: switch with "
                     f"`/symposium use {session.community} <the admin's handle>`",
                     "sessions": [s.view() for s in self.all() if s.role == "admin"],
                 }
             )
         return session.directory, session, rest
+
+    def admin_only(self, command: str, rest: list) -> bool:
+        """Only the admin runs it: an admin-only command, but not a subcommand any member runs
+        (`roster list`)."""
+        if command not in ADMIN_ONLY:
+            return False
+        return not (rest and rest[0] in MEMBERS_TOO.get(command, set()))
+
+    def named_command(self, command: str, rest: list) -> str:
+        """The command as a refusal names it: with its subcommand where members run others
+        (`roster add`)."""
+        if command in MEMBERS_TOO and rest and not rest[0].startswith("-"):
+            return f"{command} {rest[0]}"
+        return command
 
     def chosen(self) -> Session:
         """The current session, or the machine's only one."""

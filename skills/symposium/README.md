@@ -33,8 +33,8 @@ directory and nobody creates or enters one:
 | `~/.symposium/member/<community>/<handle>/` | a member's session: `setup` makes it from the invite |
 
 Each holds the session's context, its copy of the record (`record/`) and its event log. `setup` and `bootstrap` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another, and `/symposium use` alone lists them all. Every other command works in the current session (or, when the agent session has chosen none, the machine's only one). Each agent session keeps its own choice, so several agents on one machine never change each other's. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`).
-An admin-only command (the admin commands, `gate`, `port`) refuses in a member's session and
-names the `use` command for the community's admin. Relative paths you give a command are read from the directory you are in.
+An admin-only command (the admin commands, `gate`, `port`; `roster list` is any member's)
+refuses in a member's session and names the `use` command for the community's admin. Relative paths you give a command are read from the directory you are in.
 
 - **Admins:** `/symposium bootstrap --community-file community.json` creates the community if
   needed, adds its members to the roster and writes their invite files, one

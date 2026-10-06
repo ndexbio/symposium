@@ -151,9 +151,11 @@ def test_use_lists_switches_and_keeps_the_admins_commands_for_the_admin(
     assert skill.ok(tmp_path, "data", "changes", "--collection", "record")[
         "session"
     ] == ("demo/lyra")
-    code, out = skill(
-        tmp_path, "roster", "list"
-    )  # the admin's, refused in lyra's session
+    # any member reads the roster; changing it is the admin's, refused in lyra's session
+    listed = skill.ok(tmp_path, "roster", "list")
+    assert listed["session"] == "demo/lyra"
+    assert [m["handle"] for m in listed["roster"]] == ["lyra"]
+    code, out = skill(tmp_path, "roster", "add", "--handle", "vega")
     assert code == 1 and "/symposium use demo <the admin's handle>" in out["error"]
     code, out = skill(
         tmp_path, "use"

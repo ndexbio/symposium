@@ -156,6 +156,22 @@ def test_an_admin_command_is_refused_in_a_members_session(root, caller, table):
     assert "/symposium use demo <the admin's handle>" in refused.value.report["error"]
 
 
+def test_a_member_lists_the_roster_but_does_not_change_it(root, caller, table):
+    session(root, "admin", "demo", handle="demo-admin", role="admin")
+    lyra = session(root, "member", "demo", "lyra", handle="lyra", role="member")
+    sessions = agent_session(root, caller, table, 300)
+    sessions.use(["demo", "lyra"])
+    assert sessions.place("roster", ["list"])[0] == lyra  # any member reads it
+    for change in (["add", "--handle", "vega"], ["remove", "--handle", "vega"]):
+        with pytest.raises(SessionError) as refused:
+            sessions.place("roster", change)
+        assert refused.value.report["error"].startswith(
+            f"`roster {change[0]}` is the admin's"
+        )
+    with pytest.raises(SessionError):
+        sessions.place("roster", [])
+
+
 def test_a_reused_pid_is_a_new_agent_session(root, caller, table):
     session(root, "admin", "demo", handle="demo-admin", role="admin")
     session(root, "member", "demo", "lyra", handle="lyra", role="member")

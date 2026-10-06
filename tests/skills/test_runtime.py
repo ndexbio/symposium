@@ -41,8 +41,9 @@ def test_a_sessions_first_command_builds_the_environment_and_records_it(
     skill, tmp_path
 ):
     lyra = session(tmp_path, "lyra")
-    command = runtime(skill, lyra).command()
-    python = skill / ".venv" / "bin" / "python"
+    built = runtime(skill, lyra)
+    command = built.command()
+    python = built.interpreter(skill / ".venv")
     assert command == [
         str(python),
         str(skill / "toolchain/tools/symposium-data/cli.py"),
@@ -74,7 +75,8 @@ def test_a_new_session_reuses_the_built_environment(skill, tmp_path, monkeypatch
 
     monkeypatch.setattr(Runtime, "run", refuse)
     vega = session(tmp_path, "vega")
-    assert runtime(skill, vega).command()[0] == str(skill / ".venv" / "bin" / "python")
+    reused = runtime(skill, vega)
+    assert reused.command()[0] == str(reused.interpreter(skill / ".venv"))
     assert (vega / ".symposium" / "runtime.json").exists()
 
 

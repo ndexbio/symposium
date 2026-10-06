@@ -10,6 +10,11 @@ compared normalized: the base name, a login shell's leading `-` removed, `.exe` 
 ignored. On Windows a parent is accepted only when it started before its child: a parent ID can
 belong to a newer process once the original has ended.
 
+On Windows the walk also passes the Python launchers that start the skill's interpreter as their
+child: the `py` launcher, and a virtual environment's `python.exe`, which runs the base
+interpreter as a child process. That launcher is recognized by its executable being this
+process's `sys.executable` while this process runs another one.
+
 macOS and Linux read each process with `ps`; Windows through the Windows API (`ctypes`). Start
 times are opaque strings, compared only on the same host.
 
@@ -20,6 +25,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 
 # what starts or wraps a command, never the agent itself
@@ -37,6 +43,8 @@ PASS_THROUGH = {
     "nohup",
     "timeout",
 }
+# Windows only: the launcher that starts Python
+WINDOWS_PASS_THROUGH = {"py"}
 
 
 @dataclass(frozen=True)
@@ -45,6 +53,7 @@ class Process:
     parent: int
     started: str
     name: str
+    path: str = ""  # the full executable path, where the platform gives it (Windows)
 
 
 def normalized(name: str) -> str:
@@ -112,18 +121,17 @@ class WindowsProcesses:
             found = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
             while found:
                 pid = entry.th32ProcessID
+                started, path = self.details(kernel32, pid)
                 table[pid] = Process(
-                    pid,
-                    entry.th32ParentProcessID,
-                    self.started(kernel32, pid),
-                    entry.szExeFile,
+                    pid, entry.th32ParentProcessID, started, entry.szExeFile, path
                 )
                 found = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
         finally:
             kernel32.CloseHandle(snapshot)
         return table
 
-    def started(self, kernel32, pid: int) -> str:
+    def details(self, kernel32, pid: int) -> tuple:
+        """-> (its start time, its full executable path); empty strings where unreadable."""
         import ctypes
         from ctypes import wintypes
 
@@ -132,38 +140,81 @@ class WindowsProcesses:
             0x1000, False, pid
         )  # PROCESS_QUERY_LIMITED_INFORMATION
         if not handle:
-            return ""
+            return "", ""
         try:
+            started = ""
             times = [wintypes.FILETIME() for _ in range(4)]
-            if not kernel32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
-                return ""
-            created = times[0]
-            return str((created.dwHighDateTime << 32) | created.dwLowDateTime)
+            if kernel32.GetProcessTimes(handle, *(ctypes.byref(t) for t in times)):
+                created = times[0]
+                started = str((created.dwHighDateTime << 32) | created.dwLowDateTime)
+            buffer = ctypes.create_unicode_buffer(32768)
+            size = wintypes.DWORD(len(buffer))
+            path = ""
+            if kernel32.QueryFullProcessImageNameW(
+                handle, 0, buffer, ctypes.byref(size)
+            ):
+                path = buffer.value
+            return started, path
         finally:
             kernel32.CloseHandle(handle)
 
 
 class AgentProcess:
     def __init__(
-        self, processes=None, windows: bool | None = None, start: int | None = None
+        self,
+        processes=None,
+        windows: bool | None = None,
+        start: int | None = None,
+        launcher: str | None = None,
     ):
         self.start = start  # where the walk starts: the skill's parent unless given
         self.windows = os.name == "nt" if windows is None else windows
         self.processes = processes or (
             WindowsProcesses() if self.windows else PosixProcesses()
         )
+        # the virtual environment's launcher of this interpreter, when one started it
+        self.launcher = self.own_launcher() if launcher is None else launcher
 
     def find(self) -> Process | None:
         """The agent process, walking up from the skill's parent (or the given start)."""
         current = self.processes.get(
             self.start if self.start is not None else os.getppid()
         )
-        while current is not None and normalized(current.name) in PASS_THROUGH:
+        while current is not None and self.passes(current):
             parent = self.processes.get(current.parent) if current.parent > 0 else None
             if parent is None or (self.windows and not self.earlier(parent, current)):
                 return current  # the top this walk can trust
             current = parent
         return current
+
+    def passes(self, process: Process) -> bool:
+        """A shell, a wrapper, or on Windows a Python launcher: never the agent."""
+        name = normalized(process.name)
+        if name in PASS_THROUGH:
+            return True
+        if not self.windows:
+            return False
+        return name in WINDOWS_PASS_THROUGH or (
+            bool(self.launcher) and self.same(process.path, self.launcher)
+        )
+
+    def own_launcher(self) -> str:
+        """On Windows, `sys.executable` when this process runs another executable: a virtual
+        environment's launcher started it. Otherwise empty."""
+        if not self.windows:
+            return ""
+        me = self.processes.get(os.getpid())
+        if me is None or not me.path or self.same(me.path, sys.executable):
+            return ""
+        return sys.executable
+
+    def same(self, path: str, other: str) -> bool:
+        if not path or not other:
+            return False
+        try:
+            return os.path.samefile(path, other)
+        except OSError:
+            return os.path.normcase(path) == os.path.normcase(other)
 
     def earlier(self, parent: Process, child: Process) -> bool:
         """A Windows parent started before its child (FILETIME counts, as decimal strings)."""

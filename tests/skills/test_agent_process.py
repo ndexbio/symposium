@@ -25,8 +25,8 @@ class Table:
         return self.rows.get(pid)
 
 
-def walk(table: Table, start: int, windows: bool = False):
-    return AgentProcess(table, windows=windows, start=start).find()
+def walk(table: Table, start: int, windows: bool = False, launcher: str = ""):
+    return AgentProcess(table, windows=windows, start=start, launcher=launcher).find()
 
 
 def test_the_walk_passes_shells_and_wrappers_to_the_agent():
@@ -73,6 +73,22 @@ def test_windows_shells_are_passed_and_a_younger_parent_is_not_trusted():
     assert walk(reused, 30, windows=True).pid == 30
 
 
+def test_windows_python_launchers_are_passed():
+    venv = r"C:\work\.venv\Scripts\python.exe"
+    table = Table(
+        Process(10, 4, "100", "explorer.exe"),
+        Process(20, 10, "200", "agent.exe"),
+        Process(30, 20, "300", "cmd.exe"),
+        Process(40, 30, "400", "py.exe"),  # the py launcher
+        Process(50, 40, "500", "python.exe", venv),  # a virtual environment's launcher
+    )
+    assert walk(table, 50, windows=True, launcher=venv).pid == 20
+    # without a launcher to recognize, a python.exe parent is an agent written in Python
+    assert walk(table, 50, windows=True).pid == 50
+    # elsewhere `py` is only a name: the walk stops there
+    assert walk(table, 40).pid == 40
+
+
 def test_the_real_process_tree_finds_this_tests_parent_process():
     """A child of this test, run through a shell, finds this test's own process: the
     long-lived process that started its shell, as an agent starts each command's shell."""
@@ -88,7 +104,7 @@ def test_the_real_process_tree_finds_this_tests_parent_process():
             "-c",
             probe,
             scripts,
-        ]  # its parent is this test itself
+        ]  # its parent is this test itself, or this test's virtual environment's launcher
     else:
         command = ["sh", "-c", f'"{sys.executable}" -c "{probe}" "{scripts}"']
     pid, started = subprocess.run(

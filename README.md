@@ -97,7 +97,7 @@ agent> /symposium gate --watch
 Terminal 2, do this after running `/symposium gate` on Terminal 1:
 ```bash
 # this is a new agent session: choose the admin's session for it (bootstrap chose it for terminal 1)
-agent> /symposium use <name> <admin>
+agent> /symposium use <community_name> <admin handle>
 # publish your own artifacts: the gate in terminal 1 decides them like any member's
 agent> /symposium publish welcome_message.json
 # check that your copy of the record matches the server's

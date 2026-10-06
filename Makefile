@@ -2,6 +2,8 @@
 #   make lint           ruff over all Python, then the toolchain's conformance suite
 #   make test           lint, then the data server's suites (its one image build), then the
 #                       top-level suite against that same image. It is the single gate.
+#                       DOCKER=false runs only the skill's suites that need no container
+#                       (tests/skills/test_agent_process.py, test_sessions.py, test_runtime.py)
 #   make build          lint, then dist/Symposium_skill.zip: the symposium skill, with the
 #                       symposium-data CLI inside it (R-I8)
 #   make deploy-local   build, then install the skill from the zip into $(SKILLS)
@@ -13,6 +15,10 @@ IMAGE := ndexbio/symposium-data
 TAG := $(shell sed -n 's/^version = "\(.*\)"/\1/p' data-server/service/pyproject.toml)
 # The top-level suite (tests/): the CLI's tests, then the skill's, on one container.
 SUITES := tests/symposium-data tests/skills
+# DOCKER=false (CI's Windows job): only the skill's suites that need no container
+DOCKER ?= true
+NO_DOCKER_SUITES := tests/skills/test_agent_process.py tests/skills/test_sessions.py \
+	tests/skills/test_runtime.py
 BUNDLE := dist/Symposium_skill.zip
 SKILLS ?= $(HOME)/.claude/skills
 
@@ -23,10 +29,15 @@ lint:
 	$(UV) ruff format --check data-server tools/symposium-data tests skills
 	cd tools && python3 conformance.py
 
+ifeq ($(DOCKER),false)
+test:
+	SYMPOSIUM_TEST_DOCKER=false $(UV) pytest -c tests/pytest.ini $(NO_DOCKER_SUITES)
+else
 test: lint
 	$(MAKE) -C data-server test
 	SYMPOSIUM_DATA_TEST_IMAGE=$(IMAGE):$(TAG) SYMPOSIUM_DATA_TEST_VERSION=$(TAG) \
 		$(UV) pytest -c tests/pytest.ini $(SUITES)
+endif
 
 build: lint
 	python3 tools/bundle.py $(BUNDLE)
@@ -41,5 +52,5 @@ deploy-local: build
 		mkdir -p "$(SKILLS)" && \
 		mv "$$staging/skills/symposium" "$(SKILLS)/symposium"
 	@echo "/symposium skill installed in $(SKILLS)/symposium"
-	@echo "  usage: /symposium <setup|bootstrap|publish|sync|gate|validate|serve|port|admin-config|…> [options]    e.g. /symposium setup --invite-file <file>"
+	@echo "  usage: /symposium <setup|bootstrap|use|publish|sync|gate|validate|serve|port|admin-config|…> [options]    e.g. /symposium setup --invite-file <file>"
 	@echo "  full instructions: $(SKILLS)/symposium/README.md"

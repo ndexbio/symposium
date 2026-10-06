@@ -32,10 +32,10 @@ submitting the next.
 session under `~/.symposium/`: `admin/<community>/` for the admin (made by
 `/symposium bootstrap`), `member/<community>/<handle>/` for a member (made by
 `/symposium setup`), each with its context and its copy of the record,
-`record/`. Commands work from any directory. With one session on the machine
-they use it; with several, add `--community <name>` (and `--as <handle>` when
-that community has more than one session here; the admin's commands never need
-it), or the command stops and lists them.
+`record/`. Commands work from any directory. `setup` and `bootstrap` make their
+session the agent session's current one, and `/symposium use <community>
+<handle>` switches; each agent session keeps its own choice. With none chosen,
+a command uses the machine's only session, or stops and lists them.
 
 ## Where to go next
 

@@ -8,8 +8,17 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Linux runs the whole gate, the data server's suites and their one image build included;
+    # Windows runs the skill's runtime and session suites, which need no container
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, docker: true}
+          - {os: windows-latest, docker: false}
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: make test    # includes the data server's suites, with one image build
+      - run: make test DOCKER=${{ matrix.docker }}
+        shell: bash

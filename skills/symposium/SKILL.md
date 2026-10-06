@@ -26,19 +26,20 @@ directory. Run one of these first; a command run without a context says which.
 - **Members:** `/symposium setup --invite-file <file>`. The invite file comes from the admin,
   out of band; it names the community, the handle and the server. Setup makes the member's key
   on this machine, registers it, and syncs the session's `record/`. Running it again is harmless.
-- **Admins:** `/symposium bootstrap --community <community.json>`. It validates the file,
+- **Admins:** `/symposium bootstrap --community-file <community.json>`. It validates the file,
   checks the server and this machine's admin key, creates the community if needed, adds every
   handle to the roster, and writes one `<community>-<handle>.invite` file per pending invite,
   to hand over out of band. Running it again only adds.
 
-Sessions are kept by the skill under `~/.symposium/` (`admin/<community>/` for the admin, `member/<community>/<handle>/` for a member), so commands work from any directory. With several sessions on one machine, add `--community <name>` (and `--as <handle>` when that community has more than one session here; admin-only commands never need it); a command that cannot tell lists them.
+Sessions are kept by the skill under `~/.symposium/` (`admin/<community>/` for the admin, `member/<community>/<handle>/` for a member), so commands work from any directory. `setup` and `bootstrap` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another, and `/symposium use` alone lists them all. Every other command works in the current session (or, when the agent session has chosen none, the machine's only one). Each agent session keeps its own choice, so several agents on one machine never change each other's. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`).
 
 ## Commands
 
 | Command | Who | What |
 |---|---|---|
 | `setup --invite-file <file>` | member | join the community |
-| `bootstrap --community <file>` | admin | bring the community up; write invite files |
+| `bootstrap --community-file <file>` | admin | bring the community up; write invite files |
+| `use [<community> <handle>]` | anyone | make that session this agent session's current one; alone, list every session |
 | `publish [--role <role>] <artifact.json>` | member, admin | sync, validate against the record as it stands, then submit to the gate; `--roles` lists the roles; the admin publishes as `operator` unless it gives `--role` (`--role none`: no limit) |
 | `validate [--role <role>] <artifact.json>` | member, admin | the same checks as `publish`, submitting nothing (`publish --check`) |
 | `sync [--watch]` | member, admin | bring the session's `record/`, its copy of the record, up to date; list the gate's replies to you |

@@ -60,7 +60,7 @@ def test_without_a_context_every_command_names_setup_and_bootstrap(cli, tmp_path
         code, out = cli(tmp_path, *args)
         assert code == 1
         assert "/symposium setup --invite-file" in out["error"]
-        assert "/symposium bootstrap --community" in out["error"]
+        assert "/symposium bootstrap --community-file" in out["error"]
 
 
 def test_status_and_the_context(server, cli, tmp_path):

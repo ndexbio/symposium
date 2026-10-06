@@ -23,11 +23,11 @@ ported once.
   Never paste the password into a chat.
 
 ## The order
-1. `/symposium bootstrap --community community.json` creates the community (empty) and sets
+1. `/symposium bootstrap --community-file community.json` creates the community (empty) and sets
    this directory's context. List the members you already know in `handles`; the port adds the
    rest.
 2. `/symposium port <ndex_credentials_file> <ndex_url>` ports into it.
-3. `/symposium bootstrap --community community.json` again: it writes an invite file for every
+3. `/symposium bootstrap --community-file community.json` again: it writes an invite file for every
    author and reply recipient the port added to the roster. Hand each one over out of band.
 
 ## What is ported

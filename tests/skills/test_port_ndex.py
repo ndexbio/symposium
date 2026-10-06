@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from fixtures.ndex_port.stub import CREDENTIALS, FIXTURES, NdexStub, attributes
-from suite import SKILL, community_file
+from suite import ADMIN, SKILL, community_file
 
 
 def credentials_file(directory: Path) -> Path:
@@ -22,7 +22,7 @@ def bootstrap(
     skill, directory: Path, server, community: str = "demo", handles=()
 ) -> dict:
     spec = community_file(directory, server, community, handles)
-    return skill.ok(directory, "bootstrap", "--community", spec)
+    return skill.ok(directory, "bootstrap", "--community-file", spec)
 
 
 def test_bootstrap_then_port_then_bootstrap_invites_the_authors(
@@ -64,9 +64,8 @@ def test_port_refusals_are_reported_with_their_reasons(
         code, out = skill(tmp_path, "port", credentials_file(tmp_path), stub.url)
         assert code == 1 and out["status"] == 404
 
-        bootstrap(skill, tmp_path, server)
-        demo = ("--community", "demo")
-        port = ("port", *demo, credentials_file(tmp_path), stub.url)
+        bootstrap(skill, tmp_path, server)  # it makes demo's session the current one
+        port = ("port", credentials_file(tmp_path), stub.url)
         assert skill(tmp_path, *port)[0] == 0
         code, out = skill(tmp_path, *port)
         assert code == 1 and out["status"] == 400 and "holds files" in out["error"]
@@ -80,13 +79,12 @@ def test_a_port_while_another_runs_is_refused(server, skill, tmp_path):
         directory.mkdir()
         bootstrap(skill, directory, server, community)
     stub = NdexStub(hold=True)
+    skill.ok(first_dir, "use", "demo", ADMIN)
     first = subprocess.Popen(
         [
             sys.executable,
             str(SKILL),
             "port",
-            "--community",
-            "demo",
             str(credentials_file(first_dir)),
             stub.url,
         ],
@@ -97,18 +95,14 @@ def test_a_port_while_another_runs_is_refused(server, skill, tmp_path):
     )
     try:
         assert stub.held.wait(timeout=30), "the first port never reached the listing"
-        code, out = skill(
-            other_dir,
-            "port",
-            "--community",
-            "other",
-            credentials_file(other_dir),
-            stub.url,
-        )
+        # switching now changes only the commands after it: the running port keeps demo's
+        skill.ok(other_dir, "use", "other", ADMIN)
+        code, out = skill(other_dir, "port", credentials_file(other_dir), stub.url)
         assert code == 1 and out["status"] == 409
         stub.released.set()
         stdout, _ = first.communicate(timeout=60)
-        assert json.loads(stdout)["state"] == "ok"
+        ported = json.loads(stdout)
+        assert ported["state"] == "ok" and ported["session"] == f"demo/{ADMIN}"
     finally:
         stub.close()
         first.kill()

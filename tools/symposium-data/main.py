@@ -33,7 +33,7 @@ CITATION = re.compile(r"^symposium-data:([0-9a-fA-F-]{36})@v(\d+)$")
 FILE_ID = re.compile(r"^[0-9a-fA-F-]{36}$")
 NO_CONTEXT = (
     "no context in this directory: run `/symposium setup --invite-file <file>` (members) or "
-    "`/symposium bootstrap --community <file>` (admins) first"
+    "`/symposium bootstrap --community-file <file>` (admins) first"
 )
 
 

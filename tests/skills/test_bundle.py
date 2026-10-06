@@ -129,7 +129,7 @@ def test_deploy_local_installs_exactly_the_skill_and_says_so(installed):
     # after lint and build report, deploy-local ends with its three lines
     assert installed["output"].splitlines()[-3:] == [
         f"/symposium skill installed in {skills}/symposium",
-        "  usage: /symposium <setup|bootstrap|publish|sync|gate|validate|serve|port|"
+        "  usage: /symposium <setup|bootstrap|use|publish|sync|gate|validate|serve|port|"
         "admin-config|…> [options]    e.g. /symposium setup --invite-file <file>",
         f"  full instructions: {skills}/symposium/README.md",
     ]

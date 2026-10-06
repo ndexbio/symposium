@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Bring a community up on a data server, as its admin: `/symposium bootstrap --community <file>`.
+"""Bring a community up on a data server, as its admin:
+`/symposium bootstrap --community-file <file>`.
 
-    python3 bootstrap.py --community community.json
+    python3 bootstrap.py --community-file community.json
 
 `community.json` holds three fields (see community.example.json): `community`, the community's
 name (1-20 letters, digits or underscores); `handles`, its members' handles; and
@@ -161,10 +162,12 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="bootstrap", description="Bring a community up on a data server, as its admin."
     )
-    parser.add_argument("--community", required=True, help="community.json")
+    parser.add_argument(
+        "--community-file", required=True, help="community.json: it names the community"
+    )
     args = parser.parse_args(argv)
     try:
-        result = Bootstrap(SymposiumData()).run(args.community)
+        result = Bootstrap(SymposiumData()).run(args.community_file)
     except DataError as e:
         print(json.dumps(e.report))
         return 1

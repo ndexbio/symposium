@@ -4,7 +4,8 @@
 every data interaction runs the `symposium-data` CLI (R-I1).
 
     setup --invite-file <file>             members: join a community (run first in a session)
-    bootstrap --community <file>           admins: bring a community up (run first in a session)
+    bootstrap --community-file <file>      admins: bring a community up (run first in a session)
+    use [<community> <handle>]             choose this agent session's session; alone, list them
     publish [--role <role>] <artifact.json>
                                            submit an artifact to the gate (`--check`: validate only)
     validate <artifact.json>               validate only: `publish --check`
@@ -18,12 +19,14 @@ every data interaction runs the `symposium-data` CLI (R-I1).
     data <symposium-data command …>        direct data work: put, get, keys, collection, find, …
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit
-code is the result (0 = done); every other command prints one JSON object.
+code is the result (0 = done); every other command prints one JSON object. Every command names
+the session it worked in: a `session` key in its JSON object, or a first line
+`session: <community>/<handle>` before its free text, which then streams through as it comes.
 
 Every command runs in its session's directory, which the skill keeps under ~/.symposium/
-(sessions.py): `setup`, `bootstrap`, `import` and `admin-config` name theirs; any other command
-uses the machine's one session, or the one `--community <name>` (and `--handle <h>`) selects.
-The first command of a session prepares the CLI's Python runtime (runtime.py) before anything
+(sessions.py): `setup`, `bootstrap`, `import` and `admin-config` name theirs, and `setup` and
+`bootstrap` make theirs this agent session's current one; any other command works in the
+current session (`use` chooses it), or the machine's only one. The first command of a session prepares the CLI's Python runtime (runtime.py) before anything
 else; later commands in the session reuse it. Every tool started here gets the CLI command in
 SYMPOSIUM_DATA_CLI.
 
@@ -57,6 +60,8 @@ ADMIN = (
     "export",
     "import",
 )
+# the commands that print free text: their session goes on a first line of its own
+FREE_TEXT = {"publish", "validate", "sync", "gate", "serve"}
 # the workflow commands: each runs its tool from the toolchain
 WORKFLOW = {
     "publish": "publish.py",
@@ -65,7 +70,7 @@ WORKFLOW = {
     "serve": "serve.py",
 }
 USAGE = (
-    "/symposium <setup|bootstrap|publish|sync|gate|validate|serve|port|admin-config|roster|"
+    "/symposium <setup|bootstrap|use|publish|sync|gate|validate|serve|port|admin-config|roster|"
     "invite|rebind-key|suspect-after|purge|export|import|data> [options]    "
     "e.g. /symposium setup --invite-file <file>"
 )
@@ -122,19 +127,56 @@ def main(argv=None) -> int:
             )
         )
         return 0
-    if command_line(argv[0], argv[1:], []) is None:
-        print(json.dumps({"error": f"unknown command '{argv[0]}'", "usage": USAGE}))
+    command, sessions = argv[0], Sessions()
+    if command == "use":
+        try:
+            print(json.dumps(sessions.use(argv[1:])))
+        except SessionError as e:
+            print(json.dumps(e.report))
+            return 1
+        return 0
+    if command_line(command, argv[1:], []) is None:
+        print(json.dumps({"error": f"unknown command '{command}'", "usage": USAGE}))
         return 1
     try:
-        session, rest = Sessions().place(argv[0], argv[1:])
+        directory, session, rest = sessions.place(command, argv[1:])
         # the session's runtime, before anything else
-        cli = Runtime(SKILL, CLI, session=session).command()
+        cli = Runtime(SKILL, CLI, session=directory).command()
     except (SessionError, RuntimeUnavailable) as e:
         print(json.dumps(e.report))
         return 1
-    process = command_line(argv[0], rest, cli)
+    process = command_line(command, rest, cli)
     environment = {**os.environ, "SYMPOSIUM_DATA_CLI": json.dumps(cli)}
-    return subprocess.run(process, env=environment, cwd=session).returncode
+    if command in FREE_TEXT:
+        # the session first; the report then streams through as it comes (serve, --watch)
+        print(f"session: {session.label()}", flush=True)
+        return subprocess.run(process, env=environment, cwd=directory).returncode
+    result = subprocess.run(
+        process, env=environment, cwd=directory, stdout=subprocess.PIPE, text=True
+    )
+    if command in ("setup", "bootstrap") and result.returncode == 0:
+        made = sessions.at(directory)
+        if made is not None:
+            sessions.make_current(
+                made
+            )  # the session it made is this agent session's now
+            session = made
+    print(named(result.stdout, session), end="")
+    return result.returncode
+
+
+def named(output: str, session) -> str:
+    """A command's one JSON object with the session it worked in added; anything else (a
+    command's --help, or no session yet) as it was."""
+    if session is None:
+        return output
+    try:
+        report = json.loads(output)
+    except ValueError:
+        return output
+    if not isinstance(report, dict):
+        return output
+    return json.dumps({**report, "session": session.label()}) + "\n"
 
 
 if __name__ == "__main__":

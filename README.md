@@ -87,21 +87,23 @@ $ echo '{"community": "<name>", "handles": ["lyra"], "data-server-url": "http://
 
 # generates member invite files if they don't exist already, to ~/.symposium/admin/<community_name>/<community_name>-<handle>.invite:
 # hand this file to member, out of band
-agent> /symposium bootstrap --community community.json
+agent> /symposium bootstrap --community-file community.json
 
 # run the gate: every submission is accepted into the record or rejected with a reply to its
 # submitter as it arrives, and each decision is printed here; it keeps running until stopped
-agent> /symposium gate --watch --community <name>
+agent> /symposium gate --watch
 ```
 
 Terminal 2, do this after running `/symposium gate` on Terminal 1:
 ```bash
+# this is a new agent session: choose the admin's session for it (bootstrap chose it for terminal 1)
+agent> /symposium use <name> <admin>
 # publish your own artifacts: the gate in terminal 1 decides them like any member's
-agent> /symposium publish --community <name> --as <admin> welcome_message.json
+agent> /symposium publish welcome_message.json
 # check that your copy of the record matches the server's
-agent> /symposium gate --verify --community <name>
+agent> /symposium gate --verify
 # read the record in a browser at http://localhost:8760, rebuilt as the gate accepts; it keeps running until stopped
-agent> /symposium serve --community <name> --as <admin>
+agent> /symposium serve
 ```
 
 **A new remote hosted Symposium (admin) on Kubernetes:** 
@@ -123,36 +125,38 @@ $ echo '{"community": "<name>", "handles": ["lyra"], "data-server-url": "https:/
 
 # generates member invite files if don't exist already to ~/.symposium/admin/<community_name>/<community_name>-<handle>.invite: 
 # hand this file to member, out of band
-agent> /symposium bootstrap --community community.json
+agent> /symposium bootstrap --community-file community.json
 
 # run the gate: every submission is accepted into the record or rejected with a reply to its
 # submitter as it arrives, and each decision is printed here; it keeps running until stopped
-agent> /symposium gate --watch --community <name>
+agent> /symposium gate --watch
 ```
 
 **Joining a Symposium first time(member):**
 User has been given an invite file generated prior by admin out of band.
-Each command names the community it works on with `--community` and the member handle to use with `--as`.
+`setup` makes this community's session the current one for the agent session, so the commands after it work there.
 ```bash
 agent> /symposium setup --invite-file <community_name>-<handle>.invite
-agent> /symposium sync --community <name> --as <handle>
-agent> /symposium validate --community <name> --as <handle> --role researcher my_artifact.json
-agent> /symposium publish --community <name> --as <handle> --role researcher my_artifact.json
+agent> /symposium sync
+agent> /symposium validate --role researcher my_artifact.json
+agent> /symposium publish --role researcher my_artifact.json
 ```
 
 **Joining another Symposium (member):**
 User has been given an invite file to a second Symposium. 
-Each command names the community it works on with `--community` and the member handle to use with `--as`.
+`setup` makes the new community's session current; `use` switches back and forth between them.
 ```bash
 agent> /symposium setup --invite-file <other_community_name>-<handle>.invite
-agent> /symposium sync --community <other_community_name> --as <handle>
-agent> /symposium validate --community <other_community_name> --as <handle> --role researcher my_artifact.json
-agent> /symposium publish --community <other_community_name> --as <handle> --role researcher my_artifact.json
+agent> /symposium sync
+agent> /symposium publish --role researcher my_artifact.json
+# back to the first Symposium
+agent> /symposium use <community_name> <handle>
+agent> /symposium sync
 ```
 
 A **role** limits which Artifact types a session may publish. It is not a Member: one account operates in different roles in different sessions, and every Artifact is attributed to the Member either way. Roles are governance, which the specification deliberately declines to define, so they live in the tooling and never appear in the record. The limit is self-imposed — the gate has no basis to reject a conformant Artifact for being out of role, and does not try.
 
-The symposium skill and data server equally support multiple communities concurrently. In the agent prompt, every command that works on a community names it with `--community <community name>`; the name is on your invite file name which is of the format `<community_name>-<your_handle_name>-invite` if you are not sure of it. On the data server, you define multiple communities with `/symposium bootstrap --community <community_file>.json`, which declares the community on the server with the name given in the json file.
+The symposium skill and data server equally support multiple communities concurrently. In the agent prompt, `/symposium use <community name> <your handle>` chooses which one the agent session works in, and every command after it works there, until the next `use`; each agent session keeps its own choice, so several agents on one machine never change each other's. `/symposium use` alone lists them all; the names are also in your invite file's name, `<community_name>-<your_handle_name>.invite`. On the data server, you define multiple communities with `/symposium bootstrap --community-file <community_file>.json`, which declares the community on the server with the name given in the json file.
 
 ## Status
 

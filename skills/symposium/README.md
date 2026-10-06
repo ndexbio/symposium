@@ -30,14 +30,11 @@ directory and nobody creates or enters one:
 | `~/.symposium/admin/<community>/` | the admin's session for a community: `bootstrap` makes it and writes the invite files there |
 | `~/.symposium/member/<community>/<handle>/` | a member's session: `setup` makes it from the invite |
 
-Each holds the session's context, its copy of the record (`record/`) and its event log. With one
-session on the machine, every command uses it. With several (an admin and a member, or several
-members, on one machine), add `--community <name>`, and `--as <handle>` when that community has
-more than one session here; an admin-only command (the admin commands, `gate`, `port`) needs
-only `--community`, since each community has one admin session. A command that cannot tell
-lists every session with the options that select it. Relative paths you give a command are read from the directory you are in.
+Each holds the session's context, its copy of the record (`record/`) and its event log. `setup` and `bootstrap` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another, and `/symposium use` alone lists them all. Every other command works in the current session (or, when the agent session has chosen none, the machine's only one). Each agent session keeps its own choice, so several agents on one machine never change each other's. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`).
+An admin-only command (the admin commands, `gate`, `port`) refuses in a member's session and
+names the `use` command for the community's admin. Relative paths you give a command are read from the directory you are in.
 
-- **Admins:** `/symposium bootstrap --community community.json` creates the community if
+- **Admins:** `/symposium bootstrap --community-file community.json` creates the community if
   needed, adds its members to the roster and writes their invite files, one
   `<community>-<handle>.invite` each, in `~/.symposium/admin/<community>/`, to hand over out of
   band (never through a chat). Run it
@@ -54,6 +51,7 @@ the community's record.
 
 | Command | What it does |
 |---|---|
+| `/symposium use [<community> <handle>]` | Make that session this agent session's current one; every command after it works there, until the next `use`. Alone, list every session on this machine with the `use` command for each. |
 | `/symposium publish [--role <role>] <artifact.json>` | Submit one artifact to the gate. It syncs first, validates against the record as it stands (the same checks the gate runs), and submits only what passes; a rejection comes back as a reply that `sync` lists. `--roles` lists the roles, `--roles <name>` prints one. The admin publishes as `operator` unless it gives `--role`; `--role none` lifts the limit. Needs the data server: nothing validates offline. |
 | `/symposium validate [--role <role>] <artifact.json>` | The same checks as `publish`, submitting nothing (`publish --check`). |
 | `/symposium sync [--watch]` | Bring the session's `record/` up to date from the record, in the server's order, and list the gate's replies addressed to you. `--watch` repeats every `SYMPOSIUM_POLL` seconds (default 30). |
@@ -71,7 +69,7 @@ the community's record.
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit code
 is the result (0 = done; `serve`, `sync --watch` and `gate --watch` run until stopped). Every other command
-prints one JSON object: `setup`, `bootstrap`, `port`, the admin commands (`admin-config`,
+prints one JSON object: `setup`, `bootstrap`, `use`, `port`, the admin commands (`admin-config`,
 `roster`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import`) and `data …`.
 
 ## 2. Deploying a data server

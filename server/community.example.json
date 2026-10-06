@@ -1,7 +1,7 @@
 {
   "_comment": [
     "A community on a Symposium Data server. Copy this to community.json, edit it, and run",
-    "`/symposium bootstrap --community community.json` as the server's admin.",
+    "`/symposium bootstrap --community-file community.json` as the server's admin.",
     "",
     "community: the community's name, 1-20 letters, digits or underscores. It is unique on",
     "  its server, ignoring case, and 'status', 'communities' and 'admin' are reserved.",

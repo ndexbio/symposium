@@ -5,16 +5,19 @@ command works in. Nobody creates or enters a session directory; the skill keeps 
     ~/.symposium/admin/                          admin-config's public key files
     ~/.symposium/admin/<community>/              the admin's session for a community (bootstrap)
     ~/.symposium/member/<community>/<handle>/    a member's session (setup, from the invite)
+    ~/.symposium/current/<pid>.json              each agent session's current session
 
 A session directory holds what a working directory holds for the CLI and the tools: the context
 (`.symposium/context.json`), the runtime record, the copy of the record (`record/`), the invite
 files and the event log. The skill runs every command in its session's directory.
 
 `setup`, `bootstrap`, `import` and `admin-config` name their session themselves. Every other
-command uses the one session on the machine, or the one `--community` (and `--as <handle>`, when
-that community has more than one session here) selects; the skill takes those two options off
-the command line. Relative paths on a command line are the caller's: they are resolved against
-the directory the agent ran the command in, before the command moves into its session.
+command works in the agent session's current session: the one `/symposium use <community>
+<handle>` chose, or the one `setup` or `bootstrap` made; when the agent session has chosen none,
+the machine's only session. The choice is kept per agent process (agent_process.py), so two agent
+sessions on one machine never change each other's. Relative paths on a command line are the
+caller's: they are resolved against the directory the agent ran the command in, before the
+command moves into its session.
 
 Standard library only, Python 3.9+.
 """
@@ -26,9 +29,11 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from agent_process import AgentProcess
+
 NO_SESSION = (
     "no Symposium session on this machine: run `/symposium setup --invite-file <file>` "
-    "(members) or `/symposium bootstrap --community <file>` (admins) first"
+    "(members) or `/symposium bootstrap --community-file <file>` (admins) first"
 )
 # names that may name a session directory: a community (a slug, R-G8) and a handle
 COMMUNITY = re.compile(r"^[A-Za-z0-9_]{1,20}$")
@@ -75,34 +80,51 @@ class Session:
     handle: str
     role: str
 
-    def selector(self) -> str:
-        return f"--community {self.community} --as {self.handle}"
+    def label(self) -> str:
+        return f"{self.community}/{self.handle}"
+
+    def view(self) -> dict:
+        return {
+            "community": self.community,
+            "handle": self.handle,
+            "role": self.role,
+            "directory": str(self.directory),
+            "use": f"/symposium use {self.community} {self.handle}",
+        }
 
 
 class Sessions:
-    def __init__(self, root: Path | None = None, caller: Path | None = None):
+    def __init__(
+        self,
+        root: Path | None = None,
+        caller: Path | None = None,
+        agent: AgentProcess | None = None,
+    ):
         self.root = root or Path.home() / ".symposium"
         self.caller = caller or Path.cwd()
+        self.agent = agent or AgentProcess()
 
     # ── the sessions on this machine ─────────────────────────────────────────────────────
     def all(self) -> list:
-        found = []
-        for context in sorted(
-            self.root.glob("admin/*/.symposium/context.json")
-        ) + sorted(self.root.glob("member/*/*/.symposium/context.json")):
-            try:
-                held = json.loads(context.read_text())
-            except (OSError, ValueError):
-                continue
-            found.append(
-                Session(
-                    context.parents[1],
-                    held.get("community", ""),
-                    held.get("handle", ""),
-                    held.get("role", ""),
-                )
-            )
-        return found
+        return [
+            s
+            for context in sorted(self.root.glob("admin/*/.symposium/context.json"))
+            + sorted(self.root.glob("member/*/*/.symposium/context.json"))
+            if (s := self.at(context.parents[1])) is not None
+        ]
+
+    def at(self, directory: Path) -> Session | None:
+        """The session in a directory, from its context, or None."""
+        try:
+            held = json.loads((directory / ".symposium" / "context.json").read_text())
+        except (OSError, ValueError):
+            return None
+        return Session(
+            directory,
+            held.get("community", ""),
+            held.get("handle", ""),
+            held.get("role", ""),
+        )
 
     def admin_session(self, community: str) -> Path:
         return self.root / "admin" / community
@@ -110,21 +132,124 @@ class Sessions:
     def member_session(self, community: str, handle: str) -> Path:
         return self.root / "member" / community / handle
 
-    # ── choosing a command's session ─────────────────────────────────────────────────────
-    def place(self, command: str, rest: list) -> tuple:
-        """-> (the command's session directory, created when needed; its arguments, with the
-        caller's paths resolved and the session options taken off)."""
-        if command not in NAMED:
-            # the session options first: their values are names, never the caller's paths
-            rest, community, handle = self.take(rest)
-            session = self.choose(community, handle, command in ADMIN_ONLY)
-            return session.directory, self.resolve(command, rest)
-        rest = self.resolve(command, rest)
-        directory = self.named(command, rest)
-        if directory is None:
-            return self.caller, rest  # the tool reports what is wrong with its file
+    # ── this agent session's current session ─────────────────────────────────────────────
+    def current(self) -> Session | None:
+        """What this agent session chose, while its record matches the agent process."""
+        agent = self.agent.find()
+        if agent is None:
+            return None
+        try:
+            record = json.loads(self.record(agent.pid).read_text())
+        except (OSError, ValueError):
+            return None
+        if record.get("started") != agent.started:
+            return None  # the PID was reused: the record belongs to an ended process
+        found = [
+            s
+            for s in self.all()
+            if s.community == record.get("community")
+            and s.handle == record.get("handle")
+        ]
+        return found[0] if found else None
+
+    def make_current(self, session: Session):
+        """Record `session` as this agent session's current one, and purge the records of
+        agent processes that have ended (or whose PID is now another process's)."""
+        agent = self.agent.find()
+        if agent is None:
+            return
+        directory = self.root / "current"
         directory.mkdir(parents=True, exist_ok=True)
-        return directory, rest
+        for record in directory.glob("*.json"):
+            if record.stem == str(agent.pid) or not record.stem.isdigit():
+                continue
+            try:
+                started = json.loads(record.read_text()).get("started")
+            except (OSError, ValueError):
+                started = None
+            if started is None or self.agent.started(int(record.stem)) != started:
+                record.unlink(missing_ok=True)
+        self.record(agent.pid).write_text(
+            json.dumps(
+                {
+                    "community": session.community,
+                    "handle": session.handle,
+                    "started": agent.started,
+                }
+            )
+            + "\n"
+        )
+
+    def record(self, pid: int) -> Path:
+        return self.root / "current" / f"{pid}.json"
+
+    def use(self, rest: list) -> dict:
+        """`/symposium use <community> <handle>`: make that session this agent session's
+        current one. With no arguments, or a session that does not exist, list them all."""
+        sessions = self.all()
+        if len(rest) == 2:
+            community, handle = rest
+            for session in sessions:
+                if (
+                    session.community.lower() == community.lower()
+                    and session.handle == handle
+                ):
+                    self.make_current(session)
+                    return {**session.view(), "current": True}
+            error = f"no session for {handle} in {community} on this machine"
+        else:
+            error = "usage: /symposium use <community> <handle>"
+        raise SessionError(
+            {
+                "error": error if sessions else NO_SESSION,
+                "sessions": [s.view() for s in sessions],
+            }
+        )
+
+    # ── a command's session ──────────────────────────────────────────────────────────────
+    def place(self, command: str, rest: list) -> tuple:
+        """-> (the command's session directory, created when needed; its Session, or None
+        when it has none yet; its arguments, with the caller's paths resolved)."""
+        rest = self.resolve(command, rest)
+        if command in NAMED:
+            directory = self.named(command, rest)
+            if directory is None:
+                return (
+                    self.caller,
+                    None,
+                    rest,
+                )  # the tool reports what is wrong with its file
+            directory.mkdir(parents=True, exist_ok=True)
+            return directory, self.at(directory), rest
+        session = self.chosen()
+        if command in ADMIN_ONLY and session.role != "admin":
+            raise SessionError(
+                {
+                    "error": f"`{command}` is the admin's, and this agent session works as "
+                    f"{session.label()}: switch with "
+                    f"`/symposium use {session.community} <the admin's handle>`",
+                    "sessions": [s.view() for s in self.all() if s.role == "admin"],
+                }
+            )
+        return session.directory, session, rest
+
+    def chosen(self) -> Session:
+        """The current session, or the machine's only one."""
+        current = self.current()
+        if current is not None:
+            return current
+        sessions = self.all()
+        if len(sessions) == 1:
+            return sessions[0]
+        if not sessions:
+            raise SessionError({"error": NO_SESSION})
+        raise SessionError(
+            {
+                "error": "this machine holds several Symposium sessions: choose one for this "
+                "agent session with `/symposium use <community> <handle>`",
+                "sessions": [s.view() for s in sessions],
+            }
+        )
 
     def named(self, command: str, rest: list) -> Path | None:
         """The session a NAMED command names: the server's for admin-config; the community
@@ -137,75 +262,20 @@ class Sessions:
             if invite is None or not invite["handle"]:
                 return None
             return self.member_session(invite["community"], invite["handle"])
-        option = "--community" if command == "bootstrap" else "--community-file"
-        spec = self.read(rest, option)
+        spec = self.read(rest, "--community-file")
         return None if spec is None else self.admin_session(spec["community"])
 
-    def choose(
-        self, community: str | None, handle: str | None, admin: bool = False
-    ) -> Session:
-        """The session a command works in. An admin-only command looks only at the admin's
-        sessions, one per community, so `--community` alone always chooses among them."""
-        sessions = [s for s in self.all() if s.role == "admin" or not admin]
-        if not sessions:
-            raise SessionError({"error": NO_SESSION})
-        matching = [
-            s
-            for s in sessions
-            if (community is None or s.community.lower() == community.lower())
-            and (handle is None or s.handle == handle)
-        ]
-        if len(matching) == 1:
-            return matching[0]
-        listed = [
-            {
-                "community": s.community,
-                "handle": s.handle,
-                "role": s.role,
-                "select": s.selector(),
-            }
-            for s in sessions
-        ]
-        if not matching:
-            raise SessionError(
-                {
-                    "error": "no session on this machine matches "
-                    f"{self.describe(community, handle)}",
-                    "sessions": listed,
-                }
-            )
-        raise SessionError(
-            {
-                "error": "this machine holds several Symposium sessions: choose one with "
-                "--community <name> (and --as <handle>)",
-                "sessions": listed,
-            }
-        )
-
     # ── the command line ─────────────────────────────────────────────────────────────────
-    def take(self, rest: list) -> tuple:
-        """Take `--community` and `--as` off the command line. -> (rest, community, handle)"""
-        kept, chosen = [], {"--community": None, "--as": None}
-        args = iter(rest)
-        for arg in args:
-            name, _, value = arg.partition("=")
-            if name in chosen:
-                chosen[name] = value if value else next(args, None)
-            else:
-                kept.append(arg)
-        return kept, chosen["--community"], chosen["--as"]
-
     def resolve(self, command: str, rest: list) -> list:
         """The caller's relative paths, made absolute against the caller's directory."""
         out, expecting = [], False
-        options = PATH_OPTIONS | ({"--community"} if command == "bootstrap" else set())
         for arg in rest:
             if expecting:
                 out.append(self.absolute(arg))
                 expecting = False
                 continue
             name, equals, value = arg.partition("=")
-            if name in options:
+            if name in PATH_OPTIONS:
                 if equals:
                     out.append(f"{name}={self.absolute(value)}")
                 else:
@@ -250,10 +320,3 @@ class Sessions:
             "community": spec["community"],
             "handle": handle if HANDLE.match(handle) else "",
         }
-
-    def describe(self, community, handle) -> str:
-        parts = [
-            f"--community {community}" if community else "",
-            f"--as {handle}" if handle else "",
-        ]
-        return " ".join(p for p in parts if p)

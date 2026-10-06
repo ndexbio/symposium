@@ -52,7 +52,7 @@ def test_help_names_the_data_server_image_and_prepares_nothing(skill, suite, tmp
 def test_usage_and_an_unknown_command(skill, tmp_path):
     usage = skill.ok(tmp_path, "--help")
     assert usage["usage"].startswith(
-        "/symposium <setup|bootstrap|publish|sync|gate|validate|serve|port|admin-config"
+        "/symposium <setup|bootstrap|use|publish|sync|gate|validate|serve|port|admin-config"
     )
     code, out = skill(tmp_path, "frobnicate")
     assert code == 1 and "unknown command 'frobnicate'" in out["error"]
@@ -65,12 +65,14 @@ def test_a_workflow_command_without_a_context_names_setup_and_bootstrap(
         code, out = report(suite, tmp_path, *command)
         assert code == 1, (command, out)
         assert "/symposium setup --invite-file" in out, (command, out)
-        assert "/symposium bootstrap --community" in out, (command, out)
+        assert "/symposium bootstrap --community-file" in out, (command, out)
         assert "COULD NOT REACH" not in out and "could not be reached" not in out
 
 
 def test_serve_without_a_record_copy_says_to_sync(server, skill, suite, tmp_path):
-    skill.ok(tmp_path, "bootstrap", "--community", community_file(tmp_path, server))
+    skill.ok(
+        tmp_path, "bootstrap", "--community-file", community_file(tmp_path, server)
+    )
     code, out = report(suite, tmp_path, "serve")
     assert code == 1 and "no record copy at" in out and "/symposium sync" in out
     assert str(admin_session(suite, "demo") / "record") in out  # the session's own copy
@@ -80,55 +82,68 @@ def test_the_workflow_through_the_skill_from_any_directory(
     server, skill, suite, tmp_path
 ):
     spec = community_file(tmp_path, server, "demo", ["lyra", "vega"])
-    invites = skill.ok(tmp_path, "bootstrap", "--community", spec)["invite_files"]
+    invites = skill.ok(tmp_path, "bootstrap", "--community-file", spec)["invite_files"]
     for invite in invites:
         skill.ok(tmp_path, "setup", "--invite-file", invite)
-    # three sessions on one machine: the admin's and two members'; each command chooses one
-    lyra = ("--community", "demo", "--as", "lyra")
-    code, out = report(
-        suite, tmp_path, "validate", *lyra, note(tmp_path, "lyra", "check")
-    )
+    # three sessions on one machine, the admin's and two members': `use` switches between them
+    skill.ok(tmp_path, "use", "demo", "lyra")
+    code, out = report(suite, tmp_path, "validate", note(tmp_path, "lyra", "check"))
     assert code == 0 and "--check: validation passed" in out, out
-    code, out = report(
-        suite, tmp_path, "publish", *lyra, note(tmp_path, "lyra", "seed")
-    )
-    assert code == 0 and "submitted  symposium-data:" in out, out
-    # the gate is the admin's: --community alone chooses the admin's session
-    code, out = report(suite, tmp_path, "gate", "--community", "demo")
-    assert code == 0 and "ACCEPTED" in out, out
-    code, out = report(suite, tmp_path, "sync", "--community", "demo", "--as", "vega")
+    code, out = report(suite, tmp_path, "publish", note(tmp_path, "lyra", "seed"))
+    assert code == 0 and out.startswith("session: demo/lyra\n"), out
+    assert "submitted  symposium-data:" in out, out
+    skill.ok(tmp_path, "use", "demo", ADMIN)
+    code, out = report(suite, tmp_path, "gate")
+    assert (
+        code == 0 and out.startswith(f"session: demo/{ADMIN}\n") and "ACCEPTED" in out
+    ), out
+    skill.ok(tmp_path, "use", "demo", "vega")
+    code, out = report(suite, tmp_path, "sync")
     assert code == 0 and "+1: lyra_note_seed_v1" in out, out
     vega = suite.home / ".symposium" / "member" / "demo" / "vega"
     assert (vega / "record" / "lyra_note_seed_v1.json").exists()
 
 
-def test_several_sessions_without_a_choice_are_listed(server, skill, suite, tmp_path):
+def test_use_lists_switches_and_keeps_the_admins_commands_for_the_admin(
+    server, skill, suite, tmp_path
+):
     spec = community_file(tmp_path, server, "demo", ["lyra"])
-    [invite] = skill.ok(tmp_path, "bootstrap", "--community", spec)["invite_files"]
-    skill.ok(tmp_path, "setup", "--invite-file", invite)
-    code, out = skill(tmp_path, "data", "changes", "--collection", "record")
-    assert code == 1 and "several Symposium sessions" in out["error"]
-    assert sorted(s["select"] for s in out["sessions"]) == [
-        f"--community demo --as {ADMIN}",
-        "--community demo --as lyra",
+    [invite] = skill.ok(tmp_path, "bootstrap", "--community-file", spec)["invite_files"]
+    joined = skill.ok(tmp_path, "setup", "--invite-file", invite)
+    assert joined["session"] == "demo/lyra"  # setup made lyra's session the current one
+    assert skill.ok(tmp_path, "data", "changes", "--collection", "record")[
+        "session"
+    ] == ("demo/lyra")
+    code, out = skill(
+        tmp_path, "roster", "list"
+    )  # the admin's, refused in lyra's session
+    assert code == 1 and "/symposium use demo <the admin's handle>" in out["error"]
+    code, out = skill(
+        tmp_path, "use"
+    )  # alone: every session, with the command for each
+    assert code == 1 and sorted(s["use"] for s in out["sessions"]) == [
+        f"/symposium use demo {ADMIN}",
+        "/symposium use demo lyra",
     ]
-    code, out = skill(tmp_path, "data", "changes", "--community", "nowhere")
-    assert code == 1 and "--community nowhere" in out["error"] and out["sessions"]
-    # an admin-only command needs no choice: it works in the admin's one session
+    code, out = skill(tmp_path, "use", "demo", "nobody")
+    assert code == 1 and "no session for nobody in demo" in out["error"]
+    chosen = skill.ok(tmp_path, "use", "demo", ADMIN)
+    assert chosen["role"] == "admin" and chosen["current"] is True
     roster = skill.ok(tmp_path, "roster", "list")
     assert [m["handle"] for m in roster["roster"]] == ["lyra"]
+    assert roster["session"] == f"demo/{ADMIN}"
 
 
 def test_a_command_without_a_context_names_setup_and_bootstrap(skill, tmp_path):
     code, out = skill(tmp_path, "roster", "list")
     assert code == 1
     assert "/symposium setup --invite-file" in out["error"]
-    assert "/symposium bootstrap --community" in out["error"]
+    assert "/symposium bootstrap --community-file" in out["error"]
 
 
 def test_bootstrap_reports_every_missing_field(skill, tmp_path):
     (tmp_path / "community.json").write_text("{}")
-    code, out = skill(tmp_path, "bootstrap", "--community", "community.json")
+    code, out = skill(tmp_path, "bootstrap", "--community-file", "community.json")
     assert code == 1
     fields = sorted(p.split(":")[0] for p in out["problems"])
     assert fields == ["community", "data-server-url", "handles"]
@@ -144,7 +159,7 @@ def test_bootstrap_reports_every_invalid_field(server, skill, tmp_path):
             }
         )
     )
-    code, out = skill(tmp_path, "bootstrap", "--community", "community.json")
+    code, out = skill(tmp_path, "bootstrap", "--community-file", "community.json")
     assert code == 1
     problems = "\n".join(out["problems"])
     assert "'not ok!' is not a community name" in problems
@@ -155,7 +170,7 @@ def test_bootstrap_reports_every_invalid_field(server, skill, tmp_path):
 
 def test_bootstrap_writes_invite_files_and_only_adds(server, skill, suite, tmp_path):
     spec = community_file(tmp_path, server, "demo", ["lyra", "vega"])
-    first = skill.ok(tmp_path, "bootstrap", "--community", spec)
+    first = skill.ok(tmp_path, "bootstrap", "--community-file", spec)
     assert first["created"] is True and first["added_to_roster"] == ["lyra", "vega"]
     session = admin_session(
         suite, "demo"
@@ -186,7 +201,7 @@ def test_bootstrap_writes_invite_files_and_only_adds(server, skill, suite, tmp_p
     # bootstrap again only adds, and writes the invites of those still waiting
     for path in session.glob("*.invite"):
         path.unlink()
-    second = skill.ok(tmp_path, "bootstrap", "--community", spec)
+    second = skill.ok(tmp_path, "bootstrap", "--community-file", spec)
     assert second["created"] is False and second["added_to_roster"] == []
     assert invite_files(session) == ["demo-vega.invite"]
 
@@ -202,7 +217,7 @@ def test_one_handle_in_two_communities_gets_two_invite_files(
 ):
     for community in ("demo", "other"):
         spec = community_file(tmp_path, server, community, ["lyra"])
-        skill.ok(tmp_path, "bootstrap", "--community", spec)
+        skill.ok(tmp_path, "bootstrap", "--community-file", spec)
     files = [
         admin_session(suite, "demo") / "demo-lyra.invite",
         admin_session(suite, "other") / "other-lyra.invite",
@@ -226,7 +241,7 @@ def test_bootstrap_refuses_a_server_bound_to_another_admin_key(
         and config["fingerprint"] != server.status()["fingerprint"]
     )
     spec = community_file(tmp_path, server, "demo", ["lyra"])
-    code, out = other(tmp_path, "bootstrap", "--community", spec)
+    code, out = other(tmp_path, "bootstrap", "--community-file", spec)
     assert (
         code == 1
         and "bound to" in out["error"]

@@ -40,11 +40,13 @@ SKILL_COMMANDS = [
     "admin-config",
     "roster list",
     "roster add",
+    "roster remove",
     "invite",
     "rebind-key",
     "suspect-after",
     "purge",
     "export",
+    "import",
     "port",
     "data",
     "gen-api-key",
@@ -128,9 +130,14 @@ def test_every_operation_states_its_security(spec):
         security = op.get("security")
         assert security, f"{where}: states no security requirement"
         named = {name for requirement in security for name in requirement}
-        assert "apiKey" in named and named <= schemes, (
-            f"{where}: security is {security}"
-        )
+        assert named <= schemes, f"{where}: security is {security}"
+        if path.startswith("/admin/api-keys"):
+            # a key scoped to one community would otherwise read every key on the server
+            assert security == [{"adminToken": []}], (
+                f"{where}: takes more than adminToken"
+            )
+        else:
+            assert "apiKey" in named, f"{where}: takes no API key"
         anonymous = {} in security
         assert anonymous == ("x-anonymous" in op), (
             f"{where}: `{{}}` and x-anonymous disagree"
@@ -139,6 +146,13 @@ def test_every_operation_states_its_security(spec):
             assert "reader" in op["x-roles"], (
                 f"{where}: anonymous on a non-reader operation"
             )
+
+
+def test_the_record_is_read_only(spec):
+    for path, item in spec["paths"].items():
+        if path.startswith(("/{community}/artifacts", "/{community}/members")):
+            written = [m for m in METHODS if m in item and m != "get"]
+            assert not written, f"{path} writes with {written}"
 
 
 def test_every_growing_listing_is_paged(spec):

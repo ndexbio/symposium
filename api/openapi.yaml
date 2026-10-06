@@ -29,7 +29,8 @@ info:
 
     **Roles.** Each operation lists the roles it allows in `x-roles` and in its description.
     `reader` reads the record. `member` reads, publishes as its Member, and reads its own
-    submissions and replies. `admin` holds both, decides submissions and provisions API keys.
+    submissions and replies. `admin` holds both and decides submissions. API keys are
+    provisioned with the server admin's Ed25519 token alone.
 
     **Errors.** Every error answers the `Error` body.
 
@@ -1358,10 +1359,9 @@ paths:
         can hand a lost key back. A revoked key's value is erased at revocation and answers
         `null`. Ordered by creation ascending. This is `/symposium list-api-keys`.
 
-        Roles: admin.
+        Roles: admin, through the server admin's Ed25519 token only.
       x-roles: [admin]
       security:
-        - apiKey: []
         - adminToken: []
       parameters:
         - $ref: '#/components/parameters/cursor'
@@ -1411,11 +1411,10 @@ paths:
         and publishes as that Member. A key scoped to the server holds `admin` and names the
         server's admin handle. This is `/symposium gen-api-key <username> <roles…>`.
 
-        Roles: admin.
+        Roles: admin, through the server admin's Ed25519 token only.
       x-roles: [admin]
       x-bounded: the key's roles, at most three
       security:
-        - apiKey: []
         - adminToken: []
       requestBody:
         required: true
@@ -1459,11 +1458,10 @@ paths:
       description: |
         One key, as `listApiKeys` shows it.
 
-        Roles: admin.
+        Roles: admin, through the server admin's Ed25519 token only.
       x-roles: [admin]
       x-bounded: the key's roles, at most three
       security:
-        - apiKey: []
         - adminToken: []
       parameters:
         - $ref: '#/components/parameters/keyId'
@@ -1495,11 +1493,10 @@ paths:
         row stays for the record of who held it. Revoking a revoked key answers it unchanged.
         This is `/symposium revoke-api-key <key id>`.
 
-        Roles: admin.
+        Roles: admin, through the server admin's Ed25519 token only.
       x-roles: [admin]
       x-bounded: the key's roles, at most three
       security:
-        - apiKey: []
         - adminToken: []
       parameters:
         - $ref: '#/components/parameters/keyId'
@@ -1533,8 +1530,8 @@ components:
       bearerFormat: JWT
       description: |
         The server admin's Ed25519 token from `POST /v1/admin/token`, the one the skill already
-        holds. Accepted only by the gate and API-key operations, so the admin can issue the
-        first API key with the credential it already has.
+        holds. The gate operations accept it beside an `admin` API key. The API-key operations
+        accept it alone, so an API key, whatever its scope, reads and makes no other key.
   parameters:
     community:
       name: community

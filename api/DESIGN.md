@@ -26,10 +26,10 @@ storage code.
 Lint it with:
 
 ```bash
-npx --yes @redocly/cli@2.59.0 lint api/openapi.yaml
+npx --yes @redocly/cli@2.59.0 lint --config api/redocly.yaml api/openapi.yaml
 ```
 
-CI runs the same command. `make test` runs `tests/api/`.
+`make test` runs it, then `tests/api/`, and CI runs `make test`.
 
 ## 1. The resource model
 
@@ -91,7 +91,7 @@ supersedes what, findings, and grounded spans. The server keeps a **derived inde
 these facts in its PostgreSQL. It folds in each Artifact the moment `record` gains it. The
 index is a cache of the record and is never the source of truth. `POST gate/rebuild`
 rebuilds it from the `record` feed, and `GET gate/verify` compares the two. Every read
-answers from the index and states the index's `position` (§6.3).
+answers from the index and states the index's `position` (§6.2).
 
 ### 1.4 Canonical URLs
 
@@ -191,7 +191,7 @@ same identity or the same bytes.
 |---|---|
 | `reader` | every read of the record: Artifacts, views, Members, the record stream |
 | `member` | everything `reader` has, plus publishing as its Member and reading its own submissions, replies and their streams |
-| `admin` | everything `member` has, plus every submission and reply, the gate's operations, and API keys |
+| `admin` | everything `member` has, plus every submission and reply, and the gate's operations |
 
 The issue asked for `member` and `admin` and asked whether more are needed.
 
@@ -257,12 +257,15 @@ itself, and `submitArtifact` applies them through `role=` as `--role` does.
 | runGatePass | POST /{community}/gate/passes | | | ✓ |
 | verifyGate | GET /{community}/gate/verify | | | ✓ |
 | rebuildGate | POST /{community}/gate/rebuild | | | ✓ |
-| listApiKeys | GET /admin/api-keys | | | ✓ |
-| createApiKey | POST /admin/api-keys | | | ✓ |
-| getApiKey | GET /admin/api-keys/{key_id} | | | ✓ |
-| revokeApiKey | DELETE /admin/api-keys/{key_id} | | | ✓ |
+| listApiKeys | GET /admin/api-keys | | | ✓ token |
+| createApiKey | POST /admin/api-keys | | | ✓ token |
+| getApiKey | GET /admin/api-keys/{key_id} | | | ✓ token |
+| revokeApiKey | DELETE /admin/api-keys/{key_id} | | | ✓ token |
 
 "own" means rows about the key's Member: its submissions, and the replies addressed to it.
+"token" means the server admin's Ed25519 token alone (`adminToken`). An API key of any role or
+scope is refused there. A key scoped to one community would otherwise read every decrypted
+key on the server, including the server-wide admin's.
 
 ## 5. API keys
 
@@ -345,11 +348,14 @@ check runs on every request. Its keys stay listed until the admin revokes them.
 
 ### 5.5 Life cycle
 
+All four key operations take the server admin's Ed25519 token and nothing else. An API
+key, whatever its role or scope, can read, make or revoke no key.
+
 1. **`/symposium gen-api-key <username> <roles…> [--community <c> | --server]
    [--expires-days N] [--label …]`** calls `createApiKey` with the admin's Ed25519 token.
-   The admin needs no API key to make the first one. It prints the key once and the id.
-   The default scope is the session's community.
-2. **`/symposium list-api-keys [--community <c>]`** calls `listApiKeys`. It prints every key
+   It prints the key once and the id. The default scope is the session's community.
+2. **`/symposium list-api-keys [--community <c>]`** calls `listApiKeys`, with the same
+   token. It prints every key
    with its username, its value (decrypted), its roles, its scope, its creation, expiry and
    revocation, and its last use. This follows the precedent of `GET /v1/{community}/invites`,
    which hands pending invites back to the admin. A revoked key shows `key: null`.
@@ -425,7 +431,7 @@ Server-Sent Events on three streams, each `text/event-stream`:
 | Publishing roles are self-imposed | `role=` applies the charter's `may_publish` before submitting. The gate ignores roles, as it does today. |
 
 `runGatePass` runs the gate's code on the server under the server admin's authority. The
-skill's client-side `/symposium gate` keeps working unchanged. §9 covers how the two run
+skill's client-side `/symposium gate` keeps working unchanged. §10 covers how the two run
 side by side.
 
 ## 8. Coexistence with today's access
@@ -435,7 +441,7 @@ Nothing that exists today changes for the skill or the CLI.
 | Credential | Where it works | Changes |
 |---|---|---|
 | Member Ed25519 token (JWT) | `/v1` | none |
-| Server admin Ed25519 token (JWT) | `/v1`; also the API's gate and API-key operations (`adminToken`) | it is newly accepted on those API operations |
+| Server admin Ed25519 token (JWT) | `/v1`; also the API's gate operations, and the API-key operations, which accept it alone (`adminToken`) | it is newly accepted on those API operations |
 | Read key `sdr_…` | `/v1` reads of its collection | none; the API does not accept it |
 | Public collection | anonymous `/v1` reads | a public `record` also opens the API's record reads anonymously |
 | API key `sak_…` | `/api/v1` only | new; `/v1` refuses it |

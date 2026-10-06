@@ -1,7 +1,8 @@
 # Symposium. The only targets are lint, test, build and deploy-local.
 #   make lint           ruff over all Python, then the toolchain's conformance suite
-#   make test           lint, then the data server's suites (its one image build), then the
-#                       top-level suite against that same image. It is the single gate.
+#   make test           lint, then the API contract's OpenAPI lint (node and npx), then the
+#                       data server's suites (its one image build), then the top-level
+#                       suite against that same image. It is the single gate.
 #                       DOCKER=false runs only the suites that need no container
 #                       (tests/skills/test_agent_process.py, test_sessions.py, test_runtime.py,
 #                       and tests/api)
@@ -22,6 +23,8 @@ DOCKER ?= true
 NO_DOCKER_SUITES := tests/skills/test_agent_process.py tests/skills/test_sessions.py \
 	tests/skills/test_long_running.py \
 	tests/skills/test_runtime.py tests/api
+# The OpenAPI linter for the API contract (api/openapi.yaml), pinned; it runs through npx.
+REDOCLY := 2.59.0
 BUNDLE := dist/Symposium_skill.zip
 SKILLS ?= $(HOME)/.claude/skills
 
@@ -37,6 +40,7 @@ test:
 	SYMPOSIUM_TEST_DOCKER=false $(UV) pytest -c tests/pytest.ini $(NO_DOCKER_SUITES)
 else
 test: lint
+	npx --yes @redocly/cli@$(REDOCLY) lint --config api/redocly.yaml api/openapi.yaml
 	$(MAKE) -C data-server test
 	SYMPOSIUM_DATA_TEST_IMAGE=$(IMAGE):$(TAG) SYMPOSIUM_DATA_TEST_VERSION=$(TAG) \
 		$(UV) pytest -c tests/pytest.ini $(SUITES)

@@ -201,15 +201,15 @@ role holds everything the one before it holds.
   a Member, so a leaked one can publish nothing.
 - **`member`** is a Member on the roster. It publishes as that Member and sees its own
   traffic with the gate.
-- **`admin`** is the server's admin. Deciding submissions belongs to it alone, as
-  `/symposium gate` does today. `promote` is admin-only on `/v1`, and the profile keeps the
-  party that sets goals apart from the party that decides publication. So there is no
-  separate gate role: `admin` holds the gate.
+- **`admin`** is the server's admin. It holds the gate's operations: deciding submissions
+  belongs to the admin, as `/symposium gate` does today. `promote` is admin-only on `/v1`,
+  and the profile keeps the party that sets goals apart from the party that decides
+  publication.
 
 Provisioning API keys sits outside the three roles. It takes the server admin's Ed25519
 token (§5.5), so no API key of any role can read or make another key.
 
-Anonymous access is a separate case, not a fourth role. When a community's `record`
+Anonymous access is a separate case from the roles. When a community's `record`
 collection is public on the data server, every record read also answers with no
 credential. The operation says so in `x-anonymous`, and its `security` includes `{}`. This
 is the API's version of a public collection.
@@ -506,16 +506,19 @@ the key's Member.
 ## 10. How the code is arranged
 
 The API's code and the rules it shares with the skill each get their own package, so every
-dependency points one way: toward the rules, and from the API toward storage.
+dependency points one way: toward the rules, and from the API toward storage. A small
+composition module outside both services assembles the running server, so no package
+imports one that imports it back.
 
 | Package | Holds | Imported by |
 |---|---|---|
 | `symposium_rules` (new, standard library only, Python 3.9+) | the validator (today `tools/validate.py`), the gate's ordering and skip rules (today in `tools/gate.py`), the publish checks and the charter loader (today in `tools/publish.py`), and the charters in `tools/roles/` | the skill's `tools/`, the API |
-| `symposium_api` (new) | the `/api/v1` routes, the index, the streams and the gate pass | the data server's app, which mounts it |
-| `symposium_data` (today) | storage: `/v1`, records, identity | `symposium_api`, through its records layer |
+| `symposium_api` (new) | the `/api/v1` routes, the index, the streams and the gate pass, as a FastAPI router built from a records layer it is handed | `symposium_server` |
+| `symposium_data` (today) | storage: `/v1`, records, identity | `symposium_api`, through its records layer; `symposium_server` |
+| `symposium_server` (new, a few lines) | the composition root: it builds `symposium_data`'s app and records layer, builds `symposium_api`'s router from that records layer, and mounts the router at `/api/v1`. uvicorn starts this module | nothing |
 
 `tools/validate.py`, `tools/gate.py` and `tools/publish.py` become thin callers of
 `symposium_rules`, with the same behaviour and the same command lines. The skill bundle and
 the data server image both ship the one package, so the validator the API runs is the
-validator the gate runs, byte for byte. Storage imports none of the rules, and the rules
-import none of the storage.
+validator the gate runs, byte for byte. Storage imports none of the rules and none of the
+API, and the rules import none of the storage. Only `symposium_server` sees all three.

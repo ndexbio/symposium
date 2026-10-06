@@ -22,3 +22,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: make test DOCKER=${{ matrix.docker }}
         shell: bash
+      # the API contract (api/openapi.yaml) must stay valid OpenAPI; the linter needs node,
+      # which only this one job uses
+      - if: matrix.docker
+        run: npx --yes @redocly/cli@2.59.0 lint api/openapi.yaml

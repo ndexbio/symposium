@@ -2,8 +2,9 @@
 #   make lint           ruff over all Python, then the toolchain's conformance suite
 #   make test           lint, then the data server's suites (its one image build), then the
 #                       top-level suite against that same image. It is the single gate.
-#                       DOCKER=false runs only the skill's suites that need no container
-#                       (tests/skills/test_agent_process.py, test_sessions.py, test_runtime.py)
+#                       DOCKER=false runs only the suites that need no container
+#                       (tests/skills/test_agent_process.py, test_sessions.py, test_runtime.py,
+#                       and tests/api)
 #   make build          lint, then dist/Symposium_skill.zip: the symposium skill, with the
 #                       symposium-data CLI inside it (R-I8)
 #   make deploy-local   build, then install the skill from the zip into $(SKILLS)
@@ -13,13 +14,14 @@ UV := uv run --project data-server/service --frozen
 # The image `make -C data-server test` builds: the top-level suites run against the same one.
 IMAGE := ndexbio/symposium-data
 TAG := $(shell sed -n 's/^version = "\(.*\)"/\1/p' data-server/service/pyproject.toml)
-# The top-level suite (tests/): the CLI's tests, then the skill's, on one container.
-SUITES := tests/symposium-data tests/skills
-# DOCKER=false (CI's Windows job): only the skill's suites that need no container
+# The top-level suite (tests/): the CLI's tests, then the skill's, on one container, then the
+# API contract's, which need none.
+SUITES := tests/symposium-data tests/skills tests/api
+# DOCKER=false (CI's Windows job): only the suites that need no container
 DOCKER ?= true
 NO_DOCKER_SUITES := tests/skills/test_agent_process.py tests/skills/test_sessions.py \
 	tests/skills/test_long_running.py \
-	tests/skills/test_runtime.py
+	tests/skills/test_runtime.py tests/api
 BUNDLE := dist/Symposium_skill.zip
 SKILLS ?= $(HOME)/.claude/skills
 

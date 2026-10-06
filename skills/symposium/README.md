@@ -9,7 +9,9 @@ shell on the server.
 
 **Install** the skill from the Symposium bundle: `make deploy-local` from a clone of the
 repository, or unzip a release's `Symposium_skill.zip` and copy its `skills/symposium/` into
-`~/.claude/skills/`. The CLI ships inside the skill (`toolchain/tools/symposium-data/`), and
+`~/.claude/skills/`. The skill's `toolchain/` holds the repository's Symposium base at its
+repository paths: the specification, the tools and their docs, roles, policies and SOPs, the
+worked examples and the conformance suite. The CLI ships inside it (`toolchain/tools/symposium-data/`), and
 the host needs only Python 3.9+: nothing goes on `PATH`. The first command of an agent session
 prepares the skill's Python runtime: on the machine's first session it builds the skill's own
 environment, `.venv`, from PyPI (so that first command needs network access), and every later

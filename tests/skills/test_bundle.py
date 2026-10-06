@@ -1,8 +1,9 @@
-"""The bundle (R-I8) and `make deploy-local` (R-J4): the zip holds the root README and the skill,
-with its toolchain, the stamped CLI and the data server's deployment files inside it, and
-nothing else; deploy-local installs exactly the skill; and the installed skill works with no
-repository and nothing on PATH but python3, preparing its own Python runtime once per agent
-session (R-I7), including `validate` against a data server."""
+"""The bundle (R-I8) and `make deploy-local` (R-J4): the zip holds the root README, the licence
+and the skill, with its toolchain inside it: the repository's Symposium base one for one, at its
+repository paths, so every relative link in the installed skill resolves inside it and the
+conformance suite runs from it; deploy-local installs exactly the skill; and the installed skill
+works with no repository and nothing on PATH but python3, preparing its own Python runtime once
+per agent session (R-I7), including `validate` against a data server."""
 
 import json
 import os
@@ -19,6 +20,15 @@ from suite import REPO
 
 BUNDLE = REPO / "dist" / "Symposium_skill.zip"
 CLI = "skills/symposium/toolchain/tools/symposium-data"
+# the repository's Symposium base, shipped whole at its repository paths under toolchain/
+SHIPPED_FOLDERS = ("spec", "tools", "server", "examples")
+# and the data server's operator docs (its top-level *.md but its developer README) and manifest
+SHIPPED_FILES = (
+    ":(glob)data-server/*.md",
+    "data-server/docker/k8s-data-deployment.yml",
+)
+NOT_SHIPPED = {"tools/bundle.py", "data-server/README.md"}
+LINK = re.compile(r"\]\(([^)\s]+)\)")
 
 
 def make(*args) -> subprocess.CompletedProcess:
@@ -38,6 +48,17 @@ def installed(tmp_path_factory) -> dict:
 
 def files_under(root: Path) -> set:
     return {p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file()}
+
+
+def tracked(*paths) -> set:
+    listed = subprocess.run(
+        ["git", "ls-files", "--", *paths],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return set(listed.stdout.split())
 
 
 def only_python3(suite, tmp_path) -> dict:
@@ -68,8 +89,13 @@ def test_the_bundle_holds_the_skill_with_its_toolchain_and_the_stamped_cli(insta
         skill_md = zf.read("skills/symposium/SKILL.md").decode()
         compat = json.loads(zf.read(f"{CLI}/compat.json"))
         readme = zf.read("README.md")
-    assert all(n == "README.md" or n.startswith("skills/symposium/") for n in names)
+    assert all(
+        n in ("README.md", "LICENSE") or n.startswith("skills/symposium/")
+        for n in names
+    )
     assert readme == (REPO / "README.md").read_bytes()  # the repository's, at the root
+    with zipfile.ZipFile(BUNDLE) as zf:
+        assert zf.read("LICENSE") == (REPO / "LICENSE").read_bytes()
     for required in (
         "skills/symposium/SKILL.md",
         "skills/symposium/README.md",
@@ -118,6 +144,54 @@ def test_the_bundle_holds_the_skill_with_its_toolchain_and_the_stamped_cli(insta
         re.MULTILINE,
     ).group(1)
     assert compat == {"data_server_version": version}
+
+
+def test_the_installed_skill_holds_the_repositorys_symposium_base_one_for_one(
+    installed,
+):
+    toolchain = installed["skills"] / "symposium" / "toolchain"
+    expected = tracked(*SHIPPED_FOLDERS, *SHIPPED_FILES) - NOT_SHIPPED
+    shipped = {
+        f
+        for f in files_under(toolchain)
+        if "__pycache__" not in f  # what running the suite leaves behind
+    } - {"tools/symposium-data/compat.json"}  # the bundle's stamp
+    assert shipped == expected
+    for path in sorted(expected):
+        assert (toolchain / path).read_bytes() == (REPO / path).read_bytes(), path
+
+
+def test_every_relative_link_in_the_installed_skill_resolves_inside_it(installed):
+    skill = (installed["skills"] / "symposium").resolve()
+    broken = []
+    for doc in sorted(skill.rglob("*.md")):
+        if any(part.startswith(".venv") for part in doc.relative_to(skill).parts):
+            continue  # the runtime's packages, not the skill's documents
+        for target in LINK.findall(doc.read_text(encoding="utf-8")):
+            path = target.split("#", 1)[0]
+            if not path or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", path):
+                continue  # an anchor in the same document, or a URL
+            if path.startswith(("@", "<")):
+                continue  # a Symposium artifact address, written as a link
+            resolved = (doc.parent / path).resolve()
+            if not resolved.exists() or skill not in (resolved, *resolved.parents):
+                broken.append(f"{doc.relative_to(skill)} -> {target}")
+    assert broken == []
+
+
+def test_the_conformance_suite_runs_from_the_installed_skill(installed):
+    tools = installed["skills"] / "symposium" / "toolchain" / "tools"
+    result = subprocess.run(
+        [sys.executable, "conformance.py"],
+        cwd=tools,
+        # the installed skill stays exactly as installed: no bytecode written into it
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    assert result.returncode == 0, result.stdout[-3000:] + result.stderr
+    assert "everything behaved as specified" in result.stdout
 
 
 def test_deploy_local_installs_exactly_the_skill_and_says_so(installed):

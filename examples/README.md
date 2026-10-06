@@ -58,7 +58,7 @@ cp -r examples/manuscript_example ~/symposium-scratch/record
 ```
 
 Publishing your own Artifacts belongs in a community of your own on a Symposium
-Data server — see the skill's [`README.md`](../skills/symposium/README.md).
+Data server — see the `symposium` skill's `README.md`.
 Nothing you author should land in this repository.
 
 ## Checking that they still pass

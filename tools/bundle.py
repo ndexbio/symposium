@@ -5,11 +5,20 @@
 
 The zip holds:
   README.md                  the repository's README: Symposium, installing it, and participating
-  skills/symposium/          the `symposium` skill, with toolchain/: the tool files and context
-                             its dispatch and SKILL.md need, the CLI (tools/symposium-data/,
-                             stamped with compat.json: the data-server version this bundle was
-                             built for, R-I5), and the data server's RUNBOOK.md and Kubernetes
-                             manifest, so an installed skill needs nothing else
+  LICENSE                    the repository's licence
+  skills/symposium/          the `symposium` skill, with toolchain/: the repository's Symposium
+                             base, one for one at its repository paths, so every relative link
+                             between its documents resolves in the installed skill as it does in
+                             a clone: spec/, tools/ (the workflow tools, the docs, roles, policies
+                             and SOPs, the conformance suite and record checkers, and the CLI in
+                             tools/symposium-data/, stamped with compat.json: the data-server
+                             version this bundle was built for, R-I5), server/, examples/, and
+                             the data server's operator docs (its top-level *.md but its
+                             developer README) and Kubernetes manifest
+
+Only repository-maintenance files stay out: this script (NOT_SHIPPED), and everything outside
+TOOLCHAIN (AGENTS.md, CLAUDE.md, the Makefile, CI, tests, and the data server's source; the
+server ships as its image).
 
 Never tests, caches, the skill's own Python environment (.venv) or editor leftovers. Entries are sorted and dated alike, so the same tree
 always builds the same zip. Standard library only, Python 3.9+.
@@ -26,33 +35,17 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 SKILL = REPO / "skills" / "symposium"
-# The toolchain the skill's dispatch and SKILL.md reach, kept at its repository path under
-# skills/symposium/toolchain/.
+# The repository's Symposium base, kept at its repository paths under skills/symposium/toolchain/.
 TOOLCHAIN = (
-    "tools/setup.py",
-    "tools/publish.py",
-    "tools/sync.py",
-    "tools/gate.py",
-    "tools/validate.py",
-    "tools/data_io.py",
-    "tools/telemetry.py",
-    "tools/browse.py",
-    "tools/serve.py",
-    "tools/figures.py",
-    "tools/templates.py",
-    "tools/vendor/cytoscape.min.js",
-    "tools/vendor/cytoscape-svg.js",
-    "tools/CANONICAL.md",
-    "tools/symposium-data",
-    "server/bootstrap.py",
-    "data-server/RUNBOOK.md",
-    "data-server/docker/k8s-data-deployment.yml",
-    "tools/MEMBER-AGENT-INSTRUCTIONS.md",
-    "tools/roles",
-    "tools/policy",
-    "tools/sop",
     "spec",
+    "tools",
+    "server",
+    "examples",
+    "data-server/*.md",
+    "data-server/docker/k8s-data-deployment.yml",
 )
+# inside TOOLCHAIN, but repository maintenance: never shipped
+NOT_SHIPPED = {"tools/bundle.py", "data-server/README.md"}
 SKIPPED = {"__pycache__", "tests", ".pytest_cache", ".ruff_cache", ".DS_Store"}
 DATE = (1980, 1, 1, 0, 0, 0)
 
@@ -78,14 +71,18 @@ class Bundle:
 
     def entries(self) -> dict:
         """zip path -> source path (or bytes, for the generated stamp)."""
-        out = {"README.md": self.repo / "README.md"}
+        out = {"README.md": self.repo / "README.md", "LICENSE": self.repo / "LICENSE"}
         for path, relative in self.files(SKILL):
             out[f"skills/symposium/{relative.as_posix()}"] = path
         for item in TOOLCHAIN:
-            source = self.repo / item
-            for path, relative in self.files(source):
-                inner = Path(item) if source.is_file() else Path(item) / relative
-                out[f"skills/symposium/toolchain/{inner.as_posix()}"] = path
+            for source in sorted(self.repo.glob(item)):
+                for path, relative in self.files(source):
+                    inner = source.relative_to(self.repo)
+                    if source.is_dir():
+                        inner = inner / relative
+                    if inner.as_posix() in NOT_SHIPPED:
+                        continue
+                    out[f"skills/symposium/toolchain/{inner.as_posix()}"] = path
         out["skills/symposium/toolchain/tools/symposium-data/compat.json"] = (
             json.dumps({"data_server_version": self.data_server_version()}, indent=2)
             + "\n"

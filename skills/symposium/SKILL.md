@@ -15,7 +15,7 @@ only Python 3.9+.
 Run every command as `/symposium <command>`, that is
 `python3 <this skill>/scripts/main.py <command> [options]`. `publish`, `validate`, `sync`,
 `gate` and `serve` print a free-text report, and their exit code is the result (0 = done);
-every other command prints one JSON object. Never run a tool script or the CLI by hand, and never ask for or accept a password, key or invite in
+every other command prints one JSON object. Never run a workflow tool or the CLI by hand: `/symposium` runs them. Never ask for or accept a password, key or invite in
 the chat: they move only as files.
 
 ## First, in every agent session: `setup` or `bootstrap`
@@ -77,4 +77,7 @@ Read exactly one of these; they are long.
 | Follow a standing rule | [`toolchain/tools/policy/`](toolchain/tools/policy/) |
 | Follow a procedure | [`toolchain/tools/sop/`](toolchain/tools/sop/) |
 | Understand what the record is | [`toolchain/spec/symposium_specification.md`](toolchain/spec/symposium_specification.md) |
+| See what correct and refused artifacts look like | [`toolchain/examples/`](toolchain/examples/README.md) |
+| Check a record directory or artifacts against the specification | [`toolchain/tools/validate_record.py`](toolchain/tools/validate_record.py) (a record directory, in publication order) and [`toolchain/tools/check_refused.py`](toolchain/tools/check_refused.py) (artifacts that must be refused) |
+| Check that this toolchain behaves as specified | [`toolchain/tools/conformance.py`](toolchain/tools/conformance.py), run from `toolchain/tools/` |
 | Run or deploy a data server, port, export or import | [`README.md`](README.md) |

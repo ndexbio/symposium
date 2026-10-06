@@ -18,6 +18,7 @@ SUITES := tests/symposium-data tests/skills
 # DOCKER=false (CI's Windows job): only the skill's suites that need no container
 DOCKER ?= true
 NO_DOCKER_SUITES := tests/skills/test_agent_process.py tests/skills/test_sessions.py \
+	tests/skills/test_long_running.py \
 	tests/skills/test_runtime.py
 BUNDLE := dist/Symposium_skill.zip
 SKILLS ?= $(HOME)/.claude/skills

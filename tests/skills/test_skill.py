@@ -5,9 +5,12 @@ what the skill says when something is missing; and the workflow commands (`publi
 
 import json
 import re
+import shlex
+import socket
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from skills.test_workflow import note
@@ -33,6 +36,40 @@ def report(suite, cwd: Path, *args) -> tuple[int, str]:
         timeout=300,
     )
     return result.returncode, result.stdout + result.stderr
+
+
+# a stand-in agent: a long-lived process that starts the command's shell, and keeps running
+STAND_IN_AGENT = "import subprocess, sys, time; subprocess.Popen(['sh', '-c', sys.argv[1]]); time.sleep(300)"
+
+
+def in_the_background(suite, cwd: Path, log: Path, *args) -> subprocess.Popen:
+    """A command an agent runs in the background, its output going to a file; -> the agent."""
+    command = shlex.join([sys.executable, str(SKILL), *map(str, args)])
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            STAND_IN_AGENT,
+            f"{command} > {shlex.quote(str(log))} 2>&1",
+        ],
+        cwd=cwd,
+        env={**suite.env, "SYMPOSIUM_POLL": "1"},
+    )
+
+
+def until(log: Path, text: str, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if log.exists() and text in log.read_text():
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def free_port() -> int:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
 
 
 def test_help_names_the_data_server_image_and_prepares_nothing(skill, suite, tmp_path):
@@ -254,3 +291,38 @@ def test_setup_with_an_unusable_invite_file_is_refused(skill, tmp_path):
     (tmp_path / "bad.invite").write_text(json.dumps({"handle": "lyra"}))
     code, out = skill(tmp_path, "setup", "--invite-file", "bad.invite")
     assert code == 1 and "lacks" in out["error"]
+
+
+def test_commands_that_keep_running_stream_their_output_and_end_with_their_agent(
+    server, skill, suite, tmp_path
+):
+    skill.ok(
+        tmp_path, "bootstrap", "--community-file", community_file(tmp_path, server)
+    )
+    gate_log, serve_log = tmp_path / "gate.log", tmp_path / "serve.log"
+    gate = in_the_background(suite, tmp_path, gate_log, "gate", "--watch")
+    serve = None
+    try:
+        assert until(gate_log, "watching inbox", 30), gate_log.read_text()
+        code, out = report(suite, tmp_path, "publish", note(tmp_path, ADMIN, "kept"))
+        assert code == 0, out
+        # each decision reaches the agent as the gate prints it, while the gate keeps running
+        assert until(gate_log, "ACCEPTED", 30), gate_log.read_text()
+        serve = in_the_background(
+            suite, tmp_path, serve_log, "serve", "--port", free_port()
+        )
+        assert until(serve_log, "build 1:", 30), serve_log.read_text()
+    finally:
+        for agent in (gate, serve):
+            if agent is not None:
+                agent.kill()  # the agent session ends abruptly
+                agent.wait()
+    for log in (gate_log, serve_log):
+        assert until(log, "the agent session that started this has ended", 30), (
+            log.read_text()
+        )
+        assert "Traceback" not in log.read_text()
+    left = subprocess.run(
+        ["pgrep", "-f", f"{REPO}/tools/(gate|serve).py"], capture_output=True, text=True
+    )
+    assert left.stdout == ""

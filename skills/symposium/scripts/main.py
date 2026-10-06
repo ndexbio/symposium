@@ -42,6 +42,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from long_running import LongRunning
 from runtime import Runtime, RuntimeUnavailable
 from sessions import SessionError, Sessions
 
@@ -148,8 +149,11 @@ def main(argv=None) -> int:
     process = command_line(command, rest, cli)
     environment = {**os.environ, "SYMPOSIUM_DATA_CLI": json.dumps(cli)}
     if command in FREE_TEXT:
-        # the session first; the report then streams through as it comes (serve, --watch)
+        # the session first; the report then streams through, each line as it is printed
         print(f"session: {session.label()}", flush=True)
+        environment["PYTHONUNBUFFERED"] = "1"
+        if keeps_running(command, rest):
+            return LongRunning().run(process, environment, directory)
         return subprocess.run(process, env=environment, cwd=directory).returncode
     result = subprocess.run(
         process, env=environment, cwd=directory, stdout=subprocess.PIPE, text=True
@@ -163,6 +167,11 @@ def main(argv=None) -> int:
             session = made
     print(named(result.stdout, session), end="")
     return result.returncode
+
+
+def keeps_running(command: str, rest: list) -> bool:
+    """`serve`, `gate --watch` and `sync --watch` run until stopped."""
+    return command == "serve" or (command in ("gate", "sync") and "--watch" in rest)
 
 
 def named(output: str, session) -> str:

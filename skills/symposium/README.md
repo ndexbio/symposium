@@ -72,6 +72,13 @@ is the result (0 = done; `serve`, `sync --watch` and `gate --watch` run until st
 prints one JSON object: `setup`, `bootstrap`, `use`, `port`, the admin commands (`admin-config`,
 `roster`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import`) and `data …`.
 
+**Commands that keep running** (`gate --watch`, `sync --watch`, `serve`): your agent starts each
+one in the background and shows you every line it prints as it appears, so you follow the gate's
+decisions, the copy's updates and the browser's rebuilds in the conversation. Ask the agent to
+stop one. Each also stops on its own, with a last line saying so, when the agent session that
+started it ends: on macOS and Linux it finishes cleanly, as with ctrl-c; on Windows it is ended
+at once, which is safe for the gate because the server holds every decision.
+
 ## 2. Deploying a data server
 
 The skill never runs a data server; a person deploys one, once, and it can host many

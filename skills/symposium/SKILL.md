@@ -42,9 +42,9 @@ Sessions are kept by the skill under `~/.symposium/` (`admin/<community>/` for t
 | `use [<community> <handle>]` | anyone | make that session this agent session's current one; alone, list every session |
 | `publish [--role <role>] <artifact.json>` | member, admin | sync, validate against the record as it stands, then submit to the gate; `--roles` lists the roles; the admin publishes as `operator` unless it gives `--role` (`--role none`: no limit) |
 | `validate [--role <role>] <artifact.json>` | member, admin | the same checks as `publish`, submitting nothing (`publish --check`) |
-| `sync [--watch]` | member, admin | bring the session's `record/`, its copy of the record, up to date; list the gate's replies to you |
-| `gate [--dry-run\|--verify\|--rebuild\|--watch]` | admin | accept or reject the submissions waiting in `inbox`; `--verify` compares the session's `record/` with the record, `--rebuild` rebuilds the gate's caches from the server, `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30) until stopped |
-| `serve [<record dir>] [--port N]` | anyone | browse the session's `record/` (or the record directory given) at `http://localhost:8760`, rebuilt as it changes |
+| `sync [--watch]` | member, admin | bring the session's `record/`, its copy of the record, up to date; list the gate's replies to you; `--watch` keeps running (see below) |
+| `gate [--dry-run\|--verify\|--rebuild\|--watch]` | admin | accept or reject the submissions waiting in `inbox`; `--verify` compares the session's `record/` with the record, `--rebuild` rebuilds the gate's caches from the server, `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30) and keeps running (see below) |
+| `serve [<record dir>] [--port N]` | anyone | browse the session's `record/` (or the record directory given) at `http://localhost:8760`, rebuilt as it changes; keeps running (see below) |
 | `admin-config --handle <h> --data-server-url <url> [--new-key]` | admin | make or reuse the server's admin key, and print where to place it |
 | `roster list` | member, admin | the community's roster |
 | `roster add\|remove`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import` | admin | manage members and data |
@@ -52,6 +52,19 @@ Sessions are kept by the skill under `~/.symposium/` (`admin/<community>/` for t
 | `data <symposium-data command …>` | anyone | direct data work: `put`, `get`, `version`, `delete`, `keys`, `collection`, `find`, `verify`, `changes`, … |
 
 `/symposium data <command> --help` describes any CLI command and its options.
+
+## Commands that keep running
+
+`gate --watch`, `sync --watch` and `serve` run until they are stopped. For each one:
+
+- **Start it in the background**, so the conversation stays usable while it runs.
+- **Show the user every line it prints, as it appears,** for as long as it runs: follow its
+  output and relay each new line into the conversation. Output the user is not shown is a
+  fault; for `gate --watch`, each line is a decision the admin must see.
+- **Tell the user it is running,** and that they stop it by asking you; stop it when they ask.
+
+Each one also stops on its own, with a last line saying so, when the agent session that started
+it ends.
 
 ## What to read for the task in front of you
 

@@ -13,7 +13,8 @@ import pytest
 import yaml
 
 API = Path(__file__).resolve().parents[2] / "api"
-ROLES = {"reader", "member", "admin"}
+# The three roles an API key may hold, each a superset of the one before.
+ROLES = ("non-member", "member", "admin")
 METHODS = ("get", "post", "put", "patch", "delete")
 
 # Each view of the record browser (tools/browse.py) and each command of the skill
@@ -114,13 +115,22 @@ def test_every_operation_names_its_roles(spec):
     for path, method, op in operations(spec):
         roles = op.get("x-roles")
         where = f"{method.upper()} {path}"
-        assert roles and set(roles) <= ROLES, f"{where}: x-roles is {roles}"
+        assert roles and set(roles) <= set(ROLES), f"{where}: x-roles is {roles}"
         stated = re.search(r"^Roles: (.+)$", op["description"], re.M)
         assert stated, f"{where}: the description states no 'Roles:' line"
-        named = set(re.findall(r"\b(reader|member|admin)\b", stated.group(1)))
+        named = set(
+            re.findall(r"(?<![\w-])(non-member|member|admin)\b", stated.group(1))
+        )
         assert named == set(roles), (
             f"{where}: description names {named}, x-roles {roles}"
         )
+
+
+def test_each_role_holds_everything_the_one_before_holds(spec):
+    for path, method, op in operations(spec):
+        allowed = [role in op["x-roles"] for role in ROLES]
+        first = allowed.index(True)
+        assert all(allowed[first:]), f"{method.upper()} {path}: x-roles skips a role"
 
 
 def test_every_operation_states_its_security(spec):
@@ -143,8 +153,8 @@ def test_every_operation_states_its_security(spec):
             f"{where}: `{{}}` and x-anonymous disagree"
         )
         if anonymous:
-            assert "reader" in op["x-roles"], (
-                f"{where}: anonymous on a non-reader operation"
+            assert "non-member" in op["x-roles"], (
+                f"{where}: anonymous where a non-member is refused"
             )
 
 
@@ -183,8 +193,9 @@ def test_every_read_of_the_record_states_its_position(spec):
         schema = success_json(spec, op)
         if schema is None:
             continue
-        _, required = flatten(spec, schema)
+        properties, required = flatten(spec, schema)
         assert "position" in required, f"GET {path}: response omits `position`"
+        assert properties["position"] == {"$ref": "#/components/schemas/Position"}, path
 
 
 def test_every_stream_resumes_from_a_cursor(spec):
@@ -236,12 +247,8 @@ def test_the_role_table_matches_the_contract(spec, design):
     }
     rows = table(design, "### 4.2 Endpoint × role")
     documented = {}
-    for operation, route, reader, member, admin in rows:
-        roles = {
-            r
-            for r, cell in zip(("reader", "member", "admin"), (reader, member, admin))
-            if cell.startswith("✓")
-        }
+    for operation, route, *cells in rows:
+        roles = {r for r, cell in zip(ROLES, cells) if cell.startswith("✓")}
         documented[operation] = (route, roles)
     assert set(documented) == set(contract)
     for operation, (method, path, roles) in contract.items():

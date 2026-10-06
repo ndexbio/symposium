@@ -27,10 +27,11 @@ info:
 
     **Streams.** Server-Sent Events resume from `Last-Event-ID`, which is a paging cursor.
 
-    **Roles.** Each operation lists the roles it allows in `x-roles` and in its description.
-    `reader` reads the record. `member` reads, publishes as its Member, and reads its own
-    submissions and replies. `admin` holds both and decides submissions. API keys are
-    provisioned with the server admin's Ed25519 token alone.
+    **Roles.** An API key holds exactly one of three roles, each a superset of the one
+    before. `non-member` reads the record. `member` also publishes as its Member and reads
+    its own submissions and replies. `admin` also reads every submission and reply and runs
+    the gate's operations. Each operation lists the roles it allows in `x-roles` and in its
+    description. API keys are provisioned with the server admin's Ed25519 token alone.
 
     **Errors.** Every error answers the `Error` body.
 
@@ -73,8 +74,8 @@ paths:
         The record's position, its size by type and by Member, its time span, and the
         specification versions its Artifacts declare.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       x-bounded: the specification versions in use, one per revision of the specification
       security:
@@ -105,8 +106,8 @@ paths:
         the gate accepted them in; `order=-created` reverses it. This listing is also the
         record's change feed: a client that keeps `next` reads each new Artifact once.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -161,8 +162,8 @@ paths:
         links derived from the record: what it supersedes, what supersedes it, and its Member.
         Its address is `@<name>`.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -191,8 +192,8 @@ paths:
       description: |
         The value of one header property. Its address is `@<name>.<property>`.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -223,8 +224,8 @@ paths:
         The Artifact's Objects, in the order its canonical JSON lists them. A Model may hold
         many, so the listing is paged.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -263,8 +264,8 @@ paths:
         One Object and the relationships that start or end at it. Its address is
         `@<name>.<object>`.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -294,8 +295,8 @@ paths:
       description: |
         The value of one property of an Object. Its address is `@<name>.<object>.<property>`.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -327,8 +328,8 @@ paths:
         The Artifact's relationships, in the order its canonical JSON lists them. Relationships
         carry no address, so they are reached only through their Artifact.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -370,8 +371,8 @@ paths:
         input, the Artifacts that supersede it, the Arguments extracted from it, the work that
         serves a ResearchGoal, or citations in prose.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -415,8 +416,8 @@ paths:
         distance, ordered by `created` ascending. Each entry says whether it is earlier or later
         and carries its `supersedes_rationale`.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -452,8 +453,8 @@ paths:
         `basis=current` gives the findings against the whole record now, as the record browser
         shows them; a later supersession can add one. Ordered by check, then by message.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -502,8 +503,8 @@ paths:
         node. The server computes it, because a source node needs every cited address resolved
         against the record. The graph is bounded by the one Argument.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       x-bounded: one Argument's Objects and the addresses its Grounds cite
       security:
@@ -544,8 +545,8 @@ paths:
         scope and one row per Ground carrying the citation, its URL, the rationale and the
         criterion. Bounded by the one Argument.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       x-bounded: one Argument's Assertions and Grounds
       security:
@@ -580,8 +581,8 @@ paths:
         graph on the record browser's page for a Data, a Model or any non-Argument Artifact.
         Bounded by the one Artifact.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       x-bounded: one Artifact's Objects and relationships
       security:
@@ -613,8 +614,8 @@ paths:
         sits in and the Ground that cites it. Ordered by the citing Artifact's `created`
         ascending.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -651,8 +652,8 @@ paths:
         as the gate verifies it. A `rest` or `download` reference answers its Content Object's
         `location` and `access_method`, unverified.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -692,8 +693,8 @@ paths:
         the edges that leave them, so a client that reads every page holds the whole graph.
         Layout and colour are the client's.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -727,8 +728,8 @@ paths:
         published by type, and a stable `palette_index` so every client colours a Member alike.
         Ordered by handle ascending. This is `/symposium roster list`.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -760,8 +761,8 @@ paths:
       description: |
         One Member. Its address is `@<handle>`. A Member exposes its name and nothing within it.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -790,8 +791,8 @@ paths:
       description: |
         Every Artifact whose `published_by` is this Member, ordered by `created` ascending.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -827,8 +828,8 @@ paths:
         ascending. Messages are Artifacts of the record, so anyone who reads the record reads
         them. The gate's replies to a rejection are a different thing: see `listReplies`.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -860,12 +861,12 @@ paths:
       tags: [members]
       summary: Who this API key acts as
       description: |
-        The key's username, its roles, its scope and its expiry, and the Member it publishes as
-        where it holds `member`.
+        The key's username, its role, its scope and its expiry, and the Member it publishes as
+        where it holds `member` or `admin`.
 
-        Roles: reader, member, admin.
-      x-roles: [reader, member, admin]
-      x-bounded: the key's roles, at most three
+        Roles: non-member, member, admin.
+      x-roles: [non-member, member, admin]
+      x-bounded: one key
       security:
         - apiKey: []
       parameters:
@@ -920,7 +921,9 @@ paths:
       summary: Validate an Artifact and submit nothing
       description: |
         The checks `publish` runs, against the record as it stands, with a provisional
-        `created` from the server's clock. Nothing is stored. A pass means the gate accepts the
+        `created` from the server's clock: the naming rule, the publishing role's limits
+        (`may_publish`, and `may_import` for an Artifact carrying `import_method`), the
+        250 KB limit on embedded payload, and the validator. Nothing is stored. A pass means the gate accepts the
         Artifact if the record has not moved. This is `/symposium validate` and
         `publish --check`.
 
@@ -1147,9 +1150,11 @@ paths:
         summary. Each event's `id` is a cursor; reconnecting with `Last-Event-ID` resumes after
         it, so a client misses nothing. A `heartbeat` event every 30 seconds carries the
         position. This is `/symposium sync --watch`.
+        The server re-checks the key at every event and every heartbeat, and closes the stream
+        when the key is revoked or expired, or its Member leaves the roster.
 
-        Roles: reader, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [reader, member, admin]
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member, admin]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -1180,10 +1185,13 @@ paths:
       summary: Follow submissions and the gate's decisions
       description: |
         A `submission.received` event when a submission lands in `inbox`, and a
-        `submission.accepted`, `submission.rejected` or `submission.deferred` event when the
+        `submission.accepted`, `submission.rejected`, `submission.deferred` or
+        `submission.skipped` event when the
         gate decides it. A `member` key receives events on its own submissions; an `admin` key
         receives every one. Resumes from `Last-Event-ID`. This is what `/symposium gate --watch`
         watches.
+        The server re-checks the key at every event and every heartbeat, and closes the stream
+        when the key is revoked or expired, or its Member leaves the roster.
 
         Roles: member, admin.
       x-roles: [member, admin]
@@ -1216,6 +1224,8 @@ paths:
       description: |
         One `reply` event per reply addressed to the key's Member, as the gate sends it. Resumes
         from `Last-Event-ID`.
+        The server re-checks the key at every event and every heartbeat, and closes the stream
+        when the key is revoked or expired, or its Member leaves the roster.
 
         Roles: member, admin.
       x-roles: [member, admin]
@@ -1354,7 +1364,7 @@ paths:
       tags: [api-keys]
       summary: List every API key, with its value
       description: |
-        Every API key, each with its username, its roles, its scope, its creation, expiry and
+        Every API key, each with its username, its role, its scope, its creation, expiry and
         revocation, its last use, and the key itself, decrypted for this listing, so the admin
         can hand a lost key back. A revoked key's value is erased at revocation and answers
         `null`. Ordered by creation ascending. This is `/symposium list-api-keys`.
@@ -1406,14 +1416,15 @@ paths:
       tags: [api-keys]
       summary: Create an API key
       description: |
-        Create a key for a username with the given roles and scope, and answer it once with its
-        value. A key holding `member` must name a handle registered on its community's roster,
-        and publishes as that Member. A key scoped to the server holds `admin` and names the
-        server's admin handle. This is `/symposium gen-api-key <username> <roles…>`.
+        Create a key for a username with one role and a scope, and answer it once with its
+        value. A `member` key must name a handle registered on its community's roster, and
+        publishes as that Member. An `admin` key names the server's admin handle and is bound
+        to the admin's current Ed25519 key. A key scoped to the server holds `admin`. This is
+        `/symposium gen-api-key <username> <role>`.
 
         Roles: admin, through the server admin's Ed25519 token only.
       x-roles: [admin]
-      x-bounded: the key's roles, at most three
+      x-bounded: one key
       security:
         - adminToken: []
       requestBody:
@@ -1460,7 +1471,7 @@ paths:
 
         Roles: admin, through the server admin's Ed25519 token only.
       x-roles: [admin]
-      x-bounded: the key's roles, at most three
+      x-bounded: one key
       security:
         - adminToken: []
       parameters:
@@ -1495,7 +1506,7 @@ paths:
 
         Roles: admin, through the server admin's Ed25519 token only.
       x-roles: [admin]
-      x-bounded: the key's roles, at most three
+      x-bounded: one key
       security:
         - adminToken: []
       parameters:
@@ -1613,9 +1624,11 @@ components:
       description: |
         The publishing role whose limit applies, as `--role` gives it. Absent means `operator`
         for an admin key and no type limit for a member key, as `/symposium publish` does;
-        `none` applies no limit.
+        `none` applies no limit. The server looks the name up in the charters it ships
+        (`listPublishRoles`) and answers 400 for any other name; it reads no path from it.
       schema:
         type: string
+        pattern: ^[a-z][a-z0-9_-]{0,39}$
     lastEventId:
       name: Last-Event-ID
       in: header
@@ -1735,7 +1748,11 @@ components:
         - '@agent_lyra_data_overexpression_screen_v1.values#csv.row=BST2&col=Normalized infection'
     Cursor:
       type: string
-      description: An opaque position in an ordered listing. It stays valid for the life of the record.
+      maxLength: 256
+      pattern: ^[A-Za-z0-9_-]+$
+      description: |
+        An opaque position in an ordered listing, base64url. It stays valid for the life of the
+        record.
     Position:
       type: object
       description: The state of the record a read response reflects.
@@ -2631,7 +2648,10 @@ components:
                 $ref: '#/components/schemas/MemberResource'
     KeyRole:
       type: string
-      enum: [reader, member, admin]
+      description: |
+        The key's one role. `member` holds everything `non-member` holds, and `admin` holds
+        everything `member` holds.
+      enum: [non-member, member, admin]
     KeyScope:
       type: object
       required: [kind]
@@ -2643,14 +2663,12 @@ components:
           $ref: '#/components/schemas/CommunityName'
     Me:
       type: object
-      required: [username, roles, scope, key_id, position]
+      required: [username, role, scope, key_id, position]
       properties:
         username:
           type: string
-        roles:
-          type: array
-          items:
-            $ref: '#/components/schemas/KeyRole'
+        role:
+          $ref: '#/components/schemas/KeyRole'
         scope:
           $ref: '#/components/schemas/KeyScope'
         key_id:
@@ -2704,9 +2722,11 @@ components:
     SubmissionStatus:
       type: string
       description: |
-        `pending` until the gate decides; `deferred` while it waits for an Analysis the
-        submission names; then `accepted` or `rejected`.
-      enum: [pending, deferred, accepted, rejected]
+        `pending` until the gate decides. `deferred` while a server-side gate pass waits for
+        an Analysis the submission names. `skipped` when the gate's own rule sets it aside: its
+        inbox name is the artifact's name with the wrong prefix, or its submitter is off the
+        roster. Then `accepted` or `rejected`. `api/DESIGN.md` §7 says where each comes from.
+      enum: [pending, deferred, skipped, accepted, rejected]
     SubmissionResource:
       type: object
       required: [id, url, name, submitted_by, submitted, status, citation, position]
@@ -2847,6 +2867,7 @@ components:
                     - submission.accepted
                     - submission.rejected
                     - submission.deferred
+                    - submission.skipped
                 data:
                   $ref: '#/components/schemas/SubmissionResource'
         - $ref: '#/components/schemas/HeartbeatEvent'
@@ -2943,7 +2964,7 @@ components:
           $ref: '#/components/schemas/Position'
     ApiKeyCreate:
       type: object
-      required: [username, roles, scope]
+      required: [username, role, scope]
       properties:
         username:
           type: string
@@ -2951,14 +2972,10 @@ components:
           maxLength: 64
           description: |
             For `member`, a handle registered on the scope's roster. For a server-scoped
-            `admin` key, the server's admin handle. For `reader`, a label naming the
+            `admin` key, the server's admin handle. For `non-member`, a label naming the
             application, which matches no handle on the roster.
-        roles:
-          type: array
-          minItems: 1
-          uniqueItems: true
-          items:
-            $ref: '#/components/schemas/KeyRole'
+        role:
+          $ref: '#/components/schemas/KeyRole'
         scope:
           $ref: '#/components/schemas/KeyScope'
         expires_days:
@@ -2971,7 +2988,7 @@ components:
           maxLength: 200
     ApiKey:
       type: object
-      required: [id, url, username, roles, scope, key, created, created_by, expires, revoked, last_used, uses]
+      required: [id, url, username, role, scope, key, created, created_by, expires, revoked, last_used, uses]
       properties:
         id:
           type: string
@@ -2981,10 +2998,8 @@ components:
           format: uri
         username:
           type: string
-        roles:
-          type: array
-          items:
-            $ref: '#/components/schemas/KeyRole'
+        role:
+          $ref: '#/components/schemas/KeyRole'
         scope:
           $ref: '#/components/schemas/KeyScope'
         key:

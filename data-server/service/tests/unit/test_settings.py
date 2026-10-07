@@ -17,8 +17,8 @@ def test_settings_read_service_env_and_operator_variables(tmp_path):
     s = Settings(
         str(path),
         environ={
-            "SYMPOSIUM_DATA_INVITE_HOURS": "24",
-            "SYMPOSIUM_DATA_QUOTA_BYTES": "1000",
+            "SYMPOSIUM_CONTROL_API_INVITE_HOURS": "24",
+            "SYMPOSIUM_SERVER_QUOTA_BYTES": "1000",
         },
     )
     assert s.database_url.startswith("postgresql://u:p@")
@@ -41,9 +41,9 @@ def test_durations_accept_fractions_of_a_second(tmp_path):
     s = Settings(
         str(path),
         environ={
-            "SYMPOSIUM_DATA_PENDING_TTL": "1",
-            "SYMPOSIUM_DATA_JANITOR_INTERVAL": "0.5",
-            "SYMPOSIUM_DATA_SCRUB_INTERVAL": "0.5",
+            "SYMPOSIUM_SERVER_PENDING_TTL": "1",
+            "SYMPOSIUM_SERVER_JANITOR_INTERVAL": "0.5",
+            "SYMPOSIUM_SERVER_SCRUB_INTERVAL": "0.5",
         },
     )
     assert (s.pending_ttl, s.janitor_interval, s.scrub_interval) == (1.0, 0.5, 0.5)
@@ -57,9 +57,12 @@ def test_the_quota_file_overrides_the_quota_only_with_test_hooks(tmp_path, monke
     monkeypatch.setattr(Settings, "QUOTA_FILE", override)
     hooked = Settings(
         str(path),
-        environ={"SYMPOSIUM_DATA_TEST_HOOKS": "1", "SYMPOSIUM_DATA_QUOTA_BYTES": "500"},
+        environ={
+            "SYMPOSIUM_SERVER_TEST_HOOKS": "1",
+            "SYMPOSIUM_SERVER_QUOTA_BYTES": "500",
+        },
     )
-    plain = Settings(str(path), environ={"SYMPOSIUM_DATA_QUOTA_BYTES": "500"})
+    plain = Settings(str(path), environ={"SYMPOSIUM_SERVER_QUOTA_BYTES": "500"})
     assert hooked.quota() == 500
     override.write_text("1000")
     assert hooked.quota() == 1000

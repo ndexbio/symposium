@@ -295,7 +295,7 @@ READER=$(jq -r .key ~/.symposium/admin/api-keys/<dashboard key id>.key)
 
 ```bash
 curl -s $API/openapi.json | jq '{openapi, title: .info.title}'
-# {"openapi": "3.0.3", "title": "Symposium API"}
+# {"openapi": "3.0.3", "title": "Symposium Data API"}
 curl -s $API/demo/record
 # {"detail": "the record of demo is private: an API key is required", "code": "unauthorized"}
 ```
@@ -415,18 +415,34 @@ them without values. A revoked key answers 401 on its next call, and a stream op
 
 ## Configuration
 
-| Variable | Applies to | Default | Meaning |
-|---|---|---|---|
-| `SYMPOSIUM_DATA_TRUSTED_PROXY` | server | `127.0.0.1` | The only address whose `X-Forwarded-*` headers are trusted. |
-| `SYMPOSIUM_DATA_TOKEN_TTL` | Control API | `900` | Lifetime, in seconds, of the Ed25519 access tokens the Control API issues. |
-| `SYMPOSIUM_DATA_INVITE_HOURS` | Control API | `72` | Default invite lifetime, in hours. |
-| `SYMPOSIUM_DATA_QUOTA_BYTES` | server | `0` (none) | Per-member limit, in each community, on the bytes of content the member uploaded first, through either API. The server admin's own writes are exempt. |
-| `SYMPOSIUM_DATA_PENDING_TTL` | server | `86400` | Age, in seconds, after which the janitor removes an upload that never completed. |
-| `SYMPOSIUM_DATA_JANITOR_INTERVAL` | server | `3600` | How often, in seconds, the janitor runs. |
-| `SYMPOSIUM_DATA_SCRUB_INTERVAL` | server | `3600` | How often, in seconds, the integrity scrub runs. |
-| `SYMPOSIUM_DATA_SCRUB_BATCH` | server | `50` | How many payloads each scrub pass re-hashes, least recently checked first. |
-| `SYMPOSIUM_DATA_WORKERS` | server | `1` | uvicorn worker processes, each serving both APIs. Every worker serves any request; the Data API's stream caps are counted in PostgreSQL. |
-| `SYMPOSIUM_DATA_PUBLIC_URL` | Data API | (the request's URL) | The base of every canonical `url` the Data API answers, such as `https://data.example.org`. |
-| `SYMPOSIUM_API_MAX_STREAMS` | Data API | `500` | Open Data API streams across the server. |
+Each setting's prefix says what it governs: `SYMPOSIUM_SERVER_*` the whole server, both APIs
+included; `SYMPOSIUM_CONTROL_API_*` the Control API (`/v1`) alone; `SYMPOSIUM_DATA_API_*` the
+Data API (`/api/v1`) alone.
+
+### Server-wide
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SYMPOSIUM_SERVER_TRUSTED_PROXY` | `127.0.0.1` | The only address whose `X-Forwarded-*` headers are trusted. |
+| `SYMPOSIUM_SERVER_QUOTA_BYTES` | `0` (none) | Per-member limit, in each community, on the bytes of content the member uploaded first, through either API. The server admin's own writes are exempt. |
+| `SYMPOSIUM_SERVER_PENDING_TTL` | `86400` | Age, in seconds, after which the janitor removes an upload that never completed. |
+| `SYMPOSIUM_SERVER_JANITOR_INTERVAL` | `3600` | How often, in seconds, the janitor runs. |
+| `SYMPOSIUM_SERVER_SCRUB_INTERVAL` | `3600` | How often, in seconds, the integrity scrub runs. |
+| `SYMPOSIUM_SERVER_SCRUB_BATCH` | `50` | How many payloads each scrub pass re-hashes, least recently checked first. |
+| `SYMPOSIUM_SERVER_WORKERS` | `1` | uvicorn worker processes, each serving both APIs. Every worker serves any request; the Data API's stream caps are counted in PostgreSQL. |
+
+### Control API (`/v1`)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SYMPOSIUM_CONTROL_API_TOKEN_TTL` | `900` | Lifetime, in seconds, of the Ed25519 access tokens the Control API issues. |
+| `SYMPOSIUM_CONTROL_API_INVITE_HOURS` | `72` | Default invite lifetime, in hours. |
+
+### Data API (`/api/v1`)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SYMPOSIUM_DATA_API_PUBLIC_URL` | (the request's URL) | The base of every canonical `url` the Data API answers, such as `https://data.example.org`. |
+| `SYMPOSIUM_DATA_API_MAX_STREAMS` | `500` | Open Data API streams across the server. |
 
 All state lives under `/apps` inside the container: one volume, or a PVC. Internal secrets are generated on first boot with mode 0600 and are never baked into the image.

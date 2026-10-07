@@ -1,4 +1,4 @@
-"""The Symposium API, live: the data-server container this suite starts, over HTTP.
+"""The Symposium Data API, live: the data-server container this suite starts, over HTTP.
 
 Every operation in api/openapi.yaml is called and every answer is validated against the
 contract's schemas, errors included; every row of the endpoint × role table in api/DESIGN.md

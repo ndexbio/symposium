@@ -1,4 +1,4 @@
-"""Symposium Data HTTP API. Every byte is streamed by this service; S3 is never exposed.
+"""The Symposium Control API, `/v1`. Every byte is streamed by this service; S3 is never exposed.
 
 Communities are tenants (R-G8): every community-dependent route is under /v1/{community}/...,
 with collection-scoped routes under collections/{collection}/ and file routes under files/{id}/.
@@ -125,7 +125,7 @@ async def _conflict(_request, error):
 
 
 # Callables that add to /v1/status once the server is operational and healthy: the
-# composition root registers the Symposium API's index position here, so this module never
+# composition root registers the Symposium Data API's index position here, so this module never
 # imports the API.
 status_extensions: list = []
 

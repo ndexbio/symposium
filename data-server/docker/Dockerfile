@@ -1,5 +1,5 @@
-# Symposium Data: one image running the data service, PostgreSQL and SeaweedFS under
-# supervisord. Build context: data-server/.
+# Symposium Data: one image running the API server (the Control API at /v1 and the Data API
+# at /api/v1), PostgreSQL and SeaweedFS under supervisord. Build context: data-server/.
 
 # ── Runtime base: PostgreSQL 16 (PGDG), supervisor, gosu, SeaweedFS ─────────────────────────
 # Debian plus PGDG rather than the postgres image: that image declares
@@ -68,4 +68,4 @@ COPY docker/scripts/start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/start.sh"]
-CMD ["--data-api", "--postgres", "--seaweed"]
+CMD ["--api-server", "--postgres", "--seaweed"]

@@ -1,4 +1,4 @@
-"""The Symposium API's contract (`api/openapi.yaml`) against the rules its design notes
+"""The Symposium Data API's contract (`api/openapi.yaml`) against the rules its design notes
 (`api/DESIGN.md`) set: every operation names its roles and its security, every listing that
 grows with the record is paged, every read of the record states its position, every error
 shares one body, and the notes' tables agree with the contract. The linter checks that the

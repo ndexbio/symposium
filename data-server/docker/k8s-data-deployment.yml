@@ -57,9 +57,9 @@ spec:
         - name: symposium-data
           image: docker.io/ndexbio/symposium-data
           imagePullPolicy: Always
-          args: ["--data-api", "--postgres", "--seaweed"]
+          args: ["--api-server", "--postgres", "--seaweed"]
           env:
-            - {name: SYMPOSIUM_DATA_TRUSTED_PROXY, value: "10.0.0.0/8"}
+            - {name: SYMPOSIUM_SERVER_TRUSTED_PROXY, value: "10.0.0.0/8"}
           ports:
             - {name: http, containerPort: 8080, protocol: TCP}
           readinessProbe:
@@ -98,7 +98,7 @@ spec:
 # metadata:
 #   name: symposium-data
 #   annotations:
-#     # the Symposium API's streams (Server-Sent Events): unbuffered, and open past the
+#     # the Symposium Data API's streams (Server-Sent Events): unbuffered, and open past the
 #     # 30-second heartbeat
 #     nginx.ingress.kubernetes.io/proxy-buffering: "off"
 #     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"

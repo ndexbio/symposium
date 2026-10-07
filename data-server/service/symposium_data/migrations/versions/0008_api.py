@@ -1,4 +1,4 @@
-"""The Symposium API's tables (api/DESIGN.md §1.3, §4.2, §10.5): API keys, the open streams
+"""The Symposium Data API's tables (api/DESIGN.md §1.3, §4.2, §10.5): API keys, the open streams
 that the stream caps count, and the derived index of each community's record. A trigger
 notifies the API's streams whenever a version is written, so they wake without polling.
 

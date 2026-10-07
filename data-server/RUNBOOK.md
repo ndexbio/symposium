@@ -23,12 +23,12 @@ Every server needs the admin's **public** key file, `admin_pub_<handle>.key`, wh
      ndexbio/symposium-data:<version>
    ```
 
-   **Reachable by other machines.** Put a TLS-terminating proxy in front, and name it in `SYMPOSIUM_DATA_TRUSTED_PROXY`. Members join the same way as on a local server: by invite.
+   **Reachable by other machines.** Put a TLS-terminating proxy in front, and name it in `SYMPOSIUM_SERVER_TRUSTED_PROXY`. Members join the same way as on a local server: by invite.
 
    ```bash
    docker run -d --name symposium-data --restart unless-stopped \
      -p 8790:8080 -v /path/to/your/machine/symposium-storage:/apps \
-     -e SYMPOSIUM_DATA_TRUSTED_PROXY=<proxy address> \
+     -e SYMPOSIUM_SERVER_TRUSTED_PROXY=<proxy address> \
      ndexbio/symposium-data:<version>
    ```
 
@@ -117,7 +117,7 @@ Removing an owner from the roster ends their control of their collections; the a
 curl -X POST -H "Authorization: Bearer <admin token>" https://data.example.org/v1/<community>/files/<file-id>/v/<n>/purge
 ```
 
-**Janitor.** It runs in the background and removes what a crash mid-write leaves behind: uploads that never completed, and name reservations that never turned into a file. Both are removed after `SYMPOSIUM_DATA_PENDING_TTL`. Normal failures are cleaned up immediately; the janitor covers a crash, and retries any S3 delete that failed. Bytes are always deleted before the row that tracks them, so every object in the bucket stays accounted for. Work still in progress (a streaming upload, an import, a port) refreshes its timestamps (a heartbeat every TTL/3, at most every 60 s), so the janitor never expires live work.
+**Janitor.** It runs in the background and removes what a crash mid-write leaves behind: uploads that never completed, and name reservations that never turned into a file. Both are removed after `SYMPOSIUM_SERVER_PENDING_TTL`. Normal failures are cleaned up immediately; the janitor covers a crash, and retries any S3 delete that failed. Bytes are always deleted before the row that tracks them, so every object in the bucket stays accounted for. Work still in progress (a streaming upload, an import, a port) refreshes its timestamps (a heartbeat every TTL/3, at most every 60 s), so the janitor never expires live work.
 
 **Scrub.** It also runs in the background, re-hashing stored content on a schedule. A mismatch is recorded, never repaired: `stat` reports `"integrity": "mismatch"`, and clients also detect it because the bytes no longer match `Repr-Digest`.
 
@@ -151,7 +151,7 @@ curl -s http://127.0.0.1:8790/v1/status
 
 It answers `200` with the version, `server_id`, the `mode`, and `"postgres": "ok"` and `"s3": "ok"`; once operational, also the admin's handle and `fingerprint`. It answers `503` while PostgreSQL or the file store is down, which is what the Kubernetes readiness probe checks.
 
-The Symposium API serves its OpenAPI contract with no credential, as YAML or JSON:
+The Symposium Data API serves its OpenAPI contract with no credential, as YAML or JSON:
 
 ```bash
 curl -s http://127.0.0.1:8790/api/v1/openapi.yaml

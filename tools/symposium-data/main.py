@@ -211,7 +211,7 @@ class DataServer:
         status = self.status()
         if status.get("api") != API_VERSION:
             raise CommandError(
-                f"this CLI speaks the data server's API version {API_VERSION}, but the server "
+                f"this CLI speaks the data server's Control API version {API_VERSION}, but the server "
                 f"at {self.base_url} speaks version {status.get('api')}; this bundle was built "
                 f"for data-server image {image_version()}"
             )

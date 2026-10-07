@@ -56,7 +56,7 @@ class Contract:
 
 
 def load() -> Contract:
-    configured = os.environ.get("SYMPOSIUM_API_CONTRACT")
+    configured = os.environ.get("SYMPOSIUM_DATA_API_CONTRACT")
     if configured:
         return Contract(Path(configured))
     return Contract(IMAGE_CONTRACT if IMAGE_CONTRACT.is_file() else CHECKOUT_CONTRACT)

@@ -1,11 +1,11 @@
 openapi: 3.0.3
 info:
-  title: Symposium API
+  title: Symposium Data API
   version: 1.0.0
   description: |
     Read a Symposium community record, follow it as it changes, and publish through the gate.
 
-    The Symposium API speaks in the specification's model: Artifacts, Objects, properties,
+    The Symposium Data API speaks in the specification's model: Artifacts, Objects, properties,
     relationships, Members and addresses (`spec/symposium_specification.md`, profiled by
     `tools/CANONICAL.md`). It is served by the Symposium Data server and reads the community
     record held there, so every application sees the one record under the server's own
@@ -208,9 +208,10 @@ paths:
       tags: [record]
       summary: One Artifact, whole
       description: |
-        The Artifact in canonical JSON, as the gate stored it, with its canonical URL and the
-        links derived from the record: what it supersedes, what supersedes it, and its Member.
-        Its address is `@<name>`.
+        The Artifact's canonical JSON, rendered through `CanonicalArtifact`, with its canonical
+        URL and the links derived from the record: what it supersedes, what supersedes it, and
+        its Member. Its address is `@<name>`. `links.content` answers the bytes the gate stored,
+        unchanged.
 
         Roles: non-member, member; anonymous when the community's `record` collection is public.
       x-roles: [non-member, member]
@@ -1161,7 +1162,7 @@ components:
     TooManyStreams:
       description: |
         A stream cap is reached: 8 per API key, 4 per anonymous client address, 200
-        anonymous in all, or the server's `SYMPOSIUM_API_MAX_STREAMS` (default 500).
+        anonymous in all, or the server's `SYMPOSIUM_DATA_API_MAX_STREAMS` (default 500).
         `api/DESIGN.md` §10.5 holds the rules.
         Close a stream or retry later.
       content:

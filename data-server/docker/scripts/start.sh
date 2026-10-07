@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # start.sh — Symposium Data container startup.
 #
-# Usage: start.sh [--data-api] [--postgres] [--seaweed]     (no flags: all three)
+# Usage: start.sh [--api-server] [--postgres] [--seaweed]     (no flags: all three)
 #
 # Phases:
 #   0  Version banner
@@ -20,18 +20,19 @@ echo "symposium-data $(/opt/venv/bin/python -c 'import symposium_data; print(sym
 
 # ── Phase 1: flags ────────────────────────────────────────────────────────────────────────────
 ENABLE_API=false; ENABLE_PG=false; ENABLE_SW=false
-[[ $# -eq 0 ]] && set -- --data-api --postgres --seaweed
+[[ $# -eq 0 ]] && set -- --api-server --postgres --seaweed
 for flag in "$@"; do
   case "$flag" in
-    --data-api) ENABLE_API=true ;;
+    --api-server) ENABLE_API=true ;;
     --postgres) ENABLE_PG=true ;;
     --seaweed)  ENABLE_SW=true ;;
     *) echo "unknown flag: $flag" >&2; exit 2 ;;
   esac
 done
-export SYMPOSIUM_DATA_TRUSTED_PROXY="${SYMPOSIUM_DATA_TRUSTED_PROXY:-127.0.0.1}"
-# uvicorn workers for the data API and the Symposium API (one process, both prefixes)
-export SYMPOSIUM_DATA_WORKERS="${SYMPOSIUM_DATA_WORKERS:-1}"
+export SYMPOSIUM_SERVER_TRUSTED_PROXY="${SYMPOSIUM_SERVER_TRUSTED_PROXY:-127.0.0.1}"
+# uvicorn workers for the api-server program: one process serving the Control API (/v1)
+# and the Data API (/api/v1)
+export SYMPOSIUM_SERVER_WORKERS="${SYMPOSIUM_SERVER_WORKERS:-1}"
 
 # ── Phase 2: directories ──────────────────────────────────────────────────────────────────────
 mkdir -p /apps/data/config /apps/postgres/config /apps/postgres/data \
@@ -120,6 +121,6 @@ CONF=/tmp/supervisord.conf
 cat /opt/symposium-data/supervisord/header.conf > "$CONF"
 $ENABLE_PG  && cat /opt/symposium-data/supervisord/postgres.conf >> "$CONF"
 $ENABLE_SW  && cat /opt/symposium-data/supervisord/seaweed.conf  >> "$CONF"
-$ENABLE_API && cat /opt/symposium-data/supervisord/data-api.conf >> "$CONF"
+$ENABLE_API && cat /opt/symposium-data/supervisord/api-server.conf >> "$CONF"
 log "starting supervisord (api=$ENABLE_API postgres=$ENABLE_PG seaweed=$ENABLE_SW)"
 exec supervisord -c "$CONF"

@@ -19,7 +19,7 @@ import psycopg
 from .errors import ApiError
 
 # seconds between heartbeats, and so between a quiet stream's key re-checks; a test shortens it
-HEARTBEAT = float(os.environ.get("SYMPOSIUM_API_HEARTBEAT", "30"))
+HEARTBEAT = float(os.environ.get("SYMPOSIUM_DATA_API_HEARTBEAT", "30"))
 STALE = 90  # seconds without a heartbeat before a stream's slot is freed
 PER_KEY = 8
 PER_ANONYMOUS_ADDRESS = 4
@@ -38,7 +38,9 @@ class Caps:
         anonymous_total: int = ANONYMOUS_TOTAL,
     ):
         self.db = db
-        self.total = total or int(os.environ.get("SYMPOSIUM_API_MAX_STREAMS", "500"))
+        self.total = total or int(
+            os.environ.get("SYMPOSIUM_DATA_API_MAX_STREAMS", "500")
+        )
         self.per_key = per_key
         self.per_anonymous_address = per_anonymous_address
         self.anonymous_total = anonymous_total

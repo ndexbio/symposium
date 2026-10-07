@@ -25,12 +25,12 @@ VERSION = os.environ.get("SYMPOSIUM_DATA_TEST_VERSION", "")
 # test hooks act only while a test has created their file: S3 delete faults (the fault file)
 # and a quota (the quota file, set_quota()); the reset before each test removes both.
 TEST_ENV = {
-    "SYMPOSIUM_DATA_PENDING_TTL": "1",
-    "SYMPOSIUM_DATA_JANITOR_INTERVAL": "0.5",
-    "SYMPOSIUM_DATA_SCRUB_INTERVAL": "0.5",
-    "SYMPOSIUM_DATA_TEST_HOOKS": "1",
+    "SYMPOSIUM_SERVER_PENDING_TTL": "1",
+    "SYMPOSIUM_SERVER_JANITOR_INTERVAL": "0.5",
+    "SYMPOSIUM_SERVER_SCRUB_INTERVAL": "0.5",
+    "SYMPOSIUM_SERVER_TEST_HOOKS": "1",
     # the API's stream heartbeat, which also paces each stream's key re-check
-    "SYMPOSIUM_API_HEARTBEAT": "2",
+    "SYMPOSIUM_DATA_API_HEARTBEAT": "2",
 }
 
 # Run inside the container: empty every data table and the bucket, keeping the admin binding.
@@ -126,7 +126,7 @@ class Server:
         """End the API process only; supervisord starts it again and the container keeps
         running. The caller waits for the state the new process reports."""
         ctl = ("supervisorctl", "-c", "/tmp/supervisord.conf")
-        result = self.exec(*ctl, "signal", signal, "data-api")
+        result = self.exec(*ctl, "signal", signal, "api-server")
         assert result.returncode == 0, result.stdout + result.stderr
 
     def status(self) -> dict:

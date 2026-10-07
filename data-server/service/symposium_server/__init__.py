@@ -1,4 +1,4 @@
-"""The composition root (api/DESIGN.md §9): the data server's app with the Symposium API
+"""The composition root (api/DESIGN.md §9): the data server's app with the Symposium Data API
 mounted at /api/v1. uvicorn starts `symposium_server:app`; neither `symposium_data` nor
 `symposium_api` imports the other's app, so every import points one way.
 
@@ -43,7 +43,8 @@ runtime = provider.Runtime(
     settings=data.settings,
     tokens=data.tokens,
     admin_mode=lambda: data.admin_mode,
-    public_url=(os.environ.get("SYMPOSIUM_DATA_PUBLIC_URL") or "").rstrip("/") or None,
+    public_url=(os.environ.get("SYMPOSIUM_DATA_API_PUBLIC_URL") or "").rstrip("/")
+    or None,
 )
 contract = contract_module.load()
 keys = data.api_keys

@@ -1,6 +1,6 @@
-# Symposium API: design notes
+# Symposium Data API: design notes
 
-The Symposium API lets any application read a community record, follow it as it changes,
+The Symposium Data API lets any application read a community record, follow it as it changes,
 and publish to it through the gate as a Member. It speaks the specification's model
 (Artifacts, Objects, properties, relationships, Members and addresses), not the data
 server's model of files and versions.
@@ -468,13 +468,13 @@ the key's Member.
   - A request body is at most 8 MiB, which answers 413. `/v1` sets none.
   - An Artifact's embedded payload is at most 250 KB, as `publish.py` refuses today, which
     answers 422 with a finding. The validator reviews any payload over 50 KB.
-  - The per-Member quota, `SYMPOSIUM_DATA_QUOTA_BYTES`, applies to submissions as it does
+  - The per-Member quota, `SYMPOSIUM_SERVER_QUOTA_BYTES`, applies to submissions as it does
     to `/v1` writes.
   - A page holds at most 1000 items, and a cursor is at most 256 characters. Responses are
     otherwise unbounded, like `/v1`.
   - Open streams are capped, and a stream past a cap answers 429 with the `Error` body
     (§10.5): 8 per API key, 4 per anonymous client address, 200 anonymous in all, and
-    `SYMPOSIUM_API_MAX_STREAMS` (default 500) across the server.
+    `SYMPOSIUM_DATA_API_MAX_STREAMS` (default 500) across the server.
   - Requests other than streams carry no rate limit, matching `/v1`. A deployment that needs
     one puts it in its ingress.
 
@@ -506,7 +506,7 @@ API, and the rules import none of the storage. Only `symposium_server` sees all 
 | Question | Answer |
 |---|---|
 | Which image | `ndexbio/symposium-data`, the data server's own image. The API ships in the same release. |
-| Which process | the `data-api` supervisord program, the one uvicorn process that serves `/v1` today. It starts `symposium_server:app`, which mounts `/api/v1` beside `/v1`. |
+| Which process | the `api-server` supervisord program, the one uvicorn process that serves the Control API at `/v1`. It starts `symposium_server:app`, which mounts the Data API at `/api/v1` beside it. |
 | Which HTTP server | uvicorn, the ASGI server the image already runs, with `--proxy-headers` as today. |
 | Which port | 8080, the port the image already exposes. `/v1` and `/api/v1` share it. |
 | Which language and framework | Python 3.11 and FastAPI, the data server's own. |
@@ -553,10 +553,10 @@ same test for the same reason.
 
 ### 10.5 Running it
 
-- **Always on.** The `data-api` program always starts `symposium_server:app`, so every data
-  server serves `/api/v1` beside `/v1`. `start.sh`'s flags, the Dockerfile's `CMD` and the
-  Kubernetes container args are unchanged.
-- **Canonical URLs.** `SYMPOSIUM_DATA_PUBLIC_URL`, when set, is the base of every `url` the API
+- **Always on.** The `api-server` program always starts `symposium_server:app`, so every data
+  server serves `/api/v1` beside `/v1`. `start.sh` starts the program for its `--api-server`
+  flag, which the Dockerfile's `CMD` and the Kubernetes container args pass.
+- **Canonical URLs.** `SYMPOSIUM_DATA_API_PUBLIC_URL`, when set, is the base of every `url` the API
   answers; otherwise the base is the URL the request reached, after `--proxy-headers`.
 - **CPU work leaves the event loop.** Validation, findings and address resolution run in
   FastAPI's thread pool, so a long validation holds no stream and no `/v1` request.
@@ -572,15 +572,15 @@ same test for the same reason.
   | per API key | 8 |
   | per anonymous client address | 4 |
   | anonymous, in all | 200 |
-  | the whole server | `SYMPOSIUM_API_MAX_STREAMS`, default 500 |
+  | the whole server | `SYMPOSIUM_DATA_API_MAX_STREAMS`, default 500 |
 
   Past any cap, a new stream answers 429 with the `Error` body. Anonymous streams can hold
   at most 200 slots, so key holders always keep at least 300. The client address is the one uvicorn
-  reports after `--proxy-headers`, from a proxy in `SYMPOSIUM_DATA_TRUSTED_PROXY` alone.
+  reports after `--proxy-headers`, from a proxy in `SYMPOSIUM_SERVER_TRUSTED_PROXY` alone.
   Each stream holds one coroutine and wakes on a shared `LISTEN` connection, so 500 cost
   little memory.
-- **Workers.** One uvicorn worker by default, as today. `SYMPOSIUM_DATA_WORKERS` is a new
-  setting that raises it, passed to `--workers` by the `data-api` program. Every worker
+- **Workers.** One uvicorn worker by default, as today. `SYMPOSIUM_SERVER_WORKERS` is a new
+  setting that raises it, passed to `--workers` by the `api-server` program. Every worker
   keeps no client's state in memory (§5.3), and the stream caps live in PostgreSQL, so any
   worker serves any request or reconnect.
 - **The ingress.** SSE needs two settings on a proxy in front of the server: response

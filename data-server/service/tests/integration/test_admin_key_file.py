@@ -129,7 +129,7 @@ def restarted(server) -> str:
 
     It first waits for supervisord to count the current process as RUNNING (up for its first
     5 s): a process ended before that is a failed start, and after a few supervisord gives up."""
-    ctl = ("supervisorctl", "-c", "/tmp/supervisord.conf", "status", "data-api")
+    ctl = ("supervisorctl", "-c", "/tmp/supervisord.conf", "status", "api-server")
     deadline = time.time() + 30
     while "RUNNING" not in server.exec(*ctl).stdout:
         assert time.time() < deadline, "the API never reached RUNNING"

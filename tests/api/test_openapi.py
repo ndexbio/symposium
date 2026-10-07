@@ -17,29 +17,13 @@ API = Path(__file__).resolve().parents[2] / "api"
 ROLES = ("non-member", "member", "admin")
 METHODS = ("get", "post", "put", "patch", "delete")
 
-# Each command of the skill (skills/symposium/SKILL.md), as issue #23 names them;
-# DESIGN.md must map every one.
+# The skill's commands (skills/symposium/SKILL.md) that have an API equivalent; DESIGN.md
+# must map every one, and map nothing that lacks an endpoint.
 SKILL_COMMANDS = [
-    "setup",
-    "bootstrap",
-    "use",
     "publish",
     "validate",
     "sync",
-    "gate",
-    "serve",
-    "admin-config",
     "roster list",
-    "roster add",
-    "roster remove",
-    "invite",
-    "rebind-key",
-    "suspect-after",
-    "purge",
-    "export",
-    "import",
-    "port",
-    "data",
     "gen-api-key",
     "list-api-keys",
     "revoke-api-key",
@@ -195,7 +179,7 @@ def test_every_stream_resumes_from_a_cursor(spec):
             if "text/event-stream" in deref(spec, response).get("content", {}):
                 streams += 1
                 assert "Last-Event-ID" in params(spec, op), f"{path}: no Last-Event-ID"
-    assert streams >= 3
+    assert streams >= 2
 
 
 def test_every_error_shares_one_body(spec):
@@ -247,15 +231,19 @@ def test_the_role_table_matches_the_contract(spec, design):
         assert listed == roles, operation
 
 
-def test_the_design_maps_every_command(spec, design):
-    operation_ids = {op["operationId"] for _, _, op in operations(spec)}
+def test_the_design_maps_every_command_to_a_real_endpoint(spec, design):
+    routes = {
+        op["operationId"]: f"{method.upper()} {path}"
+        for path, method, op in operations(spec)
+    }
     commands = table(design, "## 2. The skill's commands → endpoints")
     for command in SKILL_COMMANDS:
         assert any(
             re.search(rf"`{re.escape(command)}\b", row[0]) for row in commands
         ), command
-    for row in commands:
-        for named in re.findall(r"`?\b([a-z]+[A-Z][A-Za-z]+)\b", row[2]):
-            assert named in operation_ids, (
-                f"the notes name {named}, which the contract lacks"
-            )
+    for command, endpoints, named in commands:
+        named = re.findall(r"`(\w+)`", named)
+        assert named, f"{command} maps to no operation"
+        assert set(named) <= set(routes), f"{command} names {named}"
+        listed = {e.split("?")[0] for e in re.findall(r"`([A-Z]+ /[^`]+)`", endpoints)}
+        assert listed == {routes[n] for n in named}, command

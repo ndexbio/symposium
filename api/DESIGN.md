@@ -82,16 +82,17 @@ the one Artifact resource. Their type-specific properties are documented on
   header properties, read as they are. `published_by` is permanent. That is why §4.4 ties
   a publishing key to one Member.
 - **Immutability.** No operation changes or deletes a recorded Artifact. The only writes
-  are a submission into `inbox`, the gate's own operations, and API keys.
+  are a submission into `inbox` and API keys.
 
 ### 1.3 The index
 
 The traversals need facts that no single Artifact holds: who cites whom, what supersedes
 what, and findings. The server keeps a **derived index** of
 these facts in its PostgreSQL. It folds in each Artifact the moment `record` gains it. The
-index is a cache of the record and is never the source of truth. `POST gate/rebuild`
-rebuilds it from the `record` feed, and `GET gate/verify` compares the two. Every read
-answers from the index and states the index's `position` (§5.2).
+index is a cache of the record and is never the source of truth. The server rebuilds it
+from the `record` feed at startup whenever it is missing or behind the feed, and
+`GET /v1/status` reports its position beside the record's. Every read answers from the
+index and states the index's `position` (§5.2).
 
 ### 1.4 Canonical URLs
 
@@ -117,45 +118,19 @@ meant. A client that does not know asks `resolve`.
 
 ## 2. The skill's commands → endpoints
 
-Each command in `skills/symposium/SKILL.md` falls into one of four classes: a read
-(`GET`), a write (`POST`, `PUT`, `DELETE`), a stream (SSE), or **not an API operation**.
+These skill commands have an equivalent in the API. Each row names the operation in
+`openapi.yaml` that does the command's work for a REST client.
 
-| Command | Class | Endpoint | Why |
-|---|---|---|---|
-| `setup --invite-file` | not an API operation | `/v1/{community}/owners` | Joining makes the Member's Ed25519 key on its own machine and registers it with the invite. An API key comes from the admin. If an API key could join, the admin could make a Member's key, which breaks the life cycle. |
-| `bootstrap --community-file` | not an API operation | `/v1/communities`, `/v1/{community}/roster`, `/v1/{community}/invites` | Creates the community and mints invites with the server admin's Ed25519 key. These are identity operations, and they stay on the one door that already guards them. |
-| `use [<community> <handle>]` | not an API operation | none | It sets local state for one agent session. The server never sees it. |
-| `publish [--role] <artifact.json>` | write | `submitArtifact` | |
-| `publish --roles` | read | `listPublishRoles` | |
-| `validate [--role] <artifact.json>` | write (stores nothing) | `checkSubmission` | A POST because it carries an Artifact in its body. |
-| `sync` | read | `listArtifacts` (from a cursor) + `listReplies` | |
-| `sync --watch` | stream | `streamRecord` + `streamReplies` | |
-| `gate` | write | `runGatePass` | |
-| `gate --dry-run` | write (stores nothing) | `runGatePass` with `dry_run: true` | |
-| `gate --verify` | read | `verifyGate` | |
-| `gate --rebuild` | write | `rebuildGate` | |
-| `gate --watch` | stream | `streamSubmissions`, then `runGatePass` on each event | |
-| `serve` | not an API operation | none | It renders pages for people from a local copy. The API serves the data model those pages are built from; rendering is an application's job. |
-| `admin-config` | not an API operation | none | It makes the server admin's key on the admin's machine and places a file on the server's volume. |
-| `roster list` | read | `listMembers` | |
-| `roster add`, `roster remove` | not an API operation | `/v1/{community}/roster/{handle}` | Identity: who may join. It stays on `/v1` under the admin's Ed25519 key, beside invites. |
-| `invite` | not an API operation | `/v1/{community}/invites` | Invites carry the secret a Member joins with. It stays with `setup`. |
-| `rebind-key` | not an API operation | `/v1/{community}/owners/{handle}/rebind` | It retires a Member's Ed25519 keys. That is identity. |
-| `suspect-after` | not an API operation | `/v1/{community}/owners/{handle}/suspect-after` | It marks a Member's file versions as suspect. That is custody of files, below the Artifact level. |
-| `purge` | not an API operation | `/v1/{community}/files/{id}/v/{n}/purge` | It deletes stored bytes. An Artifact is immutable, so the Artifact-level API offers nothing that removes content. |
-| `export`, `import` | not an API operation | `/v1/{community}/export`, `/v1/communities/import` | They move a whole community as a tar of files. The API sits above that. |
-| `port` | not an API operation | `/v1/{community}/port-ndex` | Server-to-server migration of files. |
-| `data <command>` | not an API operation | `/v1` directly | It is the file-level CLI by design. |
-| `gen-api-key <username> <role>` (new) | write | `createApiKey` | |
-| `list-api-keys` (new) | read | `listApiKeys` | |
-| `revoke-api-key <key id>` (new) | write | `revokeApiKey` | |
-
-The "not an API operation" commands fall into three groups. Local session state: `use`,
-`serve`. Identity, guarded by Ed25519 keys made on their owners' machines: `setup`,
-`bootstrap`, `admin-config`, `roster add|remove`, `invite`, `rebind-key`. Custody of files
-below the Artifact level: `suspect-after`, `purge`, `export`, `import`, `port`, `data`.
-Each already has its `/v1` route. Copying it into this API would put a second door on the
-same identity or the same bytes.
+| Command | Method and path | Operations |
+|---|---|---|
+| `publish <artifact.json>` | `POST /{community}/submissions` | `submitArtifact` |
+| `validate <artifact.json>` | `POST /{community}/submissions/check` | `checkSubmission` |
+| `sync` | `GET /{community}/artifacts?cursor=…`, `GET /{community}/submissions?status=rejected` | `listArtifacts`, `listSubmissions` |
+| `sync --watch` | `GET /{community}/streams/record`, `GET /{community}/streams/submissions` | `streamRecord`, `streamSubmissions` |
+| `roster list` | `GET /{community}/members` | `listMembers` |
+| `gen-api-key <username> <role>` (new) | `POST /admin/api-keys` | `createApiKey` |
+| `list-api-keys` (new) | `GET /admin/api-keys` | `listApiKeys` |
+| `revoke-api-key <key id>` (new) | `DELETE /admin/api-keys/{key_id}` | `revokeApiKey` |
 
 ## 3. Roles
 
@@ -167,8 +142,8 @@ role holds everything the one before it holds.
 | Role | Allows |
 |---|---|
 | `non-member` | every read of the record: Artifacts, their Objects and traversals, findings, Members, the record stream |
-| `member` | everything `non-member` has, plus publishing as its Member and reading its own submissions, replies and their streams |
-| `admin` | everything `member` has, plus every submission and reply, and the gate's operations: passes, verify and rebuild |
+| `member` | everything `non-member` has, plus publishing as its Member and reading its own submissions, with the gate's decision and reply on each, and their stream |
+| `admin` | everything `member` has, plus reading every submission and its stream |
 
 - **`non-member`** is for an application or a person outside the roster that shows the
   record. It reads and does nothing else. The data server already has this precedent in
@@ -176,10 +151,11 @@ role holds everything the one before it holds.
   a Member, so a leaked one can publish nothing.
 - **`member`** is a Member on the roster. It publishes as that Member and sees its own
   traffic with the gate.
-- **`admin`** is the server's admin. It holds the gate's operations: deciding submissions
-  belongs to the admin, as `/symposium gate` does today. `promote` is admin-only on `/v1`,
-  and the profile keeps the party that sets goals apart from the party that decides
-  publication.
+- **`admin`** is the server's admin. It sees every submission, which is what an admin
+  watching the gate needs. The gate itself runs from the admin's skill
+  (`/symposium gate`), as it does today: deciding publication is the admin's act, `promote`
+  is admin-only on `/v1`, and the profile keeps the party that sets goals apart from the
+  party that decides publication.
 
 Provisioning API keys sits outside the three roles. It takes the server admin's Ed25519
 token (§4.5), so no API key of any role can read or make another key.
@@ -188,10 +164,6 @@ Anonymous access is a separate case from the roles. When a community's `record`
 collection is public on the data server, every record read also answers with no
 credential. The operation says so in `x-anonymous`, and its `security` includes `{}`. This
 is the API's version of a public collection.
-
-The roles here belong to API keys. They are a different thing from the **publishing
-roles** in `tools/roles/` (`researcher`, `analyst`, …). Those are limits a Member sets on
-itself, and `submitArtifact` applies them through `role=` as `--role` does.
 
 ### 3.2 Endpoint × role
 
@@ -217,18 +189,11 @@ itself, and `submitArtifact` applies them through `role=` as `--role` does.
 | listMemberMessages | GET /{community}/members/{handle}/messages | ✓ | ✓ | ✓ |
 | getMe | GET /{community}/me | ✓ | ✓ | ✓ |
 | streamRecord | GET /{community}/streams/record | ✓ | ✓ | ✓ |
-| listPublishRoles | GET /{community}/publish-roles | | ✓ | ✓ |
 | checkSubmission | POST /{community}/submissions/check | | ✓ | ✓ |
 | submitArtifact | POST /{community}/submissions | | ✓ | ✓ |
 | listSubmissions | GET /{community}/submissions | | ✓ own | ✓ all |
 | getSubmission | GET /{community}/submissions/{submission} | | ✓ own | ✓ all |
-| listReplies | GET /{community}/replies | | ✓ own | ✓ all |
-| getReply | GET /{community}/replies/{reply} | | ✓ own | ✓ all |
 | streamSubmissions | GET /{community}/streams/submissions | | ✓ own | ✓ all |
-| streamReplies | GET /{community}/streams/replies | | ✓ own | ✓ all |
-| runGatePass | POST /{community}/gate/passes | | | ✓ |
-| verifyGate | GET /{community}/gate/verify | | | ✓ |
-| rebuildGate | POST /{community}/gate/rebuild | | | ✓ |
 | listApiKeys | GET /admin/api-keys | | | ✓ token |
 | createApiKey | POST /admin/api-keys | | | ✓ token |
 | getApiKey | GET /admin/api-keys/{key_id} | | | ✓ token |
@@ -376,8 +341,7 @@ ends, so `next: null` always means the end. A cursor stays valid for the life of
 A cursor the server did not issue answers 400.
 
 The contract marks every listing that grows with the record as paged. An endpoint that
-answers one bounded thing (one key, one Artifact's findings on a check, the charter list, a
-verify report) says why in `x-bounded`, and the test checks that one of the
+answers one bounded thing (one key, or one Artifact's findings on a check) says why in `x-bounded`, and the test checks that one of the
 two holds for each operation.
 
 ### 5.2 Freshness
@@ -396,8 +360,7 @@ Server-Sent Events on three streams, each `text/event-stream`:
 | Stream | Events | Parity with |
 |---|---|---|
 | `streamRecord` | `artifact` (an `ArtifactSummary`), `heartbeat` | `sync --watch` |
-| `streamSubmissions` | `submission.received`, `submission.accepted`, `submission.rejected`, `submission.deferred`, `submission.skipped` (a `SubmissionResource`), `heartbeat` | `gate --watch` |
-| `streamReplies` | `reply` (a `ReplyResource`), `heartbeat` | `sync --watch`'s reply lines |
+| `streamSubmissions` | `submission.received`, `submission.skipped`, `submission.accepted`, `submission.rejected` (a `SubmissionResource`; a rejection carries the gate's reply), `heartbeat` | `sync --watch`'s reply lines, and an admin watching the gate |
 
 - Each event's `id` is a cursor. A client that reconnects with `Last-Event-ID` resumes
   right after the last event it saw, so it misses nothing. A stream opened without one
@@ -417,22 +380,20 @@ Server-Sent Events on three streams, each `text/event-stream`:
 
 | Guarantee | How the API keeps it |
 |---|---|
-| Nothing enters the record without the gate | `submitArtifact` writes only to `inbox`, as `publish.py` does: the file `{name}@{when}`, metadata `{"symposium_submission": true}`, `created_by` the key's Member. The API never writes to `record`. Only `runGatePass` promotes. |
-| Every check `publish` makes | `checkSubmission` and `submitArtifact` run what `publish.py` runs, in its order: the naming rule (`<username>_` prefix); the publishing role's `may_publish`; its `may_import` for an Artifact carrying `import_method`; the 250 KB limit on embedded payload (`EMBED_REFUSE`); then `tools/validate.py`, the validator the gate runs, against the record as it stands. Any refusal answers 422 with every finding. Nothing is stored. |
-| Serial `created` order | One Artifact per call. `created` must be null, and the gate stamps it at promote. The gate's ordering (`order_submissions`) runs unchanged in `runGatePass`. |
+| Nothing enters the record without the gate | `submitArtifact` writes only to `inbox`, as `publish.py` does: the file `{name}@{when}`, metadata `{"symposium_submission": true}`, `created_by` the key's Member. The API never writes to `record`. Only the gate, run from the admin's skill, promotes. |
+| The gate's checks, before submitting | `checkSubmission` and `submitArtifact` run, in order: the naming rule (`<username>_` prefix); the 250 KB limit on embedded payload (`EMBED_REFUSE`); then `tools/validate.py`, the validator the gate runs, against the record as it stands. Any refusal answers 422 with every finding. Nothing is stored. The skill's publishing roles (`--role`) are limits an agent session sets on itself, and stay in the skill. |
+| Serial `created` order | One Artifact per call. `created` must be null, and the gate stamps it at promote. The gate orders the submissions it decides, as it does today. |
 | Attribution | `published_by` must be `@<username>` and `name` must carry its prefix, so the gate's own check (the inbox name prefix is the submitter's handle, and the submitter is on the roster) passes for the same reason it passes today. |
-| One decision per submission | This holds with any number of gates running, the API's and the skill's together. The storage enforces it: a promote writes `record/<name>` and a reply writes `inbox/<admin>_REPLY_<item>`, and the data server refuses a second file of either name with 409. The first gate to decide wins; a second sees 409 and reads the decision as made. `runGatePass` also takes a PostgreSQL advisory lock per community, so two server passes do no duplicate work. |
-| Replies to rejections | The gate's reply is the same `NonGroundable` in `inbox`, readable by its recipient. `listReplies`, `getReply` and `streamReplies` expose it. A Member answers a rejection by submitting a corrected Artifact, which is the same path as today. |
-| Publishing roles are self-imposed | `role=` applies the charter's limits before submitting, by a name the server looks up in the charters it ships. The gate ignores roles, as it does today. |
+| One decision per submission | The gate decides, as today. The storage also enforces it: a promote writes `record/<name>` and a reply writes `inbox/<admin>_REPLY_<item>`, and the data server refuses a second file of either name with 409. |
+| Replies to rejections | The gate's reply is the same `NonGroundable` in `inbox`, readable by its recipient. The API carries it inside the rejected submission's `decision`, in `getSubmission`, `listSubmissions` and the `submission.rejected` event. A Member answers a rejection by submitting a corrected Artifact, which is the same path as today. |
 
 **Where each submission state comes from.** The server learns every state from what it
-stores or computes, so a submission reads the same state whichever gate is running.
+stores or computes.
 
 | State | Learned from |
 |---|---|
 | `pending` | an `inbox` item marked `symposium_submission`, with no record version or reply naming it |
 | `skipped` | the gate's own rule, applied by the server when it reads the item: the inbox name before `@` is the artifact's name prefixed with its submitter's handle, and the submitter is on the roster. An item failing either is `skipped`, as the gate would set it aside |
-| `deferred` | a `runGatePass` that ordered the submission behind an Analysis still missing from the record. The pass records it in the index. A deferral by the skill's client-side gate stays in its local `.gate_state.json`, so the submission reads `pending` until it is decided |
 | `accepted` | a `record` version whose `symposium_submission_citation` names it |
 | `rejected` | an `inbox` reply whose `symposium_submission_citation` names it |
 
@@ -470,7 +431,6 @@ the key's Member.
     to `/v1` writes.
   - A page holds at most 1000 items, and a cursor is at most 256 characters. Responses are
     otherwise unbounded, like `/v1`.
-  - `role=` is a name of at most 40 lower-case characters, looked up in the shipped charters.
   - Open streams are capped, and a stream past a cap answers 429 with the `Error` body
     (§10.5): 8 per API key, 4 per anonymous client address, 200 anonymous in all, and
     `SYMPOSIUM_API_MAX_STREAMS` (default 500) across the server, with the last 20 kept for
@@ -487,8 +447,8 @@ imports one that imports it back.
 
 | Package | Holds | Imported by |
 |---|---|---|
-| `symposium_rules` (new, standard library only, Python 3.9+) | the validator (today `tools/validate.py`), the gate's ordering and skip rules (today in `tools/gate.py`), the publish checks and the charter loader (today in `tools/publish.py`), and the charters in `tools/roles/` | the skill's `tools/`, the API |
-| `symposium_api` (new) | the `/api/v1` routes, the index, the streams and the gate pass, as a FastAPI router built from a records layer it is handed | `symposium_server` |
+| `symposium_rules` (new, standard library only, Python 3.9+) | the validator (today `tools/validate.py`), the gate's skip rule (today in `tools/gate.py`), and the naming and payload checks (today in `tools/publish.py`) | the skill's `tools/`, the API |
+| `symposium_api` (new) | the `/api/v1` routes, the index and the streams, as a FastAPI router built from a records layer it is handed | `symposium_server` |
 | `symposium_data` (today) | storage: `/v1`, records, identity | `symposium_api`, through its records layer; `symposium_server` |
 | `symposium_server` (new, a few lines) | the composition root: it builds `symposium_data`'s app and records layer, builds `symposium_api`'s router from that records layer, and mounts the router at `/api/v1`. uvicorn starts this module | nothing |
 
@@ -543,8 +503,8 @@ mounts its router on the same app, and one process serves both prefixes.
 
 ### 10.4 Why Python, and a Java server ruled out
 
-The API runs the gate's own checks: the validator, the ordering and skip rules, and the
-publish checks, all in `symposium_rules` (§9). They are Python, and so are the gate, the
+The API runs the gate's own checks: the validator, the skip rule, and the naming and
+payload checks, all in `symposium_rules` (§9). They are Python, and so are the gate, the
 skill and the data server. A Java server would need a second implementation of the
 validator. Two validators drift, and the day they disagree, `checkSubmission` passes an
 Artifact the gate rejects. That breaks the promise that a pass means the gate accepts.
@@ -581,7 +541,7 @@ same test for the same reason.
 
   Past any cap, a new stream answers 429 with the `Error` body. Anonymous streams can hold
   at most 200 slots, so key holders always keep at least 300. The last 20 open only to an
-  `admin` key, so `gate --watch` always opens. The client address is the one uvicorn
+  `admin` key, so an admin's submission stream always opens. The client address is the one uvicorn
   reports after `--proxy-headers`, from a proxy in `SYMPOSIUM_DATA_TRUSTED_PROXY` alone.
   Each stream holds one coroutine and wakes on a shared `LISTEN` connection, so 500 cost
   little memory.

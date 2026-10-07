@@ -29,9 +29,12 @@ info:
 
     **Roles.** An API key holds exactly one of three roles, each a superset of the one
     before. `non-member` reads the record. `member` also publishes as its Member and reads
-    its own submissions and replies. `admin` also reads every submission and reply and runs
-    the gate's operations. Each operation lists the roles it allows in `x-roles` and in its
+    its own submissions, with the gate's decision and reply on each. `admin` also reads
+    every submission. Each operation lists the roles it allows in `x-roles` and in its
     description. API keys are provisioned with the server admin's Ed25519 token alone.
+
+    **The gate** runs from the admin's skill (`/symposium gate`), as it does today. The API
+    takes submissions into `inbox` and reports the gate's decisions on them.
 
     **Errors.** Every error answers the `Error` body.
 
@@ -53,11 +56,9 @@ tags:
   - name: members
     description: The community's Members and what they published.
   - name: publishing
-    description: Submissions into `inbox`, the gate's decisions and its replies.
+    description: Submissions into `inbox`, with the gate's decision and reply on each.
   - name: streams
-    description: Server-Sent Events for following the record, the gate and replies.
-  - name: gate
-    description: The gate's own operations, for the admin.
+    description: Server-Sent Events for following the record and the submissions.
   - name: api-keys
     description: Provisioning API keys, for the admin.
 security:
@@ -637,7 +638,8 @@ paths:
       description: |
         Every Message in the record whose `recipients` names this Member, ordered by `created`
         ascending. Messages are Artifacts of the record, so anyone who reads the record reads
-        them. The gate's replies to a rejection are a different thing: see `listReplies`.
+        them. The gate's reply to a rejected submission is a different thing: it sits in the
+        submission's `decision` (`getSubmission`).
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
       x-roles: [non-member, member, admin]
@@ -695,46 +697,15 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /{community}/publish-roles:
-    get:
-      operationId: listPublishRoles
-      tags: [publishing]
-      summary: The publishing roles a submission may declare
-      description: |
-        The role charters under `tools/roles/` and the Artifact types each may publish. This is
-        `/symposium publish --roles`. A publishing role is a limit a Member sets on itself; it
-        is a different thing from an API key's role. Bounded by the charters the server ships.
-
-        Roles: member, admin.
-      x-roles: [member, admin]
-      security:
-        - apiKey: []
-      x-bounded: the role charters the server ships
-      parameters:
-        - $ref: '#/components/parameters/community'
-      responses:
-        '200':
-          description: The publishing roles.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PublishRoleList'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
   /{community}/submissions/check:
     post:
       operationId: checkSubmission
       tags: [publishing]
       summary: Validate an Artifact and submit nothing
       description: |
-        The checks `publish` runs, against the record as it stands, with a provisional
-        `created` from the server's clock: the naming rule, the publishing role's limits
-        (`may_publish`, and `may_import` for an Artifact carrying `import_method`), the
-        250 KB limit on embedded payload, and the validator. Nothing is stored. A pass means the gate accepts the
+        The checks the gate makes, against the record as it stands, with a provisional
+        `created` from the server's clock: the naming rule, the 250 KB limit on embedded
+        payload, and the validator. Nothing is stored. A pass means the gate accepts the
         Artifact if the record has not moved. This is `/symposium validate` and
         `publish --check`.
 
@@ -745,7 +716,6 @@ paths:
         - apiKey: []
       parameters:
         - $ref: '#/components/parameters/community'
-        - $ref: '#/components/parameters/publishRole'
       requestBody:
         $ref: '#/components/requestBodies/Submission'
       responses:
@@ -823,7 +793,6 @@ paths:
         - apiKey: []
       parameters:
         - $ref: '#/components/parameters/community'
-        - $ref: '#/components/parameters/publishRole'
       requestBody:
         $ref: '#/components/requestBodies/Submission'
       responses:
@@ -859,8 +828,9 @@ paths:
       tags: [publishing]
       summary: One submission and its decision
       description: |
-        One submission, its state, and where it led: the record Artifact when accepted, the
-        gate's reply when rejected. A `member` key reads only its own.
+        One submission, its state, and the gate's decision on it: the record Artifact when
+        accepted, the gate's reply with its failures when rejected. A `member` key reads only
+        its own.
 
         Roles: member, admin.
       x-roles: [member, admin]
@@ -876,75 +846,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SubmissionResource'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /{community}/replies:
-    get:
-      operationId: listReplies
-      tags: [publishing]
-      summary: The gate's replies to the caller
-      description: |
-        The gate's replies addressed to the key's Member: one per rejected submission, naming
-        it and listing the failures. Replies live in `inbox` and are never part of the record.
-        An `admin` key sees every reply. Ordered by when the reply was sent, ascending. This is
-        the reply listing `/symposium sync` prints.
-
-        Roles: member, admin.
-      x-roles: [member, admin]
-      security:
-        - apiKey: []
-      parameters:
-        - $ref: '#/components/parameters/community'
-        - $ref: '#/components/parameters/cursor'
-        - $ref: '#/components/parameters/limit'
-      responses:
-        '200':
-          description: One page of replies.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReplyPage'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /{community}/replies/{reply}:
-    get:
-      operationId: getReply
-      tags: [publishing]
-      summary: One reply from the gate
-      description: |
-        One reply. A `member` key reads only a reply addressed to it.
-
-        Roles: member, admin.
-      x-roles: [member, admin]
-      x-bounded: one reply's recipients and failures
-      security:
-        - apiKey: []
-      parameters:
-        - $ref: '#/components/parameters/community'
-        - name: reply
-          in: path
-          required: true
-          description: The reply's id.
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: The reply.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ReplyResource'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -997,12 +898,11 @@ paths:
       tags: [streams]
       summary: Follow submissions and the gate's decisions
       description: |
-        A `submission.received` event when a submission lands in `inbox`, and a
-        `submission.accepted`, `submission.rejected`, `submission.deferred` or
-        `submission.skipped` event when the
-        gate decides it. A `member` key receives events on its own submissions; an `admin` key
-        receives every one. Resumes from `Last-Event-ID`. This is what `/symposium gate --watch`
-        watches.
+        A `submission.received` event when a submission lands in `inbox`, a
+        `submission.skipped` event when the gate's rule sets it aside, and a
+        `submission.accepted` or `submission.rejected` event when the gate decides it. A
+        rejection carries the gate's reply. A `member` key receives events on its own submissions; an `admin` key
+        receives every one. Resumes from `Last-Event-ID`.
         The server re-checks the key at every event and every heartbeat, and closes the stream
         when the key is revoked or expired, or its Member leaves the roster.
 
@@ -1031,150 +931,6 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyStreams'
-  /{community}/streams/replies:
-    get:
-      operationId: streamReplies
-      tags: [streams]
-      summary: Follow the gate's replies to the caller
-      description: |
-        One `reply` event per reply addressed to the key's Member, as the gate sends it. Resumes
-        from `Last-Event-ID`.
-        The server re-checks the key at every event and every heartbeat, and closes the stream
-        when the key is revoked or expired, or its Member leaves the roster.
-
-        Roles: member, admin.
-      x-roles: [member, admin]
-      security:
-        - apiKey: []
-      parameters:
-        - $ref: '#/components/parameters/community'
-        - $ref: '#/components/parameters/lastEventId'
-      responses:
-        '200':
-          description: An open event stream.
-          content:
-            text/event-stream:
-              schema:
-                type: array
-                description: The stream's events, in order. Each is one SSE frame.
-                items:
-                  $ref: '#/components/schemas/ReplyStreamEvent'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '429':
-          $ref: '#/components/responses/TooManyStreams'
-  /{community}/gate/passes:
-    post:
-      operationId: runGatePass
-      tags: [gate]
-      summary: Decide the waiting submissions
-      description: |
-        One gate pass, as `/symposium gate` runs it: order the waiting submissions for serial
-        publication, validate each against the record as it stands, accept by promoting it into
-        `record` with `created` stamped, and reject with a reply to its submitter. The gate's
-        rules are unchanged. `dry_run` decides and reports and writes nothing. One pass runs at
-        a time per community; a second answers 409 until the first ends.
-
-        Roles: admin.
-      x-roles: [admin]
-      x-bounded: one pass decides at most 1000 submissions and says `more` when others wait
-      security:
-        - apiKey: []
-        - adminToken: []
-      parameters:
-        - $ref: '#/components/parameters/community'
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/GatePassRequest'
-      responses:
-        '200':
-          description: What the pass decided.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/GatePassReport'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-  /{community}/gate/verify:
-    get:
-      operationId: verifyGate
-      tags: [gate]
-      summary: Compare the API's index with the record
-      description: |
-        Compare every Artifact the API's index holds with the `record` feed, by name and
-        digest, and report each difference. Changes nothing. This is `/symposium gate --verify`,
-        with the server's index in the place of a session's copy. Bounded by the number of
-        differences, which a sound index keeps at zero.
-
-        Roles: admin.
-      x-roles: [admin]
-      x-bounded: the differences between the index and the record, zero when they agree
-      security:
-        - apiKey: []
-        - adminToken: []
-      parameters:
-        - $ref: '#/components/parameters/community'
-      responses:
-        '200':
-          description: The comparison. `ok` is true when they agree.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/GateVerifyReport'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /{community}/gate/rebuild:
-    post:
-      operationId: rebuildGate
-      tags: [gate]
-      summary: Rebuild the API's index from the record
-      description: |
-        Discard the API's derived index for this community (citations, supersession, findings,
-        grounded spans, the gate's cursors) and rebuild it from the `record` and `inbox` feeds.
-        Reads keep answering from the old index until the new one is complete. This is
-        `/symposium gate --rebuild`.
-
-        Roles: admin.
-      x-roles: [admin]
-      security:
-        - apiKey: []
-        - adminToken: []
-      parameters:
-        - $ref: '#/components/parameters/community'
-      responses:
-        '202':
-          description: The rebuild has started.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/GateRebuild'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
   /admin/api-keys:
     get:
       operationId: listApiKeys
@@ -1358,8 +1114,8 @@ components:
       bearerFormat: JWT
       description: |
         The server admin's Ed25519 token from `POST /v1/admin/token`, the one the skill already
-        holds. The gate operations accept it beside an `admin` API key. The API-key operations
-        accept it alone, so an API key, whatever its scope, reads and makes no other key.
+        holds. The API-key operations accept it alone, so an API key, whatever its scope,
+        reads and makes no other key.
   parameters:
     community:
       name: community
@@ -1435,17 +1191,6 @@ components:
         type: string
         enum: [created, -created]
         default: created
-    publishRole:
-      name: role
-      in: query
-      description: |
-        The publishing role whose limit applies, as `--role` gives it. Absent means `operator`
-        for an admin key and no type limit for a member key, as `/symposium publish` does;
-        `none` applies no limit. The server looks the name up in the charters it ships
-        (`listPublishRoles`) and answers 400 for any other name; it reads no path from it.
-      schema:
-        type: string
-        pattern: ^[a-z][a-z0-9_-]{0,39}$
     lastEventId:
       name: Last-Event-ID
       in: header
@@ -1488,7 +1233,7 @@ components:
     Conflict:
       description: |
         The request conflicts with the state: a name already in the record or already
-        submitted, or a gate operation already running.
+        submitted.
       content:
         application/json:
           schema:
@@ -1503,7 +1248,7 @@ components:
       description: |
         A stream cap is reached: 8 per API key, 4 per anonymous client address, 200
         anonymous in all, or the server's `SYMPOSIUM_API_MAX_STREAMS` (default 500), whose
-        last 20 slots open only to an `admin` key. `api/DESIGN.md` §11.5 holds the rules.
+        last 20 slots open only to an `admin` key. `api/DESIGN.md` §10.5 holds the rules.
         Close a stream or retry later.
       content:
         application/json:
@@ -2230,28 +1975,6 @@ components:
           description: The Member this key publishes as, where it holds `member`.
         position:
           $ref: '#/components/schemas/Position'
-    PublishRole:
-      type: object
-      required: [name, may_publish]
-      properties:
-        name:
-          type: string
-        description:
-          type: string
-        may_publish:
-          type: array
-          items:
-            type: string
-    PublishRoleList:
-      type: object
-      required: [roles, position]
-      properties:
-        roles:
-          type: array
-          items:
-            $ref: '#/components/schemas/PublishRole'
-        position:
-          $ref: '#/components/schemas/Position'
     SubmissionCheck:
       type: object
       required: [ok, role, findings, position]
@@ -2269,11 +1992,10 @@ components:
     SubmissionStatus:
       type: string
       description: |
-        `pending` until the gate decides. `deferred` while a server-side gate pass waits for
-        an Analysis the submission names. `skipped` when the gate's own rule sets it aside: its
+        `pending` until the gate decides. `skipped` when the gate's own rule sets it aside: its
         inbox name is the artifact's name with the wrong prefix, or its submitter is off the
-        roster. Then `accepted` or `rejected`. `api/DESIGN.md` §7 says where each comes from.
-      enum: [pending, deferred, skipped, accepted, rejected]
+        roster. Then `accepted` or `rejected`. `api/DESIGN.md` §6 says where each comes from.
+      enum: [pending, skipped, accepted, rejected]
     SubmissionResource:
       type: object
       required: [id, url, name, submitted_by, submitted, status, citation, position]
@@ -2298,9 +2020,6 @@ components:
         citation:
           type: string
           description: The submission's file version on the data server, `symposium-data:<uuid>@v1`.
-        role:
-          type: string
-          description: The publishing role it was checked under.
         decided:
           type: [string, 'null']
           format: date-time
@@ -2308,10 +2027,9 @@ components:
           type: string
           format: uri
           description: Accepted. The record Artifact.
-        reply_url:
-          type: string
-          format: uri
+        reply:
           description: Rejected. The gate's reply.
+          $ref: '#/components/schemas/Reply'
         position:
           $ref: '#/components/schemas/Position'
     SubmissionPage:
@@ -2324,49 +2042,24 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/SubmissionResource'
-    ReplyResource:
+    Reply:
       type: object
-      required: [id, url, sender, recipients, sent, in_reply_to, submission_url, text, position]
+      description: The gate's reply to a rejected submission, as it sits in `inbox`.
+      required: [sender, sent, text, failures]
       properties:
-        id:
-          type: string
-          format: uuid
-        url:
-          type: string
-          format: uri
         sender:
           $ref: '#/components/schemas/Handle'
-        recipients:
-          type: array
-          items:
-            $ref: '#/components/schemas/Handle'
         sent:
           type: string
           format: date-time
-        in_reply_to:
-          $ref: '#/components/schemas/Name'
-        submission_url:
-          type: string
-          format: uri
         text:
           type: string
           description: The reply as the gate wrote it, `REJECTED` and one line per failure.
         failures:
           type: array
+          description: One line per failure the validator found.
           items:
             type: string
-        position:
-          $ref: '#/components/schemas/Position'
-    ReplyPage:
-      allOf:
-        - $ref: '#/components/schemas/Page'
-        - type: object
-          required: [items]
-          properties:
-            items:
-              type: array
-              items:
-                $ref: '#/components/schemas/ReplyResource'
     StreamEventBase:
       type: object
       description: One Server-Sent Events frame. `id` is a cursor for `Last-Event-ID`.
@@ -2413,102 +2106,10 @@ components:
                     - submission.received
                     - submission.accepted
                     - submission.rejected
-                    - submission.deferred
                     - submission.skipped
                 data:
                   $ref: '#/components/schemas/SubmissionResource'
         - $ref: '#/components/schemas/HeartbeatEvent'
-    ReplyStreamEvent:
-      oneOf:
-        - allOf:
-            - $ref: '#/components/schemas/StreamEventBase'
-            - type: object
-              properties:
-                event:
-                  const: reply
-                data:
-                  $ref: '#/components/schemas/ReplyResource'
-        - $ref: '#/components/schemas/HeartbeatEvent'
-    GatePassRequest:
-      type: object
-      properties:
-        dry_run:
-          type: boolean
-          default: false
-          description: Decide and report; promote, reply and save nothing.
-    GateDecision:
-      type: object
-      required: [submission, name, outcome]
-      properties:
-        submission:
-          type: string
-          format: uri
-        name:
-          $ref: '#/components/schemas/Name'
-        outcome:
-          type: string
-          enum: [accepted, rejected, deferred, skipped]
-        artifact_url:
-          type: string
-          format: uri
-        reply_url:
-          type: string
-          format: uri
-        failures:
-          type: array
-          items:
-            type: string
-        reason:
-          type: string
-          description: Deferred or skipped. Why.
-    GatePassReport:
-      type: object
-      required: [dry_run, decisions, position]
-      properties:
-        dry_run:
-          type: boolean
-        decisions:
-          type: array
-          description: |
-            One entry per submission the pass considered, in the order it decided them. A pass
-            reads at most 1000 waiting submissions; the rest wait for the next pass.
-          items:
-            $ref: '#/components/schemas/GateDecision'
-        more:
-          type: boolean
-          description: True when submissions remain for another pass.
-        position:
-          $ref: '#/components/schemas/Position'
-    GateVerifyReport:
-      type: object
-      required: [ok, checked, differences, position]
-      properties:
-        ok:
-          type: boolean
-        checked:
-          type: integer
-        differences:
-          type: array
-          items:
-            type: object
-            required: [name, kind]
-            properties:
-              name:
-                $ref: '#/components/schemas/Name'
-              kind:
-                type: string
-                enum: [missing, extra, changed]
-        position:
-          $ref: '#/components/schemas/Position'
-    GateRebuild:
-      type: object
-      required: [started, position]
-      properties:
-        started:
-          type: string
-          format: date-time
-        position:
-          $ref: '#/components/schemas/Position'
     ApiKeyCreate:
       type: object
       required: [username, role, scope]

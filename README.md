@@ -17,7 +17,8 @@ The record and its files live on a **Symposium Data server**, which the skill re
 ## Installing Symposium as agentic Skill
 
 ### Requirements
-Your host needs only Python 3.9+. 
+- **Python 3.9+** is all the installed skill needs.
+- **[uv](https://docs.astral.sh/uv/getting-started/installation/)** must be installed on the host to run Makefile targets.
 
 ### From cloned repository
 

@@ -45,7 +45,7 @@ TOOLCHAIN = (
     "data-server/docker/k8s-data-deployment.yml",
 )
 # inside TOOLCHAIN, but repository maintenance: never shipped
-NOT_SHIPPED = {"tools/bundle.py", "data-server/README.md"}
+NOT_SHIPPED = {"tools/bundle.py", "tools/pyproject.toml", "data-server/README.md"}
 SKIPPED = {"__pycache__", "tests", ".pytest_cache", ".ruff_cache", ".DS_Store"}
 DATE = (1980, 1, 1, 0, 0, 0)
 

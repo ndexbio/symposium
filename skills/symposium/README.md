@@ -68,11 +68,15 @@ the community's record.
 | `/symposium purge --cite <citation>` | Admin: free one version's content; it then answers that it was purged, with its metadata. |
 | `/symposium export`, `/symposium import` | Admin: see section 4. |
 | `/symposium admin-config …` | Admin: see section 2. |
+| `/symposium gen-api-key <username> <role> [--community <c> \| --server] [--expires-days N] [--label …]` | Admin: a Symposium API key (`/api/v1`) with one role, `non-member`, `member` or `admin`. The key goes to a 0600 file under `~/.symposium/admin/api-keys/`; only its id, username, role and the file's path are printed. A `member` key names a registered handle and publishes as it; an `admin` key names the admin. Hand the file over out of band. |
+| `/symposium list-api-keys [--community <c>]` | Admin: every API key, written with its value to a 0600 file under `~/.symposium/admin/api-keys/`; the keys are printed without values. |
+| `/symposium revoke-api-key <key id>` | Admin: stop a key at once and erase its value. |
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit code
 is the result (0 = done; `serve`, `sync --watch` and `gate --watch` run until stopped). Every other command
 prints one JSON object: `setup`, `bootstrap`, `use`, `port`, the admin commands (`admin-config`,
-`roster`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import`) and `data …`.
+`roster`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import`, `gen-api-key`,
+`list-api-keys`, `revoke-api-key`) and `data …`.
 
 **Commands that keep running** (`gate --watch`, `sync --watch`, `serve`): your agent starts each
 one in the background and shows you every line it prints as it appears, so you follow the gate's

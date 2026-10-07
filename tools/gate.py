@@ -57,6 +57,7 @@ from data_io import (
     Mirror,
     SymposiumData,
 )
+from symposium_rules.checks import skip_reason
 from sync import POLL, Sync
 from sync import STATE as SYNC_STATE
 from validate import finding, method_of, parse_instant, passed, validate
@@ -265,12 +266,9 @@ class Gate:
             return skip(f"not readable as an artifact ({e})")
         declared = (canonical.get("artifact") or {}).get("name") \
             if isinstance(canonical, dict) else None
-        if declared != name:
-            return skip(f"inbox name '{name}' is not the artifact's name '{declared}'")
-        if not name.startswith(f"{owner}_"):
-            return skip(f"the name is not prefixed with its submitter's handle '{owner}_'")
-        if owner not in members:
-            return skip(f"'{owner}' is not a member of this community")
+        why = skip_reason(item["name"], owner, declared, members)
+        if why:
+            return skip(why)
         return {"item": item, "citation": item["citation"], "name": name, "owner": owner,
                 "canonical": canonical}
 

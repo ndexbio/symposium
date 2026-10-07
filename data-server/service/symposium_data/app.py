@@ -119,6 +119,12 @@ async def _conflict(_request, error):
     return JSONResponse({"detail": str(error)}, status_code=409)
 
 
+# Callables that add to /v1/status once the server is operational and healthy: the
+# composition root registers the Symposium API's index position here, so this module never
+# imports the API.
+status_extensions: list = []
+
+
 @app.get("/v1/status")
 def status(response: Response):
     """Version, mode and health. Answers 503 while PostgreSQL or the S3 store is unavailable,
@@ -143,6 +149,9 @@ def status(response: Response):
     }
     if admin_mode.operational:
         body.update(admin=admin_mode.handle, fingerprint=admin_mode.fingerprint)
+        if postgres_ok:
+            for extend in status_extensions:
+                body.update(extend())
     else:
         body["reason"] = admin_mode.reason
     return body

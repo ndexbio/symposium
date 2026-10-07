@@ -51,6 +51,12 @@ class QuotaExceeded(Exception):
     pass
 
 
+def unpurged(file_id_sql: str) -> str:
+    """A SQL condition, true while every version of the file `file_id_sql` names keeps its
+    content: the purge model is this module's, so other packages filter through it."""
+    return f"NOT EXISTS (SELECT 1 FROM versions v WHERE v.file_id = {file_id_sql} AND v.purged)"
+
+
 def iso(instant: datetime | None) -> str | None:
     return instant.astimezone(UTC).isoformat() if instant else None
 

@@ -2,7 +2,7 @@
 
 A single Docker image that runs Symposium Data, the versioned file store Symposium communities use to persist, share and cite data files. The image contains three services, managed by `supervisord`:
 
-- **the data service**: FastAPI on port 8080, the only port the container exposes;
+- **the data service**: FastAPI on port 8080, the only port the container exposes. It serves the data server's own API under `/v1` and the Symposium API under `/api/v1` (see "The Symposium API");
 - **PostgreSQL 16**: the server's records: configuration, owner identities, rosters, grants, invites, collections, files, versions, metadata and read keys. All of it is managed by Alembic migrations;
 - **SeaweedFS**: the internal S3 store for file contents. It is never exposed; the data service streams every byte.
 
@@ -13,6 +13,9 @@ A single Docker image that runs Symposium Data, the versioned file store Symposi
 | Path | What it is |
 |---|---|
 | `service/` | The `symposium_data` Python package: the HTTP API, its background jobs and the Alembic migrations, plus the tests. Locked with `uv.lock`. |
+| `service/symposium_api/` | The Symposium API: `generated/`, generated from `api/openapi.yaml` and never edited by hand, and the hand-written service behind it. |
+| `service/symposium_server/` | The composition root uvicorn starts: the data service with the Symposium API mounted at `/api/v1`. |
+| `service/codegen/` | The generator script and its templates (see "The Symposium API"). |
 | `docker/Dockerfile` | Multi-stage build: `runtime-base` (PostgreSQL, supervisor, gosu, SeaweedFS with a pinned sha256), then `builder` (installs the locked wheel into `/opt/venv`), then `deploy`. |
 | `docker/supervisord/` | One config snippet per service. `start.sh` assembles them. |
 | `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, then starts supervisord. |
@@ -28,8 +31,8 @@ These four targets are the only ones. Run them from this folder, or from the rep
 |---|---|
 | `lint` | `ruff check` and `ruff format --check` on `service/`. |
 | `test` | `lint` and `build-docker`, then the unit suites, then the integration suites against that image, on one `sdtest-*` container for the whole session. |
-| `build-docker` | Builds and tags the image `ndexbio/symposium-data:$(TAG)`. |
-| `push-docker` | A buildx multi-arch (`linux/amd64`, `linux/arm64`) build and push of `:$(TAG)` and `:latest`. It is used by the release workflow, on a tag cut from a `data-store` commit that CI has tested. |
+| `build-docker` | Builds and tags the image `ndexbio/symposium-data:$(TAG)`. The image also takes `../tools` (the `symposium_rules` package) and `../api` (the contract), as the named build contexts `rules` and `api`. |
+| `push-docker` | A buildx multi-arch (`linux/amd64`, `linux/arm64`) build and push of `:$(TAG)` and `:latest`. It is used by the release workflow, on a `data-server-v<version>` GitHub release. |
 
 `TAG` defaults to the version in `service/pyproject.toml`; override it with `make build-docker TAG=1.2.3`. The image is built with `DATA_VERSION=$(TAG)`. The container prints `symposium-data <version>` as its first line of output, and `GET /v1/status` reports the same version. `/v1/status` also reports health: it answers **503**, with `"postgres"` or `"s3"` set to `"unavailable"`, whenever either dependency is down. The Kubernetes readiness probe relies on this. It reports the server's `mode` too (see "The admin key file").
 
@@ -37,7 +40,7 @@ These four targets are the only ones. Run them from this folder, or from the rep
 
 ## Releases
 
-Pushing a tag `data-server-v<version>` from the `data-store` branch runs `.github/workflows/release.yml`. That workflow runs `make push-docker TAG=<version>`, which publishes `ndexbio/symposium-data:<version>` and `:latest`. It needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
+Publishing a GitHub release tagged `data-server-v<version>` runs the `push-image` job of `.github/workflows/release.yml`; the release tag's prefix alone gates it, and a pushed tag on its own runs nothing. That job runs `make push-docker TAG=<version>`, which publishes `ndexbio/symposium-data:<version>` and `:latest`. It needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 
 ## The admin key file
 
@@ -152,6 +155,236 @@ Every community has three collections: `inbox` (submissions), `files` (stored da
 
 Listing a collection (`changes`, `query`, `find`) needs read access to it. A member listing `inbox` sees only their own submissions and the replies addressed to them; a file-scoped read key sees only its file.
 
+## The Symposium API
+
+`/api/v1` serves the community record at the level of the specification's model: Artifacts,
+Objects, properties, relationships, Members and addresses, with paging, freshness, Server-Sent
+Event streams and publishing through the gate. Its contract is `api/openapi.yaml` and its
+design `api/DESIGN.md`, at the repository root. Every server serves it, on port 8080 beside
+`/v1`, and it serves its own contract with no credential at `GET /api/v1/openapi.yaml` and
+`GET /api/v1/openapi.json`.
+
+**Credentials.** The API takes API keys, `Authorization: Bearer sak_…`, each holding one role:
+`non-member`, `member` or `admin`. The admin makes, lists and revokes them with
+`/symposium gen-api-key`, `list-api-keys` and `revoke-api-key`, which call the four
+`/api/v1/admin/api-keys` operations with the admin's Ed25519 token; no API key can call those.
+Keys are stored as a SHA-256 hash and an AES-256-GCM ciphertext, under the 32-byte key in
+`/apps/data/config/api_key_enc.key`, which `start.sh` makes on first boot.
+
+**Generated code.** The routers, the models and the service interface in
+`service/symposium_api/generated/` are generated from `api/openapi.yaml` by
+`fastapi-code-generator` and `datamodel-code-generator`, pinned in the dev group. After a change
+to the contract, regenerate and commit:
+
+```bash
+uv run --project data-server/service python data-server/service/codegen/generate.py
+```
+
+The repository's `make lint` regenerates into a scratch directory and fails if the committed
+code differs.
+
+**Ingress.** The streams need response buffering off and a read timeout above their
+30-second heartbeat; the commented Ingress in `docker/k8s-data-deployment.yml` carries both.
+
+### Quickstart: from an empty server to `curl`
+
+This walks one community, `demo`, from an empty server to publishing and reading through
+`/api/v1`. The admin's steps are prompts to an agent that has the `symposium` skill
+installed (`skills/symposium/README.md`); the API calls are plain `curl`. The responses shown
+are trimmed from a real run.
+
+**1. Run a server**, with a host directory for its data:
+
+```bash
+mkdir -p ~/symposium-storage
+docker run -d --name symposium-data -p 127.0.0.1:8790:8080 \
+  -v ~/symposium-storage:/apps ndexbio/symposium-data:<version>
+```
+
+It starts non-operational until the admin's key file is in place (step 2).
+
+**2. Make the admin key and bind it.** In an agent session, prompt:
+
+```text
+/symposium admin-config --handle demo_admin --data-server-url http://127.0.0.1:8790
+```
+
+Then place the public key file it wrote and restart, so the server binds `demo_admin`:
+
+```bash
+cp ~/.symposium/admin/admin_pub_demo_admin.key ~/symposium-storage/
+docker restart symposium-data
+```
+
+**3. Create the community.** Copy `server/community.example.json` to `community.json`, keep
+`"community": "demo"`, list one member, `"handles": ["agent_lyra"]`, and prompt:
+
+```text
+/symposium bootstrap --community-file community.json
+```
+
+It creates `demo`, puts `agent_lyra` on the roster and writes the invite file
+`~/.symposium/admin/demo/demo-agent_lyra.invite`.
+
+**4. The member registers.** A `member` API key acts as a registered handle, so `agent_lyra`
+joins first, in its own agent session (on this machine or another, with the invite file
+handed over out of band):
+
+```text
+/symposium setup --invite-file demo-agent_lyra.invite
+```
+
+**5. The admin issues API keys.** Back in the admin's session, prompt:
+
+```text
+/symposium gen-api-key agent_lyra member --label "lyra's notebook"
+/symposium gen-api-key dashboard non-member --label "lab dashboard" --expires-days 90
+```
+
+Each prints the key's id, username, role and scope, and the path of a 0600 file that holds the
+key itself; the chat never sees a key:
+
+```json
+{
+  "id": "5779183b-bb3d-439f-bdbf-d042c2e58306",
+  "username": "agent_lyra",
+  "role": "member",
+  "scope": {"kind": "community", "community": "demo"},
+  "label": "lyra's notebook",
+  "expires": null,
+  "key_file": "~/.symposium/admin/api-keys/5779183b-bb3d-439f-bdbf-d042c2e58306.key"
+}
+```
+
+A `member` key publishes as its handle and reads the community. A `non-member` key reads only,
+under a label that is no member's handle: a dashboard, a notebook, another service. An `admin`
+key, `gen-api-key demo_admin admin --server`, reads every community and sees every
+submission. Hand each file to whoever will use the key; its `key` field is the bearer value:
+
+```bash
+API=http://127.0.0.1:8790/api/v1
+LYRA=$(jq -r .key ~/.symposium/admin/api-keys/5779183b-bb3d-439f-bdbf-d042c2e58306.key)
+READER=$(jq -r .key ~/.symposium/admin/api-keys/<dashboard key id>.key)
+```
+
+**6. Read the contract**, with no key at all:
+
+```bash
+curl -s $API/openapi.json | jq '{openapi, title: .info.title}'
+# {"openapi": "3.0.3", "title": "Symposium API"}
+curl -s $API/demo/record
+# {"detail": "the record of demo is private: an API key is required", "code": "unauthorized"}
+```
+
+**7. Publish as `agent_lyra`.** An Artifact goes in as its canonical JSON, with `created`
+null: the gate stamps it on acceptance.
+
+```bash
+cat > note.json <<'JSON'
+{
+  "artifact": {
+    "name": "agent_lyra_note_bst2_v1",
+    "type": "NonGroundable",
+    "specification_version": "1.0",
+    "published_by": "@agent_lyra",
+    "created": null,
+    "groundable": false,
+    "title": "BST2 in the screen",
+    "text": "BST2 scored highest in the restriction screen."
+  },
+  "objects": [],
+  "relationships": []
+}
+JSON
+
+# validate first: the gate's own checks, against the record as it stands; nothing is stored
+curl -s -H "Authorization: Bearer $LYRA" -H 'Content-Type: application/json' \
+  -d @note.json $API/demo/submissions/check | jq '{ok, findings}'
+# {"ok": true, "findings": []}
+
+# submit: 201, with the submission's URL in Location
+curl -s -H "Authorization: Bearer $LYRA" -H 'Content-Type: application/json' \
+  -d @note.json $API/demo/submissions | jq '{id, status, citation}'
+# {"id": "4020b3e6-…", "status": "pending", "citation": "symposium-data:4020b3e6-…@v1"}
+```
+
+A failed check answers 200 with `"ok": false` and one finding per refusal, such as
+`{"check": "NAMING", "level": "FAIL", "msg": "name must be prefixed 'agent_lyra_' (profile
+naming rule)"}`, and `submissions` refuses the same Artifact with 422. The `non-member` key
+may not submit at all:
+
+```bash
+curl -s -H "Authorization: Bearer $READER" -H 'Content-Type: application/json' \
+  -d @note.json $API/demo/submissions
+# {"detail": "a non-member key may not do this; it takes member, admin", "code": "forbidden"}
+```
+
+**8. The gate decides.** In the admin's session, prompt `/symposium gate` (or keep
+`/symposium gate --watch` running). Then the submission reads `accepted` and links its
+Artifact:
+
+```bash
+curl -s -H "Authorization: Bearer $LYRA" "$API/demo/submissions?status=accepted" \
+  | jq '.items[] | {name, status, decided, artifact_url}'
+# {"name": "agent_lyra_note_bst2_v1", "status": "accepted",
+#  "decided": "2026-10-07T19:40:22.193873Z",
+#  "artifact_url": "http://127.0.0.1:8790/api/v1/demo/artifacts/agent_lyra_note_bst2_v1"}
+```
+
+**9. List and query** with the read-only key:
+
+```bash
+H="Authorization: Bearer $READER"
+
+# the record at a glance
+curl -s -H "$H" $API/demo/record | jq '{counts, members, position}'
+# {"counts": {"artifacts": 1, "by_type": {"NonGroundable": 1},
+#             "by_member": {"agent_lyra": 1}, "findings": {}},
+#  "members": 1,
+#  "position": {"cursor": "eyJyIjoxfQ", "seq": 1, "created": "2026-10-07T19:40:22.193873Z", …}}
+
+# Artifacts, filtered and paged: follow `next` until it is null
+curl -s -H "$H" "$API/demo/artifacts?type=NonGroundable&published_by=agent_lyra&limit=10" \
+  | jq '{next, items: [.items[] | {name, title, created}]}'
+# {"next": null, "items": [{"name": "agent_lyra_note_bst2_v1",
+#   "title": "BST2 in the screen", "created": "2026-10-07T19:40:22.193873Z"}]}
+
+# one Artifact: its canonical JSON, with links to its member, citers and findings
+curl -s -H "$H" $API/demo/artifacts/agent_lyra_note_bst2_v1 | jq '.canonical.artifact.title'
+# "BST2 in the screen"
+
+# one property, by its address
+curl -s -H "$H" $API/demo/artifacts/agent_lyra_note_bst2_v1/properties/text | jq '{address, value}'
+# {"address": "@agent_lyra_note_bst2_v1.text",
+#  "value": "BST2 scored highest in the restriction screen."}
+
+# members, and what each has published
+curl -s -H "$H" $API/demo/members | jq '.items[] | {handle, registered, counts}'
+# {"handle": "agent_lyra", "registered": true,
+#  "counts": {"artifacts": 1, "by_type": {"NonGroundable": 1}}}
+curl -s -H "$H" $API/demo/members/agent_lyra/artifacts | jq '[.items[].name]'
+# ["agent_lyra_note_bst2_v1"]
+
+# follow the record live: one `artifact` event per acceptance, a heartbeat every 30 s
+curl -sN -H "$H" $API/demo/streams/record
+```
+
+Every read answers a `position`, and its `cursor` resumes the record stream through
+`Last-Event-ID`. The submissions stream resumes from the `id` of the last event it sent,
+which carries the inbox position as well.
+The contract lists the rest: Objects, relationships, citations, supersession, findings,
+address resolution and messages.
+
+**10. Retire keys** from the admin's session:
+
+```text
+/symposium list-api-keys
+/symposium revoke-api-key 258376c9-01b2-45d3-8078-6676cc676937
+```
+
+`list-api-keys` writes every key, values included, to one 0600 file and prints them without
+values. A revoked key answers 401 on its next call, and a stream open on it closes.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -164,5 +397,8 @@ Listing a collection (`changes`, `query`, `find`) needs read access to it. A mem
 | `SYMPOSIUM_DATA_JANITOR_INTERVAL` | `3600` | How often, in seconds, the janitor runs. |
 | `SYMPOSIUM_DATA_SCRUB_INTERVAL` | `3600` | How often, in seconds, the integrity scrub runs. |
 | `SYMPOSIUM_DATA_SCRUB_BATCH` | `50` | How many payloads each scrub pass re-hashes, least recently checked first. |
+| `SYMPOSIUM_DATA_WORKERS` | `1` | uvicorn worker processes for `/v1` and `/api/v1`. Every worker serves any request; the API's stream caps are counted in PostgreSQL. |
+| `SYMPOSIUM_DATA_PUBLIC_URL` | (the request's URL) | The base of every canonical `url` the Symposium API answers, such as `https://data.example.org`. |
+| `SYMPOSIUM_API_MAX_STREAMS` | `500` | Open Symposium API streams across the server; the last 20 open only to an `admin` key. |
 
 All state lives under `/apps` inside the container: one volume, or a PVC. Internal secrets are generated on first boot with mode 0600 and are never baked into the image.

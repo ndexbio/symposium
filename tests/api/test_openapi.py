@@ -162,7 +162,7 @@ def test_every_growing_listing_is_paged(spec):
 
 def test_every_read_of_the_record_states_its_position(spec):
     for path, method, op in operations(spec):
-        if method != "get" or path.startswith("/admin/"):
+        if method != "get" or not path.startswith("/{community}"):
             continue
         schema = success_json(spec, op)
         if schema is None:

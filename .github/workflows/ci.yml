@@ -1,10 +1,8 @@
 name: ci
 
+# Every pull request, whatever branch it targets, once per commit
 on:
-  push:
-    branches: [data-store]
   pull_request:
-    branches: [data-store]
 
 jobs:
   test:

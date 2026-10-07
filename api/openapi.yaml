@@ -1,9 +1,10 @@
-openapi: 3.1.0
+openapi: 3.0.3
 info:
   title: Symposium API
   version: 1.0.0
-  summary: Read a Symposium community record, follow it as it changes, and publish through the gate.
   description: |
+    Read a Symposium community record, follow it as it changes, and publish through the gate.
+
     The Symposium API speaks in the specification's model: Artifacts, Objects, properties,
     relationships, Members and addresses (`spec/symposium_specification.md`, profiled by
     `tools/CANONICAL.md`). It is served by the Symposium Data server beside its file-level
@@ -42,7 +43,7 @@ info:
     items. Responses are otherwise unbounded, matching the data server.
   license:
     name: MIT
-    identifier: MIT
+    url: https://opensource.org/licenses/MIT
 servers:
   - url: https://{host}/api/v1
     description: A Symposium Data server. The API's major version is part of the path.
@@ -61,9 +62,59 @@ tags:
     description: Server-Sent Events for following the record and the submissions.
   - name: api-keys
     description: Provisioning API keys, for the admin.
+  - name: contract
+    description: This OpenAPI document, served by the API itself.
 security:
   - apiKey: []
 paths:
+  /openapi.yaml:
+    get:
+      operationId: getOpenApiYaml
+      tags: [contract]
+      summary: This OpenAPI document, as YAML
+      description: |
+        The contract this server implements, exactly as committed in `api/openapi.yaml`. It
+        answers with no credential, so any client can read it.
+
+        Roles: non-member, member, admin; anonymous always.
+      x-roles: [non-member, member, admin]
+      x-anonymous: always
+      security:
+        - apiKey: []
+        - {}
+      responses:
+        '200':
+          description: The OpenAPI document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /openapi.json:
+    get:
+      operationId: getOpenApiJson
+      tags: [contract]
+      summary: This OpenAPI document, as JSON
+      description: |
+        The same document as `getOpenApiYaml`, converted to JSON. It answers with no credential.
+
+        Roles: non-member, member, admin; anonymous always.
+      x-roles: [non-member, member, admin]
+      x-anonymous: always
+      security:
+        - apiKey: []
+        - {}
+      responses:
+        '200':
+          description: The OpenAPI document.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /{community}/record:
     get:
       operationId: getRecord
@@ -129,7 +180,8 @@ paths:
           in: query
           description: Only Artifacts published by this Member's handle.
           schema:
-            $ref: '#/components/schemas/Handle'
+            type: string
+            pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'
         - name: created_after
           in: query
           description: Only Artifacts whose `created` is strictly later than this.
@@ -515,7 +567,8 @@ paths:
           required: true
           description: The address, starting with `@`, URL-encoded.
           schema:
-            $ref: '#/components/schemas/Address'
+            type: string
+            pattern: '^@[^.#]+'
       responses:
         '200':
           description: What the address names.
@@ -884,6 +937,8 @@ paths:
                 description: The stream's events, in order. Each is one SSE frame.
                 items:
                   $ref: '#/components/schemas/RecordStreamEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -923,6 +978,8 @@ paths:
                 description: The stream's events, in order. Each is one SSE frame.
                 items:
                   $ref: '#/components/schemas/SubmissionStreamEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -953,7 +1010,8 @@ paths:
           in: query
           description: Only keys scoped to this community.
           schema:
-            $ref: '#/components/schemas/CommunityName'
+            type: string
+            pattern: '^[A-Za-z0-9_]{1,20}$'
         - name: username
           in: query
           description: Only keys for this username.
@@ -973,7 +1031,7 @@ paths:
               description: Always `no-store`, because the page holds secrets.
               schema:
                 type: string
-                const: no-store
+                enum: [no-store]
           content:
             application/json:
               schema:
@@ -1019,7 +1077,7 @@ paths:
               description: Always `no-store`, because the body holds a secret.
               schema:
                 type: string
-                const: no-store
+                enum: [no-store]
           content:
             application/json:
               schema:
@@ -1057,7 +1115,7 @@ paths:
               description: Always `no-store`, because the body holds a secret.
               schema:
                 type: string
-                const: no-store
+                enum: [no-store]
           content:
             application/json:
               schema:
@@ -1123,35 +1181,40 @@ components:
       required: true
       description: The community's name, matched ignoring case.
       schema:
-        $ref: '#/components/schemas/CommunityName'
+        type: string
+        pattern: '^[A-Za-z0-9_]{1,20}$'
     artifactName:
       name: name
       in: path
       required: true
       description: The Artifact's `name`.
       schema:
-        $ref: '#/components/schemas/Name'
+        type: string
+        pattern: '^[^@.#][^.#]*$'
     objectName:
       name: object
       in: path
       required: true
       description: The Object's `name` within its Artifact.
       schema:
-        $ref: '#/components/schemas/Name'
+        type: string
+        pattern: '^[^@.#][^.#]*$'
     property:
       name: property
       in: path
       required: true
       description: The property's name.
       schema:
-        $ref: '#/components/schemas/Name'
+        type: string
+        pattern: '^[^@.#][^.#]*$'
     handle:
       name: handle
       in: path
       required: true
       description: The Member's handle, its `name` without the `@`.
       schema:
-        $ref: '#/components/schemas/Handle'
+        type: string
+        pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'
     submission:
       name: submission
       in: path
@@ -1173,7 +1236,9 @@ components:
       in: query
       description: The `next` of the previous page. Absent for the first page.
       schema:
-        $ref: '#/components/schemas/Cursor'
+        type: string
+        maxLength: 256
+        pattern: '^[A-Za-z0-9_-]+$'
     limit:
       name: limit
       in: query
@@ -1196,7 +1261,9 @@ components:
       in: header
       description: The `id` of the last event the client received. The stream resumes after it.
       schema:
-        $ref: '#/components/schemas/Cursor'
+        type: string
+        maxLength: 256
+        pattern: '^[A-Za-z0-9_-]+$'
   requestBodies:
     Submission:
       required: true
@@ -1310,8 +1377,7 @@ components:
         An address (specification §1.8): `@` and dot-separated segments naming a Member, an
         Artifact, an Object or a property, then optionally `#` and a schema reference.
       pattern: ^@[^.#]+
-      examples:
-        - '@agent_lyra_data_overexpression_screen_v1.values#csv.row=BST2&col=Normalized infection'
+      example: '@agent_lyra_data_overexpression_screen_v1.values#csv.row=BST2&col=Normalized infection'
     Cursor:
       type: string
       maxLength: 256
@@ -1331,7 +1397,8 @@ components:
           minimum: 0
           description: The `record` collection's sequence number at the newest Artifact reflected.
         created:
-          type: [string, 'null']
+          type: string
+          nullable: true
           format: date-time
           description: The `created` of the newest Artifact reflected; null for an empty record.
         as_of:
@@ -1342,21 +1409,23 @@ components:
       description: |
         A property value (specification §1.3): a number, a string, a boolean, a date-time or an
         address written as a string, or a list of these.
-      oneOf:
+      anyOf:
         - type: string
+        - type: integer
         - type: number
         - type: boolean
         - type: array
           items:
-            oneOf:
+            anyOf:
               - type: string
+              - type: integer
               - type: number
               - type: boolean
     ArtifactHeader:
       type: object
       description: |
         An Artifact's properties (specification §1.5 and §2, profile §1 and §2.1). Members may
-        add properties of their own.
+        add properties of their own. An extra property takes any JSON value.
       required: [name, type, created, published_by, specification_version]
       properties:
         name:
@@ -1367,7 +1436,10 @@ components:
         created:
           type: string
           format: date-time
-          description: Stamped by the gate at acceptance.
+          nullable: true
+          description: |
+            Stamped by the gate at acceptance, so every record Artifact carries it. A submission
+            sends null, and `checkSubmission` and `submitArtifact` refuse any other value.
         published_by:
           $ref: '#/components/schemas/Address'
         specification_version:
@@ -1433,21 +1505,13 @@ components:
           description: Message.
           items:
             $ref: '#/components/schemas/Address'
-      additionalProperties:
-        $ref: '#/components/schemas/PropertyValue'
-    SubmittedHeader:
-      description: A header as an author submits it. `created` is null; the gate stamps it.
-      allOf:
-        - $ref: '#/components/schemas/ArtifactHeader'
-        - type: object
-          properties:
-            created:
-              type: 'null'
+      additionalProperties: true
     RecordObject:
       type: object
       description: |
         An Object (specification §1.6). Assertion, Ground, Assumption and Content carry the
         properties the specification requires of them; any other type is the author's.
+        An extra property takes any JSON value.
       required: [name, type]
       properties:
         name:
@@ -1490,11 +1554,12 @@ components:
           type: string
           pattern: ^[0-9a-f]{64}$
           description: Content, profile.
-      additionalProperties:
-        $ref: '#/components/schemas/PropertyValue'
+      additionalProperties: true
     Relationship:
       type: object
-      description: A directed relationship between two Objects of one Artifact (specification §1.7).
+      description: |
+        A directed relationship between two Objects of one Artifact (specification §1.7).
+        An extra property takes any JSON value.
       required: [rel, source, target]
       properties:
         rel:
@@ -1503,8 +1568,7 @@ components:
           $ref: '#/components/schemas/Name'
         target:
           $ref: '#/components/schemas/Name'
-      additionalProperties:
-        $ref: '#/components/schemas/PropertyValue'
+      additionalProperties: true
     CanonicalArtifact:
       type: object
       description: One Artifact in canonical JSON (profile §1).
@@ -1526,7 +1590,7 @@ components:
       required: [artifact, objects, relationships]
       properties:
         artifact:
-          $ref: '#/components/schemas/SubmittedHeader'
+          $ref: '#/components/schemas/ArtifactHeader'
         objects:
           type: array
           items:
@@ -1542,9 +1606,10 @@ components:
       properties:
         next:
           description: The cursor of the following page; null on the last page.
-          oneOf:
-            - $ref: '#/components/schemas/Cursor'
-            - type: 'null'
+          type: string
+          nullable: true
+          maxLength: 256
+          pattern: '^[A-Za-z0-9_-]+$'
         position:
           $ref: '#/components/schemas/Position'
     RecordState:
@@ -1574,14 +1639,15 @@ components:
                 type: integer
             findings:
               type: object
-              description: Findings against the current record, by level.
+              description: Findings as the gate saw each Artifact at its acceptance, by level.
               additionalProperties:
                 type: integer
         members:
           type: integer
           description: Handles on the roster.
         first_created:
-          type: [string, 'null']
+          type: string
+          nullable: true
           format: date-time
         specification_versions:
           type: array
@@ -1784,7 +1850,8 @@ components:
           format: date-time
         ground:
           description: For `ground` and `testimony`, the citing Ground's address.
-          $ref: '#/components/schemas/Address'
+          allOf:
+            - $ref: '#/components/schemas/Address'
     CitationPage:
       allOf:
         - $ref: '#/components/schemas/Page'
@@ -1842,7 +1909,8 @@ components:
           type: string
         object:
           description: The Object the finding names, where it names one.
-          $ref: '#/components/schemas/Name'
+          allOf:
+            - $ref: '#/components/schemas/Name'
     FindingPage:
       allOf:
         - $ref: '#/components/schemas/Page'
@@ -1888,7 +1956,8 @@ components:
           description: True when the server checked the reference against embedded content.
         value:
           description: The value reached, where the address reaches one.
-          $ref: '#/components/schemas/PropertyValue'
+          allOf:
+            - $ref: '#/components/schemas/PropertyValue'
         location:
           type: string
           description: For `rest` and `download`, the Content Object's `location`.
@@ -1967,7 +2036,8 @@ components:
           type: string
           format: uuid
         expires:
-          type: [string, 'null']
+          type: string
+          nullable: true
           format: date-time
         member_url:
           type: string
@@ -1977,12 +2047,10 @@ components:
           $ref: '#/components/schemas/Position'
     SubmissionCheck:
       type: object
-      required: [ok, role, findings, position]
+      required: [ok, findings, position]
       properties:
         ok:
           type: boolean
-        role:
-          type: string
         findings:
           type: array
           items:
@@ -2021,7 +2089,8 @@ components:
           type: string
           description: The submission's file version on the data server, `symposium-data:<uuid>@v1`.
         decided:
-          type: [string, 'null']
+          type: string
+          nullable: true
           format: date-time
         artifact_url:
           type: string
@@ -2029,7 +2098,8 @@ components:
           description: Accepted. The record Artifact.
         reply:
           description: Rejected. The gate's reply.
-          $ref: '#/components/schemas/Reply'
+          allOf:
+            - $ref: '#/components/schemas/Reply'
         position:
           $ref: '#/components/schemas/Position'
     SubmissionPage:
@@ -2077,7 +2147,7 @@ components:
         - type: object
           properties:
             event:
-              const: heartbeat
+              enum: [heartbeat]
             data:
               type: object
               required: [position]
@@ -2091,7 +2161,7 @@ components:
             - type: object
               properties:
                 event:
-                  const: artifact
+                  enum: [artifact]
                 data:
                   $ref: '#/components/schemas/ArtifactSummary'
         - $ref: '#/components/schemas/HeartbeatEvent'
@@ -2151,7 +2221,8 @@ components:
         scope:
           $ref: '#/components/schemas/KeyScope'
         key:
-          type: [string, 'null']
+          type: string
+          nullable: true
           pattern: ^sak_[A-Za-z0-9_-]{43}$
           description: The key. Null once revoked.
         label:
@@ -2162,15 +2233,19 @@ components:
         created_by:
           type: string
         expires:
-          type: [string, 'null']
+          type: string
+          nullable: true
           format: date-time
         revoked:
-          type: [string, 'null']
+          type: string
+          nullable: true
           format: date-time
         revoked_by:
-          type: [string, 'null']
+          type: string
+          nullable: true
         last_used:
-          type: [string, 'null']
+          type: string
+          nullable: true
           format: date-time
         uses:
           type: integer
@@ -2183,9 +2258,10 @@ components:
       properties:
         next:
           description: The cursor of the following page; null on the last page.
-          oneOf:
-            - $ref: '#/components/schemas/Cursor'
-            - type: 'null'
+          type: string
+          nullable: true
+          maxLength: 256
+          pattern: '^[A-Za-z0-9_-]+$'
         items:
           type: array
           items:

@@ -43,7 +43,11 @@ FROM runtime-base AS builder
 COPY --from=ghcr.io/astral-sh/uv:0.10.4 /uv /usr/local/bin/uv
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON=/usr/bin/python3 UV_PYTHON_DOWNLOADS=never \
     UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
-WORKDIR /src
+# the service builds at /build/service, so its path dependency on ../../tools (symposium-rules,
+# the named context `rules`) resolves to /tools
+WORKDIR /build/service
+COPY --from=rules pyproject.toml /tools/pyproject.toml
+COPY --from=rules symposium_rules /tools/symposium_rules
 COPY service/pyproject.toml service/uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 COPY service/ ./
@@ -56,6 +60,9 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 RUN mkdir -p /opt/symposium-data /apps \
     && if [ -n "${DATA_VERSION}" ]; then echo "${DATA_VERSION}" > /opt/symposium-data/VERSION; fi
+# The API's contract lives outside this build context: the Makefile passes it as the named
+# context `api` (api/).
+COPY --from=api openapi.yaml /opt/symposium-api/openapi.yaml
 COPY docker/supervisord/ /opt/symposium-data/supervisord/
 COPY docker/scripts/start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh

@@ -385,7 +385,7 @@ Server-Sent Events on three streams, each `text/event-stream`:
 | Serial `created` order | One Artifact per call. `created` must be null, and the gate stamps it at promote. The gate orders the submissions it decides, as it does today. |
 | Attribution | `published_by` must be `@<username>` and `name` must carry its prefix, so the gate's own check (the inbox name prefix is the submitter's handle, and the submitter is on the roster) passes for the same reason it passes today. |
 | One decision per submission | The gate decides, as today. The storage also enforces it: a promote writes `record/<name>` and a reply writes `inbox/<admin>_REPLY_<item>`, and the data server refuses a second file of either name with 409. |
-| Replies to rejections | The gate's reply is the same `NonGroundable` in `inbox`, readable by its recipient. The API carries it inside the rejected submission's `decision`, in `getSubmission`, `listSubmissions` and the `submission.rejected` event. A Member answers a rejection by submitting a corrected Artifact, which is the same path as today. |
+| Replies to rejections | The gate's reply is the same `NonGroundable` in `inbox`, readable by its recipient. The API carries it in the rejected submission's `reply` field, in `getSubmission`, `listSubmissions` and the `submission.rejected` event. A Member answers a rejection by submitting a corrected Artifact, which is the same path as today. |
 
 **Where each submission state comes from.** The server learns every state from what it
 stores or computes.
@@ -404,7 +404,7 @@ Nothing that exists today changes for the skill or the CLI.
 | Credential | Where it works | Changes |
 |---|---|---|
 | Member Ed25519 token (JWT) | `/v1` | none |
-| Server admin Ed25519 token (JWT) | `/v1`; also the API's gate operations, and the API-key operations, which accept it alone (`adminToken`) | it is newly accepted on those API operations |
+| Server admin Ed25519 token (JWT) | `/v1`; also the API's four API-key operations, which accept it alone (`adminToken`) | it is newly accepted on those four operations |
 | Read key `sdr_…` | `/v1` reads of its collection | none; the API does not accept it |
 | Public collection | anonymous `/v1` reads | a public `record` also opens the API's record reads anonymously |
 | API key `sak_…` | `/api/v1` only | new; `/v1` refuses it |

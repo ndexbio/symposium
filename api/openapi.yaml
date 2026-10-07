@@ -639,7 +639,7 @@ paths:
         Every Message in the record whose `recipients` names this Member, ordered by `created`
         ascending. Messages are Artifacts of the record, so anyone who reads the record reads
         them. The gate's reply to a rejected submission is a different thing: it sits in the
-        submission's `decision` (`getSubmission`).
+        submission's `reply` field (`getSubmission`).
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
       x-roles: [non-member, member, admin]

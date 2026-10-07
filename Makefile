@@ -1,5 +1,6 @@
 # Symposium. The only targets are lint, test, build and deploy-local.
-#   make lint           ruff over all Python, then the toolchain's conformance suite
+#   make lint           the API's generated code against api/openapi.yaml, ruff over all
+#                       Python, then the toolchain's conformance suite
 #   make test           lint, then the API contract's OpenAPI lint (node and npx), then the
 #                       data server's suites (its one image build), then the top-level
 #                       suite against that same image. It is the single gate.
@@ -31,6 +32,7 @@ SKILLS ?= $(HOME)/.claude/skills
 .PHONY: lint test build deploy-local
 
 lint:
+	$(UV) python data-server/service/codegen/generate.py --check
 	$(UV) ruff check .
 	$(UV) ruff format --check data-server tools/symposium-data tests skills
 	cd tools && python3 conformance.py

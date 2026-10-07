@@ -30,6 +30,8 @@ for flag in "$@"; do
   esac
 done
 export SYMPOSIUM_DATA_TRUSTED_PROXY="${SYMPOSIUM_DATA_TRUSTED_PROXY:-127.0.0.1}"
+# uvicorn workers for the data API and the Symposium API (one process, both prefixes)
+export SYMPOSIUM_DATA_WORKERS="${SYMPOSIUM_DATA_WORKERS:-1}"
 
 # ── Phase 2: directories ──────────────────────────────────────────────────────────────────────
 mkdir -p /apps/data/config /apps/postgres/config /apps/postgres/data \
@@ -75,6 +77,19 @@ EOT
   chown postgres:postgres /apps/postgres/config/superuser.pw
   chmod 600 "$CFG" /apps/data/config/token_ed25519.pem /apps/seaweed/config/s3.json \
             /apps/postgres/config/superuser.pw
+fi
+
+# The API keys' encryption key (api/DESIGN.md §4.3): 32 random bytes beside the other secrets,
+# made on first boot and on the first boot of a server that predates the API.
+API_KEY=/apps/data/config/api_key_enc.key
+if [[ ! -f "$API_KEY" ]]; then
+  log "generating the API keys' encryption key"
+  ( umask 077; head -c 32 /dev/urandom > "$API_KEY" )
+  chown symposium:symposium "$API_KEY"
+  chmod 600 "$API_KEY"
+fi
+if ! grep -q '^API_KEY_ENC_KEY_FILE=' "$CFG"; then
+  echo "API_KEY_ENC_KEY_FILE=$API_KEY" >> "$CFG"
 fi
 
 # ── Phase 4: PostgreSQL ───────────────────────────────────────────────────────────────────────

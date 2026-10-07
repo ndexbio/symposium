@@ -12,22 +12,30 @@ dependencies = [
   "psycopg[binary]>=3.2",
   "psycopg-pool>=3.2",
   "PyJWT>=2.8",
+  "pyyaml>=6.0",
   "sqlalchemy>=2.0",
   "uvicorn>=0.30",
 ]
 
 [dependency-groups]
-dev = ["httpx>=0.27", "pytest>=8", "pyyaml>=6.0", "ruff>=0.6"]
+dev = [
+  "datamodel-code-generator==0.56.1",
+  "fastapi-code-generator==0.6.0",
+  "httpx>=0.27",
+  "openapi-schema-validator>=0.6",
+  "pytest>=8",
+  "ruff>=0.6",
+]
 
 [build-system]
 requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["symposium_data"]
+packages = ["symposium_data", "symposium_api", "symposium_server"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # tests/harness.py and tests/fixtures are shared by the data server's suites and the
 # top-level CLI and skill suites, which import them from here
-pythonpath = ["tests"]
+pythonpath = ["tests", "../../tools"]

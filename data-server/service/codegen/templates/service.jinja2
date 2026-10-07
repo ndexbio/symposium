@@ -1,0 +1,30 @@
+"""Generated from api/openapi.yaml by codegen/generate.py. Never edit by hand.
+
+The service interface: one method per operation, typed with the generated models. The
+hand-written implementation subclasses it; the generated routers call it."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import AsyncIterator
+
+from symposium_api.authz import Caller
+
+from .dependencies import *
+
+
+class Service(ABC):
+{% for operation in operations %}
+{%- set sse = 'text/event-stream' in operation.responses.get('200', {}).get('content', {}) %}
+{%- set ns = namespace(status=200, model=operation.response) %}
+{%- for code in operation.responses %}{% if (code | string)[0] == '2' and ns.status == 200 %}{% set ns.status = code | int %}{% if code | string != '200' %}{% set ns.model = (operation.responses[code].get('content', {}).get('application/json', {}).get('schema', {}).get('$ref', '/None')).split('/')[-1] %}{% endif %}{% endif %}{% endfor %}
+    @abstractmethod
+    def {{ operation.function_name }}(
+        self,
+        caller: Caller,
+        {% if operation.arguments_list %}*,{% endif %}
+        {% for argument in operation.arguments_list %}{{ argument.name }}: {{ argument.resolved_type_hint }},
+        {% endfor %}
+    ) -> {% if sse %}AsyncIterator[{{ operation.response | replace('List[', '', 1) | replace(']', '', 1) }}]{% else %}{{ ns.model }}{% endif %}:
+        """{{ operation.operationId }}: {{ operation.summary }}"""
+{% endfor %}

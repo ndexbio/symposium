@@ -1,0 +1,47 @@
+"""Generated from api/openapi.yaml by codegen/generate.py. Never edit by hand."""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
+
+from symposium_api.authz import Caller, authorize
+from symposium_api.provider import service_provider
+
+from ..dependencies import *
+from ..service import Service
+from ..sse import SSE_HEADERS, sse_frames
+
+router = APIRouter(tags=['{{ tag }}'])
+{% for operation in operations %}{% if operation.tags[0] == tag %}
+{%- set sse = 'text/event-stream' in operation.responses.get('200', {}).get('content', {}) %}
+{%- set ns = namespace(status=200, model=operation.response) %}
+{%- for code in operation.responses %}{% if (code | string)[0] == '2' and ns.status == 200 %}{% set ns.status = code | int %}{% if code | string != '200' %}{% set ns.model = (operation.responses[code].get('content', {}).get('application/json', {}).get('schema', {}).get('$ref', '/None')).split('/')[-1] %}{% endif %}{% endif %}{% endfor %}
+
+
+@router.{{ operation.type }}(
+    '{{ operation.path }}',
+    {% if sse %}response_class=StreamingResponse,{% else %}response_model={{ ns.model }},
+    response_model_exclude_unset=True,{% endif %}
+    status_code={{ ns.status }},
+    operation_id='{{ operation.operationId }}',
+    {% if operation.additional_responses %}
+    responses={
+        {% for status_code, models in operation.additional_responses.items() %}
+        '{{ status_code }}': { {% for key, model in models.items() %}'{{ key }}': {{ model }}, {% endfor %} },
+        {% endfor %}
+    },
+    {% endif %}
+)
+{% if sse %}async {% endif %}def {{ operation.function_name }}(
+    {% if operation.arguments_list %}{{ operation.snake_case_arguments }},
+    {% endif %}caller: Caller = Depends(authorize('{{ operation.operationId }}')),
+    service: Service = Depends(service_provider),
+){% if not sse %} -> {{ ns.model }}{% endif %}:
+    """{{ operation.summary }}"""
+    {% if sse %}return StreamingResponse(
+        sse_frames(service.{{ operation.function_name }}(caller{% for argument in operation.arguments_list %}, {{ argument.name }}={{ argument.name }}{% endfor %})),
+        media_type='text/event-stream',
+        headers=SSE_HEADERS,
+    ){% else %}return service.{{ operation.function_name }}(caller{% for argument in operation.arguments_list %}, {{ argument.name }}={{ argument.name }}{% endfor %}){% endif %}
+{% endif %}{% endfor %}

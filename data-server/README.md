@@ -2,7 +2,7 @@
 
 A single Docker image that runs Symposium Data, the versioned file store Symposium communities use to persist, share and cite data files. The image contains three services, managed by `supervisord`:
 
-- **the data service**: FastAPI on port 8080, the only port the container exposes;
+- **the data service**: FastAPI on port 8080, the only port the container exposes. It serves the data server's own API under `/v1` and the Symposium API under `/api/v1` (see "The Symposium API");
 - **PostgreSQL 16**: the server's records: configuration, owner identities, rosters, grants, invites, collections, files, versions, metadata and read keys. All of it is managed by Alembic migrations;
 - **SeaweedFS**: the internal S3 store for file contents. It is never exposed; the data service streams every byte.
 
@@ -13,6 +13,9 @@ A single Docker image that runs Symposium Data, the versioned file store Symposi
 | Path | What it is |
 |---|---|
 | `service/` | The `symposium_data` Python package: the HTTP API, its background jobs and the Alembic migrations, plus the tests. Locked with `uv.lock`. |
+| `service/symposium_api/` | The Symposium API: `generated/`, generated from `api/openapi.yaml` and never edited by hand, and the hand-written service behind it. |
+| `service/symposium_server/` | The composition root uvicorn starts: the data service with the Symposium API mounted at `/api/v1`. |
+| `service/codegen/` | The generator script and its templates (see "The Symposium API"). |
 | `docker/Dockerfile` | Multi-stage build: `runtime-base` (PostgreSQL, supervisor, gosu, SeaweedFS with a pinned sha256), then `builder` (installs the locked wheel into `/opt/venv`), then `deploy`. |
 | `docker/supervisord/` | One config snippet per service. `start.sh` assembles them. |
 | `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, then starts supervisord. |
@@ -28,7 +31,7 @@ These four targets are the only ones. Run them from this folder, or from the rep
 |---|---|
 | `lint` | `ruff check` and `ruff format --check` on `service/`. |
 | `test` | `lint` and `build-docker`, then the unit suites, then the integration suites against that image, on one `sdtest-*` container for the whole session. |
-| `build-docker` | Builds and tags the image `ndexbio/symposium-data:$(TAG)`. |
+| `build-docker` | Builds and tags the image `ndexbio/symposium-data:$(TAG)`. The image also takes `../tools/symposium_rules` and `../api/openapi.yaml`, as the named build contexts `rules` and `api`. |
 | `push-docker` | A buildx multi-arch (`linux/amd64`, `linux/arm64`) build and push of `:$(TAG)` and `:latest`. It is used by the release workflow, on a tag cut from a `data-store` commit that CI has tested. |
 
 `TAG` defaults to the version in `service/pyproject.toml`; override it with `make build-docker TAG=1.2.3`. The image is built with `DATA_VERSION=$(TAG)`. The container prints `symposium-data <version>` as its first line of output, and `GET /v1/status` reports the same version. `/v1/status` also reports health: it answers **503**, with `"postgres"` or `"s3"` set to `"unavailable"`, whenever either dependency is down. The Kubernetes readiness probe relies on this. It reports the server's `mode` too (see "The admin key file").
@@ -152,6 +155,37 @@ Every community has three collections: `inbox` (submissions), `files` (stored da
 
 Listing a collection (`changes`, `query`, `find`) needs read access to it. A member listing `inbox` sees only their own submissions and the replies addressed to them; a file-scoped read key sees only its file.
 
+## The Symposium API
+
+`/api/v1` serves the community record at the level of the specification's model: Artifacts,
+Objects, properties, relationships, Members and addresses, with paging, freshness, Server-Sent
+Event streams and publishing through the gate. Its contract is `api/openapi.yaml` and its
+design `api/DESIGN.md`, at the repository root. Every server serves it, on port 8080 beside
+`/v1`, and it serves its own contract with no credential at `GET /api/v1/openapi.yaml` and
+`GET /api/v1/openapi.json`.
+
+**Credentials.** The API takes API keys, `Authorization: Bearer sak_…`, each holding one role:
+`non-member`, `member` or `admin`. The admin makes, lists and revokes them with
+`/symposium gen-api-key`, `list-api-keys` and `revoke-api-key`, which call the four
+`/api/v1/admin/api-keys` operations with the admin's Ed25519 token; no API key can call those.
+Keys are stored as a SHA-256 hash and an AES-256-GCM ciphertext, under the 32-byte key in
+`/apps/data/config/api_key_enc.key`, which `start.sh` makes on first boot.
+
+**Generated code.** The routers, the models and the service interface in
+`service/symposium_api/generated/` are generated from `api/openapi.yaml` by
+`fastapi-code-generator` and `datamodel-code-generator`, pinned in the dev group. After a change
+to the contract, regenerate and commit:
+
+```bash
+uv run --project data-server/service python data-server/service/codegen/generate.py
+```
+
+The repository's `make lint` regenerates into a scratch directory and fails if the committed
+code differs.
+
+**Ingress.** The streams need response buffering off and a read timeout above their
+30-second heartbeat; the commented Ingress in `docker/k8s-data-deployment.yml` carries both.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -164,5 +198,8 @@ Listing a collection (`changes`, `query`, `find`) needs read access to it. A mem
 | `SYMPOSIUM_DATA_JANITOR_INTERVAL` | `3600` | How often, in seconds, the janitor runs. |
 | `SYMPOSIUM_DATA_SCRUB_INTERVAL` | `3600` | How often, in seconds, the integrity scrub runs. |
 | `SYMPOSIUM_DATA_SCRUB_BATCH` | `50` | How many payloads each scrub pass re-hashes, least recently checked first. |
+| `SYMPOSIUM_DATA_WORKERS` | `1` | uvicorn worker processes for `/v1` and `/api/v1`. Every worker serves any request; the API's stream caps are counted in PostgreSQL. |
+| `SYMPOSIUM_DATA_PUBLIC_URL` | (the request's URL) | The base of every canonical `url` the Symposium API answers, such as `https://data.example.org`. |
+| `SYMPOSIUM_API_MAX_STREAMS` | `500` | Open Symposium API streams across the server; the last 20 open only to an `admin` key. |
 
 All state lives under `/apps` inside the container: one volume, or a PVC. Internal secrets are generated on first boot with mode 0600 and are never baked into the image.

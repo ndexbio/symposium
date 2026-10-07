@@ -29,6 +29,8 @@ TEST_ENV = {
     "SYMPOSIUM_DATA_JANITOR_INTERVAL": "0.5",
     "SYMPOSIUM_DATA_SCRUB_INTERVAL": "0.5",
     "SYMPOSIUM_DATA_TEST_HOOKS": "1",
+    # the API's stream heartbeat, which also paces each stream's key re-check
+    "SYMPOSIUM_API_HEARTBEAT": "2",
 }
 
 # Run inside the container: empty every data table and the bucket, keeping the admin binding.
@@ -40,7 +42,8 @@ store = PayloadStore(settings)
 with psycopg.connect(settings.database_url) as conn:
     conn.execute(
         "TRUNCATE communities, owners, owner_keys, challenges, roster, grants, invites, "
-        "collections, files, versions, payloads, read_keys, ports CASCADE"
+        "collections, files, versions, payloads, read_keys, ports, api_keys, api_streams, "
+        "api_index, api_citations, api_index_position CASCADE"
     )
 for page in store.s3.get_paginator("list_objects_v2").paginate(Bucket=store.bucket):
     for item in page.get("Contents", []):

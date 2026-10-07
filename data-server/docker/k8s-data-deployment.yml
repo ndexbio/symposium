@@ -97,6 +97,11 @@ spec:
 # kind: Ingress
 # metadata:
 #   name: symposium-data
+#   annotations:
+#     # the Symposium API's streams (Server-Sent Events): unbuffered, and open past the
+#     # 30-second heartbeat
+#     nginx.ingress.kubernetes.io/proxy-buffering: "off"
+#     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
 # spec:
 #   tls:
 #     - hosts: [data.example.org]

@@ -5,7 +5,7 @@ and publish to it through the gate as a Member. It speaks the specification's mo
 (Artifacts, Objects, properties, relationships, Members and addresses), not the data
 server's model of files and versions.
 
-These notes go with [`openapi.yaml`](openapi.yaml), the OpenAPI 3.1 document. The YAML is
+These notes go with [`openapi.yaml`](openapi.yaml), the OpenAPI 3.0.3 document. The YAML is
 the contract. These notes say why it has the shape it has. They cover issue #23. Building
 the API, the API-key commands and the new table belongs to a later issue.
 
@@ -17,6 +17,11 @@ the API, the API-key commands and the new table belongs to a later issue.
 | `api/DESIGN.md` | these notes |
 | `api/redocly.yaml` | the linter's ruleset, `recommended-strict` |
 | `tests/api/test_openapi.py` | checks the contract against the rules below and against these notes' tables |
+| `tests/api/test_api_live.py` | runs the data-server container and checks every operation, every role and the keys live |
+| `data-server/service/codegen/` | the generator script and its templates |
+| `data-server/service/symposium_api/generated/` | the routers, models and service interface generated from the contract; never edited by hand |
+| `data-server/service/symposium_api/`, `symposium_server/` | the hand-written implementation and the composition root (§9) |
+| `tools/symposium_rules/` | the rules the gate and the API share (§9) |
 
 The API gets its own top-level directory because it is a third face of Symposium. It sits
 beside `spec/`, the model, and `data-server/`, the storage. The data server's process
@@ -30,6 +35,17 @@ npx --yes @redocly/cli@2.59.0 lint --config api/redocly.yaml api/openapi.yaml
 ```
 
 `make test` runs it, then `tests/api/`, and CI runs `make test`.
+
+The server code that mirrors the contract is generated from it, never written by hand:
+`fastapi-code-generator` writes the routers and the service interface from the templates in
+`data-server/service/codegen/templates/`, and `datamodel-code-generator` writes the Pydantic
+models. After a change to `api/openapi.yaml`, regenerate and commit:
+
+```bash
+uv run --project data-server/service python data-server/service/codegen/generate.py
+```
+
+`make lint` regenerates into a scratch directory and fails if the committed code differs.
 
 ## 1. The resource model
 
@@ -163,7 +179,9 @@ token (§4.5), so no API key of any role can read or make another key.
 Anonymous access is a separate case from the roles. When a community's `record`
 collection is public on the data server, every record read also answers with no
 credential. The operation says so in `x-anonymous`, and its `security` includes `{}`. This
-is the API's version of a public collection.
+is the API's version of a public collection. The OpenAPI document itself,
+`GET /api/v1/openapi.yaml` and `/api/v1/openapi.json`, always answers anonymously
+(`x-anonymous: always`).
 
 ### 3.2 Endpoint × role
 
@@ -171,6 +189,8 @@ is the API's version of a public collection.
 
 | Operation | Method and path | non-member | member | admin |
 |---|---|---|---|---|
+| getOpenApiYaml | GET /openapi.yaml | ✓ | ✓ | ✓ |
+| getOpenApiJson | GET /openapi.json | ✓ | ✓ | ✓ |
 | getRecord | GET /{community}/record | ✓ | ✓ | ✓ |
 | listArtifacts | GET /{community}/artifacts | ✓ | ✓ | ✓ |
 | getArtifact | GET /{community}/artifacts/{name} | ✓ | ✓ | ✓ |
@@ -447,15 +467,16 @@ imports one that imports it back.
 
 | Package | Holds | Imported by |
 |---|---|---|
-| `symposium_rules` (new, standard library only, Python 3.9+) | the validator (today `tools/validate.py`), the gate's skip rule (today in `tools/gate.py`), and the naming and payload checks (today in `tools/publish.py`) | the skill's `tools/`, the API |
+| `symposium_rules` (`tools/symposium_rules/`, standard library only, Python 3.9+) | the validator (today `tools/validate.py`), the gate's skip rule (today in `tools/gate.py`), and the naming and payload checks (today in `tools/publish.py`) | the skill's `tools/`, the API |
 | `symposium_api` (new) | the `/api/v1` routes, the index and the streams, as a FastAPI router built from a records layer it is handed | `symposium_server` |
 | `symposium_data` (today) | storage: `/v1`, records, identity | `symposium_api`, through its records layer; `symposium_server` |
 | `symposium_server` (new, a few lines) | the composition root: it builds `symposium_data`'s app and records layer, builds `symposium_api`'s router from that records layer, and mounts the router at `/api/v1`. uvicorn starts this module | nothing |
 
 `tools/validate.py`, `tools/gate.py` and `tools/publish.py` become thin callers of
 `symposium_rules`, with the same behaviour and the same command lines. The skill bundle and
-the data server image both ship the one package, so the validator the API runs is the
-validator the gate runs, byte for byte. Storage imports none of the rules and none of the
+the data server image both ship the one package (the image takes it, and the contract, as
+named build contexts), so the validator the API runs is the validator the gate runs, byte
+for byte. Storage imports none of the rules and none of the
 API, and the rules import none of the storage. Only `symposium_server` sees all three.
 
 ## 10. Where the API server runs
@@ -513,15 +534,11 @@ same test for the same reason.
 
 ### 10.5 Running it
 
-- **Start flag.** `start.sh` gains `--symposium-api`. With it, the `data-api` program starts
-  `symposium_server:app`; without it, `symposium_data.app:app` as today, and `/api/v1`
-  answers 404. The flag is on wherever the image's defaults apply:
-  - `start.sh` with no flags turns on all four: `--data-api --postgres --seaweed
-    --symposium-api`.
-  - The Dockerfile's `CMD` names all four.
-  - The container `args` in `data-server/docker/k8s-data-deployment.yml` name all four.
-
-  An operator who wants `/v1` alone passes the first three.
+- **Always on.** The `data-api` program always starts `symposium_server:app`, so every data
+  server serves `/api/v1` beside `/v1`. `start.sh`'s flags, the Dockerfile's `CMD` and the
+  Kubernetes container args are unchanged.
+- **Canonical URLs.** `SYMPOSIUM_DATA_PUBLIC_URL`, when set, is the base of every `url` the API
+  answers; otherwise the base is the URL the request reached, after `--proxy-headers`.
 - **CPU work leaves the event loop.** Validation, findings and address resolution run in
   FastAPI's thread pool, so a long validation holds no stream and no `/v1` request.
 - **Streams are capped, across the whole server.** Every open stream holds one row in a

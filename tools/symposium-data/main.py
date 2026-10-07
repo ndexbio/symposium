@@ -21,6 +21,7 @@ import tarfile
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 import port_ndex  # the port-ndex command: all of the CLI's NDEx code is in port_ndex.py
@@ -288,6 +289,32 @@ class DataServer:
     def suspect_after(self, handle: str, at: str) -> dict:
         return self.request(
             "PUT", self.c(f"/owners/{handle}/suspect-after"), body={"at": at}
+        )
+
+    # ── the Symposium API's keys: server-wide, the admin's Ed25519 token alone ──────────────
+    def create_api_key(self, body: dict) -> dict:
+        return self.request("POST", "/api/v1/admin/api-keys", body=body)
+
+    def api_keys(self, community: str | None) -> list:
+        """Every API key, page by page, each with its value."""
+        items, cursor = [], None
+        while True:
+            query = {"limit": "1000"}
+            if community:
+                query["community"] = community
+            if cursor:
+                query["cursor"] = cursor
+            page = self.request(
+                "GET", "/api/v1/admin/api-keys?" + urllib.parse.urlencode(query)
+            )
+            items += page["items"]
+            cursor = page.get("next")
+            if not cursor:
+                return items
+
+    def revoke_api_key(self, key_id: str) -> dict:
+        return self.request(
+            "DELETE", f"/api/v1/admin/api-keys/{urllib.parse.quote(key_id)}"
         )
 
     def challenge(self, handle: str) -> str:
@@ -663,6 +690,58 @@ class Commands:
 
     def suspect_after(self, args) -> dict:
         return self.admin().suspect_after(args.handle, args.at)
+
+    # ── API keys (api/DESIGN.md §4.5): values move as 0600 files, never on stdout ───────────
+    @staticmethod
+    def api_key_dir() -> Path:
+        return Path.home() / ".symposium" / "admin" / "api-keys"
+
+    @staticmethod
+    def api_key_view(item: dict) -> dict:
+        """A key as printed: everything but its value."""
+        return {k: v for k, v in item.items() if k != "key"}
+
+    def gen_api_key(self, args) -> dict:
+        context = self.context.load()
+        server = self.admin()
+        scope = (
+            {"kind": "server"}
+            if args.server
+            else {
+                "kind": "community",
+                "community": args.community or context["community"],
+            }
+        )
+        body = {"username": args.username, "role": args.role, "scope": scope}
+        if args.expires_days:
+            body["expires_days"] = args.expires_days
+        if args.label:
+            body["label"] = args.label
+        issued = server.create_api_key(body)
+        path = self.api_key_dir() / f"{issued['id']}.key"
+        write_secret(
+            path,
+            {
+                **issued,
+                "data-server-url": server.base_url,
+                "api": server.base_url + "/api/v1",
+            },
+        )
+        return {**self.api_key_view(issued), "key_file": str(path.resolve())}
+
+    def list_api_keys(self, args) -> dict:
+        server = self.admin()
+        items = server.api_keys(args.community)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        path = self.api_key_dir() / f"list-{stamp}.json"
+        write_secret(path, {"data-server-url": server.base_url, "keys": items})
+        return {
+            "keys": [self.api_key_view(item) for item in items],
+            "keys_file": str(path.resolve()),
+        }
+
+    def revoke_api_key(self, args) -> dict:
+        return self.api_key_view(self.admin().revoke_api_key(args.key_id))
 
     def purge(self, args) -> dict:
         cited = CITATION.match(args.cite)
@@ -1067,6 +1146,37 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     )
     p.add_argument("--handle", required=True)
     p.add_argument("--at", required=True, help="ISO 8601, with a timezone")
+
+    p = command(
+        sub,
+        "gen-api-key",
+        commands.gen_api_key,
+        "create a Symposium API key and write it to a 0600 file under "
+        "~/.symposium/admin/api-keys/ (admin)",
+    )
+    p.add_argument("username", help="a registered handle, the admin, or an app label")
+    p.add_argument("role", choices=("non-member", "member", "admin"))
+    scope = p.add_mutually_exclusive_group()
+    scope.add_argument("--community", help="default: the context's community")
+    scope.add_argument(
+        "--server", action="store_true", help="scope the key to the server (admin role)"
+    )
+    p.add_argument("--expires-days", type=int)
+    p.add_argument("--label")
+
+    p = command(
+        sub,
+        "list-api-keys",
+        commands.list_api_keys,
+        "write every API key, with its value, to a 0600 file under "
+        "~/.symposium/admin/api-keys/; print the keys without values (admin)",
+    )
+    p.add_argument("--community", help="only keys scoped to this community")
+
+    p = command(
+        sub, "revoke-api-key", commands.revoke_api_key, "revoke an API key (admin)"
+    )
+    p.add_argument("key_id")
 
     p = command(sub, "purge", commands.purge, "free one version's content (admin)")
     p.add_argument("--cite", required=True, help="symposium-data:<file-id>@v<n>")

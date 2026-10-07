@@ -19,9 +19,12 @@ test: lint build-docker
 	cd service && SYMPOSIUM_DATA_TEST_IMAGE=$(IMAGE):$(TAG) SYMPOSIUM_DATA_TEST_VERSION=$(TAG) \
 		$(UV) pytest tests/integration
 
+# the API's shared rules and contract, from outside this directory, as named build contexts
+CONTEXTS := --build-context rules=../tools/symposium_rules --build-context api=../api
+
 build-docker:
-	docker build -f docker/Dockerfile --build-arg DATA_VERSION=$(TAG) -t $(IMAGE):$(TAG) .
+	docker build -f docker/Dockerfile $(CONTEXTS) --build-arg DATA_VERSION=$(TAG) -t $(IMAGE):$(TAG) .
 
 push-docker:
-	docker buildx build --platform $(PLATFORMS) -f docker/Dockerfile \
+	docker buildx build --platform $(PLATFORMS) -f docker/Dockerfile $(CONTEXTS) \
 		--build-arg DATA_VERSION=$(TAG) -t $(IMAGE):$(TAG) -t $(IMAGE):latest --push .

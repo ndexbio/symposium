@@ -99,6 +99,32 @@ flag a member's writes after an instant (admin)
 symposium-data suspect-after [-h] --handle HANDLE --at AT
 ```
 
+## `gen-api-key`
+
+create a Symposium API key and write it to a 0600 file under ~/.symposium/admin/api-keys/ (admin)
+
+```
+symposium-data gen-api-key [-h] [--community COMMUNITY | --server]
+                                  [--expires-days EXPIRES_DAYS] [--label LABEL]
+                                  username {non-member,member,admin}
+```
+
+## `list-api-keys`
+
+write every API key, with its value, to a 0600 file under ~/.symposium/admin/api-keys/; print the keys without values (admin)
+
+```
+symposium-data list-api-keys [-h] [--community COMMUNITY]
+```
+
+## `revoke-api-key`
+
+revoke an API key (admin)
+
+```
+symposium-data revoke-api-key [-h] key_id
+```
+
 ## `purge`
 
 free one version's content (admin)

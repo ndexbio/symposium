@@ -1,0 +1,6 @@
+"""Generated from api/openapi.yaml by codegen/generate.py. Never edit by hand: change the
+contract or the templates in codegen/templates, then regenerate."""
+
+from .routers import {{ routers | join(", ") }}
+
+ROUTERS = [{% for router in routers %}{{ router }}.router, {% endfor %}]

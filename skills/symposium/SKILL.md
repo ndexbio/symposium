@@ -49,6 +49,7 @@ Sessions are kept by the skill under `~/.symposium/` (`admin/<community>/` for t
 | `roster list` | member, admin | the community's roster |
 | `roster add\|remove`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import` | admin | manage members and data |
 | `port <ndex_credentials_file> <ndex_url>` | admin | port a community's record (port-ndex; see `reference/PORT_NDEX.md`) |
+| `gen-api-key <username> <role>`, `list-api-keys`, `revoke-api-key <key id>` | admin | the Symposium API's keys (`/api/v1`); key values go to 0600 files under `~/.symposium/admin/api-keys/`, never to the chat |
 | `data <symposium-data command …>` | anyone | direct data work: `put`, `get`, `version`, `delete`, `keys`, `collection`, `find`, `verify`, `changes`, … |
 
 `/symposium data <command> --help` describes any CLI command and its options.

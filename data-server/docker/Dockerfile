@@ -56,6 +56,11 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 RUN mkdir -p /opt/symposium-data /apps \
     && if [ -n "${DATA_VERSION}" ]; then echo "${DATA_VERSION}" > /opt/symposium-data/VERSION; fi
+# The API's shared rules and its contract live outside this build context: the Makefile passes
+# them as the named contexts `rules` (tools/symposium_rules) and `api` (api/).
+COPY --from=rules . /opt/symposium-rules/symposium_rules
+COPY --from=api openapi.yaml /opt/symposium-api/openapi.yaml
+ENV PYTHONPATH=/opt/symposium-rules
 COPY docker/supervisord/ /opt/symposium-data/supervisord/
 COPY docker/scripts/start.sh /usr/local/bin/start.sh
 RUN chmod +x /usr/local/bin/start.sh

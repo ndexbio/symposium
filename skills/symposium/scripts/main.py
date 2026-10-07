@@ -16,6 +16,9 @@ every data interaction runs the `symposium-data` CLI (R-I1).
     port <ndex_credentials_file> <url>     admins: port a community's record (port-ndex)
     admin-config | roster | invite | rebind-key | suspect-after | purge | export | import
                                            admins: the server admin's commands
+    gen-api-key | list-api-keys | revoke-api-key
+                                           admins: the Symposium API's keys, written as 0600
+                                           files under ~/.symposium/admin/api-keys/
     data <symposium-data command …>        direct data work: put, get, keys, collection, find, …
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit
@@ -60,6 +63,9 @@ ADMIN = (
     "purge",
     "export",
     "import",
+    "gen-api-key",
+    "list-api-keys",
+    "revoke-api-key",
 )
 # the commands that print free text: their session goes on a first line of its own
 FREE_TEXT = {"publish", "validate", "sync", "gate", "serve"}
@@ -72,7 +78,8 @@ WORKFLOW = {
 }
 USAGE = (
     "/symposium <setup|bootstrap|use|publish|sync|gate|validate|serve|port|admin-config|roster|"
-    "invite|rebind-key|suspect-after|purge|export|import|data> [options]    "
+    "invite|rebind-key|suspect-after|purge|export|import|gen-api-key|list-api-keys|"
+    "revoke-api-key|data> [options]    "
     "e.g. /symposium setup --invite-file <file>"
 )
 

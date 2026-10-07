@@ -59,7 +59,13 @@ def conforms(operation_id: str, response: httpx.Response, body=None):
         f"{operation_id} answered {status}, which the contract does not list: "
         f"{response.text[:300]}"
     )
-    content = deref(responses[status]).get("content", {})
+    declared = deref(responses[status])
+    for name, header in declared.get("headers", {}).items():
+        value = response.headers.get(name)
+        assert value is not None, f"{operation_id} {status} lacks its {name} header"
+        allowed = deref(header).get("schema", {}).get("enum")
+        assert allowed is None or value in allowed, (operation_id, name, value)
+    content = declared.get("content", {})
     media = response.headers.get("content-type", "").split(";")[0]
     if not content:
         return
@@ -612,6 +618,12 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     # every column of every row holds a key only as its hash and its ciphertext
     rows = sql(server, "SELECT to_jsonb(k)::text FROM api_keys k")
     assert rows and all(key not in row[0] for row in rows)
+    # and the ciphertext column, read as the bytes it holds rather than as hex
+    sealed = sql(
+        server,
+        "SELECT encode(ciphertext, 'escape') FROM api_keys WHERE ciphertext IS NOT NULL",
+    )
+    assert sealed and all(key not in row[0] for row in sealed)
 
     # a stream closes within the heartbeat of its key's revocation
     ended = follow(api, key)
@@ -1049,6 +1061,8 @@ def refused_checks(output: str) -> set:
     checks = set(re.findall(r"\[FAIL\s+(\w+)\s*\]", output))
     if "name must be prefixed" in output:
         checks.add("NAMING")
+    if "embedded payload is" in output:
+        checks.add("SIZE")
     return checks
 
 
@@ -1069,7 +1083,9 @@ def test_the_api_refuses_what_validate_refuses(world, suite, tmp_path):
     del incomplete["artifact"]["verdict"]
     unprefixed = note("lyra", "x")
     unprefixed["artifact"]["name"] = "note_without_a_prefix_v1"
-    for doc in (unresolved, loose, incomplete, unprefixed):
+    oversized = note("lyra", "oversized")
+    oversized["artifact"]["text"] = "x" * (260 * 1024)
+    for doc in (unresolved, loose, incomplete, unprefixed, oversized):
         path = tmp_path / f"{doc['artifact']['name']}.json"
         path.write_text(json.dumps(doc))
         code, out = tool(suite, member_dir, "publish.py", "--check", path)
@@ -1080,3 +1096,27 @@ def test_the_api_refuses_what_validate_refuses(world, suite, tmp_path):
             f["check"] for f in refused.json()["findings"] if f["level"] == "FAIL"
         }
         assert api_checks == refused_checks(out), (doc["artifact"]["name"], out)
+
+    # a set `created`: `publish` replaces it with its own provisional stamp, while the API takes
+    # the JSON as sent and refuses it, since the gate alone stamps `created`
+    stamped = note("lyra", "stamped")
+    stamped["artifact"]["created"] = "2026-01-01T00:00:00+00:00"
+    path = tmp_path / "stamped.json"
+    path.write_text(json.dumps(stamped))
+    code, out = tool(suite, member_dir, "publish.py", "--check", path)
+    assert code == 0, out
+    refused = api.call("POST", "/demo/submissions", lyra, stamped)
+    assert refused.status_code == 422, refused.text
+    assert {f["check"] for f in refused.json()["findings"] if f["level"] == "FAIL"} == {
+        "STRUCT"
+    }
+
+    # a clean note passes both
+    clean = note("lyra", "clean")
+    path = tmp_path / "clean.json"
+    path.write_text(json.dumps(clean))
+    code, out = tool(suite, member_dir, "publish.py", "--check", path)
+    assert code == 0, out
+    checked = api.call("POST", "/demo/submissions/check", lyra, clean)
+    assert checked.status_code == 200 and checked.json()["ok"] is True, checked.text
+    conforms("checkSubmission", checked)

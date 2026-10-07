@@ -20,13 +20,14 @@ from symposium_rules.validate import (
     validate,
 )
 
+from symposium_data.records import unpurged
+
 RECORD = "record"
 # every read of the index skips an Artifact whose version was purged on /v1
-LIVE = "NOT EXISTS (SELECT 1 FROM versions v WHERE v.file_id = api_index.file_id AND v.purged)"
+LIVE = unpurged("api_index.file_id")
 LIVE_CITATION = (
-    "NOT EXISTS (SELECT 1 FROM api_index i JOIN versions v ON v.file_id = i.file_id "
-    "WHERE i.community = api_citations.community AND i.name = api_citations.from_name "
-    "AND v.purged)"
+    "NOT EXISTS (SELECT 1 FROM api_index i WHERE i.community = api_citations.community "
+    f"AND i.name = api_citations.from_name AND NOT {unpurged('i.file_id')})"
 )
 BATCH = 200
 # header properties whose values are addresses, and the citation kind each one is

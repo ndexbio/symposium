@@ -1425,7 +1425,7 @@ components:
       type: object
       description: |
         An Artifact's properties (specification §1.5 and §2, profile §1 and §2.1). Members may
-        add properties of their own. Each extra property's value is a `PropertyValue`.
+        add properties of their own. An extra property takes any JSON value.
       required: [name, type, created, published_by, specification_version]
       properties:
         name:
@@ -1511,7 +1511,7 @@ components:
       description: |
         An Object (specification §1.6). Assertion, Ground, Assumption and Content carry the
         properties the specification requires of them; any other type is the author's.
-        Each extra property's value is a `PropertyValue`.
+        An extra property takes any JSON value.
       required: [name, type]
       properties:
         name:
@@ -1559,7 +1559,7 @@ components:
       type: object
       description: |
         A directed relationship between two Objects of one Artifact (specification §1.7).
-        Each extra property's value is a `PropertyValue`.
+        An extra property takes any JSON value.
       required: [rel, source, target]
       properties:
         rel:

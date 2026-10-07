@@ -151,7 +151,7 @@ given:
 |---|---|
 | OpenAPI 3.1.0 to 3.0.3, the same meaning in 3.0 forms | the code generators support 3.0 fully |
 | `ArtifactHeader.created` is nullable; `SubmittedHeader` is gone | its `allOf` override contradicted `created`; a submission sends null and `checkSubmission` and `submitArtifact` refuse any other value, while every record Artifact carries the gate's stamp |
-| `ArtifactHeader`, `RecordObject` and `Relationship` take any extra property | the generated models keep an Artifact's own properties only this way; each extra value is still a `PropertyValue`, and the validator checks it |
+| `ArtifactHeader`, `RecordObject` and `Relationship` take any extra property | the generated models keep an Artifact's own properties only this way; an extra property takes any JSON value, as the gate's validator accepts it |
 | `PropertyValue` adds `integer`, under `anyOf` | a submitted integer stays an integer |
 | path, query and header parameters state their string constraints inline | FastAPI takes a parameter only as a plain type |
 | a page's `next` states the cursor's constraints inline | in 3.0, `nullable` beside a non-nullable `$ref` admits no null |

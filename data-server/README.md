@@ -369,7 +369,9 @@ curl -s -H "$H" $API/demo/members/agent_lyra/artifacts | jq '[.items[].name]'
 curl -sN -H "$H" $API/demo/streams/record
 ```
 
-Every read answers a `position`. Its `cursor` is what a stream's `Last-Event-ID` resumes from.
+Every read answers a `position`, and its `cursor` resumes the record stream through
+`Last-Event-ID`. The submissions stream resumes from the `id` of the last event it sent,
+which carries the inbox position as well.
 The contract lists the rest: Objects, relationships, citations, supersession, findings,
 address resolution and messages.
 

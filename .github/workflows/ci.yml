@@ -1,18 +1,12 @@
 name: ci
 
-# Every branch push and every pull request, whatever branch it targets; release tags run
+# Every pull request, whatever branch it targets, once per commit; release tags run
 # release.yml instead
 on:
-  push:
-    branches: ["**"]
   pull_request:
 
 jobs:
   test:
-    # A branch in this repository is tested by its push run, whose checks appear on its pull
-    # request too; the pull_request run is for forks, which push nowhere here. So each commit
-    # runs once, and the skipped duplicate reads as skipped
-    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     # Linux runs the whole gate, the data server's suites and their one image build included;
     # Windows runs the skill's runtime and session suites, which need no container
     strategy:

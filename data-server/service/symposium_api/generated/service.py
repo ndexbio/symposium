@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
-from symposium_api.authz import Caller
+from symposium_api.caller import Caller
 
 from .dependencies import *
 
@@ -36,6 +36,7 @@ class Service(ABC):
         caller: Caller,
         *,
         body: ApiKeyCreate,
+        raw: dict,
     ) -> ApiKey:
         """createApiKey: Create an API key"""
 
@@ -309,6 +310,7 @@ class Service(ABC):
         *,
         community: str,
         body: SubmittedArtifact,
+        raw: dict,
     ) -> SubmissionResource:
         """submitArtifact: Publish one Artifact through the gate"""
 
@@ -319,6 +321,7 @@ class Service(ABC):
         *,
         community: str,
         body: SubmittedArtifact,
+        raw: dict,
     ) -> SubmissionCheck:
         """checkSubmission: Validate an Artifact and submit nothing"""
 

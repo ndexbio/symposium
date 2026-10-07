@@ -937,6 +937,8 @@ paths:
                 description: The stream's events, in order. Each is one SSE frame.
                 items:
                   $ref: '#/components/schemas/RecordStreamEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -976,6 +978,8 @@ paths:
                 description: The stream's events, in order. Each is one SSE frame.
                 items:
                   $ref: '#/components/schemas/SubmissionStreamEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':

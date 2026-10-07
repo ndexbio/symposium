@@ -5,12 +5,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
-from symposium_api.authz import Caller, authorize
+from symposium_api.authz import authorize
+from symposium_api.caller import Caller
 from symposium_api.provider import service_provider
 
+from ..body import raw_json
 from ..dependencies import *
 from ..service import Service
 from ..sse import SSE_HEADERS, sse_frames
@@ -24,6 +27,9 @@ router = APIRouter(tags=["streams"])
     status_code=200,
     operation_id="streamRecord",
     responses={
+        "400": {
+            "model": Error,
+        },
         "401": {
             "model": Error,
         },
@@ -45,14 +51,15 @@ async def stream_record(
     service: Service = Depends(service_provider),
 ):
     """Follow the record as the gate accepts"""
+    # opening a stream reads the database: off the event loop
+    events = await run_in_threadpool(
+        service.stream_record,
+        caller,
+        community=community,
+        last__event__i_d=last__event__i_d,
+    )
     return StreamingResponse(
-        sse_frames(
-            service.stream_record(
-                caller, community=community, last__event__i_d=last__event__i_d
-            )
-        ),
-        media_type="text/event-stream",
-        headers=SSE_HEADERS,
+        sse_frames(events), media_type="text/event-stream", headers=SSE_HEADERS
     )
 
 
@@ -62,6 +69,9 @@ async def stream_record(
     status_code=200,
     operation_id="streamSubmissions",
     responses={
+        "400": {
+            "model": Error,
+        },
         "401": {
             "model": Error,
         },
@@ -83,12 +93,13 @@ async def stream_submissions(
     service: Service = Depends(service_provider),
 ):
     """Follow submissions and the gate's decisions"""
+    # opening a stream reads the database: off the event loop
+    events = await run_in_threadpool(
+        service.stream_submissions,
+        caller,
+        community=community,
+        last__event__i_d=last__event__i_d,
+    )
     return StreamingResponse(
-        sse_frames(
-            service.stream_submissions(
-                caller, community=community, last__event__i_d=last__event__i_d
-            )
-        ),
-        media_type="text/event-stream",
-        headers=SSE_HEADERS,
+        sse_frames(events), media_type="text/event-stream", headers=SSE_HEADERS
     )

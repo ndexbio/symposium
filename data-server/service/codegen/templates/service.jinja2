@@ -8,7 +8,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
-from symposium_api.authz import Caller
+from symposium_api.caller import Caller
 
 from .dependencies import *
 
@@ -24,7 +24,8 @@ class Service(ABC):
         caller: Caller,
         {% if operation.arguments_list %}*,{% endif %}
         {% for argument in operation.arguments_list %}{{ argument.name }}: {{ argument.resolved_type_hint }},
-        {% endfor %}
+        {% endfor %}{% if operation.arguments_list | selectattr('name', 'equalto', 'body') | list | length > 0 %}raw: dict,
+        {% endif %}
     ) -> {% if sse %}AsyncIterator[{{ operation.response | replace('List[', '', 1) | replace(']', '', 1) }}]{% else %}{{ ns.model }}{% endif %}:
         """{{ operation.operationId }}: {{ operation.summary }}"""
 {% endfor %}

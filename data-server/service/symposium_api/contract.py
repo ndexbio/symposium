@@ -22,7 +22,7 @@ ANONYMOUS_ALWAYS = "always"
 class Rule:
     """Who may call one operation."""
 
-    roles: frozenset
+    roles: tuple  # in the order the contract lists them
     api_key: bool  # an API key may call it
     admin_token: bool  # the server admin's Ed25519 token may call it
     anonymous: str | None  # None, ANONYMOUS_ALWAYS, or the condition `record` is public
@@ -52,7 +52,7 @@ class Contract:
                 security = operation.get("security", default)
                 schemes = {name for requirement in security for name in requirement}
                 rules[operation["operationId"]] = Rule(
-                    roles=frozenset(operation["x-roles"]),
+                    roles=tuple(operation["x-roles"]),
                     api_key="apiKey" in schemes,
                     admin_token="adminToken" in schemes,
                     anonymous=operation.get("x-anonymous") if {} in security else None,

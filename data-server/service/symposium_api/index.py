@@ -21,6 +21,13 @@ from symposium_rules.validate import (
 )
 
 RECORD = "record"
+# every read of the index skips an Artifact whose version was purged on /v1
+LIVE = "NOT EXISTS (SELECT 1 FROM versions v WHERE v.file_id = api_index.file_id AND v.purged)"
+LIVE_CITATION = (
+    "NOT EXISTS (SELECT 1 FROM api_index i JOIN versions v ON v.file_id = i.file_id "
+    "WHERE i.community = api_citations.community AND i.name = api_citations.from_name "
+    "AND v.purged)"
+)
 BATCH = 200
 # header properties whose values are addresses, and the citation kind each one is
 HEADER_ADDRESSES = {
@@ -189,18 +196,19 @@ class Index:
     # ── reads ──────────────────────────────────────────────────────────────────────────────
     def docs(self, conn, community: str) -> list:
         return conn.execute(
-            "SELECT * FROM api_index WHERE community = %s ORDER BY seq", (community,)
+            f"SELECT * FROM api_index WHERE community = %s AND {LIVE} ORDER BY seq",
+            (community,),
         ).fetchall()
 
     def artifact(self, conn, community: str, name: str):
         return conn.execute(
-            "SELECT * FROM api_index WHERE community = %s AND name = %s",
+            f"SELECT * FROM api_index WHERE community = %s AND name = %s AND {LIVE}",
             (community, name),
         ).fetchone()
 
     def newest(self, conn, community: str):
         return conn.execute(
-            "SELECT seq, created FROM api_index WHERE community = %s "
+            f"SELECT seq, created FROM api_index WHERE community = %s AND {LIVE} "
             "ORDER BY seq DESC LIMIT 1",
             (community,),
         ).fetchone()
@@ -218,7 +226,7 @@ class Index:
         created_after: datetime | None = None,
         recipient: str | None = None,
     ) -> list:
-        clauses, args = ["community = %s"], [community]
+        clauses, args = ["community = %s", LIVE], [community]
         if after is not None:
             clauses.append("seq < %s" if descending else "seq > %s")
             args.append(after)
@@ -242,7 +250,10 @@ class Index:
         ).fetchall()
 
     def cited_by(self, conn, community, target, *, after, limit, vias=None) -> list:
-        clauses, args = ["community = %s", "target = %s"], [community, target]
+        clauses, args = (
+            ["community = %s", "target = %s", LIVE_CITATION],
+            [community, target],
+        )
         if after is not None:
             clauses.append("from_seq > %s")
             args.append(after)
@@ -258,13 +269,31 @@ class Index:
     def superseded_by(self, conn, community, name) -> list:
         return conn.execute(
             "SELECT DISTINCT from_name, from_seq FROM api_citations "
-            "WHERE community = %s AND target = %s AND via = 'supersedes' ORDER BY from_seq",
+            f"WHERE community = %s AND target = %s AND via = 'supersedes' AND {LIVE_CITATION} "
+            "ORDER BY from_seq",
             (community, name),
         ).fetchall()
 
+    def member_counts(self, conn, community, handle) -> dict:
+        """One Member's Artifacts by type, counted by the database."""
+        rows = conn.execute(
+            f"SELECT type, count(*) AS n FROM api_index WHERE community = %s "
+            f"AND published_by = %s AND {LIVE} GROUP BY type",
+            (community, handle),
+        ).fetchall()
+        by_type = {r["type"]: r["n"] for r in rows}
+        return {"artifacts": sum(by_type.values()), "by_type": by_type}
+
+    def publishers(self, conn, community) -> set:
+        rows = conn.execute(
+            f"SELECT DISTINCT published_by FROM api_index WHERE community = %s AND {LIVE}",
+            (community,),
+        ).fetchall()
+        return {r["published_by"] for r in rows}
+
     def counts(self, conn, community) -> dict:
         rows = conn.execute(
-            "SELECT type, published_by, findings FROM api_index WHERE community = %s",
+            f"SELECT type, published_by, findings FROM api_index WHERE community = %s AND {LIVE}",
             (community,),
         ).fetchall()
         by_type, by_member, findings = {}, {}, {}

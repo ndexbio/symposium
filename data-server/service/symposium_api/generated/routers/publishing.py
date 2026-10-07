@@ -5,12 +5,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
-from symposium_api.authz import Caller, authorize
+from symposium_api.authz import authorize
+from symposium_api.caller import Caller
 from symposium_api.provider import service_provider
 
+from ..body import raw_json
 from ..dependencies import *
 from ..service import Service
 from ..sse import SSE_HEADERS, sse_frames
@@ -87,13 +90,17 @@ def list_submissions(
     },
 )
 def submit_artifact(
+    response: Response,
     community: str,
     body: SubmittedArtifact = ...,
+    raw: dict = Depends(raw_json),
     caller: Caller = Depends(authorize("submitArtifact")),
     service: Service = Depends(service_provider),
 ) -> SubmissionResource:
     """Publish one Artifact through the gate"""
-    return service.submit_artifact(caller, community=community, body=body)
+    result = service.submit_artifact(caller, community=community, body=body, raw=raw)
+    response.headers["Location"] = str(result.url)
+    return result
 
 
 @router.post(
@@ -123,11 +130,12 @@ def submit_artifact(
 def check_submission(
     community: str,
     body: SubmittedArtifact = ...,
+    raw: dict = Depends(raw_json),
     caller: Caller = Depends(authorize("checkSubmission")),
     service: Service = Depends(service_provider),
 ) -> SubmissionCheck:
     """Validate an Artifact and submit nothing"""
-    return service.check_submission(caller, community=community, body=body)
+    return service.check_submission(caller, community=community, body=body, raw=raw)
 
 
 @router.get(

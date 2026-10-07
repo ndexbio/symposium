@@ -5,12 +5,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
-from symposium_api.authz import Caller, authorize
+from symposium_api.authz import authorize
+from symposium_api.caller import Caller
 from symposium_api.provider import service_provider
 
+from ..body import raw_json
 from ..dependencies import *
 from ..service import Service
 from ..sse import SSE_HEADERS, sse_frames
@@ -37,6 +40,7 @@ router = APIRouter(tags=["api-keys"])
     },
 )
 def list_api_keys(
+    response: Response,
     cursor: Optional[str] = None,
     limit: Optional[int] = 100,
     community: Optional[str] = None,
@@ -46,7 +50,7 @@ def list_api_keys(
     service: Service = Depends(service_provider),
 ) -> ApiKeyPage:
     """List every API key, with its value"""
-    return service.list_api_keys(
+    result = service.list_api_keys(
         caller,
         cursor=cursor,
         limit=limit,
@@ -54,6 +58,8 @@ def list_api_keys(
         username=username,
         include_revoked=include_revoked,
     )
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 @router.post(
@@ -84,12 +90,17 @@ def list_api_keys(
     },
 )
 def create_api_key(
+    response: Response,
     body: ApiKeyCreate,
+    raw: dict = Depends(raw_json),
     caller: Caller = Depends(authorize("createApiKey")),
     service: Service = Depends(service_provider),
 ) -> ApiKey:
     """Create an API key"""
-    return service.create_api_key(caller, body=body)
+    result = service.create_api_key(caller, body=body, raw=raw)
+    response.headers["Location"] = str(result.url)
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 @router.get(
@@ -111,12 +122,15 @@ def create_api_key(
     },
 )
 def get_api_key(
+    response: Response,
     key_id: UUID,
     caller: Caller = Depends(authorize("getApiKey")),
     service: Service = Depends(service_provider),
 ) -> ApiKey:
     """One API key, with its value"""
-    return service.get_api_key(caller, key_id=key_id)
+    result = service.get_api_key(caller, key_id=key_id)
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 @router.delete(

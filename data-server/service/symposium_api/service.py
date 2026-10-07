@@ -20,7 +20,7 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from urllib.parse import quote
 
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
 from pydantic import RootModel
 from symposium_rules.checks import naming_refusal, payload_refusal, skip_reason
 from symposium_rules.validate import (
@@ -31,7 +31,8 @@ from symposium_rules.validate import (
     verify_content,
 )
 
-from .authz import Caller, standing
+from .authz import standing
+from .caller import Caller
 from .errors import ApiError
 from .generated import models as m
 from .generated.service import Service
@@ -71,17 +72,28 @@ def encode(**fields) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
-def decode(cursor) -> dict:
+def decode(cursor, **fields) -> dict:
+    """A cursor this server issued, holding at most `fields`, each of its declared type
+    (int fields are non-negative). Anything else answers 400."""
     cursor = plain(cursor)
     if cursor is None:
         return {}
+    refused = ApiError(400, "the cursor is not one this server issued")
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
         value = json.loads(base64.urlsafe_b64decode(padded))
     except (ValueError, binascii.Error):
-        raise ApiError(400, "the cursor is not one this server issued") from None
-    if not isinstance(value, dict):
-        raise ApiError(400, "the cursor is not one this server issued")
+        raise refused from None
+    if not isinstance(value, dict) or set(value) - set(fields):
+        raise refused
+    for key, kind in fields.items():
+        item = value.get(key)
+        if item is None:
+            continue
+        if kind is int and (type(item) is not int or item < 0):
+            raise refused
+        if kind is str and not isinstance(item, str):
+            raise refused
     return value
 
 
@@ -106,6 +118,7 @@ class ApiService(Service):
         self.contract = contract
         self.caps = Caps(runtime.db)
         self.notifier = Notifier(runtime.settings.database_url)
+        self.findings_cache: dict = {}
 
     # ── plumbing ───────────────────────────────────────────────────────────────────────────
     @contextmanager
@@ -185,14 +198,14 @@ class ApiService(Service):
     @staticmethod
     def window(items: list, cursor, limit) -> tuple[list, str | None]:
         """An offset page over a bounded list."""
-        start = int(decode(cursor).get("o", 0))
+        start = decode(cursor, o=int).get("o", 0)
         limit = int(plain(limit) or 100)
         chunk = items[start : start + limit]
         more = start + limit < len(items)
         return chunk, encode(o=start + limit) if more else None
 
     def members(self, conn, community) -> set:
-        published = {r["published_by"] for r in self.index.docs(conn, community)}
+        published = self.index.publishers(conn, community)
         return members_of(conn, self.records, community, published)
 
     # ── summaries ──────────────────────────────────────────────────────────────────────────
@@ -230,7 +243,7 @@ class ApiService(Service):
         return out
 
     def summary_page(self, conn, caller, community, cursor, limit, order, **filters):
-        after = decode(cursor).get("r")
+        after = decode(cursor, r=int).get("r")
         descending = plain(order) == "-created"
         rows = self.index.page(
             conn,
@@ -454,7 +467,7 @@ class ApiService(Service):
             community = self.fresh(conn, community)
             row = self.doc_row(conn, community, name)
             limit = int(plain(limit) or 100)
-            state = decode(cursor)
+            state = decode(cursor, o=int)
             rows = self.index.cited_by(
                 conn,
                 community,
@@ -463,7 +476,7 @@ class ApiService(Service):
                 limit=100000,
                 vias=plain(via),
             )
-            start = int(state.get("o", 0))
+            start = state.get("o", 0)
             chunk = rows[start : start + limit]
             items = []
             for c in chunk:
@@ -540,6 +553,24 @@ class ApiService(Service):
                 }
             )
 
+    def current_findings(self, conn, community, row) -> list:
+        """The validator's findings against the whole record now, computed once per index
+        position: a record that has not moved answers from the cache."""
+        position = self.index.position(conn, community)
+        key = (community, row["name"], position)
+        if key not in self.findings_cache:
+            others = [
+                r["doc"]
+                for r in self.index.docs(conn, community)
+                if r["name"] != row["name"]
+            ]
+            if len(self.findings_cache) >= 4096:
+                self.findings_cache.clear()
+            self.findings_cache[key] = validate(
+                row["doc"], others, self.members(conn, community)
+            )
+        return list(self.findings_cache[key])
+
     def list_findings(self, caller, *, community, name, cursor, limit, basis, level):
         with self.connection() as conn:
             community = self.fresh(conn, community)
@@ -548,12 +579,7 @@ class ApiService(Service):
             if basis == "accepted":
                 findings = list(row["findings"])
             else:
-                others = [
-                    r["doc"]
-                    for r in self.index.docs(conn, community)
-                    if r["name"] != row["name"]
-                ]
-                findings = validate(row["doc"], others, self.members(conn, community))
+                findings = self.current_findings(conn, community, row)
             if plain(level):
                 findings = [f for f in findings if f["level"] == plain(level)]
             findings.sort(key=lambda f: (f["check"], f["msg"]))
@@ -606,19 +632,14 @@ class ApiService(Service):
 
     # ── members ────────────────────────────────────────────────────────────────────────────
     def member(self, conn, caller, community, handle, roster: dict) -> dict:
-        rows = self.index.page(
-            conn, community, after=None, limit=1000000, published_by=handle
-        )
-        by_type = {}
-        for r in rows:
-            by_type[r["type"]] = by_type.get(r["type"], 0) + 1
+        counts = self.index.member_counts(conn, community, handle)
         url = self.member_url(caller, community, handle)
         return {
             "handle": handle,
             "address": f"@{handle}",
             "url": url,
             "registered": bool(roster.get(handle, {}).get("registered")),
-            "counts": {"artifacts": len(rows), "by_type": by_type},
+            "counts": counts,
             "artifacts_url": f"{url}/artifacts",
             "messages_url": f"{url}/messages",
             "position": self.position(conn, community),
@@ -626,7 +647,7 @@ class ApiService(Service):
 
     def handles(self, conn, community) -> tuple[list, dict]:
         roster = {r["handle"]: r for r in self.records.roster(conn, community)}
-        published = {r["published_by"] for r in self.index.docs(conn, community)}
+        published = self.index.publishers(conn, community)
         return sorted(set(roster) | published), roster
 
     def list_members(self, caller, *, community, cursor, limit):
@@ -804,7 +825,7 @@ class ApiService(Service):
                 conn,
                 caller,
                 community,
-                int(decode(cursor).get("i", 0)),
+                decode(cursor, i=int).get("i", 0),
                 limit,
                 plain(status),
             )
@@ -873,8 +894,9 @@ class ApiService(Service):
         )
         return findings
 
-    def check_submission(self, caller, *, community, body):
-        doc = body.model_dump(mode="json", exclude_unset=True)
+    def check_submission(self, caller, *, community, body, raw):
+        # the rules judge the JSON as sent; the generated model already checked its shape
+        doc = raw
         with self.connection() as conn:
             community = self.fresh(conn, community)
             findings = self.checks(conn, caller, community, doc)
@@ -887,8 +909,9 @@ class ApiService(Service):
                 }
             )
 
-    def submit_artifact(self, caller, *, community, body):
-        doc = body.model_dump(mode="json", exclude_unset=True)
+    def submit_artifact(self, caller, *, community, body, raw):
+        # the rules judge, and inbox stores, the JSON as sent; the model checked its shape
+        doc = raw
         name = (doc.get("artifact") or {}).get("name", "")
         runtime, records = self.runtime, self.records
         with self.connection() as conn:
@@ -942,28 +965,29 @@ class ApiService(Service):
             conn.commit()
             row = records.version(conn, community, file_id, 1)
             resource = self.submission(conn, caller, community, row)
-        return JSONResponse(
-            m.SubmissionResource.model_validate(resource).model_dump(
-                mode="json", exclude_unset=True
-            ),
-            status_code=201,
-            headers={"Location": resource["url"]},
-        )
+        return m.SubmissionResource.model_validate(resource)
 
     # ── streams ────────────────────────────────────────────────────────────────────────────
     def still_allowed(self, caller: Caller, community: str) -> bool:
         """The re-check at every event and heartbeat: revoked, expired, off the roster or
-        unbound keys lose their stream."""
-        if caller.kind != "api_key":
-            return True
+        unbound keys lose their stream, and an anonymous stream ends once the record it
+        follows is made private."""
         with self.connection() as conn:
+            if caller.kind == "anonymous":
+                return bool(
+                    self.records.collection_row(conn, community, "record")["public"]
+                )
+            if caller.kind != "api_key":
+                return True
             row = self.keys.live(conn, caller.key_id)
-            return row is not None and standing(conn, row, community) is None
+            return (
+                row is not None and standing(conn, self.records, row, community) is None
+            )
 
     def stream_record(self, caller, *, community, last__event__i_d):
         with self.connection() as conn:
             community = self.fresh(conn, community)
-            start = decode(last__event__i_d).get("r")
+            start = decode(last__event__i_d, r=int).get("r")
             if start is None:
                 start = self.index.position(conn, community)
         stream_id = self.caps.open(caller.key_id, caller.role, caller.client_addr)
@@ -1023,7 +1047,7 @@ class ApiService(Service):
     def stream_submissions(self, caller, *, community, last__event__i_d):
         with self.connection() as conn:
             community = self.fresh(conn, community)
-            start = decode(last__event__i_d)
+            start = decode(last__event__i_d, i=int, r=int)
             if "i" not in start:
                 start = {
                     "i": self.records.collection_row(conn, community, "inbox")["seq"],
@@ -1151,16 +1175,7 @@ class ApiService(Service):
             out["label"] = row["label"]
         return out
 
-    @staticmethod
-    def secret(
-        body: dict, status: int = 200, location: str | None = None
-    ) -> JSONResponse:
-        headers = {"Cache-Control": "no-store"}
-        if location:
-            headers["Location"] = location
-        return JSONResponse(body, status_code=status, headers=headers)
-
-    def create_api_key(self, caller, *, body):
+    def create_api_key(self, caller, *, body, raw):
         request = body.model_dump(mode="json", exclude_unset=True)
         username, role = request["username"], request["role"]
         scope = request["scope"]
@@ -1206,19 +1221,22 @@ class ApiService(Service):
             )
             conn.commit()
             out = self.api_key(caller, row)
-        return self.secret(
-            m.ApiKey.model_validate(out).model_dump(mode="json", exclude_unset=True),
-            201,
-            out["url"],
-        )
+        return m.ApiKey.model_validate(out)
 
     def list_api_keys(
         self, caller, *, cursor, limit, community, username, include_revoked
     ):
         with self.connection() as conn:
             self.keys.sweep(conn)  # expired values are erased before anything is listed
-        state = decode(cursor)
-        after = (state["c"], uuid.UUID(state["k"])) if "c" in state else None
+        state = decode(cursor, c=str, k=str)
+        try:
+            after = (
+                (datetime.fromisoformat(state["c"]), uuid.UUID(state["k"]))
+                if "c" in state
+                else None
+            )
+        except (KeyError, ValueError):
+            raise ApiError(400, "the cursor is not one this server issued") from None
         limit = int(plain(limit) or 100)
         with self.connection() as conn:
             rows = self.keys.page(
@@ -1236,11 +1254,7 @@ class ApiService(Service):
                 if more
                 else None,
             }
-        return self.secret(
-            m.ApiKeyPage.model_validate(page).model_dump(
-                mode="json", exclude_unset=True
-            )
-        )
+        return m.ApiKeyPage.model_validate(page)
 
     def key_row(self, conn, key_id):
         row = self.keys.row(conn, plain(key_id))
@@ -1252,9 +1266,7 @@ class ApiService(Service):
         with self.connection() as conn:
             row = self.key_row(conn, key_id)
             out = self.api_key(caller, row)
-        return self.secret(
-            m.ApiKey.model_validate(out).model_dump(mode="json", exclude_unset=True)
-        )
+        return m.ApiKey.model_validate(out)
 
     def revoke_api_key(self, caller, *, key_id):
         with self.connection() as conn:

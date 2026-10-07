@@ -106,9 +106,19 @@ The traversals need facts that no single Artifact holds: who cites whom, what su
 what, and findings. The server keeps a **derived index** of
 these facts in its PostgreSQL. It folds in each Artifact the moment `record` gains it. The
 index is a cache of the record and is never the source of truth. The server rebuilds it
-from the `record` feed at startup whenever it is missing or behind the feed, and
-`GET /v1/status` reports its position beside the record's. Every read answers from the
+from the `record` feed at startup, in the background, and `GET /v1/status` reports
+`api_index.behind`: how many record versions it has yet to fold in, across every community.
+The figure is server-wide and names no community, because `/v1/status` answers anyone. Every read answers from the
 index and states the index's `position` (§5.2).
+
+Each Artifact's `accepted` findings are the validator's verdict against the Artifacts before
+it, with the Members as the roster stands when the index first folds that Artifact in. On a
+server whose index is built over a record that already exists, that roster is today's, so an
+older Artifact's `accepted` findings may differ from what its gate saw on a Member address the
+roster has since changed.
+
+A version purged on `/v1` leaves every read of the index: its Artifact answers 404, and its
+citations leave `cited-by` and supersession.
 
 ### 1.4 Canonical URLs
 
@@ -131,6 +141,24 @@ An address maps to a URL by a fixed rule:
 `@a.x` can name either an Object or a property. The profile forbids an Object's name from
 colliding with its Artifact's property names, so the server always knows which one is
 meant. A client that does not know asks `resolve`.
+
+### 1.5 Changes to the contract while building it
+
+Building the server against `api/openapi.yaml` changed these meanings, each for the reason
+given:
+
+| Change | Reason |
+|---|---|
+| OpenAPI 3.1.0 to 3.0.3, the same meaning in 3.0 forms | the code generators support 3.0 fully |
+| `ArtifactHeader.created` is nullable; `SubmittedHeader` is gone | its `allOf` override contradicted `created`; a submission sends null and `checkSubmission` and `submitArtifact` refuse any other value, while every record Artifact carries the gate's stamp |
+| `ArtifactHeader`, `RecordObject` and `Relationship` take any extra property | the generated models keep an Artifact's own properties only this way; each extra value is still a `PropertyValue`, and the validator checks it |
+| `PropertyValue` adds `integer`, under `anyOf` | a submitted integer stays an integer |
+| path, query and header parameters state their string constraints inline | FastAPI takes a parameter only as a plain type |
+| a page's `next` states the cursor's constraints inline | in 3.0, `nullable` beside a non-nullable `$ref` admits no null |
+| `SubmissionCheck.role` is gone | it belonged to the publishing roles, which stay in the skill |
+| `RecordState.counts.findings` counts each Artifact's `accepted` findings | counting against the whole record would run the validator over every Artifact on each call |
+| `getOpenApiYaml` and `getOpenApiJson` added | the API serves its own contract to any caller |
+| `streamRecord` and `streamSubmissions` answer 400 | `Last-Event-ID` is a cursor, and a cursor this server never issued answers 400 everywhere |
 
 ## 2. The skill's commands → endpoints
 
@@ -573,5 +601,6 @@ same test for the same reason.
   `nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"` and
   `nginx.ingress.kubernetes.io/proxy-buffering: "off"`.
 - **TLS** stays where it is today: the deployment's ingress or proxy terminates it.
-- **Health.** `GET /v1/status` stays the health check. It reports the API's index position
-  beside Postgres and S3 once the API is on.
+- **Health.** `GET /v1/status` stays the health check. Once the server is operational it
+  also reports `api_index.behind`, the server-wide count of record versions the index has
+  yet to fold in.

@@ -39,9 +39,10 @@ from pathlib import Path
 
 import telemetry
 from data_io import SUBMISSION_MARK, DataError, Mirror, SymposiumData
-from symposium_rules.checks import naming_refusal, payload_refusal
+from symposium_rules.checks import naming_refusal, payload_excess
 from sync import Sync
 from validate import (
+    EMBED_REFUSE,
     parse_instant,
     passed,
     validate,
@@ -265,9 +266,13 @@ def main(argv):
         # artifact stays small JSON that a reader can read; anything larger belongs in the file
         # store, cited from a `download` Content. Better to learn that here, with the analysis
         # still in hand.
-        refusal = payload_refusal(a)
-        if refusal:
-            print(f"  {name}: FAIL  {refusal}\n"
+        excess = payload_excess(a)
+        if excess:
+            total, props = excess
+            biggest = (f"\n           largest property: '{props[0][1]}' on {props[0][0]}, "
+                       f"{props[0][2] // 1024} KB" if props else "")
+            print(f"  {name}: FAIL  embedded payload is {total // 1024} KB, over the "
+                  f"{EMBED_REFUSE // 1024} KB limit{biggest}\n"
                   f"           Store the full output in the file store (`/symposium data put "
                   f"<file> --collection files`)\n           and cite it from a `download` "
                   f"Content; embed only what a reader needs to read here.")

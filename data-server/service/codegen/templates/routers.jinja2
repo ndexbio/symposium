@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 
-from symposium_api.authz import Caller, authorize
+from symposium_api.authz import authorize
+from symposium_api.caller import Caller
 from symposium_api.provider import service_provider
 
+from ..body import raw_json
 from ..dependencies import *
 from ..service import Service
 from ..sse import SSE_HEADERS, sse_frames
@@ -17,6 +20,9 @@ router = APIRouter(tags=['{{ tag }}'])
 {%- set sse = 'text/event-stream' in operation.responses.get('200', {}).get('content', {}) %}
 {%- set ns = namespace(status=200, model=operation.response) %}
 {%- for code in operation.responses %}{% if (code | string)[0] == '2' and ns.status == 200 %}{% set ns.status = code | int %}{% if code | string != '200' %}{% set ns.model = (operation.responses[code].get('content', {}).get('application/json', {}).get('schema', {}).get('$ref', '/None')).split('/')[-1] %}{% endif %}{% endif %}{% endfor %}
+{%- set headers = operation.responses.get(ns.status | string, {}).get('headers', {}) %}
+{%- set body = operation.arguments_list | selectattr('name', 'equalto', 'body') | list | length > 0 %}
+{%- set call %}service.{{ operation.function_name }}(caller{% for argument in operation.arguments_list %}, {{ argument.name }}={{ argument.name }}{% endfor %}{% if body %}, raw=raw{% endif %}){% endset %}
 
 
 @router.{{ operation.type }}(
@@ -34,14 +40,21 @@ router = APIRouter(tags=['{{ tag }}'])
     {% endif %}
 )
 {% if sse %}async {% endif %}def {{ operation.function_name }}(
-    {% if operation.arguments_list %}{{ operation.snake_case_arguments }},
+    {% if headers %}response: Response,
+    {% endif %}{% if operation.arguments_list %}{{ operation.snake_case_arguments }},
+    {% endif %}{% if body %}raw: dict = Depends(raw_json),
     {% endif %}caller: Caller = Depends(authorize('{{ operation.operationId }}')),
     service: Service = Depends(service_provider),
 ){% if not sse %} -> {{ ns.model }}{% endif %}:
     """{{ operation.summary }}"""
-    {% if sse %}return StreamingResponse(
-        sse_frames(service.{{ operation.function_name }}(caller{% for argument in operation.arguments_list %}, {{ argument.name }}={{ argument.name }}{% endfor %})),
-        media_type='text/event-stream',
-        headers=SSE_HEADERS,
-    ){% else %}return service.{{ operation.function_name }}(caller{% for argument in operation.arguments_list %}, {{ argument.name }}={{ argument.name }}{% endfor %}){% endif %}
+    {% if sse %}# opening a stream reads the database: off the event loop
+    events = await run_in_threadpool(
+        service.{{ operation.function_name }}, caller{% for argument in operation.arguments_list %}, {{ argument.name }}={{ argument.name }}{% endfor %}
+    )
+    return StreamingResponse(sse_frames(events), media_type='text/event-stream', headers=SSE_HEADERS)
+    {%- elif headers %}result = {{ call }}
+    {% for name, header in headers.items() %}{% if name == 'Location' %}response.headers['Location'] = str(result.url)
+    {% elif header.get('schema', {}).get('enum') %}response.headers['{{ name }}'] = '{{ header['schema']['enum'][0] }}'
+    {% endif %}{% endfor %}return result
+    {%- else %}return {{ call }}{% endif %}
 {% endif %}{% endfor %}

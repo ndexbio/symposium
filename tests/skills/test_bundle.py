@@ -27,7 +27,7 @@ SHIPPED_FILES = (
     ":(glob)data-server/*.md",
     "data-server/docker/k8s-data-deployment.yml",
 )
-NOT_SHIPPED = {"tools/bundle.py", "data-server/README.md"}
+NOT_SHIPPED = {"tools/bundle.py", "tools/pyproject.toml", "data-server/README.md"}
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 
 

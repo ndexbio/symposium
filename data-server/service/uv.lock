@@ -1436,6 +1436,7 @@ dependencies = [
     { name = "pyjwt" },
     { name = "pyyaml" },
     { name = "sqlalchemy" },
+    { name = "symposium-rules" },
     { name = "uvicorn" },
 ]
 
@@ -1460,6 +1461,7 @@ requires-dist = [
     { name = "pyjwt", specifier = ">=2.8" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "symposium-rules", directory = "../../tools" },
     { name = "uvicorn", specifier = ">=0.30" },
 ]
 
@@ -1472,6 +1474,11 @@ dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.6" },
 ]
+
+[[package]]
+name = "symposium-rules"
+version = "1.0.0"
+source = { directory = "../../tools" }
 
 [[package]]
 name = "typeguard"

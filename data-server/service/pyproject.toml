@@ -13,6 +13,7 @@ dependencies = [
   "psycopg-pool>=3.2",
   "PyJWT>=2.8",
   "pyyaml>=6.0",
+  "symposium-rules",
   "sqlalchemy>=2.0",
   "uvicorn>=0.30",
 ]
@@ -27,6 +28,10 @@ dev = [
   "ruff>=0.6",
 ]
 
+[tool.uv.sources]
+# tools/symposium_rules: the rules the gate and the API share, one package for both
+symposium-rules = { path = "../../tools" }
+
 [build-system]
 requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
@@ -38,4 +43,4 @@ packages = ["symposium_data", "symposium_api", "symposium_server"]
 testpaths = ["tests"]
 # tests/harness.py and tests/fixtures are shared by the data server's suites and the
 # top-level CLI and skill suites, which import them from here
-pythonpath = ["tests", "../../tools"]
+pythonpath = ["tests"]

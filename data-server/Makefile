@@ -20,7 +20,7 @@ test: lint build-docker
 		$(UV) pytest tests/integration
 
 # the API's shared rules and contract, from outside this directory, as named build contexts
-CONTEXTS := --build-context rules=../tools/symposium_rules --build-context api=../api
+CONTEXTS := --build-context rules=../tools --build-context api=../api
 
 build-docker:
 	docker build -f docker/Dockerfile $(CONTEXTS) --build-arg DATA_VERSION=$(TAG) -t $(IMAGE):$(TAG) .

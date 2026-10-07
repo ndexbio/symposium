@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -111,22 +112,34 @@ async def _invalid(request: Request, error: RequestValidationError):
 
 
 def index_status() -> dict:
-    """/v1/status's view of the API: each community's index position beside its record's."""
+    """/v1/status's view of the API, server-wide and naming no community: how many record
+    versions the index has yet to fold in, across every community."""
     with runtime.db.connection(timeout=0.5) as conn:
-        rows = conn.execute(
-            "SELECT c.community, c.seq AS record, COALESCE(p.seq, 0) AS indexed "
+        row = conn.execute(
+            "SELECT COALESCE(SUM(GREATEST(c.seq - COALESCE(p.seq, 0), 0)), 0) AS behind "
             "FROM collections c LEFT JOIN api_index_position p ON p.community = c.community "
-            "WHERE c.name = 'record' ORDER BY c.community"
-        ).fetchall()
-    return {
-        "api_index": {
-            r["community"]: {"record": r["record"], "indexed": r["indexed"]}
-            for r in rows
-        }
-    }
+            "WHERE c.name = 'record'"
+        ).fetchone()
+    return {"api_index": {"behind": int(row["behind"])}}
 
 
 data.status_extensions.append(index_status)
+
+
+def catch_up_all() -> None:
+    """Fold every community's record into the derived index."""
+    try:
+        with runtime.db.connection() as conn:
+            communities = [r["name"] for r in runtime.records.communities(conn)]
+        for community in communities:
+            with runtime.db.connection() as conn:
+                service.index.catch_up(conn, community)
+        log.info("api index: %d communities caught up", len(communities))
+    except Exception:
+        log.exception(
+            "api index: the startup catch-up stopped; reads catch up on their own"
+        )
+
 
 data_lifespan = app.router.lifespan_context
 
@@ -139,6 +152,9 @@ async def lifespan(application):
         if swept:
             log.info("api keys: %d revoked or erased by the startup sweep", swept)
         service.notifier.start()
+        # the derived index is rebuilt at startup, in the background, so the server serves
+        # while it catches up; a read before then folds in what it needs itself
+        threading.Thread(target=catch_up_all, name="api-index", daemon=True).start()
         try:
             yield
         finally:

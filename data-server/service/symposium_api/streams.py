@@ -28,9 +28,23 @@ ADMIN_RESERVED = 20
 
 
 class Caps:
-    def __init__(self, db, total: int | None = None):
+    """The limits default to api/DESIGN.md §10.5; a test passes small ones to reach each."""
+
+    def __init__(
+        self,
+        db,
+        total: int | None = None,
+        per_key: int = PER_KEY,
+        per_anonymous_address: int = PER_ANONYMOUS_ADDRESS,
+        anonymous_total: int = ANONYMOUS_TOTAL,
+        admin_reserved: int = ADMIN_RESERVED,
+    ):
         self.db = db
         self.total = total or int(os.environ.get("SYMPOSIUM_API_MAX_STREAMS", "500"))
+        self.per_key = per_key
+        self.per_anonymous_address = per_anonymous_address
+        self.anonymous_total = anonymous_total
+        self.admin_reserved = admin_reserved
 
     def open(self, key_id, role: str | None, client_addr: str | None) -> uuid.UUID:
         """Take a slot, or refuse with 429 past any cap. -> the stream's id."""
@@ -49,9 +63,9 @@ class Caps:
                 mine = conn.execute(
                     "SELECT count(*) AS n FROM api_streams WHERE key_id = %s", (key_id,)
                 ).fetchone()["n"]
-                if mine >= PER_KEY:
+                if mine >= self.per_key:
                     raise ApiError(
-                        429, f"this key already holds {PER_KEY} open streams"
+                        429, f"this key already holds {self.per_key} open streams"
                     )
             else:
                 anonymous = conn.execute(
@@ -62,16 +76,18 @@ class Caps:
                     "WHERE key_id IS NULL AND client_addr = %s",
                     (client_addr,),
                 ).fetchone()["n"]
-                if here >= PER_ANONYMOUS_ADDRESS:
+                if here >= self.per_anonymous_address:
                     raise ApiError(
                         429,
-                        f"this address already holds {PER_ANONYMOUS_ADDRESS} anonymous streams",
+                        f"this address already holds {self.per_anonymous_address} anonymous streams",
                     )
-                if anonymous >= ANONYMOUS_TOTAL:
+                if anonymous >= self.anonymous_total:
                     raise ApiError(
                         429, "the server holds its limit of anonymous streams"
                     )
-            ceiling = self.total if role == "admin" else self.total - ADMIN_RESERVED
+            ceiling = (
+                self.total if role == "admin" else self.total - self.admin_reserved
+            )
             if count >= ceiling:
                 raise ApiError(429, "the server holds its limit of open streams")
             stream_id = uuid.uuid4()

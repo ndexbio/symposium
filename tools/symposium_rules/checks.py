@@ -29,11 +29,19 @@ def naming_refusal(name, account: str) -> str | None:
     return None
 
 
-def payload_refusal(artifact: dict) -> str | None:
-    """The embedded-payload limit: an artifact over EMBED_REFUSE belongs in the file store."""
+def payload_excess(artifact: dict):
+    """(total bytes, the properties by size) when the artifact's embedded payload is over
+    EMBED_REFUSE, or None. An artifact that large belongs in the file store."""
     total, props = embedded_size(artifact)
-    if total <= EMBED_REFUSE:
+    return (total, props) if total > EMBED_REFUSE else None
+
+
+def payload_refusal(artifact: dict) -> str | None:
+    """The embedded-payload limit as one line, for a finding."""
+    excess = payload_excess(artifact)
+    if excess is None:
         return None
+    total, props = excess
     biggest = (
         f"; largest property: '{props[0][1]}' on {props[0][0]}, {props[0][2] // 1024} KB"
         if props

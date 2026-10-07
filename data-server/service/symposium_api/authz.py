@@ -9,41 +9,15 @@ checked again on every request: its roster entry for a `member`, its admin bindi
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from typing import Annotated
 
-from fastapi import Request
+from fastapi import Depends, Request
 
 from . import provider
-from .contract import ANONYMOUS_ALWAYS, Rule
+from .caller import Caller
+from .contract import ANONYMOUS_ALWAYS, Contract, Rule
 from .errors import ApiError
-from .keys import PREFIX, KeyRow
-
-ROLE_ORDER = ("non-member", "member", "admin")
-
-
-@dataclass
-class Caller:
-    """Who is calling, once authorized."""
-
-    kind: str  # "anonymous", "api_key" or "admin_token"
-    role: str | None = None
-    username: str | None = None
-    key_id: object | None = None
-    scope: str | None = None  # the key's community; None for server scope or no key
-    base_url: str = ""
-    client_addr: str | None = None
-    extras: dict = field(default_factory=dict)
-
-    @property
-    def handle(self) -> str | None:
-        """The Member this caller publishes as and reads its own submissions as."""
-        if self.role in ("member", "admin"):
-            return self.username
-        return None
-
-    @property
-    def is_admin(self) -> bool:
-        return self.role == "admin"
+from .keys import PREFIX, ApiKeys, KeyRow
 
 
 def bearer(request: Request) -> str | None:
@@ -53,38 +27,47 @@ def bearer(request: Request) -> str | None:
     return header.split(None, 1)[1].strip()
 
 
-def resolve_community(conn, name: str | None) -> str | None:
+def resolve_community(conn, records, name: str | None) -> str | None:
     """The community a path names, as it was created; 404 when it is unknown."""
     if name is None:
         return None
-    found = provider.runtime().records.community_name(conn, name)
+    found = records.community_name(conn, name)
     if found is None:
         raise ApiError(404, f"no community '{name}'")
     return found
 
 
-def standing(conn, row: KeyRow, community: str | None) -> str | None:
-    """Why a live key may not act now, or None. Runs on every request and every stream beat."""
-    records = provider.runtime().records
+def standing(
+    conn, records, row: KeyRow, community: str | None
+) -> tuple[int, str] | None:
+    """(status, why) when a live key may not act now, or None. Runs on every request and every
+    stream beat. A key that lost its standing answers 401; a sound key used outside its scope
+    answers 403."""
     if row.role == "member":
         if not records.on_roster(conn, row.community, row.username):
-            return f"'{row.username}' is no longer on the roster of {row.community}"
+            return (
+                401,
+                f"'{row.username}' is no longer on the roster of {row.community}",
+            )
         if not records.active_keys(conn, row.community, row.username):
-            return f"'{row.username}' has not registered in {row.community}"
+            return 401, f"'{row.username}' has not registered in {row.community}"
     elif row.role == "admin":
         if not records.admin_key_is_active(conn, row.admin_kid):
-            return "the admin key this API key was bound to has been retired"
+            return 401, "the admin key this API key was bound to has been retired"
         if row.username != records.config(conn, "admin"):
-            return f"'{row.username}' is not the server's admin"
+            return 401, f"'{row.username}' is not the server's admin"
     elif row.community and records.on_roster(conn, row.community, row.username):
-        return f"the label '{row.username}' now names a member of {row.community}"
+        return 401, f"the label '{row.username}' now names a member of {row.community}"
     if row.community and community and row.community != community:
-        return f"this key is scoped to {row.community}"
+        return 403, f"this key is scoped to {row.community}"
     return None
 
 
-def check(rule: Rule, request: Request) -> Caller:
-    runtime = provider.runtime()
+def check(
+    rule: Rule, request: Request, runtime: provider.Runtime, keys: ApiKeys
+) -> Caller:
+    """Who `request` comes from, when `rule` lets them call; ApiError otherwise. Everything it
+    reads arrives as an argument, so one rule is testable without the server wired."""
     path_community = request.path_params.get("community")
     caller = Caller(
         kind="anonymous",
@@ -93,7 +76,7 @@ def check(rule: Rule, request: Request) -> Caller:
     )
     credential = bearer(request)
     with runtime.db.connection() as conn:
-        community = resolve_community(conn, path_community)
+        community = resolve_community(conn, runtime.records, path_community)
         if credential is None:
             if rule.anonymous is None:
                 raise ApiError(
@@ -108,7 +91,7 @@ def check(rule: Rule, request: Request) -> Caller:
                     )
             return caller
         if credential.startswith(PREFIX):
-            row = provider.keys().find(conn, credential)
+            row = keys.find(conn, credential)
             conn.commit()
             if row is None:
                 raise ApiError(401, "the API key is unknown, expired or revoked")
@@ -116,14 +99,14 @@ def check(rule: Rule, request: Request) -> Caller:
                 raise ApiError(
                     403, "this operation takes the server admin's Ed25519 token alone"
                 )
-            why = standing(conn, row, community)
-            if why:
-                raise ApiError(403 if "scoped" in why else 401, why)
+            refusal = standing(conn, runtime.records, row, community)
+            if refusal:
+                raise ApiError(*refusal)
             if row.role not in rule.roles:
                 raise ApiError(
                     403,
                     f"a {row.role} key may not do this; it takes "
-                    + ", ".join(r for r in ROLE_ORDER if r in rule.roles),
+                    + ", ".join(rule.roles),
                 )
             caller.kind, caller.role, caller.username = (
                 "api_key",
@@ -153,14 +136,16 @@ def check(rule: Rule, request: Request) -> Caller:
 
 
 def authorize(operation_id: str):
-    """The dependency each generated route declares, for its own operation."""
-    rule = None
+    """The dependency each generated route declares, for its own operation. The runtime, the
+    keys and the contract arrive as FastAPI dependencies, so a test may override any of them."""
 
-    def dependency(request: Request) -> Caller:
-        nonlocal rule
-        if rule is None:
-            rule = provider.contract().rules[operation_id]
-        return check(rule, request)
+    def dependency(
+        request: Request,
+        runtime: Annotated[provider.Runtime, Depends(provider.runtime)],
+        keys: Annotated[ApiKeys, Depends(provider.keys)],
+        contract: Annotated[Contract, Depends(provider.contract)],
+    ) -> Caller:
+        return check(contract.rules[operation_id], request, runtime, keys)
 
     dependency.__name__ = f"authorize_{operation_id}"
     return dependency

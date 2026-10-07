@@ -7,6 +7,12 @@ on:
     branches: ["**"]
   pull_request:
 
+# One run per branch: a push and the pull request it updates share this group, as do
+# successive pushes, so a newer run cancels the one still in progress
+concurrency:
+  group: ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   test:
     # Linux runs the whole gate, the data server's suites and their one image build included;

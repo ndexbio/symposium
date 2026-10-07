@@ -36,6 +36,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - run: make build
-      - run: gh release upload "${{ github.event.release.tag_name }}" dist/Symposium_skill.zip --clobber
+      # the tag reaches the shell as an environment variable, so the shell reads it as data
+      - run: gh release upload "$TAG" dist/Symposium_skill.zip --clobber
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}

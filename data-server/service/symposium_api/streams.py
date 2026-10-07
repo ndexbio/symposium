@@ -24,7 +24,6 @@ STALE = 90  # seconds without a heartbeat before a stream's slot is freed
 PER_KEY = 8
 PER_ANONYMOUS_ADDRESS = 4
 ANONYMOUS_TOTAL = 200
-ADMIN_RESERVED = 20
 
 
 class Caps:
@@ -37,14 +36,12 @@ class Caps:
         per_key: int = PER_KEY,
         per_anonymous_address: int = PER_ANONYMOUS_ADDRESS,
         anonymous_total: int = ANONYMOUS_TOTAL,
-        admin_reserved: int = ADMIN_RESERVED,
     ):
         self.db = db
         self.total = total or int(os.environ.get("SYMPOSIUM_API_MAX_STREAMS", "500"))
         self.per_key = per_key
         self.per_anonymous_address = per_anonymous_address
         self.anonymous_total = anonymous_total
-        self.admin_reserved = admin_reserved
 
     def open(self, key_id, role: str | None, client_addr: str | None) -> uuid.UUID:
         """Take a slot, or refuse with 429 past any cap. -> the stream's id."""
@@ -85,10 +82,7 @@ class Caps:
                     raise ApiError(
                         429, "the server holds its limit of anonymous streams"
                     )
-            ceiling = (
-                self.total if role == "admin" else self.total - self.admin_reserved
-            )
-            if count >= ceiling:
+            if count >= self.total:
                 raise ApiError(429, "the server holds its limit of open streams")
             stream_id = uuid.uuid4()
             conn.execute(

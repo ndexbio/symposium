@@ -1,9 +1,12 @@
-"""API keys (api/DESIGN.md §4): `sak_` bearer keys, found by their SHA-256 and sealed with
-AES-256-GCM so the admin can read one back while no key is ever stored in plain text.
+"""API keys (api/DESIGN.md §4): `sak_` bearer keys for the Data API, each bound to one
+community, found by their SHA-256 and sealed with AES-256-GCM so the admin can read one back
+while no key is stored in plain text.
 
-Authentication hashes the presented key and looks the hash up; it decrypts nothing. Only the
-admin's listing decrypts, with the 32-byte key in API_KEY_ENC_KEY_FILE, which start.sh writes
-beside the server's other secrets. The associated data binds each ciphertext to its own row.
+The Control API issues, lists and revokes them (`/v1/{community}/api-keys`); the Data API
+only authenticates with them. Authentication hashes the presented key and looks the hash up;
+it decrypts nothing. Only the admin's listing decrypts, with the 32-byte key in
+API_KEY_ENC_KEY_FILE, which start.sh writes beside the server's other secrets. The
+associated data binds each ciphertext to its own row.
 """
 
 from __future__ import annotations
@@ -69,8 +72,8 @@ class Sealer:
         return AESGCM(self._key()).decrypt(nonce, ciphertext, aad).decode()
 
 
-def aad(key_id, username: str, community: str | None) -> bytes:
-    return f"{key_id}|{username}|{community or ''}".encode()
+def aad(key_id, username: str, community: str) -> bytes:
+    return f"{key_id}|{username}|{community}".encode()
 
 
 @dataclass(frozen=True)
@@ -80,8 +83,7 @@ class KeyRow:
     id: uuid.UUID
     username: str
     role: str
-    community: str | None
-    admin_kid: str | None
+    community: str
 
 
 class ApiKeys:
@@ -95,11 +97,10 @@ class ApiKeys:
         *,
         username: str,
         role: str,
-        community: str | None,
+        community: str,
         label: str | None,
         expires_days: int | None,
         created_by: str,
-        admin_kid: str | None,
     ) -> tuple[dict, str]:
         """-> (the new row, its key). The key is answered once, here and in the listing."""
         key_id, key = uuid.uuid4(), new_key()
@@ -109,8 +110,8 @@ class ApiKeys:
         )
         row = conn.execute(
             "INSERT INTO api_keys (id, hash, ciphertext, nonce, enc_kid, username, role, "
-            "admin_kid, community, label, created_by, expires) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
+            "community, label, created_by, expires) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
             (
                 key_id,
                 digest(key),
@@ -119,7 +120,6 @@ class ApiKeys:
                 self.sealer.kid,
                 username,
                 role,
-                admin_kid,
                 community,
                 label,
                 created_by,
@@ -138,39 +138,38 @@ class ApiKeys:
             aad(row["id"], row["username"], row["community"]),
         )
 
-    def page(self, conn, *, after, limit, community, username, include_revoked) -> list:
-        """Keys in creation order after the (created, id) position `after`."""
-        clauses, args = [], []
+    def page(self, conn, *, community, after, limit, username, include_revoked) -> list:
+        """One community's keys in creation order after the (created, id) position `after`."""
+        clauses, args = ["community = %s"], [community]
         if after is not None:
             clauses.append("(created, id) > (%s, %s)")
             args += list(after)
-        if community is not None:
-            clauses.append("community = %s")
-            args.append(community)
         if username is not None:
             clauses.append("username = %s")
             args.append(username)
         if not include_revoked:
             clauses.append("revoked IS NULL")
-        where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
         return conn.execute(
-            f"SELECT * FROM api_keys {where}ORDER BY created, id LIMIT %s",
+            f"SELECT * FROM api_keys WHERE {' AND '.join(clauses)} "
+            "ORDER BY created, id LIMIT %s",
             (*args, limit),
         ).fetchall()
 
-    def row(self, conn, key_id):
+    def row(self, conn, community: str, key_id):
+        """The community's key `key_id`, or None, also for a key of another community."""
         return conn.execute(
-            "SELECT * FROM api_keys WHERE id = %s", (key_id,)
+            "SELECT * FROM api_keys WHERE id = %s AND community = %s",
+            (key_id, community),
         ).fetchone()
 
-    def revoke(self, conn, key_id, by: str):
-        """Stop the key and erase its value; the row stays as the record of who held it.
-        Revoking a revoked key answers it unchanged."""
+    def revoke(self, conn, community: str, key_id, by: str):
+        """Stop the community's key and erase its value; the row stays as the record of who
+        held it. Revoking a revoked key answers it unchanged; None for an unknown key."""
         return conn.execute(
             "UPDATE api_keys SET revoked = COALESCE(revoked, now()), "
             "revoked_by = COALESCE(revoked_by, %s), ciphertext = NULL, nonce = NULL "
-            "WHERE id = %s RETURNING *",
-            (by, key_id),
+            "WHERE id = %s AND community = %s RETURNING *",
+            (by, key_id, community),
         ).fetchone()
 
     # ── authentication ─────────────────────────────────────────────────────────────────────
@@ -180,7 +179,7 @@ class ApiKeys:
         row = conn.execute(
             "UPDATE api_keys SET last_used = now(), uses = uses + 1 "
             "WHERE hash = %s AND revoked IS NULL AND (expires IS NULL OR expires > now()) "
-            "RETURNING id, username, role, community, admin_kid",
+            "RETURNING id, username, role, community",
             (digest(key),),
         ).fetchone()
         return KeyRow(**row) if row else None
@@ -188,7 +187,7 @@ class ApiKeys:
     def live(self, conn, key_id) -> KeyRow | None:
         """The key by id while it is still live: a stream re-checks its key this way."""
         row = conn.execute(
-            "SELECT id, username, role, community, admin_kid FROM api_keys "
+            "SELECT id, username, role, community FROM api_keys "
             "WHERE id = %s AND revoked IS NULL AND (expires IS NULL OR expires > now())",
             (key_id,),
         ).fetchone()
@@ -196,16 +195,8 @@ class ApiKeys:
 
     # ── upkeep ─────────────────────────────────────────────────────────────────────────────
     def sweep(self, conn) -> int:
-        """Revoke every admin key bound to a retired admin key (an admin rebind), and erase the
-        value of every expired key. -> how many rows changed."""
-        revoked = conn.execute(
-            "UPDATE api_keys SET revoked = now(), revoked_by = 'admin-rebind', "
-            "ciphertext = NULL, nonce = NULL "
-            "WHERE role = 'admin' AND revoked IS NULL AND NOT EXISTS "
-            "(SELECT 1 FROM admin_keys a WHERE a.kid = api_keys.admin_kid AND a.active)"
-        ).rowcount
-        erased = conn.execute(
+        """Erase the value of every expired key. -> how many rows changed."""
+        return conn.execute(
             "UPDATE api_keys SET ciphertext = NULL, nonce = NULL "
             "WHERE expires <= now() AND ciphertext IS NOT NULL"
         ).rowcount
-        return revoked + erased

@@ -4,10 +4,9 @@
 """Generated from api/openapi.yaml by codegen/generate.py. Never edit by hand: change the
 contract or the templates in codegen/templates, then regenerate."""
 
-from .routers import api_keys, contract, members, publishing, record, streams
+from .routers import contract, members, publishing, record, streams
 
 ROUTERS = [
-    api_keys.router,
     contract.router,
     members.router,
     publishing.router,

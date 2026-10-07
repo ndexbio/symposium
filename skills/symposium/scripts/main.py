@@ -17,8 +17,8 @@ every data interaction runs the `symposium-data` CLI (R-I1).
     admin-config | roster | invite | rebind-key | suspect-after | purge | export | import
                                            admins: the server admin's commands
     gen-api-key | list-api-keys | revoke-api-key
-                                           admins: the Symposium API's keys, written as 0600
-                                           files under ~/.symposium/admin/api-keys/
+                                           admins: the Data API's keys, one community each,
+                                           written as 0600 files under ~/.symposium/admin/api-keys/
     data <symposium-data command …>        direct data work: put, get, keys, collection, find, …
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit

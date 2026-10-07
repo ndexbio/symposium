@@ -68,9 +68,9 @@ the community's record.
 | `/symposium purge --cite <citation>` | Admin: free one version's content; it then answers that it was purged, with its metadata. |
 | `/symposium export`, `/symposium import` | Admin: see section 4. |
 | `/symposium admin-config …` | Admin: see section 2. |
-| `/symposium gen-api-key <username> <role> [--community <c> \| --server] [--expires-days N] [--label …]` | Admin: a Symposium API key (`/api/v1`) with one role, `non-member`, `member` or `admin`. The key goes to a 0600 file under `~/.symposium/admin/api-keys/`; only its id, username, role and the file's path are printed. A `member` key names a registered handle and publishes as it; an `admin` key names the admin. Hand the file over out of band. |
-| `/symposium list-api-keys [--community <c>]` | Admin: every API key, written with its value to a 0600 file under `~/.symposium/admin/api-keys/`; the keys are printed without values. |
-| `/symposium revoke-api-key <key id>` | Admin: stop a key at once and erase its value. |
+| `/symposium gen-api-key <username> <role> [--community <c>] [--expires-days N] [--label …]` | Admin: a key for the Symposium Data API (`/api/v1`), bound to one community (the session's, or `--community`), with one role, `non-member` or `member`. The key goes to a 0600 file under `~/.symposium/admin/api-keys/`; only its id, community, username, role and the file's path are printed. A `member` key names a registered handle and publishes as it; a `non-member` key's username is a label for the app that holds it. Hand the file over out of band. |
+| `/symposium list-api-keys [--community <c>]` | Admin: the community's Data API keys, written with their values to a 0600 file under `~/.symposium/admin/api-keys/`; the keys are printed without values. |
+| `/symposium revoke-api-key <key id> [--community <c>]` | Admin: stop one of the community's Data API keys at once and erase its value. |
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit code
 is the result (0 = done; `serve`, `sync --watch` and `gate --watch` run until stopped). Every other command

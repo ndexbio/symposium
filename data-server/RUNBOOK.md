@@ -151,6 +151,15 @@ curl -s http://127.0.0.1:8790/v1/status
 
 It answers `200` with the version, `server_id`, the `mode`, and `"postgres": "ok"` and `"s3": "ok"`; once operational, also the admin's handle and `fingerprint`. It answers `503` while PostgreSQL or the file store is down, which is what the Kubernetes readiness probe checks.
 
+The Symposium API serves its OpenAPI contract with no credential, as YAML or JSON:
+
+```bash
+curl -s http://127.0.0.1:8790/api/v1/openapi.yaml
+curl -s http://127.0.0.1:8790/api/v1/openapi.json
+```
+
+Both answer `200` with the contract once the server is operational, and `501` before then.
+
 ## Tear down
 
 - **Docker, keeping the data:** `docker rm -f symposium-data`. The volume, and the key file on it, are kept; the next `docker run` on that volume skips first-boot setup and starts operational.

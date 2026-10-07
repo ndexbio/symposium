@@ -131,6 +131,34 @@ def list_cited_by(
 
 
 @router.get(
+    "/{community}/artifacts/{name}/content",
+    response_model=CanonicalArtifact,
+    response_model_exclude_unset=True,
+    status_code=200,
+    operation_id="getArtifactContent",
+    responses={
+        "401": {
+            "model": Error,
+        },
+        "403": {
+            "model": Error,
+        },
+        "404": {
+            "model": Error,
+        },
+    },
+)
+def get_artifact_content(
+    community: str,
+    name: str = ...,
+    caller: Caller = Depends(authorize("getArtifactContent")),
+    service: Service = Depends(service_provider),
+) -> CanonicalArtifact:
+    """One Artifact's stored canonical JSON"""
+    return service.get_artifact_content(caller, community=community, name=name)
+
+
+@router.get(
     "/{community}/artifacts/{name}/findings",
     response_model=FindingPage,
     response_model_exclude_unset=True,

@@ -8,12 +8,10 @@ from fastapi import Header, Query
 from pydantic import AwareDatetime
 
 from .models import (
-    ApiKey,
-    ApiKeyCreate,
-    ApiKeyPage,
     ArtifactResource,
     ArtifactSummaryPage,
     Basis,
+    CanonicalArtifact,
     CitationPage,
     CitationVia,
     Error,

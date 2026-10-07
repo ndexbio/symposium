@@ -23,8 +23,6 @@ class Rule:
     """Who may call one operation."""
 
     roles: tuple  # in the order the contract lists them
-    api_key: bool  # an API key may call it
-    admin_token: bool  # the server admin's Ed25519 token may call it
     anonymous: str | None  # None, ANONYMOUS_ALWAYS, or the condition `record` is public
 
 
@@ -50,11 +48,8 @@ class Contract:
                 if not isinstance(operation, dict) or "operationId" not in operation:
                     continue
                 security = operation.get("security", default)
-                schemes = {name for requirement in security for name in requirement}
                 rules[operation["operationId"]] = Rule(
                     roles=tuple(operation["x-roles"]),
-                    api_key="apiKey" in schemes,
-                    admin_token="adminToken" in schemes,
                     anonymous=operation.get("x-anonymous") if {} in security else None,
                 )
         return rules

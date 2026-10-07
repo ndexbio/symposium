@@ -101,17 +101,17 @@ symposium-data suspect-after [-h] --handle HANDLE --at AT
 
 ## `gen-api-key`
 
-create a Symposium API key and write it to a 0600 file under ~/.symposium/admin/api-keys/ (admin)
+create a Data API key for one community and write it to a 0600 file under ~/.symposium/admin/api-keys/ (admin)
 
 ```
-symposium-data gen-api-key [-h] [--community COMMUNITY | --server]
-                                  [--expires-days EXPIRES_DAYS] [--label LABEL]
-                                  username {non-member,member,admin}
+symposium-data gen-api-key [-h] [--community COMMUNITY] [--expires-days EXPIRES_DAYS]
+                                  [--label LABEL]
+                                  username {non-member,member}
 ```
 
 ## `list-api-keys`
 
-write every API key, with its value, to a 0600 file under ~/.symposium/admin/api-keys/; print the keys without values (admin)
+write a community's Data API keys, with their values, to a 0600 file under ~/.symposium/admin/api-keys/; print the keys without values (admin)
 
 ```
 symposium-data list-api-keys [-h] [--community COMMUNITY]
@@ -119,10 +119,10 @@ symposium-data list-api-keys [-h] [--community COMMUNITY]
 
 ## `revoke-api-key`
 
-revoke an API key (admin)
+revoke a Data API key (admin)
 
 ```
-symposium-data revoke-api-key [-h] key_id
+symposium-data revoke-api-key [-h] [--community COMMUNITY] key_id
 ```
 
 ## `purge`

@@ -291,30 +291,34 @@ class DataServer:
             "PUT", self.c(f"/owners/{handle}/suspect-after"), body={"at": at}
         )
 
-    # ── the Symposium API's keys: server-wide, the admin's Ed25519 token alone ──────────────
-    def create_api_key(self, body: dict) -> dict:
-        return self.request("POST", "/api/v1/admin/api-keys", body=body)
+    # ── the Data API's keys: issued on the Control API, per community, by the admin ─────────
+    @staticmethod
+    def api_keys_path(community: str, path: str = "") -> str:
+        return f"/v1/{urllib.parse.quote(community)}/api-keys{path}"
 
-    def api_keys(self, community: str | None) -> list:
-        """Every API key, page by page, each with its value."""
+    def create_api_key(self, community: str, body: dict) -> dict:
+        return self.request("POST", self.api_keys_path(community), body=body)
+
+    def api_keys(self, community: str) -> list:
+        """The community's API keys, page by page, each with its value."""
         items, cursor = [], None
         while True:
             query = {"limit": "1000"}
-            if community:
-                query["community"] = community
             if cursor:
                 query["cursor"] = cursor
             page = self.request(
-                "GET", "/api/v1/admin/api-keys?" + urllib.parse.urlencode(query)
+                "GET",
+                self.api_keys_path(community, "?" + urllib.parse.urlencode(query)),
             )
             items += page["items"]
             cursor = page.get("next")
             if not cursor:
                 return items
 
-    def revoke_api_key(self, key_id: str) -> dict:
+    def revoke_api_key(self, community: str, key_id: str) -> dict:
         return self.request(
-            "DELETE", f"/api/v1/admin/api-keys/{urllib.parse.quote(key_id)}"
+            "DELETE",
+            self.api_keys_path(community, f"/{urllib.parse.quote(key_id)}"),
         )
 
     def challenge(self, handle: str) -> str:
@@ -701,23 +705,18 @@ class Commands:
         """A key as printed: everything but its value."""
         return {k: v for k, v in item.items() if k != "key"}
 
+    def api_key_community(self, args) -> str:
+        return args.community or self.context.load()["community"]
+
     def gen_api_key(self, args) -> dict:
-        context = self.context.load()
+        community = self.api_key_community(args)
         server = self.admin()
-        scope = (
-            {"kind": "server"}
-            if args.server
-            else {
-                "kind": "community",
-                "community": args.community or context["community"],
-            }
-        )
-        body = {"username": args.username, "role": args.role, "scope": scope}
+        body = {"username": args.username, "role": args.role}
         if args.expires_days:
             body["expires_days"] = args.expires_days
         if args.label:
             body["label"] = args.label
-        issued = server.create_api_key(body)
+        issued = server.create_api_key(community, body)
         path = self.api_key_dir() / f"{issued['id']}.key"
         write_secret(
             path,
@@ -730,18 +729,24 @@ class Commands:
         return {**self.api_key_view(issued), "key_file": str(path.resolve())}
 
     def list_api_keys(self, args) -> dict:
+        community = self.api_key_community(args)
         server = self.admin()
-        items = server.api_keys(args.community)
+        items = server.api_keys(community)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         path = self.api_key_dir() / f"list-{stamp}.json"
-        write_secret(path, {"data-server-url": server.base_url, "keys": items})
+        write_secret(
+            path,
+            {"data-server-url": server.base_url, "community": community, "keys": items},
+        )
         return {
+            "community": community,
             "keys": [self.api_key_view(item) for item in items],
             "keys_file": str(path.resolve()),
         }
 
     def revoke_api_key(self, args) -> dict:
-        return self.api_key_view(self.admin().revoke_api_key(args.key_id))
+        community = self.api_key_community(args)
+        return self.api_key_view(self.admin().revoke_api_key(community, args.key_id))
 
     def purge(self, args) -> dict:
         cited = CITATION.match(args.cite)
@@ -1151,16 +1156,12 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "gen-api-key",
         commands.gen_api_key,
-        "create a Symposium API key and write it to a 0600 file under "
+        "create a Data API key for one community and write it to a 0600 file under "
         "~/.symposium/admin/api-keys/ (admin)",
     )
-    p.add_argument("username", help="a registered handle, the admin, or an app label")
-    p.add_argument("role", choices=("non-member", "member", "admin"))
-    scope = p.add_mutually_exclusive_group()
-    scope.add_argument("--community", help="default: the context's community")
-    scope.add_argument(
-        "--server", action="store_true", help="scope the key to the server (admin role)"
-    )
+    p.add_argument("username", help="a registered handle (member) or an app label")
+    p.add_argument("role", choices=("non-member", "member"))
+    p.add_argument("--community", help="default: the context's community")
     p.add_argument("--expires-days", type=int)
     p.add_argument("--label")
 
@@ -1168,15 +1169,16 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "list-api-keys",
         commands.list_api_keys,
-        "write every API key, with its value, to a 0600 file under "
+        "write a community's Data API keys, with their values, to a 0600 file under "
         "~/.symposium/admin/api-keys/; print the keys without values (admin)",
     )
-    p.add_argument("--community", help="only keys scoped to this community")
+    p.add_argument("--community", help="default: the context's community")
 
     p = command(
-        sub, "revoke-api-key", commands.revoke_api_key, "revoke an API key (admin)"
+        sub, "revoke-api-key", commands.revoke_api_key, "revoke a Data API key (admin)"
     )
     p.add_argument("key_id")
+    p.add_argument("--community", help="default: the context's community")
 
     p = command(sub, "purge", commands.purge, "free one version's content (admin)")
     p.add_argument("--cite", required=True, help="symposium-data:<file-id>@v<n>")

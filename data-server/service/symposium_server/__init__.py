@@ -4,7 +4,8 @@ mounted at /api/v1. uvicorn starts `symposium_server:app`; neither `symposium_da
 
 It adds three things to the data server's app: the generated routers over the hand-written
 service, the API's error body on every /api/v1 refusal, and, at startup, the notify listener
-and the sweep that revokes admin API keys bound to a retired admin key.
+and the sweep that erases expired API keys' values. The keys themselves are the data
+server's: it issues them on /v1, and the API only authenticates with them.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import Request
 from fastapi.exception_handlers import (
@@ -28,7 +28,6 @@ from symposium_api import contract as contract_module
 from symposium_api import provider
 from symposium_api.errors import ApiError, body_for
 from symposium_api.generated import ROUTERS
-from symposium_api.keys import ApiKeys, Sealer, key_file_from
 from symposium_api.service import ApiService
 from symposium_data import app as data
 from symposium_data.records import Conflict, Forbidden, NotFound
@@ -47,7 +46,7 @@ runtime = provider.Runtime(
     public_url=(os.environ.get("SYMPOSIUM_DATA_PUBLIC_URL") or "").rstrip("/") or None,
 )
 contract = contract_module.load()
-keys = ApiKeys(Sealer(key_file_from(Path(data.settings.path))))
+keys = data.api_keys
 service = ApiService(runtime, keys, contract)
 provider.wire(runtime, service, keys, contract, service.caps)
 for router in ROUTERS:
@@ -150,7 +149,7 @@ async def lifespan(application):
         with runtime.db.connection() as conn:
             swept = keys.sweep(conn)
         if swept:
-            log.info("api keys: %d revoked or erased by the startup sweep", swept)
+            log.info("api keys: %d expired values erased by the startup sweep", swept)
         service.notifier.start()
         # the derived index is rebuilt at startup, in the background, so the server serves
         # while it catches up; a read before then folds in what it needs itself

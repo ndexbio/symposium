@@ -1696,8 +1696,10 @@ components:
             $ref: '#/components/schemas/Error'
     TooManyStreams:
       description: |
-        The key already holds 8 open streams, or the server holds its limit
-        (`SYMPOSIUM_API_MAX_STREAMS`, default 500). Close a stream or retry later.
+        A stream cap is reached: 8 per API key, 4 per anonymous client address, 200
+        anonymous in all, or the server's `SYMPOSIUM_API_MAX_STREAMS` (default 500), whose
+        last 20 slots open only to an `admin` key. `api/DESIGN.md` §11.5 holds the rules.
+        Close a stream or retry later.
       content:
         application/json:
           schema:

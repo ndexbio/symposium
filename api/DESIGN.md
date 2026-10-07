@@ -439,8 +439,9 @@ Server-Sent Events on three streams, each `text/event-stream`:
   request runs (§5.4). A stream whose key is revoked, expires, or loses its roster entry or
   its admin binding closes within 30 seconds. Revocation reaches an open stream as surely
   as a new request.
-- The server keeps nothing per client: the cursor holds the state. Any replica can serve a
-  reconnect. PostgreSQL `LISTEN/NOTIFY` on promote and inbox writes wakes the waiting
+- The client's cursor holds the stream's position, and the server's one row per open
+  stream (§11.5) lives in PostgreSQL, so no worker keeps a client's state in memory. Any
+  worker can serve a reconnect. PostgreSQL `LISTEN/NOTIFY` on promote and inbox writes wakes the waiting
   streams.
 
 ## 7. Publishing keeps the gate's guarantees
@@ -501,8 +502,12 @@ the key's Member.
   - A page holds at most 1000 items, and a cursor is at most 256 characters. Responses are
     otherwise unbounded, like `/v1`.
   - `role=` is a name of at most 40 lower-case characters, looked up in the shipped charters.
-  - There are no rate limits, matching `/v1`. A deployment that needs them puts them in its
-    ingress.
+  - Open streams are capped, and a stream past a cap answers 429 with the `Error` body
+    (§11.5): 8 per API key, 4 per anonymous client address, 200 anonymous in all, and
+    `SYMPOSIUM_API_MAX_STREAMS` (default 500) across the server, with the last 20 kept for
+    `admin` keys.
+  - Requests other than streams carry no rate limit, matching `/v1`. A deployment that needs
+    one puts it in its ingress.
 
 ## 10. How the code is arranged
 
@@ -579,18 +584,42 @@ same test for the same reason.
 
 ### 11.5 Running it
 
-- **Start flag.** `start.sh` gains `--symposium-api`, on by default with the others. Without
-  it, `data-api` starts `symposium_data.app:app` as today, and `/api/v1` answers 404. An
-  operator who wants `/v1` alone runs `start.sh --data-api --postgres --seaweed`.
+- **Start flag.** `start.sh` gains `--symposium-api`. With it, the `data-api` program starts
+  `symposium_server:app`; without it, `symposium_data.app:app` as today, and `/api/v1`
+  answers 404. The flag is on wherever the image's defaults apply:
+  - `start.sh` with no flags turns on all four: `--data-api --postgres --seaweed
+    --symposium-api`.
+  - The Dockerfile's `CMD` names all four.
+  - The container `args` in `data-server/docker/k8s-data-deployment.yml` name all four.
+
+  An operator who wants `/v1` alone passes the first three.
 - **CPU work leaves the event loop.** Validation, the claim graph and the overview run in
   FastAPI's thread pool, so a long validation holds no stream and no `/v1` request.
-- **Streams are capped.** At most 8 open streams per API key, and at most 500 per
-  process, set by `SYMPOSIUM_API_MAX_STREAMS`. Past either, a new stream answers 429 with
-  the `Error` body. Each stream holds one coroutine and wakes on a shared `LISTEN`
-  connection, so 500 cost little memory.
-- **Workers.** One uvicorn worker by default, as today. `SYMPOSIUM_DATA_WORKERS` raises it.
-  Every worker holds nothing between requests (§6.3), so any worker serves any request or
-  reconnect.
+- **Streams are capped, across the whole server.** Every open stream holds one row in a
+  PostgreSQL table, `api_streams (id, key_id, client_addr, opened, seen)`. The row is
+  written when the stream opens and deleted when it closes. The heartbeat refreshes `seen`
+  every 30 seconds, and a sweep deletes rows unseen for 90 seconds, so a crashed worker
+  frees its slots. A new stream counts the rows under a per-scope advisory lock, so the
+  caps hold however many workers run:
+
+  | Cap | Limit |
+  |---|---|
+  | per API key | 8 |
+  | per anonymous client address | 4 |
+  | anonymous, in all | 200 |
+  | the whole server | `SYMPOSIUM_API_MAX_STREAMS`, default 500 |
+  | kept for `admin` keys | the last 20 of the server's slots |
+
+  Past any cap, a new stream answers 429 with the `Error` body. Anonymous streams can hold
+  at most 200 slots, so key holders always keep at least 300. The last 20 open only to an
+  `admin` key, so `gate --watch` always opens. The client address is the one uvicorn
+  reports after `--proxy-headers`, from a proxy in `SYMPOSIUM_DATA_TRUSTED_PROXY` alone.
+  Each stream holds one coroutine and wakes on a shared `LISTEN` connection, so 500 cost
+  little memory.
+- **Workers.** One uvicorn worker by default, as today. `SYMPOSIUM_DATA_WORKERS` is a new
+  setting that raises it, passed to `--workers` by the `data-api` program. Every worker
+  keeps no client's state in memory (§6.3), and the stream caps live in PostgreSQL, so any
+  worker serves any request or reconnect.
 - **The ingress.** SSE needs two settings on a proxy in front of the server: response
   buffering off, and a read timeout longer than the 30-second heartbeat. The API sends
   `X-Accel-Buffering: no` on every stream, which nginx honours. The commented Ingress in

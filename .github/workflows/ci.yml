@@ -1,10 +1,11 @@
 name: ci
 
+# Every branch push and every pull request, whatever branch it targets; release tags run
+# release.yml instead
 on:
   push:
-    branches: [data-store]
+    branches: ["**"]
   pull_request:
-    branches: [data-store]
 
 jobs:
   test:

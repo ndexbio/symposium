@@ -1048,6 +1048,34 @@ def test_a_purged_artifact_leaves_every_read(world, cli):
     assert api.call("GET", "/demo/record", lyra).json()["counts"]["artifacts"] == 5
 
 
+def purge_artifact(world, cli, name: str) -> None:
+    """Purge the stored version of one record Artifact through the skill's CLI."""
+    api, lyra = world["api"], world["keys"]["lyra"]
+    content = api.call("GET", f"/demo/artifacts/{name}", lyra).json()["links"][
+        "content"
+    ]
+    file_id = content.split("/files/")[1].split("/")[0]
+    cli.ok(world["admin_dir"], "purge", "--cite", f"symposium-data:{file_id}@v1")
+
+
+def test_a_purged_citer_leaves_cited_by_and_supersession(world, cli):
+    api, lyra = world["api"], world["keys"]["lyra"]
+    cited_by = "/demo/artifacts/lyra_data_d_v1/cited-by"
+    supersession = "/demo/artifacts/vega_note_b_v1/supersession"
+    assert api.call("GET", cited_by, lyra).json()["items"]
+    assert api.call("GET", supersession, lyra).json()["items"]
+
+    purge_artifact(world, cli, "vega_arg_g_v1")
+    after = api.call("GET", cited_by, lyra)
+    conforms("listCitedBy", after)
+    assert after.json()["items"] == []
+
+    purge_artifact(world, cli, "vega_note_b_v2")
+    after = api.call("GET", supersession, lyra)
+    conforms("listSupersession", after)
+    assert after.json()["items"] == []
+
+
 def test_an_anonymous_stream_ends_when_the_record_turns_private(world, cli):
     admin_dir = world["admin_dir"]
     cli.ok(admin_dir, "collection", "set-public", "--collection", "record", "--public")

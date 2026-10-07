@@ -32,7 +32,7 @@ These four targets are the only ones. Run them from this folder, or from the rep
 | `lint` | `ruff check` and `ruff format --check` on `service/`. |
 | `test` | `lint` and `build-docker`, then the unit suites, then the integration suites against that image, on one `sdtest-*` container for the whole session. |
 | `build-docker` | Builds and tags the image `ndexbio/symposium-data:$(TAG)`. The image also takes `../tools` (the `symposium_rules` package) and `../api` (the contract), as the named build contexts `rules` and `api`. |
-| `push-docker` | A buildx multi-arch (`linux/amd64`, `linux/arm64`) build and push of `:$(TAG)` and `:latest`. It is used by the release workflow, on a tag cut from a `data-store` commit that CI has tested. |
+| `push-docker` | A buildx multi-arch (`linux/amd64`, `linux/arm64`) build and push of `:$(TAG)` and `:latest`. It is used by the release workflow, on a `data-server-v<version>` tag. |
 
 `TAG` defaults to the version in `service/pyproject.toml`; override it with `make build-docker TAG=1.2.3`. The image is built with `DATA_VERSION=$(TAG)`. The container prints `symposium-data <version>` as its first line of output, and `GET /v1/status` reports the same version. `/v1/status` also reports health: it answers **503**, with `"postgres"` or `"s3"` set to `"unavailable"`, whenever either dependency is down. The Kubernetes readiness probe relies on this. It reports the server's `mode` too (see "The admin key file").
 
@@ -40,7 +40,7 @@ These four targets are the only ones. Run them from this folder, or from the rep
 
 ## Releases
 
-Pushing a tag `data-server-v<version>` from the `data-store` branch runs `.github/workflows/release.yml`. That workflow runs `make push-docker TAG=<version>`, which publishes `ndexbio/symposium-data:<version>` and `:latest`. It needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
+Pushing a tag `data-server-v<version>` runs the `push-image` job of `.github/workflows/release.yml`; the tag's prefix alone gates it. That job runs `make push-docker TAG=<version>`, which publishes `ndexbio/symposium-data:<version>` and `:latest`. It needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 
 ## The admin key file
 

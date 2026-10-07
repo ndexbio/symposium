@@ -1,13 +1,20 @@
-name: release data server image
+name: release
 
-# Only tags data-server-v<version>, cut from data-store, publish the image:
-#   ndexbio/symposium-data:<version> and :latest (multi-arch).
+# Each release is gated on its tag's prefix alone:
+#   data-server-v<version>  a pushed tag publishes ndexbio/symposium-data:<version> and :latest
+#                           (multi-arch).
+#   symposium-v<version>    a published GitHub release gets dist/Symposium_skill.zip from
+#                           make build. The data-server image the bundle expects (its
+#                           compat.json) is published first, by a data-server-v* tag.
 on:
   push:
     tags: ["data-server-v*"]
+  release:
+    types: [published]
 
 jobs:
   push-image:
+    if: github.event_name == 'push' && startsWith(github.ref_name, 'data-server-v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,3 +26,16 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - run: make -C data-server push-docker TAG="${GITHUB_REF_NAME#data-server-v}"
+
+  attach-bundle:
+    if: github.event_name == 'release' && startsWith(github.event.release.tag_name, 'symposium-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: make build
+      - run: gh release upload "${{ github.event.release.tag_name }}" dist/Symposium_skill.zip --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

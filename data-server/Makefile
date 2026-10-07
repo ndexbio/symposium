@@ -2,7 +2,7 @@
 #   make test                      lint, the image build, unit suites, integration suites
 #   make build-docker TAG=1.2.3    the image, tagged; image targets run no tests
 #   make push-docker TAG=1.2.3     multi-arch push of :TAG and :latest (the release workflow, on a
-#                                  data-server-v<version> tag)
+#                                  data-server-v<version> GitHub release)
 
 IMAGE ?= ndexbio/symposium-data
 TAG ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' service/pyproject.toml)

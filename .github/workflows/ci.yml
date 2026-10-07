@@ -1,7 +1,6 @@
 name: ci
 
-# Every pull request, whatever branch it targets, once per commit; release tags run
-# release.yml instead
+# Every pull request, whatever branch it targets, once per commit
 on:
   pull_request:
 

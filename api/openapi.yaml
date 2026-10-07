@@ -50,8 +50,6 @@ servers:
 tags:
   - name: record
     description: The record's state, its Artifacts, and what they contain.
-  - name: views
-    description: Computed views of the record, answered by the server in one call.
   - name: members
     description: The community's Members and what they published.
   - name: publishing
@@ -445,13 +443,13 @@ paths:
   /{community}/artifacts/{name}/findings:
     get:
       operationId: listFindings
-      tags: [views]
+      tags: [record]
       summary: The validator's findings on an Artifact
       description: |
         The validator's findings, computed by the server. `basis=accepted` gives the findings
         against the record as it stood when the gate accepted the Artifact; they never change.
-        `basis=current` gives the findings against the whole record now, as the record browser
-        shows them; a later supersession can add one. Ordered by check, then by message.
+        `basis=current` gives the findings against the whole record now; a later supersession
+        can add one. Ordered by check, then by message.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
       x-roles: [non-member, member, admin]
@@ -483,155 +481,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FindingPage'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /{community}/artifacts/{name}/claim-graph:
-    get:
-      operationId: getClaimGraph
-      tags: [views]
-      summary: An Argument's claim graph
-      description: |
-        The Argument's Assertions, Grounds, Assumptions and the sources its Grounds cite, as one
-        graph, with the verdict, rationale and purpose beside it. `mode=claim` folds each Ground
-        into an edge from its Assertion to a source node; `mode=full` keeps each Ground as a
-        node. The server computes it, because a source node needs every cited address resolved
-        against the record. The graph is bounded by the one Argument.
-
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
-      x-anonymous: when the community's `record` collection is public
-      x-bounded: one Argument's Objects and the addresses its Grounds cite
-      security:
-        - apiKey: []
-        - {}
-      parameters:
-        - $ref: '#/components/parameters/community'
-        - $ref: '#/components/parameters/artifactName'
-        - name: mode
-          in: query
-          description: Fold Grounds into edges, or keep them as nodes.
-          schema:
-            type: string
-            enum: [claim, full]
-            default: claim
-      responses:
-        '200':
-          description: The claim graph.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ClaimGraph'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/NotAnArgument'
-  /{community}/artifacts/{name}/evidence:
-    get:
-      operationId: getEvidence
-      tags: [views]
-      summary: An Argument's evidence table
-      description: |
-        The reading page's evidence table: each Assertion, primary first, with its claim, its
-        scope and one row per Ground carrying the citation, its URL, the rationale and the
-        criterion. Bounded by the one Argument.
-
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
-      x-anonymous: when the community's `record` collection is public
-      x-bounded: one Argument's Assertions and Grounds
-      security:
-        - apiKey: []
-        - {}
-      parameters:
-        - $ref: '#/components/parameters/community'
-        - $ref: '#/components/parameters/artifactName'
-      responses:
-        '200':
-          description: The evidence table.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EvidenceTable'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/NotAnArgument'
-  /{community}/artifacts/{name}/internal-graph:
-    get:
-      operationId: getInternalGraph
-      tags: [views]
-      summary: An Artifact's own property graph
-      description: |
-        The Artifact's Objects other than `Content`, and the relationships among them, as one
-        graph with a legend of the Object types and relationship kinds it uses. This is the
-        graph on the record browser's page for a Data, a Model or any non-Argument Artifact.
-        Bounded by the one Artifact.
-
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
-      x-anonymous: when the community's `record` collection is public
-      x-bounded: one Artifact's Objects and relationships
-      security:
-        - apiKey: []
-        - {}
-      parameters:
-        - $ref: '#/components/parameters/community'
-        - $ref: '#/components/parameters/artifactName'
-      responses:
-        '200':
-          description: The internal graph.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/InternalGraph'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /{community}/artifacts/{name}/grounded-spans:
-    get:
-      operationId: listGroundedSpans
-      tags: [views]
-      summary: The passages of this Artifact that Grounds rest on
-      description: |
-        Each `text_span` quote in this Artifact that a later Ground cites, with the property it
-        sits in and the Ground that cites it. Ordered by the citing Artifact's `created`
-        ascending.
-
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
-      x-anonymous: when the community's `record` collection is public
-      security:
-        - apiKey: []
-        - {}
-      parameters:
-        - $ref: '#/components/parameters/community'
-        - $ref: '#/components/parameters/artifactName'
-        - $ref: '#/components/parameters/cursor'
-        - $ref: '#/components/parameters/limit'
-      responses:
-        '200':
-          description: One page of grounded spans.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/GroundedSpanPage'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -681,52 +530,14 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /{community}/overview:
-    get:
-      operationId: getOverview
-      tags: [views]
-      summary: The record's overview graph
-      description: |
-        One node per Artifact and one edge per kind of citation between two Artifacts, counted.
-        The server computes it, because each edge needs every citation in the record resolved.
-        Paged by Artifact, in `created` order ascending: a page holds its Artifacts' nodes and
-        the edges that leave them, so a client that reads every page holds the whole graph.
-        Layout and colour are the client's.
-
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
-      x-anonymous: when the community's `record` collection is public
-      security:
-        - apiKey: []
-        - {}
-      parameters:
-        - $ref: '#/components/parameters/community'
-        - $ref: '#/components/parameters/cursor'
-        - $ref: '#/components/parameters/limit'
-      responses:
-        '200':
-          description: One page of the overview graph.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OverviewPage'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
   /{community}/members:
     get:
       operationId: listMembers
       tags: [members]
       summary: The community's Members
       description: |
-        Every handle on the roster, with whether it is registered, how many Artifacts it
-        published by type, and a stable `palette_index` so every client colours a Member alike.
-        Ordered by handle ascending. This is `/symposium roster list`.
+        Every handle on the roster, with whether it is registered and how many Artifacts it
+        published by type. Ordered by handle ascending. This is `/symposium roster list`.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
       x-roles: [non-member, member, admin]
@@ -1682,12 +1493,6 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
-    NotAnArgument:
-      description: The view applies only to an Argument.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
     TooLarge:
       description: The body is over 8 MiB, or over the Member's quota.
       content:
@@ -1734,7 +1539,6 @@ components:
             - forbidden
             - not_found
             - conflict
-            - not_an_argument
             - too_large
             - validation_failed
             - unprocessable
@@ -2040,7 +1844,7 @@ components:
             type: string
     ArtifactSummary:
       type: object
-      description: One Artifact as a listing shows it, as the record browser's contents page does.
+      description: One Artifact's header fields and counts, as a listing carries it.
       required: [name, address, url, type, published_by, created]
       properties:
         name:
@@ -2062,9 +1866,6 @@ components:
         groundable:
           type: boolean
           description: False for a non-groundable type or a header saying so.
-        verdict_excerpt:
-          type: string
-          description: Argument. The first two sentences of its verdict.
         supersedes:
           type: array
           items:
@@ -2130,17 +1931,6 @@ components:
               type: string
               format: uri
             findings:
-              type: string
-              format: uri
-            claim_graph:
-              type: string
-              format: uri
-              description: Argument.
-            evidence:
-              type: string
-              format: uri
-              description: Argument.
-            internal_graph:
               type: string
               format: uri
             content:
@@ -2321,236 +2111,6 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/Finding'
-    GraphNode:
-      type: object
-      required: [id, kind, label]
-      properties:
-        id:
-          type: string
-        kind:
-          type: string
-          description: |
-            Claim graph: Assertion, Ground, Assumption, Source (cited material), External (an
-            Assertion in another Argument), ProseCitation. Overview: Artifact. Internal graph:
-            the Object's own type.
-        label:
-          type: string
-        address:
-          $ref: '#/components/schemas/Address'
-        url:
-          type: string
-          format: uri
-        member:
-          $ref: '#/components/schemas/Handle'
-        primary:
-          type: boolean
-          description: Claim graph. True on the primary Assertion.
-        unverifiable:
-          type: boolean
-          description: Claim graph. True when reached through `rest` or `download`.
-        properties:
-          type: object
-          additionalProperties:
-            $ref: '#/components/schemas/PropertyValue'
-        findings:
-          type: array
-          items:
-            $ref: '#/components/schemas/Finding'
-    GraphEdge:
-      type: object
-      required: [id, rel, source, target]
-      properties:
-        id:
-          type: string
-        rel:
-          type: string
-          description: |
-            Claim graph: depends_on, grounded_by, assumes, addresses, cites. Overview: the
-            citation kinds of `CitationVia`. Internal graph: the relationship's own `rel`.
-        source:
-          type: string
-        target:
-          type: string
-        kind:
-          type: string
-          enum: [test, evidential]
-          description: Claim graph, `grounded_by`. `test` when the Ground carries a criterion.
-        testimony:
-          type: boolean
-          description: Claim graph. True when the Ground cites another Argument's Assertion.
-        count:
-          type: integer
-          description: Overview. How many citations of this kind the edge stands for.
-        properties:
-          type: object
-          additionalProperties:
-            $ref: '#/components/schemas/PropertyValue'
-    ClaimGraph:
-      type: object
-      required: [url, argument, mode, verdict, rationale, purpose, nodes, edges, counts, position]
-      properties:
-        url:
-          type: string
-          format: uri
-        argument:
-          $ref: '#/components/schemas/ArtifactSummary'
-        mode:
-          type: string
-          enum: [claim, full]
-        verdict:
-          type: string
-        rationale:
-          type: string
-        purpose:
-          type: string
-        genre:
-          type: string
-        supersedes:
-          type: array
-          items:
-            $ref: '#/components/schemas/Address'
-        supersedes_rationale:
-          type: string
-        nodes:
-          type: array
-          items:
-            $ref: '#/components/schemas/GraphNode'
-        edges:
-          type: array
-          items:
-            $ref: '#/components/schemas/GraphEdge'
-        counts:
-          type: object
-          properties:
-            assertions:
-              type: integer
-            grounds:
-              type: integer
-            tests:
-              type: integer
-            assumptions:
-              type: integer
-            sources:
-              type: integer
-            shared_sources:
-              type: integer
-            unverifiable:
-              type: integer
-            findings:
-              type: integer
-        position:
-          $ref: '#/components/schemas/Position'
-    EvidenceRow:
-      type: object
-      required: [ground, citation, citation_url, rationale, kind]
-      properties:
-        ground:
-          $ref: '#/components/schemas/Address'
-        citation:
-          $ref: '#/components/schemas/Address'
-        citation_url:
-          type: string
-          format: uri
-        rationale:
-          type: string
-        criterion:
-          type: string
-        kind:
-          type: string
-          enum: [test, evidential]
-    EvidenceTable:
-      type: object
-      required: [url, argument, assertions, position]
-      properties:
-        url:
-          type: string
-          format: uri
-        argument:
-          $ref: '#/components/schemas/ArtifactSummary'
-        assertions:
-          type: array
-          description: Primary first.
-          items:
-            type: object
-            required: [assertion, claim, scope, primary, grounds]
-            properties:
-              assertion:
-                $ref: '#/components/schemas/Address'
-              claim:
-                type: string
-              scope:
-                type: string
-              primary:
-                type: boolean
-              grounds:
-                type: array
-                items:
-                  $ref: '#/components/schemas/EvidenceRow'
-        position:
-          $ref: '#/components/schemas/Position'
-    InternalGraph:
-      type: object
-      required: [url, artifact, nodes, edges, legend, content, position]
-      properties:
-        url:
-          type: string
-          format: uri
-        artifact:
-          $ref: '#/components/schemas/ArtifactSummary'
-        nodes:
-          type: array
-          items:
-            $ref: '#/components/schemas/GraphNode'
-        edges:
-          type: array
-          items:
-            $ref: '#/components/schemas/GraphEdge'
-        legend:
-          type: object
-          properties:
-            types:
-              type: array
-              items:
-                type: string
-            rels:
-              type: array
-              items:
-                type: string
-        content:
-          type: array
-          description: The Artifact's Content Objects, which say how to reach its content.
-          items:
-            $ref: '#/components/schemas/ObjectEntry'
-        position:
-          $ref: '#/components/schemas/Position'
-    GroundedSpan:
-      type: object
-      required: [property, quote, address, ground, ground_url, from_created]
-      properties:
-        property:
-          type: string
-        quote:
-          type: string
-        address:
-          $ref: '#/components/schemas/Address'
-        ground:
-          $ref: '#/components/schemas/Address'
-        ground_url:
-          type: string
-          format: uri
-        from_created:
-          type: string
-          format: date-time
-    GroundedSpanPage:
-      allOf:
-        - $ref: '#/components/schemas/Page'
-        - type: object
-          required: [items]
-          properties:
-            items:
-              type: array
-              items:
-                $ref: '#/components/schemas/GroundedSpan'
     Resolution:
       type: object
       required: [address, kind, url, position]
@@ -2592,33 +2152,9 @@ components:
           description: For `rest` and `download`, the Content Object's `access_method`.
         position:
           $ref: '#/components/schemas/Position'
-    OverviewPage:
-      allOf:
-        - $ref: '#/components/schemas/Page'
-        - type: object
-          required: [nodes, edges, counts]
-          properties:
-            nodes:
-              type: array
-              items:
-                $ref: '#/components/schemas/GraphNode'
-            edges:
-              type: array
-              items:
-                $ref: '#/components/schemas/GraphEdge'
-            counts:
-              type: object
-              description: Counts for the whole record, on every page.
-              properties:
-                artifacts:
-                  type: integer
-                cross_edges:
-                  type: integer
-                findings:
-                  type: integer
     MemberResource:
       type: object
-      required: [handle, address, url, registered, palette_index, counts, position]
+      required: [handle, address, url, registered, counts, position]
       properties:
         handle:
           $ref: '#/components/schemas/Handle'
@@ -2630,12 +2166,6 @@ components:
         registered:
           type: boolean
           description: True once the Member has joined from its invite.
-        palette_index:
-          type: integer
-          minimum: 0
-          description: |
-            The Member's place among the handles that published anything, sorted. The record
-            browser colours by it, so every client colours a Member alike.
         counts:
           type: object
           properties:

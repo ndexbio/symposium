@@ -17,18 +17,8 @@ API = Path(__file__).resolve().parents[2] / "api"
 ROLES = ("non-member", "member", "admin")
 METHODS = ("get", "post", "put", "patch", "delete")
 
-# Each view of the record browser (tools/browse.py) and each command of the skill
-# (skills/symposium/SKILL.md), as issue #23 names them; DESIGN.md must map every one.
-BROWSER_VIEWS = [
-    "Overview graph",
-    "Artifact page",
-    "Argument claim graph",
-    "Reading page and evidence table",
-    "Readings: CSV tables",
-    "Grounded text spans",
-    "Validator findings per Artifact",
-    "Member colours and counts",
-]
+# Each command of the skill (skills/symposium/SKILL.md), as issue #23 names them;
+# DESIGN.md must map every one.
 SKILL_COMMANDS = [
     "setup",
     "bootstrap",
@@ -245,7 +235,7 @@ def test_the_role_table_matches_the_contract(spec, design):
         op["operationId"]: (method.upper(), path, set(op["x-roles"]))
         for path, method, op in operations(spec)
     }
-    rows = table(design, "### 4.2 Endpoint × role")
+    rows = table(design, "### 3.2 Endpoint × role")
     documented = {}
     for operation, route, *cells in rows:
         roles = {r for r, cell in zip(ROLES, cells) if cell.startswith("✓")}
@@ -257,17 +247,14 @@ def test_the_role_table_matches_the_contract(spec, design):
         assert listed == roles, operation
 
 
-def test_the_design_maps_every_view_and_command(spec, design):
+def test_the_design_maps_every_command(spec, design):
     operation_ids = {op["operationId"] for _, _, op in operations(spec)}
-    views = table(design, "## 2. The record browser's views → endpoints")
-    for view in BROWSER_VIEWS:
-        assert any(row[0].startswith(view) for row in views), f"unmapped view: {view}"
-    commands = table(design, "## 3. The skill's commands → endpoints")
+    commands = table(design, "## 2. The skill's commands → endpoints")
     for command in SKILL_COMMANDS:
         assert any(
             re.search(rf"`{re.escape(command)}\b", row[0]) for row in commands
         ), command
-    for row in views + commands:
+    for row in commands:
         for named in re.findall(r"`?\b([a-z]+[A-Z][A-Za-z]+)\b", row[2]):
             assert named in operation_ids, (
                 f"the notes name {named}, which the contract lacks"

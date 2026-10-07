@@ -20,7 +20,7 @@ the API, the API-key commands and the new table belongs to a later issue.
 
 The API gets its own top-level directory because it is a third face of Symposium. It sits
 beside `spec/`, the model, and `data-server/`, the storage. The data server's process
-serves it, from its own package. §10 lays out how the code depends on what, and §11
+serves it, from its own package. §9 lays out how the code depends on what, and §10
 settles where the server runs.
 
 Lint it with:
@@ -50,19 +50,19 @@ holds only implicitly. The server computes each traversal from its index (§1.3)
 | Object property | sub-resource | `…/objects/{object}/properties/{property}` |
 | Relationship (§1.7) | listed under its Artifact; it has no address, so it gets no URL of its own | `/{community}/artifacts/{name}/relationships` |
 | Address (§1.8), schema references included | resolved | `/{community}/resolve?address=…` |
-| Content (§1.8.1) | an Object, listed with `?type=Content`; the internal graph lists it too | `…/objects?type=Content` |
+| Content (§1.8.1) | an Object, listed with `?type=Content` | `…/objects?type=Content` |
 
 The Artifact types the specification defines, and the profile's community types, all use
 the one Artifact resource. Their type-specific properties are documented on
-`ArtifactHeader` and `RecordObject`. Each type also has its own traversals and views:
+`ArtifactHeader` and `RecordObject`. Each type also has its own traversals:
 
 | Type | What the API adds for it |
 |---|---|
-| Argument (§2.2): Assertion, Ground, Assumption; verdict, rationale, purpose | `claim-graph`, `evidence`; its Grounds show up in the cited Artifact's `cited-by?via=ground` |
+| Argument (§2.2): Assertion, Ground, Assumption; verdict, rationale, purpose | its Objects and relationships under the Argument; its Grounds show up in the cited Artifact's `cited-by?via=ground` |
 | Argument, extracted (`extracted_from`) | `cited-by?via=extracted_from` on the source |
-| Non-Ground citation (§2.2.5) | `cited-by?via=prose` on the cited Artifact; `ProseCitation` nodes in the claim graph |
-| Grounding on another Argument's primary Assertion | `cited-by?via=testimony`; `External` nodes in the claim graph |
-| Data (§2.3), ScientificPublication (§2.4), Model (§2.6) | `internal-graph`; `grounded-spans` for `text_span` content |
+| Non-Ground citation (§2.2.5) | `cited-by?via=prose` on the cited Artifact |
+| Grounding on another Argument's primary Assertion | `cited-by?via=testimony` |
+| Data (§2.3), ScientificPublication (§2.4), Model (§2.6) | their Objects and relationships; `cited-by?via=ground` for the Grounds that cite their content, `text_span` quotes included |
 | Analysis (§2.5): `inputs`, outputs by `produced_by` | `cited-by?via=produced_by` gives an Analysis's outputs; `cited-by?via=inputs` on a Data gives the Analyses that used it |
 | NonGroundable (§2.7), Message (§2.8) | `members/{handle}/messages` gives the Messages addressed to a Member |
 | ResearchGoal (profile §2.1), `serves_goals` | `cited-by?via=serves_goals` on the goal gives the work that serves it |
@@ -79,19 +79,19 @@ the one Artifact resource. Their type-specific properties are documented on
 - **Groundability.** `groundable` is on the summary, so a client can tell from a listing
   that nothing in an Analysis, a NonGroundable, a Message or a ResearchGoal can be evidence.
 - **Attribution and import (§1.10).** `authors`, `import_method` and `published_by` are
-  header properties, read as they are. `published_by` is permanent. That is why §5.4 ties
+  header properties, read as they are. `published_by` is permanent. That is why §4.4 ties
   a publishing key to one Member.
 - **Immutability.** No operation changes or deletes a recorded Artifact. The only writes
   are a submission into `inbox`, the gate's own operations, and API keys.
 
 ### 1.3 The index
 
-The traversals and views need facts that no single Artifact holds: who cites whom, what
-supersedes what, findings, and grounded spans. The server keeps a **derived index** of
+The traversals need facts that no single Artifact holds: who cites whom, what supersedes
+what, and findings. The server keeps a **derived index** of
 these facts in its PostgreSQL. It folds in each Artifact the moment `record` gains it. The
 index is a cache of the record and is never the source of truth. `POST gate/rebuild`
 rebuilds it from the `record` feed, and `GET gate/verify` compares the two. Every read
-answers from the index and states the index's `position` (§6.2).
+answers from the index and states the index's `position` (§5.2).
 
 ### 1.4 Canonical URLs
 
@@ -115,33 +115,7 @@ An address maps to a URL by a fixed rule:
 colliding with its Artifact's property names, so the server always knows which one is
 meant. A client that does not know asks `resolve`.
 
-## 2. The record browser's views → endpoints
-
-The record browser (`tools/browse.py`, `tools/templates.py`, `tools/serve.py`) builds
-static pages from one host's copy of the record. Each view it computes maps to an
-endpoint. "Server-side" marks a view that only the server can answer efficiently, because
-it needs every address in the record resolved.
-
-| Browser view | Data it needs | Endpoint | Server-side |
-|---|---|---|---|
-| Overview graph (`index.html`) | one node per Artifact; citation edges counted by kind; counts | `getOverview` | yes: edges need every citation resolved |
-| Artifact page (`<name>.html`, non-Argument) | header, non-groundable banner, Content Objects, properties | `getArtifact` | |
-| Internal graph on the Artifact page | Objects other than Content, relationships, legend | `getInternalGraph` | |
-| Argument claim graph (`<name>.html`) | Assertions, Grounds, Assumptions, cited sources, prose citations, verdict panel | `getClaimGraph` (`mode=claim` or `full`) | yes: source nodes need cited addresses resolved |
-| Reading page and evidence table (`<name>_reading.html`) | verdict, purpose, rationale, description, text, supersession; one row per Ground | `getArtifact` + `getEvidence` | |
-| Readings: CSV tables with cell anchors | the property's CSV and its `csv` Content | `getArtifactProperty` + `listObjects?type=Content`; a cell by `resolveAddress` | |
-| Grounded text spans (`<mark>`) | every `text_span` quote that a later Ground cites | `listGroundedSpans` | yes: a back-reference across the record |
-| Validator findings per Artifact | `{check, level, msg}` | `listFindings` (`basis=current` as the browser shows; `accepted` as the gate saw) | yes: computed against the record |
-| Member colours and counts | members, a stable colour order, counts by member and by type | `listMembers` (`palette_index`) + `getRecord` | |
-| Contents list (`contents.html`) | summaries grouped by type, newest first, verdict excerpt, Ground/test/finding counts | `listArtifacts?order=-created` (filter by `type` to group) | |
-| Build summary (`browser_manifest.json`) | counts by type, by member, findings | `getRecord` | |
-| Reload counter (`GET /__build`) | "has the record changed" | `streamRecord` (or `position` on any read) | |
-| Navigation from a cited address | where an address leads | `resolveAddress` | |
-
-The browser's layout file (`.browser_layout.json`), pinned positions, member colours and
-the PNG/SVG export are presentation. They stay in the client.
-
-## 3. The skill's commands → endpoints
+## 2. The skill's commands → endpoints
 
 Each command in `skills/symposium/SKILL.md` falls into one of four classes: a read
 (`GET`), a write (`POST`, `PUT`, `DELETE`), a stream (SSE), or **not an API operation**.
@@ -161,7 +135,7 @@ Each command in `skills/symposium/SKILL.md` falls into one of four classes: a re
 | `gate --verify` | read | `verifyGate` | |
 | `gate --rebuild` | write | `rebuildGate` | |
 | `gate --watch` | stream | `streamSubmissions`, then `runGatePass` on each event | |
-| `serve` | not an API operation | none | It serves pages from a local copy. The API replaces what it computes (§2). The pages themselves are an application. |
+| `serve` | not an API operation | none | It renders pages for people from a local copy. The API serves the data model those pages are built from; rendering is an application's job. |
 | `admin-config` | not an API operation | none | It makes the server admin's key on the admin's machine and places a file on the server's volume. |
 | `roster list` | read | `listMembers` | |
 | `roster add`, `roster remove` | not an API operation | `/v1/{community}/roster/{handle}` | Identity: who may join. It stays on `/v1` under the admin's Ed25519 key, beside invites. |
@@ -183,16 +157,16 @@ below the Artifact level: `suspect-after`, `purge`, `export`, `import`, `port`, 
 Each already has its `/v1` route. Copying it into this API would put a second door on the
 same identity or the same bytes.
 
-## 4. Roles
+## 3. Roles
 
-### 4.1 The three roles
+### 3.1 The three roles
 
 An API key holds exactly **one** role. There are three, and that is the whole set. Each
 role holds everything the one before it holds.
 
 | Role | Allows |
 |---|---|
-| `non-member` | every read of the record: Artifacts, views, Members, the record stream |
+| `non-member` | every read of the record: Artifacts, their Objects and traversals, findings, Members, the record stream |
 | `member` | everything `non-member` has, plus publishing as its Member and reading its own submissions, replies and their streams |
 | `admin` | everything `member` has, plus every submission and reply, and the gate's operations: passes, verify and rebuild |
 
@@ -208,7 +182,7 @@ role holds everything the one before it holds.
   publication.
 
 Provisioning API keys sits outside the three roles. It takes the server admin's Ed25519
-token (§5.5), so no API key of any role can read or make another key.
+token (§4.5), so no API key of any role can read or make another key.
 
 Anonymous access is a separate case from the roles. When a community's `record`
 collection is public on the data server, every record read also answers with no
@@ -219,7 +193,7 @@ The roles here belong to API keys. They are a different thing from the **publish
 roles** in `tools/roles/` (`researcher`, `analyst`, …). Those are limits a Member sets on
 itself, and `submitArtifact` applies them through `role=` as `--role` does.
 
-### 4.2 Endpoint × role
+### 3.2 Endpoint × role
 
 `tests/api/test_openapi.py` checks this table against `x-roles` in the contract.
 
@@ -236,12 +210,7 @@ itself, and `submitArtifact` applies them through `role=` as `--role` does.
 | listCitedBy | GET /{community}/artifacts/{name}/cited-by | ✓ | ✓ | ✓ |
 | listSupersession | GET /{community}/artifacts/{name}/supersession | ✓ | ✓ | ✓ |
 | listFindings | GET /{community}/artifacts/{name}/findings | ✓ | ✓ | ✓ |
-| getClaimGraph | GET /{community}/artifacts/{name}/claim-graph | ✓ | ✓ | ✓ |
-| getEvidence | GET /{community}/artifacts/{name}/evidence | ✓ | ✓ | ✓ |
-| getInternalGraph | GET /{community}/artifacts/{name}/internal-graph | ✓ | ✓ | ✓ |
-| listGroundedSpans | GET /{community}/artifacts/{name}/grounded-spans | ✓ | ✓ | ✓ |
 | resolveAddress | GET /{community}/resolve | ✓ | ✓ | ✓ |
-| getOverview | GET /{community}/overview | ✓ | ✓ | ✓ |
 | listMembers | GET /{community}/members | ✓ | ✓ | ✓ |
 | getMember | GET /{community}/members/{handle} | ✓ | ✓ | ✓ |
 | listMemberArtifacts | GET /{community}/members/{handle}/artifacts | ✓ | ✓ | ✓ |
@@ -270,16 +239,16 @@ itself, and `submitArtifact` applies them through `role=` as `--role` does.
 scope is refused there. A key scoped to one community would otherwise read every decrypted
 key on the server, including the server-wide admin's.
 
-## 5. API keys
+## 4. API keys
 
-### 5.1 Format and presentation
+### 4.1 Format and presentation
 
 A key is `sak_` followed by the base64url of 32 random bytes (43 characters). It is sent as
 `Authorization: Bearer sak_…`. The data server already tells credentials apart by prefix
 (`sdr_` is a read key, and anything else is a JWT), so `sak_` joins that scheme. The
 contract declares it as the `apiKey` security scheme.
 
-### 5.2 The table
+### 4.2 The table
 
 A new Alembic migration adds this table to the data server's PostgreSQL. It follows the
 style of `read_keys` and `invites`.
@@ -312,7 +281,7 @@ CREATE INDEX api_keys_scope ON api_keys (community, username);
 `export` leaves the table out, as it already does with invites. A key is a credential for
 one server, so it does not travel with a community.
 
-### 5.3 Encryption at rest
+### 4.3 Encryption at rest
 
 The admin must be able to read a key back, so a key is stored **retrievably**, and **never
 in plain text**:
@@ -335,7 +304,7 @@ in plain text**:
 
 This is stricter than invites, which `/v1` keeps in plain text.
 
-### 5.4 Username, the roster and the admin binding
+### 4.4 Username, the roster and the admin binding
 
 Every check below runs at creation **and on every request**, so a key loses its standing
 the moment the thing it stands on changes.
@@ -360,7 +329,7 @@ attribution. `submitArtifact` refuses a body whose `published_by` is anything ot
 - **A handle joins the roster** with the same name as a `non-member` key's label: the key
   stops authenticating, so a label can never be mistaken for a Member.
 
-### 5.5 Life cycle
+### 4.5 Life cycle
 
 All four key operations take the server admin's Ed25519 token and nothing else. An API
 key, whatever its role or scope, can read, make or revoke no key.
@@ -387,9 +356,9 @@ commands that see key values write them to a file and print only where it is.
 6. A key past `expires` fails with 401. A janitor erases its value on the same schedule that
    `forget_expired_invites` uses.
 
-## 6. Paging, freshness and streams
+## 5. Paging, freshness and streams
 
-### 6.1 Paging
+### 5.1 Paging
 
 There is one convention:
 
@@ -407,11 +376,11 @@ ends, so `next: null` always means the end. A cursor stays valid for the life of
 A cursor the server did not issue answers 400.
 
 The contract marks every listing that grows with the record as paged. An endpoint that
-answers one bounded thing (one Argument's claim graph, one Artifact's internal graph, the
-charter list, a verify report) says why in `x-bounded`, and the test checks that one of the
+answers one bounded thing (one key, one Artifact's findings on a check, the charter list, a
+verify report) says why in `x-bounded`, and the test checks that one of the
 two holds for each operation.
 
-### 6.2 Freshness
+### 5.2 Freshness
 
 Every read response carries `position`, `{cursor, seq, created, as_of}`. These are the
 index's place in the `record` feed, the `created` of the newest Artifact it reflects, and
@@ -420,7 +389,7 @@ also open `streamRecord` to be told. This removes the record browser's "a member
 not synced sees an older record" problem: there is one index on the one server, and every
 answer says how current it is.
 
-### 6.3 Streams
+### 5.3 Streams
 
 Server-Sent Events on three streams, each `text/event-stream`:
 
@@ -436,15 +405,15 @@ Server-Sent Events on three streams, each `text/event-stream`:
 - A `heartbeat` every 30 seconds carries `position`, so a quiet stream still proves it is
   live.
 - **The key is re-checked at every event and every heartbeat**, by the same checks a
-  request runs (§5.4). A stream whose key is revoked, expires, or loses its roster entry or
+  request runs (§4.4). A stream whose key is revoked, expires, or loses its roster entry or
   its admin binding closes within 30 seconds. Revocation reaches an open stream as surely
   as a new request.
 - The client's cursor holds the stream's position, and the server's one row per open
-  stream (§11.5) lives in PostgreSQL, so no worker keeps a client's state in memory. Any
+  stream (§10.5) lives in PostgreSQL, so no worker keeps a client's state in memory. Any
   worker can serve a reconnect. PostgreSQL `LISTEN/NOTIFY` on promote and inbox writes wakes the waiting
   streams.
 
-## 7. Publishing keeps the gate's guarantees
+## 6. Publishing keeps the gate's guarantees
 
 | Guarantee | How the API keeps it |
 |---|---|
@@ -467,7 +436,7 @@ stores or computes, so a submission reads the same state whichever gate is runni
 | `accepted` | a `record` version whose `symposium_submission_citation` names it |
 | `rejected` | an `inbox` reply whose `symposium_submission_citation` names it |
 
-## 8. Coexistence with today's access
+## 7. Coexistence with today's access
 
 Nothing that exists today changes for the skill or the CLI.
 
@@ -479,13 +448,13 @@ Nothing that exists today changes for the skill or the CLI.
 | Public collection | anonymous `/v1` reads | a public `record` also opens the API's record reads anonymously |
 | API key `sak_…` | `/api/v1` only | new; `/v1` refuses it |
 
-The API is a new path prefix, `/api/v1`, served by the same process as `/v1` (§10). `/v1`
+The API is a new path prefix, `/api/v1`, served by the same process as `/v1` (§9). `/v1`
 keeps every route, body and rule. A member's API key goes through the same roster and grant
 checks a member token would. It cannot read another Member's inbox files, because the
 `inbox` visibility rule (the first writer, the admin, and `metadata.recipients`) applies to
 the key's Member.
 
-## 9. Errors, versioning and limits
+## 8. Errors, versioning and limits
 
 - **Errors.** Every error uses the `Error` body: `{detail, code, findings?}`. `detail` is
   the sentence `/v1` writes, and `code` is stable for programs. FastAPI's default 422
@@ -503,13 +472,13 @@ the key's Member.
     otherwise unbounded, like `/v1`.
   - `role=` is a name of at most 40 lower-case characters, looked up in the shipped charters.
   - Open streams are capped, and a stream past a cap answers 429 with the `Error` body
-    (§11.5): 8 per API key, 4 per anonymous client address, 200 anonymous in all, and
+    (§10.5): 8 per API key, 4 per anonymous client address, 200 anonymous in all, and
     `SYMPOSIUM_API_MAX_STREAMS` (default 500) across the server, with the last 20 kept for
     `admin` keys.
   - Requests other than streams carry no rate limit, matching `/v1`. A deployment that needs
     one puts it in its ingress.
 
-## 10. How the code is arranged
+## 9. How the code is arranged
 
 The API's code and the rules it shares with the skill each get their own package, so every
 dependency points one way: toward the rules, and from the API toward storage. A small
@@ -529,9 +498,9 @@ the data server image both ship the one package, so the validator the API runs i
 validator the gate runs, byte for byte. Storage imports none of the rules and none of the
 API, and the rules import none of the storage. Only `symposium_server` sees all three.
 
-## 11. Where the API server runs
+## 10. Where the API server runs
 
-### 11.1 The decision
+### 10.1 The decision
 
 | Question | Answer |
 |---|---|
@@ -542,7 +511,7 @@ API, and the rules import none of the storage. Only `symposium_server` sees all 
 | Which language and framework | Python 3.11 and FastAPI, the data server's own. |
 | Which volume | `/apps`, the image's one persistent volume. The API keeps its index in the same PostgreSQL. |
 
-### 11.2 Why the data server image
+### 10.2 Why the data server image
 
 - **The API reads PostgreSQL directly.** The index, the `api_keys` table, the roster and
   the feeds all live in the image's PostgreSQL, which listens on `127.0.0.1` alone. A process
@@ -560,7 +529,7 @@ API, and the rules import none of the storage. Only `symposium_server` sees all 
   Deployment, as `skills/symposium/SKILL.md` already teaches. The API's version moves with
   the storage it reads, so the two can never be deployed out of step.
 
-### 11.3 Why one uvicorn process, on the same port
+### 10.3 Why one uvicorn process, on the same port
 
 The data server is FastAPI on uvicorn already. The API is FastAPI too, so `symposium_server`
 mounts its router on the same app, and one process serves both prefixes.
@@ -570,19 +539,19 @@ mounts its router on the same app, and one process serves both prefixes.
 - The skill's `data-server-url` already names the server. An application uses the same URL
   with `/api/v1` after it.
 - A second uvicorn on another port would need a second Service port, a second Ingress rule
-  and a second health check, for no isolation the measures in §11.5 do not already give.
+  and a second health check, for no isolation the measures in §10.5 do not already give.
 
-### 11.4 Why Python, and a Java server ruled out
+### 10.4 Why Python, and a Java server ruled out
 
 The API runs the gate's own checks: the validator, the ordering and skip rules, and the
-publish checks, all in `symposium_rules` (§10). They are Python, and so are the gate, the
+publish checks, all in `symposium_rules` (§9). They are Python, and so are the gate, the
 skill and the data server. A Java server would need a second implementation of the
 validator. Two validators drift, and the day they disagree, `checkSubmission` passes an
 Artifact the gate rejects. That breaks the promise that a pass means the gate accepts.
 Java would also add a JVM to an image that holds none today. A Go or Node server fails the
 same test for the same reason.
 
-### 11.5 Running it
+### 10.5 Running it
 
 - **Start flag.** `start.sh` gains `--symposium-api`. With it, the `data-api` program starts
   `symposium_server:app`; without it, `symposium_data.app:app` as today, and `/api/v1`
@@ -593,7 +562,7 @@ same test for the same reason.
   - The container `args` in `data-server/docker/k8s-data-deployment.yml` name all four.
 
   An operator who wants `/v1` alone passes the first three.
-- **CPU work leaves the event loop.** Validation, the claim graph and the overview run in
+- **CPU work leaves the event loop.** Validation, findings and address resolution run in
   FastAPI's thread pool, so a long validation holds no stream and no `/v1` request.
 - **Streams are capped, across the whole server.** Every open stream holds one row in a
   PostgreSQL table, `api_streams (id, key_id, client_addr, opened, seen)`. The row is
@@ -618,7 +587,7 @@ same test for the same reason.
   little memory.
 - **Workers.** One uvicorn worker by default, as today. `SYMPOSIUM_DATA_WORKERS` is a new
   setting that raises it, passed to `--workers` by the `data-api` program. Every worker
-  keeps no client's state in memory (§6.3), and the stream caps live in PostgreSQL, so any
+  keeps no client's state in memory (§5.3), and the stream caps live in PostgreSQL, so any
   worker serves any request or reconnect.
 - **The ingress.** SSE needs two settings on a proxy in front of the server: response
   buffering off, and a read timeout longer than the 30-second heartbeat. The API sends

@@ -7,14 +7,12 @@ on:
     branches: ["**"]
   pull_request:
 
-# One run per branch: a push and the pull request it updates share this group, as do
-# successive pushes, so a newer run cancels the one still in progress
-concurrency:
-  group: ci-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: true
-
 jobs:
   test:
+    # A branch in this repository is tested by its push run, whose checks appear on its pull
+    # request too; the pull_request run is for forks, which push nowhere here. So each commit
+    # runs once, and the skipped duplicate reads as skipped
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     # Linux runs the whole gate, the data server's suites and their one image build included;
     # Windows runs the skill's runtime and session suites, which need no container
     strategy:

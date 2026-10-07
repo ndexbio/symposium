@@ -1178,6 +1178,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyStreams'
   /{community}/streams/submissions:
     get:
       operationId: streamSubmissions
@@ -1216,6 +1218,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyStreams'
   /{community}/streams/replies:
     get:
       operationId: streamReplies
@@ -1250,6 +1254,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyStreams'
   /{community}/gate/passes:
     post:
       operationId: runGatePass
@@ -1688,6 +1694,14 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
+    TooManyStreams:
+      description: |
+        The key already holds 8 open streams, or the server holds its limit
+        (`SYMPOSIUM_API_MAX_STREAMS`, default 500). Close a stream or retry later.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     ValidationFailed:
       description: The validator failed the Artifact. `findings` lists every finding.
       content:
@@ -1723,6 +1737,7 @@ components:
             - validation_failed
             - unprocessable
             - not_operational
+            - too_many_streams
         findings:
           type: array
           description: The validator's findings, on `validation_failed` only.

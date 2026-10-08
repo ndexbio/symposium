@@ -10,15 +10,12 @@ from dataclasses import dataclass
 class Caller:
     kind: str  # "anonymous" or "api_key"
     role: str | None = None
-    username: str | None = None
+    # the Member a `member` key acts as, from the key's own row: who publishes and whose
+    # submissions are read; None for a `non-member` key or an anonymous caller
+    handle: str | None = None
+    label: str | None = None  # the name the key's owner gave it
     key_id: object | None = None
-    community: str | None = (
-        None  # the key's one community; None for an anonymous caller
-    )
+    # the key's one community; None for an anonymous caller
+    community: str | None = None
     base_url: str = ""
     client_addr: str | None = None
-
-    @property
-    def handle(self) -> str | None:
-        """The Member this caller publishes as and reads its own submissions as."""
-        return self.username if self.role == "member" else None

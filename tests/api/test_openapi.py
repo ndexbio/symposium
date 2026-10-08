@@ -132,12 +132,26 @@ def test_the_api_takes_api_keys_alone_and_has_no_admin_operation(spec):
         assert "admin" not in op["x-roles"], f"{method.upper()} {path} admits admin"
 
 
+def test_every_member_operation_says_whose_key_it_needs(spec):
+    """An operation that acts as a Member says it needs a key the Member made for itself, and
+    that the key's handle is checked against the community in the path on every request."""
+    for path, method, op in operations(spec):
+        if op["x-roles"] != ["member"]:
+            continue
+        text = " ".join(op["description"].split())
+        where = f"{method.upper()} {path}"
+        assert "Requires a `member` API key" in text, where
+        assert "created for itself" in text, where
+        assert "the community in the path" in text, where
+
+
 def test_the_api_refers_to_nothing_outside_itself():
-    """Every URL the API answers is its own: the contract names no `/v1` route, no Ed25519
-    token and no read key, so a client holding an API key never needs another credential."""
+    """Every URL the API answers is its own: the contract names no `/v1` route and accepts no
+    credential but an API key: no Ed25519 token, no JWT, no read key. (A Member's registered
+    Ed25519 *key* is named, as the thing a `member` key's standing rests on.)"""
     text = (API / "openapi.yaml").read_text(encoding="utf-8")
     assert not re.search(r"(?<!/api)/v1\b", text), "the contract names a /v1 route"
-    for word in ("Ed25519", "adminToken", "sdr_"):
+    for word in ("Ed25519 token", "JWT", "adminToken", "sdr_"):
         assert word not in text, f"the contract mentions {word}"
 
 

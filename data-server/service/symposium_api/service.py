@@ -725,7 +725,8 @@ class ApiService(Service):
             community = self.fresh(conn, community)
             row = self.keys.row(conn, caller.community, caller.key_id)
             out = {
-                "username": caller.username,
+                "handle": caller.handle,
+                "label": caller.label,
                 "role": caller.role,
                 "community": row["community"],
                 "key_id": str(caller.key_id),

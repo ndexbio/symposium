@@ -2,6 +2,8 @@
 
 Nobody needs a shell on the server: every admin operation is a route, and the admin's key is a file placed on the server's volume. Admin routes need the admin's token, from `POST /v1/admin/challenge` and `POST /v1/admin/token` signed with the admin's private key; Symposium's CLI does this for the operator. The README lists every route.
 
+The server is the image [`ndexbio/symposium-data` on Docker Hub](https://hub.docker.com/r/ndexbio/symposium-data), published with one tag per release plus `:latest`. `docker run` and the Kubernetes manifest pull it from Docker Hub, so deploying a server needs no local build; `make build-docker` is only for developing the server itself.
+
 ## Deploy locally (Docker)
 
 Every server needs the admin's **public** key file, `admin_pub_<handle>.key`, which Symposium's `admin-config` writes on the operator's machine (mode 0644). The private key never leaves that machine.

@@ -22,11 +22,10 @@ def upgrade():
             ciphertext  bytea,
             nonce       bytea,
             enc_kid     text,
-            username    text NOT NULL,
-            role        text NOT NULL CHECK (role IN ('non-member', 'member', 'admin')),
-            admin_kid   text,
-            community   text,
-            label       text,
+            community   text NOT NULL,
+            role        text NOT NULL CHECK (role IN ('non-member', 'member')),
+            handle      text,
+            label       text NOT NULL,
             created_by  text NOT NULL,
             created     timestamptz NOT NULL DEFAULT now(),
             expires     timestamptz,
@@ -34,10 +33,13 @@ def upgrade():
             revoked_by  text,
             last_used   timestamptz,
             uses        bigint NOT NULL DEFAULT 0,
-            CHECK (community IS NOT NULL OR role = 'admin'),
-            CHECK ((role = 'admin') = (admin_kid IS NOT NULL))
+            CHECK ((role = 'member') = (handle IS NOT NULL))
         );
-        CREATE INDEX api_keys_scope ON api_keys (community, username);
+        CREATE INDEX api_keys_owner ON api_keys (community, handle);
+        CREATE UNIQUE INDEX api_keys_member_label ON api_keys (community, handle, label)
+            WHERE revoked IS NULL AND handle IS NOT NULL;
+        CREATE UNIQUE INDEX api_keys_app_label ON api_keys (community, label)
+            WHERE revoked IS NULL AND handle IS NULL;
 
         CREATE TABLE api_streams (
             id          uuid PRIMARY KEY,

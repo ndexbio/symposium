@@ -289,7 +289,7 @@ def test_the_gate_watches_inbox_until_stopped(suite, admin_dir, cli):
         assert tool(suite, lyra, "publish.py", note(lyra, "lyra", "watched"))[0] == 0
         deadline = time.monotonic() + 60
         while not records(cli, admin_dir) and time.monotonic() < deadline:
-            time.sleep(0.5)
+            time.sleep(0.2)
         assert [i["name"] for i in records(cli, admin_dir)] == ["lyra_note_watched_v1"]
     finally:
         watching.send_signal(signal.SIGINT)

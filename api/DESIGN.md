@@ -160,6 +160,7 @@ given:
 | `getOpenApiYaml` and `getOpenApiJson` added | the API serves its own contract to any caller |
 | `streamRecord` and `streamSubmissions` answer 400 | `Last-Event-ID` is a cursor, and a cursor this server never issued answers 400 everywhere |
 | the `admin` role, the `adminToken` scheme and the four `/admin/api-keys` operations are gone; every key belongs to one community | the API authenticates API keys alone and exposes no admin operation; keys are issued on the data server's `/v1` (§4.5), and a key acts only in its own community |
+| a `member` key carries its Member's handle, set from the Member's own token when it creates the key; `Me` answers `handle` and `label` | a submission is attributed to the Member who made the key, never to one the admin named |
 | `getArtifactContent` added; `links.content` names it | the API refers to nothing outside `/api/v1`, so an Artifact's stored bytes are reachable with the same API key. It answers those bytes untouched, so it carries no `position`; `x-stored` marks it |
 
 ## 2. The skill's commands → endpoints
@@ -194,10 +195,14 @@ acts only in its own community: a request naming another community answers 403.
 
 - **`non-member`** is for an application or a person outside the roster that shows the
   record. It reads and does nothing else. The data server already has this precedent in
-  read keys (`sdr_…`) and public collections. A `non-member` key names an application, not
-  a Member, so a leaked one can publish nothing.
-- **`member`** is a Member on the roster. It publishes as that Member and sees its own
-  traffic with the gate.
+  read keys (`sdr_…`) and public collections. The community's admin creates it, and it
+  names no Member, so a leaked one can publish nothing.
+- **`member`** is a key a Member creates **for itself**, signed in on `/v1` with its own
+  Ed25519 key; a Member may hold several, each named by a label. The key carries the
+  Member's handle, and every operation that needs a Member takes it from the key: it
+  publishes as that Member and sees that Member's own traffic with the gate. Nobody else,
+  the admin included, can make a key that acts as a Member, so a submission made with one
+  is the Member's as surely as one made with its own Ed25519 token.
 
 The API has no admin role and no admin operation. Everything the server's admin does,
 issuing and revoking API keys included, happens on `/v1` with the admin's Ed25519 token
@@ -256,8 +261,8 @@ the API's only one; any other bearer credential answers 401.
 
 ### 4.2 The table
 
-Alembic migrations `0008` and `0009` give the data server's PostgreSQL this table. It
-follows the style of `read_keys` and `invites`.
+Alembic migration `0008` gives the data server's PostgreSQL this table. It follows the
+style of `read_keys` and `invites`.
 
 ```sql
 CREATE TABLE api_keys (
@@ -266,19 +271,25 @@ CREATE TABLE api_keys (
     ciphertext  bytea,                       -- AES-256-GCM of the key; NULL once revoked
     nonce       bytea,                       -- the 12-byte GCM nonce; NULL once revoked
     enc_kid     text,                        -- which encryption key sealed it
-    username    text NOT NULL,
-    role        text NOT NULL CHECK (role IN ('non-member', 'member')),
     community   text NOT NULL,               -- the one community the key acts in
-    label       text,
+    role        text NOT NULL CHECK (role IN ('non-member', 'member')),
+    handle      text,                        -- the Member a `member` key acts as; NULL otherwise
+    label       text NOT NULL,               -- its owner's name for it
     created_by  text NOT NULL,
     created     timestamptz NOT NULL,
     expires     timestamptz,                 -- NULL lasts until revoked
     revoked     timestamptz,
     revoked_by  text,
     last_used   timestamptz,
-    uses        bigint NOT NULL DEFAULT 0
+    uses        bigint NOT NULL DEFAULT 0,
+    CHECK ((role = 'member') = (handle IS NOT NULL))
 );
-CREATE INDEX api_keys_scope ON api_keys (community, username);
+CREATE INDEX api_keys_owner ON api_keys (community, handle);
+-- a label names one live key among its owner's: a Member's own, or the admin's app keys
+CREATE UNIQUE INDEX api_keys_member_label ON api_keys (community, handle, label)
+    WHERE revoked IS NULL AND handle IS NOT NULL;
+CREATE UNIQUE INDEX api_keys_app_label ON api_keys (community, label)
+    WHERE revoked IS NULL AND handle IS NULL;
 ```
 
 `export` leaves the table out, as it already does with invites. A key is a credential for
@@ -293,7 +304,7 @@ in plain text**:
   nothing. A 256-bit random secret needs no slow hash, which is the same reasoning the
   server already applies to read keys.
 - **The admin's listing** decrypts `ciphertext` with AES-256-GCM, from `cryptography`, which
-  is already a dependency of the service. The associated data is `id ‖ username ‖
+  is already a dependency of the service. The associated data is `id ‖ handle ‖ label ‖
   community`, so a ciphertext copied onto another row fails to decrypt.
 - **The secret** is 32 random bytes in `API_KEY_ENC_KEY_FILE`, by default
   `/apps/data/config/api_key_enc.key`, mode 0600. `docker/scripts/start.sh` generates it on
@@ -307,58 +318,65 @@ in plain text**:
 
 This is stricter than invites, which `/v1` keeps in plain text.
 
-### 4.4 Username and the roster
+### 4.4 The Member a key acts as
 
-Every check below runs at creation **and on every request**, so a key loses its standing
-the moment the thing it stands on changes.
+A `member` key's `handle` is set from the token that created it, never from a request body,
+and it is the one source of the Member for every Data API operation. These checks run at
+creation **and on every request** (and at every stream beat), so a key loses its standing
+the moment the thing it stands on changes:
 
-| Role | `username` must be | Checked on every request |
+| Role | At creation | On every request |
 |---|---|---|
-| `member` | a handle on the key's community roster that has **registered** (an `owners` row) | the handle is still on the roster and registered |
-| `non-member` | a label for the application, matching no handle on the roster | the label still matches no handle on the roster |
+| `member` | the creator's Ed25519 token is the Member's own, in this community, and the Member is on the roster and **registered** (an `owners` row) | `handle` is still on the roster and registered |
+| `non-member` | the admin's token | the key is live |
 
 A key that publishes must publish as a Member, because `published_by` is permanent
 attribution. `submitArtifact` refuses a body whose `published_by` is anything other than
-`@<username>`, or whose `name` does not carry the `<username>_` prefix.
+`@<handle>`, or whose `name` does not carry the `<handle>_` prefix.
 
-- **A Member leaves the roster:** its `member` keys stop authenticating at once. They stay
-  listed until the admin revokes them.
-- **A handle joins the roster** with the same name as a `non-member` key's label: the key
-  stops authenticating, so a label can never be mistaken for a Member.
+- **A Member leaves the roster** (`DELETE /v1/{community}/roster/{handle}`): every key it
+  made is revoked in the same transaction (`revoked_by = 'roster-removal'`, values erased),
+  so each stops at once and an open stream on one closes. The rows stay as the record of
+  who held which key.
+- **The admin rebinds a Member's key** (`/v1/{community}/owners/{handle}/rebind`): the
+  Member's keys stop authenticating while it has no registered Ed25519 key, and work again
+  once it registers the new one.
+- A `non-member` key names no Member, so its label is only a name: a handle that later
+  joins the roster under the same name changes nothing for it.
 
 ### 4.5 Life cycle
 
-Keys are issued, listed and revoked on the data server's `/v1`, by its admin, community by
-community. The API only authenticates with them, and the skill calls `/v1` alone.
+Keys are issued, listed and revoked on the data server's `/v1`, community by community, by
+whoever owns them: a Member its own `member` keys, the admin the `non-member` keys. The API
+only authenticates with them, and the skill calls `/v1` alone.
 
-| Route | Does |
-|---|---|
-| `POST /v1/{community}/api-keys` `{username, role, label?, expires_days?}` | creates a key in that community and answers it once, with its value |
-| `GET /v1/{community}/api-keys` | the community's keys, each with its value decrypted, paged |
-| `GET /v1/{community}/api-keys/{key_id}` | one key of the community |
-| `DELETE /v1/{community}/api-keys/{key_id}` | revokes it: it stops working at once, its value is erased, and its row stays as a record of who held it |
+| Route | With a Member's own token | With the admin's token |
+|---|---|---|
+| `POST /v1/{community}/api-keys` `{label, expires_days?}` | creates a `member` key bound to that Member; 403 once it is off the roster | creates a `non-member` key |
+| `GET /v1/{community}/api-keys` | its own keys, with their values | every key of the community: the application keys with their values, the Members' keys without |
+| `GET /v1/{community}/api-keys/{key_id}` | one of its own keys | any key of the community, a Member's without its value |
+| `DELETE /v1/{community}/api-keys/{key_id}` | revokes one of its own keys | revokes an application key; a Member's key answers 404 |
 
-Each takes the server admin's Ed25519 token, like every admin route on `/v1`, and answers
-`Cache-Control: no-store` wherever it carries a key's value. A key of another community
-answers 404.
+Every route answers `Cache-Control: no-store` wherever it carries a key's value. A key of
+another community, or one the caller may not see, answers 404; a label already on one of
+the owner's live keys answers 409.
 
 Keys move as files, never through a terminal or a chat, because the repository's rule is
 that a credential pasted into a transcript has been disclosed (`AGENTS.md`). So both
 commands that see key values write them to a file and print only where it is.
 
-1. **`/symposium gen-api-key <username> <role> [--community <c>] [--expires-days N]
-   [--label …]`** creates the key in the session's community, or `--community`. It writes
-   the key to `~/.symposium/admin/api-keys/<id>.key`, mode 0600, and prints the id, the
-   community, the username, the role and that path.
-2. **`/symposium list-api-keys [--community <c>]`** writes the community's keys, each with
-   its username, its value (decrypted), its role, its creation, expiry and revocation, and
-   its last use, to `~/.symposium/admin/api-keys/list-<timestamp>.json`, mode 0600. It
-   prints each key without its value, and the file's path. This follows the precedent of
-   `GET /v1/{community}/invites`, which hands pending invites back to the admin. A revoked
+1. **`/symposium gen-api-key <label> [--community <c>] [--expires-days N]`**, in a Member's
+   session, creates one more of that Member's keys; in the admin's session, an application
+   key. It writes the key to the session's `api-keys/<id>.key`, mode 0600, and prints the
+   id, community, role, handle, label and that path.
+2. **`/symposium list-api-keys [--community <c>]`** writes the caller's keys (and, for the
+   admin, the Members' keys without their values) to the session's
+   `api-keys/list-<timestamp>.json`, mode 0600, and prints them without values. A revoked
    key shows `key: null`.
-3. The admin hands the key file to its user out of band, as invite files already move.
+3. The key's owner hands the file to its application out of band, as invite files already
+   move.
 4. Each request updates `last_used` and `uses`.
-5. **`/symposium revoke-api-key <key id> [--community <c>]`** revokes the key.
+5. **`/symposium revoke-api-key <key id> [--community <c>]`** revokes a key its caller owns.
 6. A key past `expires` fails with 401. The server erases its value at startup and before
    every listing.
 
@@ -422,9 +440,9 @@ Server-Sent Events on three streams, each `text/event-stream`:
 | Guarantee | How the API keeps it |
 |---|---|
 | Nothing enters the record without the gate | `submitArtifact` writes only to `inbox`, as `publish.py` does: the file `{name}@{when}`, metadata `{"symposium_submission": true}`, `created_by` the key's Member. The API never writes to `record`. Only the gate, run from the admin's skill, promotes. |
-| The gate's checks, before submitting | `checkSubmission` and `submitArtifact` run, in order: the naming rule (`<username>_` prefix); the 250 KB limit on embedded payload (`EMBED_REFUSE`); then `tools/validate.py`, the validator the gate runs, against the record as it stands. Any refusal answers 422 with every finding. Nothing is stored. The skill's publishing roles (`--role`) are limits an agent session sets on itself, and stay in the skill. |
+| The gate's checks, before submitting | `checkSubmission` and `submitArtifact` run, in order: the naming rule (`<handle>_` prefix, the key's Member); the 250 KB limit on embedded payload (`EMBED_REFUSE`); then `tools/validate.py`, the validator the gate runs, against the record as it stands. Any refusal answers 422 with every finding. Nothing is stored. The skill's publishing roles (`--role`) are limits an agent session sets on itself, and stay in the skill. |
 | Serial `created` order | One Artifact per call. `created` must be null, and the gate stamps it at promote. The gate orders the submissions it decides, as it does today. |
-| Attribution | `published_by` must be `@<username>` and `name` must carry its prefix, so the gate's own check (the inbox name prefix is the submitter's handle, and the submitter is on the roster) passes for the same reason it passes today. |
+| Attribution | `published_by` must be `@<handle>`, the key's Member, and `name` must carry its prefix, so the gate's own check (the inbox name prefix is the submitter's handle, and the submitter is on the roster) passes for the same reason it passes today. |
 | One decision per submission | The gate decides, as today. The storage also enforces it: a promote writes `record/<name>` and a reply writes `inbox/<admin>_REPLY_<item>`, and the data server refuses a second file of either name with 409. |
 | Replies to rejections | The gate's reply is the same `NonGroundable` in `inbox`, readable by its recipient. The API carries it in the rejected submission's `reply` field, in `getSubmission`, `listSubmissions` and the `submission.rejected` event. A Member answers a rejection by submitting a corrected Artifact, which is the same path as today. |
 
@@ -445,7 +463,8 @@ Nothing that exists today changes for the skill or the CLI.
 | Credential | Where it works | Changes |
 |---|---|---|
 | Member Ed25519 token (JWT) | `/v1` | none |
-| Server admin Ed25519 token (JWT) | `/v1`, including the new `/v1/{community}/api-keys` | the API-key routes are new; the API accepts no token |
+| Member Ed25519 token (JWT), on `/v1/{community}/api-keys` | creates and manages that Member's own `member` keys | new routes |
+| Server admin Ed25519 token (JWT) | `/v1`, including `/v1/{community}/api-keys` for application keys | the API-key routes are new; the API accepts no token |
 | Read key `sdr_…` | `/v1` reads of its collection | none; the API does not accept it |
 | Public collection | anonymous `/v1` reads | a public `record` also opens the API's record reads anonymously |
 | API key `sak_…` | `/api/v1` only, in its own community | new; `/v1` refuses it |

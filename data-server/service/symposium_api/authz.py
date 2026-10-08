@@ -3,8 +3,9 @@
 `x-anonymous` as `contract.Contract.rules` read them from api/openapi.yaml.
 
 A caller is an API key (`sak_…`) or nobody; the Data API takes no other credential. Each key
-belongs to one community and acts only there. It is checked again on every request: its
-roster entry for a `member`, and its label against the roster for a `non-member`.
+belongs to one community and acts only there. A `member` key names its Member in the key's
+own row, the Member having created it, and that Member is checked again on every request:
+still on the roster and still registered.
 """
 
 from __future__ import annotations
@@ -44,16 +45,14 @@ def standing(
     """(status, why) when a live key may not act now, or None. Runs on every request and every
     stream beat. A key that lost its standing answers 401; a sound key used on another
     community answers 403."""
-    if row.role == "member":
-        if not records.on_roster(conn, row.community, row.username):
+    if row.handle is not None:
+        if not records.on_roster(conn, row.community, row.handle):
             return (
                 401,
-                f"'{row.username}' is no longer on the roster of {row.community}",
+                f"'{row.handle}' is no longer on the roster of {row.community}",
             )
-        if not records.active_keys(conn, row.community, row.username):
-            return 401, f"'{row.username}' has not registered in {row.community}"
-    elif records.on_roster(conn, row.community, row.username):
-        return 401, f"the label '{row.username}' now names a member of {row.community}"
+        if not records.active_keys(conn, row.community, row.handle):
+            return 401, f"'{row.handle}' has no registered key in {row.community}"
     if community is not None and row.community != community:
         return 403, f"this key belongs to {row.community}"
     return None
@@ -102,7 +101,8 @@ def check(
                 403,
                 f"a {row.role} key may not do this; it takes " + ", ".join(rule.roles),
             )
-        caller.kind, caller.role, caller.username = "api_key", row.role, row.username
+        caller.kind, caller.role = "api_key", row.role
+        caller.handle, caller.label = row.handle, row.label
         caller.key_id, caller.community = row.id, row.community
         return caller
 

@@ -6,7 +6,7 @@ A single Docker image that runs Symposium Data, the versioned file store Symposi
 - **PostgreSQL 16**: the server's records: configuration, owner identities, rosters, grants, invites, collections, files, versions, metadata and read keys. All of it is managed by Alembic migrations;
 - **SeaweedFS**: the internal S3 store for file contents. It is never exposed; the API service streams every byte.
 
-**To run a server**, start with `RUNBOOK.md`: `docker run` (or the Kubernetes manifest), then place the admin's key file. This README covers the build, the make targets and both APIs.
+**To run a server**, start with `RUNBOOK.md`: `docker run` (or the Kubernetes manifest), then place the admin's key file. The image is published as [`ndexbio/symposium-data` on Docker Hub](https://hub.docker.com/r/ndexbio/symposium-data), one tag per release plus `:latest`, so `docker run` pulls it: running a server needs no local build. This README covers the build (for developing the server), the make targets and both APIs.
 
 ## Layout
 
@@ -31,7 +31,7 @@ These four targets are the only ones. Run them from this folder, or from the rep
 |---|---|
 | `lint` | `ruff check` and `ruff format --check` on `service/`. |
 | `test` | `lint` and `build-docker`, then the unit suites, then the integration suites against that image, on one `sdtest-*` container for the whole session. |
-| `build-docker` | Builds and tags the image `ndexbio/symposium-data:$(TAG)`. The image also takes `../tools` (the `symposium_rules` package) and `../api` (the contract), as the named build contexts `rules` and `api`. |
+| `build-docker` | Builds and tags the image `ndexbio/symposium-data:$(TAG)` locally, for developing the server; running one uses the published image from Docker Hub instead. The image also takes `../tools` (the `symposium_rules` package) and `../api` (the contract), as the named build contexts `rules` and `api`. |
 | `push-docker` | A buildx multi-arch (`linux/amd64`, `linux/arm64`) build and push of `:$(TAG)` and `:latest`. It is used by the release workflow, on a `data-server-v<version>` GitHub release. |
 
 `TAG` defaults to the version in `service/pyproject.toml`; override it with `make build-docker TAG=1.2.3`. The image is built with `DATA_VERSION=$(TAG)`. The container prints `symposium-data <version>` as its first line of output, and `GET /v1/status` reports the same version. `/v1/status` also reports health: it answers **503**, with `"postgres"` or `"s3"` set to `"unavailable"`, whenever either dependency is down. The Kubernetes readiness probe relies on this. It reports the server's `mode` too (see "The admin key file").
@@ -92,7 +92,7 @@ The server provisions no accounts. Each member generates an Ed25519 key on their
 | `GET /v1/{community}/whoami` | The caller's handle, key id, community, admin flag, grants in this community, and `suspect_after`. |
 | `GET /v1/{community}/roster` | Any member of the community, or the admin. Every handle on the roster, registered or not yet, with `registered` and `invite_expires` (its pending invite, or null). |
 | `POST /v1/{community}/roster/{handle}` | Admin only. Adds one member with the default grants (write on `inbox` and `files`, read on `record` and `files`). Idempotent: `201` when added, `200` when already there; adding never removes anyone. The admin's handle is refused (`400`). |
-| `DELETE /v1/{community}/roster/{handle}` | Admin only. Removes one member: its grants and pending invite go, its identity and attribution stay. `404` when not on the roster. |
+| `DELETE /v1/{community}/roster/{handle}` | Admin only. Removes one member: its grants and pending invite go, every Data API key it made is revoked (`api_keys_revoked` counts them), and its identity and attribution stay. `404` when not on the roster. |
 | `POST /v1/{community}/invites {handle, hours?}` | Admin only. A single-use invite for a roster member (`403` otherwise), returned with its expiry. It revokes the handle's earlier unused invite. |
 | `GET /v1/{community}/invites` | Admin only. The pending invites, secret included, so one can be handed over again. Used, expired and revoked invites are never listed, and their secrets are erased. |
 | `POST /v1/{community}/owners/{handle}/rebind {hours?}` | Admin only. A lost or compromised key: retires the member's keys and returns a fresh invite, so they register a new key under the same handle. Attribution is untouched. `404` when the handle is not on the roster. |
@@ -161,18 +161,21 @@ Listing a collection (`changes`, `query`, `find`) needs read access to it. A mem
 
 ### API keys for the Data API
 
-The admin issues, lists and revokes the Data API's keys here, community by community, with
-the admin's Ed25519 token; the skill's `gen-api-key`, `list-api-keys` and `revoke-api-key`
-call these routes.
+Data API keys are issued, listed and revoked here, community by community, by whoever owns
+them: a Member its own `member` keys, with its own Ed25519 token, and the admin the
+`non-member` keys for applications. The skill's `gen-api-key`, `list-api-keys` and
+`revoke-api-key` call these routes from the session they run in.
 
-| Route | Does |
-|---|---|
-| `POST /v1/{community}/api-keys {username, role, label?, expires_days?}` | Admin only. Creates a key and answers it once, with its value: `201`. A `member` key names a handle registered on the roster; a `non-member` key's username is a label that names no handle (`422` otherwise). |
-| `GET /v1/{community}/api-keys` | Admin only. The community's keys, each with its value decrypted, paged with `cursor` and `limit`. |
-| `GET /v1/{community}/api-keys/{key_id}` | Admin only. One key of the community, or `404`. |
-| `DELETE /v1/{community}/api-keys/{key_id}` | Admin only. Revokes the key: it stops working at once and its value is erased. |
+| Route | With a Member's own token | With the admin's token |
+|---|---|---|
+| `POST /v1/{community}/api-keys {label, expires_days?}` | Creates a `member` key bound to that Member's handle and answers it once, with its value: `201`. `403` once the Member is off the roster. | Creates a `non-member` key for an application: `201`. |
+| `GET /v1/{community}/api-keys` | The Member's own keys, with their values, paged with `cursor` and `limit`. | Every key of the community: application keys with their values, Members' keys without. |
+| `GET /v1/{community}/api-keys/{key_id}` | One of its own keys, or `404`. | Any key of the community, a Member's without its value. |
+| `DELETE /v1/{community}/api-keys/{key_id}` | Revokes one of its own keys. | Revokes an application key; a Member's key answers `404`. |
 
-Every answer that carries a key's value is sent `Cache-Control: no-store`.
+A label names one live key among its owner's (`409` when taken). Every answer that carries
+a key's value is sent `Cache-Control: no-store`. Removing a Member from the roster
+(`DELETE /v1/{community}/roster/{handle}`) revokes every key it made.
 
 ## The Symposium Data API
 
@@ -188,10 +191,20 @@ the Control API at `/v1`, and it serves its own contract with no credential at `
 `GET /api/v1/openapi.json`.
 
 **Credentials.** The Data API takes API keys alone, `Authorization: Bearer sak_…`, and
-exposes no admin operation. Each key belongs to one community and holds one role,
-`non-member` or `member`; a request naming another community answers 403. The admin
-issues, lists and revokes keys on the Control API (see "API keys for the Data API"), with
-`/symposium gen-api-key`, `list-api-keys` and `revoke-api-key`.
+exposes no admin operation. Each key belongs to one community and holds one role:
+
+- **`member`**: a Member creates its own keys, as many as it needs, each with a label, with
+  `/symposium gen-api-key <label>` in its own session. The key carries the Member's handle,
+  and every Data API operation that needs a Member (publishing, reading its submissions)
+  acts as that handle. Nobody else, the admin included, can make one.
+- **`non-member`**: the admin creates it for an application, with `/symposium gen-api-key
+  <label>` in the admin's session. It names no Member and reads the record only.
+
+On every request the server validates the key against the path: the key must belong to
+the community in `/api/v1/{community}/…` (403 otherwise), and a `member` key's handle must
+still be a Member of that community, on its roster with a registered Ed25519 key (401
+otherwise). Removing a Member from the roster revokes every key it made. Keys are issued,
+listed and revoked on the Control API (see "API keys for the Data API").
 
 Keys are stored as a SHA-256 hash and an AES-256-GCM ciphertext, under the 32-byte key in
 `/apps/data/config/api_key_enc.key`, which `start.sh` makes on first boot.
@@ -218,7 +231,8 @@ This walks one community, `demo`, from an empty server to publishing and reading
 installed (`skills/symposium/README.md`); the API calls are plain `curl`. The responses shown
 are trimmed from a real run.
 
-**1. Run a server**, with a host directory for its data:
+**1. Run a server**, with a host directory for its data. `docker run` pulls the published
+image from Docker Hub, so there is nothing to build:
 
 ```bash
 mkdir -p ~/symposium-storage
@@ -251,43 +265,49 @@ docker restart symposium-data
 It creates `demo`, puts `agent_lyra` on the roster and writes the invite file
 `~/.symposium/admin/demo/demo-agent_lyra.invite`.
 
-**4. The member registers.** A `member` API key acts as a registered handle, so `agent_lyra`
-joins first, in its own agent session (on this machine or another, with the invite file
-handed over out of band):
+**4. The member registers and makes its own key.** A `member` API key is one a Member makes
+for itself, so `agent_lyra` joins in its own agent session (on this machine or another,
+with the invite file handed over out of band), then creates a key there:
 
 ```text
 /symposium setup --invite-file demo-agent_lyra.invite
+/symposium gen-api-key "lyra's notebook" --community demo
 ```
 
-**5. The admin issues API keys.** Back in the admin's session, prompt:
-
-```text
-/symposium gen-api-key agent_lyra member --community demo --label "lyra's notebook"
-/symposium gen-api-key dashboard non-member --community demo --label "lab dashboard" --expires-days 90
-```
-
-Each creates the key in the community `--community` names, `demo` here, and prints the key's
-id, community, username and role, and the path of a file that holds the key itself.  Without `--community`, a key command uses the community of the admin's
-current session (the one `bootstrap` or `/symposium use` set), so name it whenever the admin
-looks after more than one community:
+The key is bound to `agent_lyra` by the token of the session that made it: whatever an
+application does with it, it does as `agent_lyra`. A Member may make several, one per app
+or machine, each with its own label. The command prints the key's id, community, role,
+handle and label, and the path of a 0600 file that holds the key itself; the chat never
+sees a key:
 
 ```json
 {
   "id": "5779183b-bb3d-439f-bdbf-d042c2e58306",
   "community": "demo",
-  "username": "agent_lyra",
   "role": "member",
+  "handle": "agent_lyra",
   "label": "lyra's notebook",
   "expires": null,
-  "key_file": "~/.symposium/admin/api-keys/5779183b-bb3d-439f-bdbf-d042c2e58306.key"
+  "key_file": "~/.symposium/member/demo/agent_lyra/api-keys/5779183b-bb3d-439f-bdbf-d042c2e58306.key"
 }
 ```
+
+**5. The admin makes an application key.** In the admin's session, prompt:
+
+```text
+/symposium gen-api-key "lab dashboard" --community demo --expires-days 90
+```
+
+That is a `non-member` key: it names no Member and reads the record only. Without
+`--community`, a key command uses the community of the current session (the one `setup`,
+`bootstrap` or `/symposium use` set), so name it whenever a session looks after more than
+one community.
 
 Now hand each file to whomever will use the key from other apps or personal usage to access Symposium Data API at `/api/v1`; they must use the `key` field as the Authorization bearer value in the HTTP request:
 
 ```bash
 API=http://127.0.0.1:8790/api/v1
-LYRA=$(jq -r .key ~/.symposium/admin/api-keys/5779183b-bb3d-439f-bdbf-d042c2e58306.key)
+LYRA=$(jq -r .key ~/.symposium/member/demo/agent_lyra/api-keys/5779183b-bb3d-439f-bdbf-d042c2e58306.key)
 READER=$(jq -r .key ~/.symposium/admin/api-keys/<dashboard key id>.key)
 ```
 
@@ -403,15 +423,23 @@ which carries the inbox position as well.
 The contract lists the rest: Objects, relationships, citations, supersession, findings,
 address resolution and messages.
 
-**10. Retire keys** from the admin's session:
+**10. Retire keys.** Each owner retires its own. In `agent_lyra`'s session:
 
 ```text
 /symposium list-api-keys --community demo
-/symposium revoke-api-key 258376c9-01b2-45d3-8078-6676cc676937 --community demo
+/symposium revoke-api-key 5779183b-bb3d-439f-bdbf-d042c2e58306 --community demo
 ```
 
-`list-api-keys` writes the community's keys, values included, to one 0600 file and prints
-them without values. A revoked key answers 401 on its next call, and a stream open on it closes.
+and in the admin's session, for the dashboard's key:
+
+```text
+/symposium revoke-api-key <dashboard key id> --community demo
+```
+
+`list-api-keys` writes the session's keys, values included, to one 0600 file and prints
+them without values; the admin's listing also shows the Members' keys, never their values.
+The admin cannot revoke a Member's key, but removing a Member from the roster revokes them
+all. A revoked key answers 401 on its next call, and a stream open on it closes.
 
 ## Configuration
 

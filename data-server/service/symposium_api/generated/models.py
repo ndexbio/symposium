@@ -470,7 +470,13 @@ class KeyRole(StrEnum):
 
 
 class Me(BaseModel):
-    username: str
+    handle: Annotated[
+        Optional[str],
+        Field(
+            description="The Member a `member` key acts as; null for a `non-member` key."
+        ),
+    ]
+    label: Annotated[str, Field(description="The name the key's owner gave it.")]
     role: KeyRole
     community: CommunityName
     key_id: UUID

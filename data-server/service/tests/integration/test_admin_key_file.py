@@ -3,8 +3,8 @@ in `AdminKeyFile` and unit-tested; these check the first bind, the non-operation
 the rebind end to end, restarting only the API process: the container keeps running."""
 
 import json
+import re
 import time
-from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -123,42 +123,61 @@ def test_a_new_key_file_rebinds_the_admin(server, tmp_path):
         )
 
 
-def restarted(server) -> str:
-    """Restart the API and wait for the new process, not the old one, to finish starting; the
-    old one can still answer for a moment, with the state it had. -> the new process's log.
+STATUS = ("supervisorctl", "-c", "/tmp/supervisord.conf", "status", "api-server")
+
+
+def api_pid(server) -> str | None:
+    """The API process's pid, as supervisord reports it, or None while it has none."""
+    found = re.search(r"\bpid (\d+)", server.exec(*STATUS).stdout)
+    return found.group(1) if found else None
+
+
+def answering(server) -> bool:
+    try:
+        return httpx.get(server.url + "/v1/status", timeout=2).status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+def restarted(server) -> dict:
+    """Restart the API and wait until the new process answers. -> its `/v1/status`.
 
     It first waits for supervisord to count the current process as RUNNING (up for its first
-    5 s): a process ended before that is a failed start, and after a few supervisord gives up."""
-    ctl = ("supervisorctl", "-c", "/tmp/supervisord.conf", "status", "api-server")
+    5 s): a process ended before that is a failed start, and after a few supervisord gives up.
+    Then it signals the process and polls every 0.2 s until supervisord no longer reports the
+    old pid and `/v1/status` answers: with the old process gone, the answer is the new one's."""
     deadline = time.time() + 30
-    while "RUNNING" not in server.exec(*ctl).stdout:
+    while "RUNNING" not in server.exec(*STATUS).stdout:
         assert time.time() < deadline, "the API never reached RUNNING"
         time.sleep(0.2)
-    since = datetime.now(UTC).isoformat()
+    old = api_pid(server)
     server.restart_api()
     deadline = time.time() + 30
-    while True:
-        logs = docker("logs", "--since", since, server.name)
-        log = logs.stdout + logs.stderr
-        if "Application startup complete." in log:
-            return log
-        assert time.time() < deadline, f"the API never started again:\n{log[-3000:]}"
+    while not (api_pid(server) != old and answering(server)):
+        assert time.time() < deadline, (
+            f"the API never answered again ({server.exec(*STATUS).stdout.strip()})"
+        )
         time.sleep(0.2)
+    return server.status()
 
 
 def test_the_key_file_is_read_from_the_mounted_directory_too(server):
     # where the Kubernetes manifest mounts the Secret holding it: /apps/admin-key/
     mounted = f"/apps/admin-key/admin_pub_{ADMIN}.key"
+    saved = server.exec("cat", BACKUP).stdout
     try:
         assert server.exec("mkdir", "-p", "/apps/admin-key").returncode == 0
         assert server.exec("mv", KEY_FILE, mounted).returncode == 0
-        log = restarted(server)
-        # read from the file itself: without it the server would run from its backup and say so
-        assert "running from the backup" not in log
-        status = server.status()
+        # with no backup to fall back on, the server is operational only by reading the
+        # mounted file, and reading it saves the backup again
+        assert server.exec("rm", BACKUP).returncode == 0
+        status = restarted(server)
         assert status["mode"] == "operational" and status["admin"] == ADMIN
         assert status["fingerprint"] == fingerprint(server.admin_key)
+        assert json.loads(server.exec("cat", BACKUP).stdout) == json.loads(saved)
     finally:
+        if server.exec("test", "-f", BACKUP).returncode != 0:
+            server.exec("sh", "-c", f"cat > {BACKUP}", input=saved)
         server.exec("mv", mounted, KEY_FILE)
         server.exec("rmdir", "/apps/admin-key")
         restarted(server)

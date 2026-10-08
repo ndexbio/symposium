@@ -25,7 +25,6 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -34,7 +33,7 @@ from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from . import API_VERSION, version
 from .admin_key import AdminKeyFile, AdminMode
-from .api_keys import ApiKeys, Sealer, key_file_from
+from .api_keys import ApiKeys, LabelInUse, Sealer, key_file_from
 from .archive import Archive, Malformed, Refused
 from .auth import PublicKeys, Secrets, Tokens
 from .jobs import Jobs
@@ -480,8 +479,8 @@ def add_member(community: str, handle: str, request: Request, response: Response
 
 @app.delete("/v1/{community}/roster/{handle}")
 def remove_member(community: str, handle: str, request: Request):
-    """Remove one handle: its grants and pending invite go; its identity and attribution stay
-    (admin only)."""
+    """Remove one handle: its grants and pending invite go, and its Data API keys are revoked;
+    its identity and attribution stay (admin only)."""
     handle = roster_handle(handle)
     with db.connection() as conn:
         community = community_of(conn, community)
@@ -489,7 +488,13 @@ def remove_member(community: str, handle: str, request: Request):
         removed = records.remove_from_roster(conn, community, handle)
         if not removed:
             refuse(404, f"'{handle}' is not on the {community} roster")
-        return {"community": community, "handle": handle, "removed": True}
+        revoked = api_keys.revoke_for(conn, community, handle, "roster-removal")
+        return {
+            "community": community,
+            "handle": handle,
+            "removed": True,
+            "api_keys_revoked": revoked,
+        }
 
 
 @app.post("/v1/{community}/invites", status_code=201)
@@ -539,22 +544,28 @@ def list_invites(community: str, request: Request):
         }
 
 
-# ── the Data API's keys: issued here, per community, by the admin (api/DESIGN.md §4) ─────────
+# ── the Data API's keys (api/DESIGN.md §4): a Member makes its own, the admin makes app keys ─
 class ApiKeyIn(BaseModel):
-    username: str = Field(min_length=1, max_length=64)
-    role: Literal["non-member", "member"]
-    label: str | None = Field(default=None, max_length=200)
+    label: str = Field(min_length=1, max_length=200)
     expires_days: int | None = Field(default=None, ge=1, le=366)
 
 
-def api_key_out(row) -> dict:
-    """One key as the admin sees it, its value decrypted; `key` is null once revoked."""
+def key_owner(conn, request: Request, community: str) -> tuple[str, bool]:
+    """(handle, is admin) behind the request's Ed25519 token, in this community."""
+    handle, _ = owner_of(conn, request, community)
+    return handle, records.is_admin(conn, handle)
+
+
+def api_key_out(row, reveal: bool) -> dict:
+    """One key as its caller sees it. Its value only when `reveal` (the key's owner), and null
+    once revoked."""
     out = {
         "id": str(row["id"]),
         "community": row["community"],
-        "username": row["username"],
         "role": row["role"],
-        "key": api_keys.value(row),
+        "handle": row["handle"],
+        "label": row["label"],
+        "key": api_keys.value(row) if reveal else None,
         "created": iso(row["created"]),
         "created_by": row["created_by"],
         "expires": iso(row["expires"]),
@@ -563,9 +574,12 @@ def api_key_out(row) -> dict:
         "last_used": iso(row["last_used"]),
         "uses": row["uses"],
     }
-    if row["label"]:
-        out["label"] = row["label"]
     return out
+
+
+def owns(row, handle: str, admin: bool) -> bool:
+    """A Member owns its own keys; the admin owns the application (`non-member`) keys."""
+    return row["handle"] is None if admin else row["handle"] == handle
 
 
 def api_key_id(key_id: str) -> uuid.UUID:
@@ -579,38 +593,31 @@ def api_key_id(key_id: str) -> uuid.UUID:
 def create_api_key(
     community: str, body: ApiKeyIn, request: Request, response: Response
 ):
-    """A Data API key for this community, answered once with its value (admin only). A
-    `member` key names a handle registered on the roster and publishes as it; a `non-member`
-    key's username is a label that names no handle."""
+    """A Data API key for this community, answered once with its value. A Member's token makes
+    a `member` key bound to that Member, which publishes as it; the admin's token makes a
+    `non-member` key for an application. Its label names it among its owner's live keys."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        admin = require_admin(conn, request, community)
-        if body.role == "member":
-            if not records.on_roster(
-                conn, community, body.username
-            ) or not records.active_keys(conn, community, body.username):
-                refuse(
-                    422, f"'{body.username}' is not a registered member of {community}"
-                )
-        elif records.on_roster(conn, community, body.username) or body.username == (
-            records.config(conn, "admin")
+        handle, admin = key_owner(conn, request, community)
+        if not admin and not (
+            records.on_roster(conn, community, handle)
+            and records.active_keys(conn, community, handle)
         ):
-            refuse(
-                422,
-                f"a non-member key's label must match no handle; '{body.username}' does",
+            refuse(403, f"'{handle}' is not a registered member of {community}")
+        try:
+            row, _ = api_keys.create(
+                conn,
+                community=community,
+                handle=None if admin else handle,
+                label=body.label,
+                expires_days=body.expires_days,
+                created_by=handle,
             )
-        row, _ = api_keys.create(
-            conn,
-            username=body.username,
-            role=body.role,
-            community=community,
-            label=body.label,
-            expires_days=body.expires_days,
-            created_by=admin,
-        )
+        except LabelInUse:
+            refuse(409, f"a live key is already labelled '{body.label}'")
         conn.commit()
         response.headers["Cache-Control"] = "no-store"
-        return api_key_out(row)
+        return api_key_out(row, reveal=True)
 
 
 @app.get("/v1/{community}/api-keys")
@@ -620,11 +627,11 @@ def list_api_keys(
     response: Response,
     cursor: str | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
-    username: str | None = None,
     include_revoked: bool = True,
 ):
-    """The community's keys in creation order, each with its value, so the admin can hand a
-    lost key back (admin only). Expired keys' values are erased before anything is listed."""
+    """A Member's own keys, with their values; for the admin, every key in the community, the
+    application keys with their values and the Members' keys without. Expired keys' values
+    are erased before anything is listed."""
     after = None
     if cursor:
         try:
@@ -636,7 +643,7 @@ def list_api_keys(
             refuse(400, "the cursor is not one this server issued")
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        handle, admin = key_owner(conn, request, community)
         api_keys.sweep(conn)
         conn.commit()
         rows = api_keys.page(
@@ -644,7 +651,7 @@ def list_api_keys(
             community=community,
             after=after,
             limit=limit + 1,
-            username=username,
+            handle=None if admin else handle,
             include_revoked=include_revoked,
         )
     more, rows = len(rows) > limit, rows[:limit]
@@ -657,36 +664,38 @@ def list_api_keys(
     response.headers["Cache-Control"] = "no-store"
     return {
         "community": community,
-        "items": [api_key_out(r) for r in rows],
+        "items": [api_key_out(r, reveal=owns(r, handle, admin)) for r in rows],
         "next": following,
     }
 
 
 @app.get("/v1/{community}/api-keys/{key_id}")
 def get_api_key(community: str, key_id: str, request: Request, response: Response):
-    """One of the community's keys, with its value (admin only)."""
+    """One key: a Member reads its own, with its value; the admin reads any key of the
+    community, a Member's without its value."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        handle, admin = key_owner(conn, request, community)
         row = api_keys.row(conn, community, api_key_id(key_id))
-        if row is None:
+        if row is None or not (admin or row["handle"] == handle):
             refuse(404, f"no API key '{key_id}' in {community}")
         response.headers["Cache-Control"] = "no-store"
-        return api_key_out(row)
+        return api_key_out(row, reveal=owns(row, handle, admin))
 
 
 @app.delete("/v1/{community}/api-keys/{key_id}")
 def revoke_api_key(community: str, key_id: str, request: Request):
-    """Revoke one of the community's keys (admin only): it stops authenticating at once, its
-    value is erased, and its row stays as the record of who held it."""
+    """Revoke a key its caller owns: a Member its own, the admin an application key. It stops
+    authenticating at once, its value is erased, and its row stays as the record."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        admin = require_admin(conn, request, community)
-        row = api_keys.revoke(conn, community, api_key_id(key_id), admin)
-        if row is None:
+        handle, admin = key_owner(conn, request, community)
+        row = api_keys.row(conn, community, api_key_id(key_id))
+        if row is None or not owns(row, handle, admin):
             refuse(404, f"no API key '{key_id}' in {community}")
+        row = api_keys.revoke(conn, community, row["id"], handle)
         conn.commit()
-        return api_key_out(row)
+        return api_key_out(row, reveal=False)
 
 
 class RebindIn(BaseModel):

@@ -17,8 +17,8 @@ every data interaction runs the `symposium-data` CLI (R-I1).
     admin-config | roster | invite | rebind-key | suspect-after | purge | export | import
                                            admins: the server admin's commands
     gen-api-key | list-api-keys | revoke-api-key
-                                           admins: the Data API's keys, one community each,
-                                           written as 0600 files under ~/.symposium/admin/api-keys/
+                                           Data API keys, as 0600 files in the session's api-keys/:
+                                           a member's own keys, or the admin's application keys
     data <symposium-data command …>        direct data work: put, get, keys, collection, find, …
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit
@@ -63,10 +63,9 @@ ADMIN = (
     "purge",
     "export",
     "import",
-    "gen-api-key",
-    "list-api-keys",
-    "revoke-api-key",
 )
+# the Data API's keys: a member makes its own, the admin makes applications'
+KEYS = ("gen-api-key", "list-api-keys", "revoke-api-key")
 # the commands that print free text: their session goes on a first line of its own
 FREE_TEXT = {"publish", "validate", "sync", "gate", "serve"}
 # the workflow commands: each runs its tool from the toolchain
@@ -115,7 +114,7 @@ def command_line(command: str, rest: list, cli: list) -> list | None:
         ]
     if command == "port":  # port-ndex
         return [sys.executable, str(SKILL / "scripts" / "port_ndex.py"), *rest]
-    if command in ADMIN:
+    if command in ADMIN or command in KEYS:
         return [*cli, command, *rest]
     if command == "data":
         return [*cli, *rest]

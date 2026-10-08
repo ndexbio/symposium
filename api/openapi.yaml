@@ -28,12 +28,23 @@ info:
 
     **Streams.** Server-Sent Events resume from `Last-Event-ID`, which is a paging cursor.
 
-    **API keys.** The API authenticates API keys alone. The server's admin issues each key
-    for exactly one community, and a key acts only there: a request naming another
-    community answers 403. A key holds one of two roles. `non-member` reads the record.
-    `member` also publishes as its Member and reads its own submissions, with the gate's
-    decision and reply on each. Each operation lists the roles it allows in `x-roles` and in
-    its description.
+    **API keys.** The API authenticates API keys alone. Each key belongs to exactly one
+    community and acts only there: a request naming another community answers 403. A key
+    holds one of two roles:
+
+    - `member`: a Member creates its own on the data server's Control API, signing in with
+      its own Ed25519 key, and may hold several, each with its own label. The key carries
+      the Member's handle, so everything done with it is done as that Member: it publishes
+      as the Member and reads the Member's own submissions, with the gate's decision and
+      reply on each. It also reads the record.
+    - `non-member`: the community's admin creates it for an application. It names no
+      Member and reads the record only.
+
+    On every request the server validates the key against the path: the key must belong to
+    the community in `/{community}/…` (403 otherwise), and a `member` key's handle must be a
+    Member of that community, on its roster with a registered key (401 otherwise).
+
+    Each operation lists the roles it allows in `x-roles` and in its description.
 
     **The gate** runs from the admin's skill (`/symposium gate`), as it does today. The API
     takes submissions into `inbox` and reports the gate's decisions on them.
@@ -760,8 +771,8 @@ paths:
       tags: [members]
       summary: Who this API key acts as
       description: |
-        The key's username, its role, its community and its expiry, and the Member it
-        publishes as where it holds `member`.
+        The key's label, its role, its community and its expiry, and, for a `member` key,
+        the handle of the Member who created it and whom it acts as.
 
         Roles: non-member, member.
       x-roles: [non-member, member]
@@ -794,6 +805,12 @@ paths:
         payload, and the validator. Nothing is stored. A pass means the gate accepts the
         Artifact if the record has not moved. This is `/symposium validate` and
         `publish --check`.
+
+        Requires a `member` API key: one the Member created for itself on the Control API.
+        The key's Member is the one who publishes and whose submissions are read. On every
+        request the server checks that the key belongs to the community in the path
+        (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered Ed25519 key (otherwise 401).
 
         Roles: member.
       x-roles: [member]
@@ -829,6 +846,12 @@ paths:
       description: |
         The key's own submissions in `inbox`, with the gate's decision on each. Ordered by
         submission time ascending, the order the gate reads them in.
+
+        Requires a `member` API key: one the Member created for itself on the Control API.
+        The key's Member is the one who publishes and whose submissions are read. On every
+        request the server checks that the key belongs to the community in the path
+        (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered Ed25519 key (otherwise 401).
 
         Roles: member.
       x-roles: [member]
@@ -871,6 +894,12 @@ paths:
         `published_by` must be the key's Member, `@<username>`, and `name` must carry its
         prefix. A submission the validator fails is refused with 422 and its findings, and
         nothing is stored. This is `/symposium publish`.
+
+        Requires a `member` API key: one the Member created for itself on the Control API.
+        The key's Member is the one who publishes and whose submissions are read. On every
+        request the server checks that the key belongs to the community in the path
+        (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered Ed25519 key (otherwise 401).
 
         Roles: member.
       x-roles: [member]
@@ -916,6 +945,12 @@ paths:
         One submission, its state, and the gate's decision on it: the record Artifact when
         accepted, the gate's reply with its failures when rejected. A `member` key reads only
         its own.
+
+        Requires a `member` API key: one the Member created for itself on the Control API.
+        The key's Member is the one who publishes and whose submissions are read. On every
+        request the server checks that the key belongs to the community in the path
+        (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered Ed25519 key (otherwise 401).
 
         Roles: member.
       x-roles: [member]
@@ -993,6 +1028,12 @@ paths:
         The server re-checks the key at every event and every heartbeat, and closes the stream
         when the key is revoked or expired, or its Member leaves the roster.
 
+        Requires a `member` API key: one the Member created for itself on the Control API.
+        The key's Member is the one who publishes and whose submissions are read. On every
+        request the server checks that the key belongs to the community in the path
+        (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered Ed25519 key (otherwise 401).
+
         Roles: member.
       x-roles: [member]
       security:
@@ -1027,9 +1068,13 @@ components:
       scheme: bearer
       bearerFormat: sak_<43 base64url characters>
       description: |
-        An API key the server's admin issued for one community, sent as
-        `Authorization: Bearer sak_…`. The server matches a key by its SHA-256 digest; it
-        decrypts nothing to authenticate.
+        An API key for one community, sent as `Authorization: Bearer sak_…`: a `member` key a
+        Member created for itself, which carries its handle, or a `non-member` key the admin
+        created for an application. The server matches a key by its SHA-256 digest; it
+        decrypts nothing to authenticate. It then validates the key on every request: the key
+        must belong to the community named in the `/{community}/…` path, or the request
+        answers 403; and a `member` key's handle must still be a Member of that community, on
+        its roster with a registered Ed25519 key, or the request answers 401.
   parameters:
     community:
       name: community
@@ -1128,13 +1173,17 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Unauthorized:
-      description: The credential is absent, unknown, expired or revoked.
+      description: |
+        The credential is absent, unknown, expired or revoked; or a `member` key's handle is
+        no longer a Member of the key's community (off its roster, or with no registered key).
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: The key is valid and its role or its community does not allow this.
+      description: |
+        The key is valid, and its role does not allow this, or it belongs to a community other
+        than the one in the path.
       content:
         application/json:
           schema:
@@ -1856,10 +1905,15 @@ components:
       enum: [non-member, member]
     Me:
       type: object
-      required: [username, role, community, key_id, position]
+      required: [handle, label, role, community, key_id, position]
       properties:
-        username:
+        handle:
           type: string
+          nullable: true
+          description: The Member a `member` key acts as; null for a `non-member` key.
+        label:
+          type: string
+          description: The name the key's owner gave it.
         role:
           $ref: '#/components/schemas/KeyRole'
         community:

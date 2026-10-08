@@ -28,7 +28,7 @@ import httpx
 import pytest
 import yaml
 from openapi_schema_validator import OAS30Validator
-from suite import ADMIN, CLI_DIR, REPO, enroll
+from suite import CLI_DIR, REPO, enroll
 
 API_DIR = REPO / "api"
 SPEC = yaml.safe_load((API_DIR / "openapi.yaml").read_text(encoding="utf-8"))
@@ -248,13 +248,19 @@ def gate(suite, admin_dir: Path) -> str:
 
 def admin_token(suite, admin_dir: Path) -> str:
     """The server admin's Ed25519 token, signed in the way the CLI signs in."""
+    return session_token(suite, admin_dir)
+
+
+def session_token(suite, directory: Path) -> str:
+    """The Ed25519 token of the session in `directory`, signed in the way the CLI signs in:
+    the admin's in the admin's session, a Member's own in its member session."""
     code = (
         f"import sys; sys.path.insert(0, {str(CLI_DIR)!r}); "
-        "from main import Commands; print(Commands().admin().token)"
+        "from main import Commands; print(Commands().signed_in().token)"
     )
     result = subprocess.run(
         [sys.executable, "-c", code],
-        cwd=admin_dir,
+        cwd=directory,
         env=suite.env,
         capture_output=True,
         text=True,
@@ -290,24 +296,15 @@ def key_value(cli_output: dict) -> str:
 
 @pytest.fixture
 def world(suite, server, cli, admin_dir):
-    """The `demo` community: members lyra and vega, a key of each role, and the six
-    artifacts of RECORD published through the API and accepted by the gate."""
-    enroll(cli, admin_dir, "lyra")
-    enroll(cli, admin_dir, "vega")
+    """The `demo` community: members lyra and vega, each with a key it made for itself in its
+    own session, a `non-member` key the admin made for an app, and the six artifacts of
+    RECORD published through the API and accepted by the gate."""
+    sessions = {handle: enroll(cli, admin_dir, handle) for handle in ("lyra", "vega")}
     keys = {
-        "lyra": key_value(cli.ok(admin_dir, "gen-api-key", "lyra", "member")),
-        "vega": key_value(cli.ok(admin_dir, "gen-api-key", "vega", "member")),
-        "non-member": key_value(
-            cli.ok(
-                admin_dir,
-                "gen-api-key",
-                "viewer-app",
-                "non-member",
-                "--label",
-                "an app",
-            )
-        ),
+        handle: key_value(cli.ok(directory, "gen-api-key", "laptop"))
+        for handle, directory in sessions.items()
     }
+    keys["non-member"] = key_value(cli.ok(admin_dir, "gen-api-key", "viewer app"))
     api = Api(server)
     for doc in RECORD:
         publisher = doc["artifact"]["published_by"].lstrip("@")
@@ -319,6 +316,7 @@ def world(suite, server, cli, admin_dir):
         "keys": keys,
         "token": admin_token(suite, admin_dir),
         "admin_dir": admin_dir,
+        "sessions": sessions,
     }
 
 
@@ -440,7 +438,7 @@ def test_every_operation_answers_as_the_contract_says(world, suite, server):
     )
     assert [i["name"] for i in messages.json()["items"]] == ["lyra_msg_c_v1"]
     me = check("getMe", "GET", "/demo/me", status=200).json()
-    assert (me["username"], me["role"]) == ("lyra", "member")
+    assert (me["handle"], me["label"], me["role"]) == ("lyra", "laptop", "member")
 
     check(
         "checkSubmission",
@@ -582,8 +580,9 @@ def sql(server, statement: str, *args) -> list:
 
 
 def follow(api, credential=None, path="/demo/streams/record") -> threading.Event:
-    """Read a stream in the background. -> an event set once the server ends it."""
-    ended = threading.Event()
+    """Read a stream in the background, once the server has opened it. -> an event set once
+    the server ends it."""
+    opened, ended = threading.Event(), threading.Event()
 
     def read():
         headers = {"Authorization": f"Bearer {credential}"} if credential else {}
@@ -591,26 +590,48 @@ def follow(api, credential=None, path="/demo/streams/record") -> threading.Event
             "GET", api.base + path, headers=headers, timeout=60
         ) as response:
             assert response.status_code == 200
+            opened.set()
             for _ in response.iter_lines():
                 pass
         ended.set()
 
     threading.Thread(target=read, daemon=True).start()
-    time.sleep(1)
+    assert opened.wait(30), f"the stream on {path} never opened"
     return ended
 
 
 def test_api_keys_work_end_to_end(world, suite, server, cli):
-    api, admin_dir = world["api"], world["admin_dir"]
-    issued = cli.ok(admin_dir, "gen-api-key", "lyra", "member", "--label", "laptop")
+    api, admin_dir, sessions = world["api"], world["admin_dir"], world["sessions"]
+    lyra_dir = sessions["lyra"]
+
+    # a Member makes its own keys, several, each named; each acts as that Member
+    issued = cli.ok(lyra_dir, "gen-api-key", "notebook")
     assert "key" not in issued and mode(issued["key_file"]) == 0o600
+    assert (issued["role"], issued["handle"], issued["label"]) == (
+        "member",
+        "lyra",
+        "notebook",
+    )
     key = key_value(issued)
     assert key.startswith("sak_") and len(key) == 47
-    assert api.call("GET", "/demo/me", key).json()["username"] == "lyra"
+    me = api.call("GET", "/demo/me", key).json()
+    assert (me["handle"], me["label"]) == ("lyra", "notebook")
+    second = key_value(cli.ok(lyra_dir, "gen-api-key", "tablet"))
+    assert api.call("GET", "/demo/me", second).json()["handle"] == "lyra"
+    # a label names one live key among its owner's
+    lyra_token = session_token(suite, lyra_dir)
+    taken = api.control("POST", "/demo/api-keys", lyra_token, {"label": "tablet"})
+    assert taken.status_code == 409, taken.text
+    # and the body names no Member: the token decides
+    made = api.control(
+        "POST", "/demo/api-keys", lyra_token, {"label": "x", "handle": "vega"}
+    )
+    assert made.status_code == 201 and made.json()["handle"] == "lyra"
 
-    listed = cli.ok(admin_dir, "list-api-keys")
+    listed = cli.ok(lyra_dir, "list-api-keys")
     assert mode(listed["keys_file"]) == 0o600
     assert all("key" not in item for item in listed["keys"])
+    assert {k["handle"] for k in listed["keys"]} == {"lyra"}
     in_file = json.loads(Path(listed["keys_file"]).read_text())["keys"]
     assert {k["key"] for k in in_file if k["id"] == issued["id"]} == {key}
 
@@ -624,15 +645,40 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     )
     assert sealed and all(key not in row[0] for row in sealed)
 
-    # a stream closes within the heartbeat of its key's revocation
+    # the admin sees a Member's keys, never their values, and cannot revoke one
+    token = world["token"]
+    seen = api.control("GET", "/demo/api-keys", token).json()["items"]
+    assert any(k["handle"] == "lyra" for k in seen)
+    assert all(k["key"] is None for k in seen if k["handle"] is not None)
+    one = api.control("GET", f"/demo/api-keys/{issued['id']}", token).json()
+    assert one["handle"] == "lyra" and one["key"] is None
+    assert (
+        api.control("DELETE", f"/demo/api-keys/{issued['id']}", token).status_code
+        == 404
+    )
+    # another Member's token sees none of them
+    vega_token = session_token(suite, sessions["vega"])
+    assert (
+        api.control("GET", f"/demo/api-keys/{issued['id']}", vega_token).status_code
+        == 404
+    )
+
+    # a stream closes within the heartbeat of its key's revocation, by its own Member
     ended = follow(api, key)
-    revoked = cli.ok(admin_dir, "revoke-api-key", issued["id"])
+    revoked = cli.ok(lyra_dir, "revoke-api-key", issued["id"])
     assert revoked["revoked"] is not None
     assert api.call("GET", "/demo/me", key).status_code == 401
     assert ended.wait(30), "the stream outlived its key's revocation"
+    # and its label is free again
+    assert (
+        api.control(
+            "POST", "/demo/api-keys", lyra_token, {"label": "notebook"}
+        ).status_code
+        == 201
+    )
 
     # an expired key answers 401, and its stream closes
-    short = cli.ok(admin_dir, "gen-api-key", "vega", "member", "--expires-days", "1")
+    short = cli.ok(sessions["vega"], "gen-api-key", "short", "--expires-days", "1")
     short_key = key_value(short)
     assert api.call("GET", "/demo/me", short_key).status_code == 200
     ended = follow(api, short_key)
@@ -644,23 +690,33 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     assert api.call("GET", "/demo/me", short_key).status_code == 401
     assert ended.wait(30), "the stream outlived its key's expiry"
 
-    # a member's key stops when its handle leaves the roster, and so does its stream
+    # removing a Member from the roster revokes every key it made, closing its streams,
+    # and it can make no new one
     vega = world["keys"]["vega"]
     assert api.call("GET", "/demo/me", vega).status_code == 200
     ended = follow(api, vega)
-    cli.ok(admin_dir, "roster", "remove", "--handle", "vega")
+    removed = cli.ok(admin_dir, "roster", "remove", "--handle", "vega")
+    assert removed["api_keys_revoked"] >= 1
     assert api.call("GET", "/demo/me", vega).status_code == 401
     assert ended.wait(30), "the stream outlived its member's roster entry"
-
-    # the admin issues, reads and revokes keys on /v1 alone, one community at a time
-    token = world["token"]
-    made = api.control(
-        "POST", "/demo/api-keys", token, {"username": "kiosk", "role": "non-member"}
+    revoked_by = sql(
+        server,
+        "SELECT DISTINCT revoked_by FROM api_keys WHERE handle = 'vega' "
+        "AND revoked_by IS NOT NULL AND id <> %s",
+        short["id"],
     )
+    assert revoked_by == [["roster-removal"]]
+    refused = api.control("POST", "/demo/api-keys", vega_token, {"label": "again"})
+    assert refused.status_code in (401, 403), refused.text
+
+    # the admin makes, reads and revokes application keys
+    made = api.control("POST", "/demo/api-keys", token, {"label": "kiosk"})
     assert made.status_code == 201 and made.headers["cache-control"] == "no-store"
+    assert (made.json()["role"], made.json()["handle"]) == ("non-member", None)
     one = api.control("GET", f"/demo/api-keys/{made.json()['id']}", token)
     assert one.status_code == 200 and one.json()["key"] == made.json()["key"]
-    assert one.json()["community"] == "demo"
+    kiosk = made.json()["key"]
+    assert api.call("GET", "/demo/record", kiosk).status_code == 200
     cli.ok(admin_dir, "communities", "create", "--name", "elsewhere")
     assert (
         api.control(
@@ -668,14 +724,19 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
         ).status_code
         == 404
     )
-    gone = api.control("DELETE", f"/demo/api-keys/{made.json()['id']}", token)
-    assert gone.status_code == 200 and gone.json()["key"] is None
-    # a member's own token manages no key, and an API key opens nothing on /v1
+    # the admin revokes its application key with the skill's command; it stops at once
+    gone = cli.ok(admin_dir, "revoke-api-key", made.json()["id"])
+    assert gone["revoked"] is not None and gone["role"] == "non-member"
+    refused = api.call("GET", "/demo/record", kiosk)
+    assert refused.status_code == 401
+    conforms("getRecord", refused)
+    # an API key opens nothing on /v1, and a missing label is refused
     assert api.control("GET", "/demo/api-keys", world["keys"]["lyra"]).status_code in (
         401,
         403,
     )
     assert api.control("GET", "/demo/api-keys").status_code == 401
+    assert api.control("POST", "/demo/api-keys", token, {}).status_code == 422
 
 
 # ── publishing through the gate ────────────────────────────────────────────────────────────
@@ -851,7 +912,6 @@ def test_streams_deliver_resume_and_cap(world, suite, cli):
 
     # anonymous streams on a public record: 4 per address, then 429
     cli.ok(admin_dir, "collection", "set-public", "--collection", "record", "--public")
-    time.sleep(0.5)
     opened = []
     try:
         for _ in range(4):
@@ -941,29 +1001,20 @@ def test_a_key_acts_only_within_its_community_and_standing(world, cli):
         )
         conforms("getRecord", elsewhere)
 
-    # a non-member key whose label later names a member stops
-    made = api.control(
-        "POST", "/demo/api-keys", token, {"username": "newcomer", "role": "non-member"}
-    )
+    # a non-member key names no Member: a handle like its label joining the roster
+    # changes nothing for it
+    made = api.control("POST", "/demo/api-keys", token, {"label": "newcomer"})
     assert made.status_code == 201
-    label = made.json()["key"]
-    assert api.call("GET", "/demo/record", label).status_code == 200
+    app_key = made.json()["key"]
+    assert api.call("GET", "/demo/record", app_key).status_code == 200
     cli.ok(admin_dir, "roster", "add", "--handle", "newcomer")
-    assert api.call("GET", "/demo/record", label).status_code == 401
-
-    # every refusal key creation makes, on /v1
-    cli.ok(
-        admin_dir, "roster", "add", "--handle", "ghost"
-    )  # on the roster, never registered
-    for body in (
-        {"username": "lyra", "role": "admin"},
-        {"username": "lyra"},
-        {"username": "ghost", "role": "member"},
-        {"username": "lyra", "role": "non-member"},
-        {"username": ADMIN, "role": "non-member"},
-    ):
-        refused = api.control("POST", "/demo/api-keys", token, body)
-        assert refused.status_code == 422, (body, refused.text)
+    assert api.call("GET", "/demo/record", app_key).status_code == 200
+    # and it publishes nothing: publishing needs a key a Member made for itself
+    refused = api.call(
+        "POST", "/demo/submissions", app_key, note("newcomer", "attempt")
+    )
+    assert refused.status_code == 403
+    conforms("submitArtifact", refused)
 
 
 def forged(**fields) -> str:

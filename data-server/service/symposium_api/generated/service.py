@@ -18,47 +18,6 @@ from .dependencies import *
 
 class Service(ABC):
     @abstractmethod
-    def list_api_keys(
-        self,
-        caller: Caller,
-        *,
-        cursor: Optional[str],
-        limit: Optional[int],
-        community: Optional[str],
-        username: Optional[str],
-        include_revoked: Optional[bool],
-    ) -> ApiKeyPage:
-        """listApiKeys: List every API key, with its value"""
-
-    @abstractmethod
-    def create_api_key(
-        self,
-        caller: Caller,
-        *,
-        body: ApiKeyCreate,
-        raw: dict,
-    ) -> ApiKey:
-        """createApiKey: Create an API key"""
-
-    @abstractmethod
-    def get_api_key(
-        self,
-        caller: Caller,
-        *,
-        key_id: UUID,
-    ) -> ApiKey:
-        """getApiKey: One API key, with its value"""
-
-    @abstractmethod
-    def revoke_api_key(
-        self,
-        caller: Caller,
-        *,
-        key_id: UUID,
-    ) -> ApiKey:
-        """revokeApiKey: Revoke an API key"""
-
-    @abstractmethod
     def get_open_api_json(
         self,
         caller: Caller,
@@ -109,6 +68,16 @@ class Service(ABC):
         via: Optional[List[CitationVia]],
     ) -> CitationPage:
         """listCitedBy: The later Artifacts that cite this one"""
+
+    @abstractmethod
+    def get_artifact_content(
+        self,
+        caller: Caller,
+        *,
+        community: str,
+        name: str,
+    ) -> CanonicalArtifact:
+        """getArtifactContent: One Artifact's stored canonical JSON"""
 
     @abstractmethod
     def list_findings(

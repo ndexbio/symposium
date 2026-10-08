@@ -265,7 +265,7 @@ class Links(BaseModel):
     content: Annotated[
         Optional[AnyUrl],
         Field(
-            description="Where the stored canonical JSON is, on the data server's `/v1`."
+            description="The Artifact's stored canonical JSON, from `getArtifactContent`."
         ),
     ] = None
 
@@ -467,23 +467,18 @@ class MemberPage(Page):
 class KeyRole(StrEnum):
     non_member = "non-member"
     member = "member"
-    admin = "admin"
-
-
-class Kind1(StrEnum):
-    community = "community"
-    server = "server"
-
-
-class KeyScope(BaseModel):
-    kind: Kind1
-    community: Optional[CommunityName] = None
 
 
 class Me(BaseModel):
-    username: str
+    handle: Annotated[
+        Optional[str],
+        Field(
+            description="The Member a `member` key acts as; null for a `non-member` key."
+        ),
+    ]
+    label: Annotated[str, Field(description="The name the key's owner gave it.")]
     role: KeyRole
-    scope: KeyScope
+    community: CommunityName
     key_id: UUID
     expires: Optional[AwareDatetime] = None
     member_url: Annotated[
@@ -621,58 +616,6 @@ class SubmissionStreamEvent1(StreamEventBase):
 
 class SubmissionStreamEvent(RootModel[Union[SubmissionStreamEvent1, HeartbeatEvent]]):
     root: Union[SubmissionStreamEvent1, HeartbeatEvent]
-
-
-class ApiKeyCreate(BaseModel):
-    username: Annotated[
-        str,
-        Field(
-            description="For `member`, a handle registered on the scope's roster. For a server-scoped\n`admin` key, the server's admin handle. For `non-member`, a label naming the\napplication, which matches no handle on the roster.\n",
-            max_length=64,
-            min_length=1,
-        ),
-    ]
-    role: KeyRole
-    scope: KeyScope
-    expires_days: Annotated[
-        Optional[int],
-        Field(description="Absent for a key that lasts until revoked.", ge=1, le=366),
-    ] = None
-    label: Annotated[Optional[str], Field(max_length=200)] = None
-
-
-class ApiKey(BaseModel):
-    id: UUID
-    url: AnyUrl
-    username: str
-    role: KeyRole
-    scope: KeyScope
-    key: Annotated[
-        Optional[str],
-        Field(
-            description="The key. Null once revoked.", pattern="^sak_[A-Za-z0-9_-]{43}$"
-        ),
-    ]
-    label: Optional[str] = None
-    created: AwareDatetime
-    created_by: str
-    expires: Annotated[Optional[AwareDatetime], Field(...)]
-    revoked: Annotated[Optional[AwareDatetime], Field(...)]
-    revoked_by: Optional[str] = None
-    last_used: Annotated[Optional[AwareDatetime], Field(...)]
-    uses: int
-
-
-class ApiKeyPage(BaseModel):
-    next: Annotated[
-        Optional[str],
-        Field(
-            description="The cursor of the following page; null on the last page.",
-            max_length=256,
-            pattern="^[A-Za-z0-9_-]+$",
-        ),
-    ]
-    items: List[ApiKey]
 
 
 class OpenapiJsonGetResponse(BaseModel):

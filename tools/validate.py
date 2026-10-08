@@ -1,5 +1,5 @@
 """The validator, at its historical import path. It lives in `symposium_rules.validate`, which
-the data server's API shares; this module is that same module object, so `import validate`
+the data server's Data API shares; this module is that same module object, so `import validate`
 and `from validate import …` reach exactly what they always did."""
 
 import sys

@@ -1,4 +1,4 @@
-"""The Symposium API's contract (`api/openapi.yaml`) against the rules its design notes
+"""The Symposium Data API's contract (`api/openapi.yaml`) against the rules its design notes
 (`api/DESIGN.md`) set: every operation names its roles and its security, every listing that
 grows with the record is paged, every read of the record states its position, every error
 shares one body, and the notes' tables agree with the contract. The linter checks that the
@@ -13,8 +13,8 @@ import pytest
 import yaml
 
 API = Path(__file__).resolve().parents[2] / "api"
-# The three roles an API key may hold, each a superset of the one before.
-ROLES = ("non-member", "member", "admin")
+# The two roles an API key may hold; `member` holds everything `non-member` holds.
+ROLES = ("non-member", "member")
 METHODS = ("get", "post", "put", "patch", "delete")
 
 # The skill's commands (skills/symposium/SKILL.md) that have an API equivalent; DESIGN.md
@@ -24,9 +24,6 @@ SKILL_COMMANDS = [
     "validate",
     "sync",
     "roster list",
-    "gen-api-key",
-    "list-api-keys",
-    "revoke-api-key",
 ]
 
 
@@ -115,13 +112,7 @@ def test_every_operation_states_its_security(spec):
         assert security, f"{where}: states no security requirement"
         named = {name for requirement in security for name in requirement}
         assert named <= schemes, f"{where}: security is {security}"
-        if path.startswith("/admin/api-keys"):
-            # a key scoped to one community would otherwise read every key on the server
-            assert security == [{"adminToken": []}], (
-                f"{where}: takes more than adminToken"
-            )
-        else:
-            assert "apiKey" in named, f"{where}: takes no API key"
+        assert named == {"apiKey"}, f"{where}: takes {named}, not an API key alone"
         anonymous = {} in security
         assert anonymous == ("x-anonymous" in op), (
             f"{where}: `{{}}` and x-anonymous disagree"
@@ -130,6 +121,38 @@ def test_every_operation_states_its_security(spec):
             assert "non-member" in op["x-roles"], (
                 f"{where}: anonymous where a non-member is refused"
             )
+
+
+def test_the_api_takes_api_keys_alone_and_has_no_admin_operation(spec):
+    assert list(spec["components"]["securitySchemes"]) == ["apiKey"]
+    for path, method, op in operations(spec):
+        assert not path.startswith("/admin"), (
+            f"{method.upper()} {path} is an admin path"
+        )
+        assert "admin" not in op["x-roles"], f"{method.upper()} {path} admits admin"
+
+
+def test_every_member_operation_says_whose_key_it_needs(spec):
+    """An operation that acts as a Member says it needs a key the Member made for itself, and
+    that the key's handle is checked against the community in the path on every request."""
+    for path, method, op in operations(spec):
+        if op["x-roles"] != ["member"]:
+            continue
+        text = " ".join(op["description"].split())
+        where = f"{method.upper()} {path}"
+        assert "Requires a `member` API key" in text, where
+        assert "created for itself" in text, where
+        assert "the community in the path" in text, where
+
+
+def test_the_api_refers_to_nothing_outside_itself():
+    """Every URL the API answers is its own: the contract names no `/v1` route and accepts no
+    credential but an API key: no Ed25519 token, no JWT, no read key. (A Member's registered
+    Ed25519 *key* is named, as the thing a `member` key's standing rests on.)"""
+    text = (API / "openapi.yaml").read_text(encoding="utf-8")
+    assert not re.search(r"(?<!/api)/v1\b", text), "the contract names a /v1 route"
+    for word in ("Ed25519 token", "JWT", "adminToken", "sdr_"):
+        assert word not in text, f"the contract mentions {word}"
 
 
 def test_the_record_is_read_only(spec):
@@ -164,6 +187,8 @@ def test_every_read_of_the_record_states_its_position(spec):
     for path, method, op in operations(spec):
         if method != "get" or not path.startswith("/{community}"):
             continue
+        if op.get("x-stored"):  # answers the stored bytes themselves, untouched
+            continue
         schema = success_json(spec, op)
         if schema is None:
             continue
@@ -194,10 +219,7 @@ def test_every_error_shares_one_body(spec):
 
 def test_every_addressable_resource_carries_its_url(spec):
     schemas = spec["components"]["schemas"]
-    for name in [n for n in schemas if n.endswith("Resource")] + [
-        "ArtifactSummary",
-        "ApiKey",
-    ]:
+    for name in [n for n in schemas if n.endswith("Resource")] + ["ArtifactSummary"]:
         _, required = flatten(spec, schemas[name])
         assert "url" in required, f"{name} omits `url`"
 

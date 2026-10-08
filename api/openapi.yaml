@@ -1,15 +1,15 @@
 openapi: 3.0.3
 info:
-  title: Symposium API
+  title: Symposium Data API
   version: 1.0.0
   description: |
     Read a Symposium community record, follow it as it changes, and publish through the gate.
 
-    The Symposium API speaks in the specification's model: Artifacts, Objects, properties,
+    The Symposium Data API speaks in the specification's model: Artifacts, Objects, properties,
     relationships, Members and addresses (`spec/symposium_specification.md`, profiled by
-    `tools/CANONICAL.md`). It is served by the Symposium Data server beside its file-level
-    `/v1` API, and reads the community record held there, so every application sees the one
-    record under the server's own access rules.
+    `tools/CANONICAL.md`). It is served by the Symposium Data server and reads the community
+    record held there, so every application sees the one record under the server's own
+    access rules. It is self-contained: every URL it answers is one of its own.
 
     **The record is read-only here.** Artifacts are immutable. A correction is a new Artifact
     that supersedes the old one, published through `POST /{community}/submissions` and decided
@@ -28,11 +28,23 @@ info:
 
     **Streams.** Server-Sent Events resume from `Last-Event-ID`, which is a paging cursor.
 
-    **Roles.** An API key holds exactly one of three roles, each a superset of the one
-    before. `non-member` reads the record. `member` also publishes as its Member and reads
-    its own submissions, with the gate's decision and reply on each. `admin` also reads
-    every submission. Each operation lists the roles it allows in `x-roles` and in its
-    description. API keys are provisioned with the server admin's Ed25519 token alone.
+    **API keys.** The API authenticates API keys alone. Each key belongs to exactly one
+    community and acts only there: a request naming another community answers 403. A key
+    holds one of two roles:
+
+    - `member`: a Member creates its own on the data server's Control API, signing in with
+      its own Ed25519 key, and may hold several, each with its own label. The key carries
+      the Member's handle, so everything done with it is done as that Member: it publishes
+      as the Member and reads the Member's own submissions, with the gate's decision and
+      reply on each. It also reads the record.
+    - `non-member`: the community's admin creates it for an application. It names no
+      Member and reads the record only.
+
+    On every request the server validates the key against the path: the key must belong to
+    the community in `/{community}/…` (403 otherwise), and a `member` key's handle must be a
+    Member of that community, on its roster with a registered key (401 otherwise).
+
+    Each operation lists the roles it allows in `x-roles` and in its description.
 
     **The gate** runs from the admin's skill (`/symposium gate`), as it does today. The API
     takes submissions into `inbox` and reports the gate's decisions on them.
@@ -60,8 +72,6 @@ tags:
     description: Submissions into `inbox`, with the gate's decision and reply on each.
   - name: streams
     description: Server-Sent Events for following the record and the submissions.
-  - name: api-keys
-    description: Provisioning API keys, for the admin.
   - name: contract
     description: This OpenAPI document, served by the API itself.
 security:
@@ -76,8 +86,8 @@ paths:
         The contract this server implements, exactly as committed in `api/openapi.yaml`. It
         answers with no credential, so any client can read it.
 
-        Roles: non-member, member, admin; anonymous always.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous always.
+      x-roles: [non-member, member]
       x-anonymous: always
       security:
         - apiKey: []
@@ -99,8 +109,8 @@ paths:
       description: |
         The same document as `getOpenApiYaml`, converted to JSON. It answers with no credential.
 
-        Roles: non-member, member, admin; anonymous always.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous always.
+      x-roles: [non-member, member]
       x-anonymous: always
       security:
         - apiKey: []
@@ -124,8 +134,8 @@ paths:
         The record's position, its size by type and by Member, its time span, and the
         specification versions its Artifacts declare.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       x-bounded: the specification versions in use, one per revision of the specification
       security:
@@ -156,8 +166,8 @@ paths:
         the gate accepted them in; `order=-created` reverses it. This listing is also the
         record's change feed: a client that keeps `next` reads each new Artifact once.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -209,12 +219,13 @@ paths:
       tags: [record]
       summary: One Artifact, whole
       description: |
-        The Artifact in canonical JSON, as the gate stored it, with its canonical URL and the
-        links derived from the record: what it supersedes, what supersedes it, and its Member.
-        Its address is `@<name>`.
+        The Artifact's canonical JSON, rendered through `CanonicalArtifact`, with its canonical
+        URL and the links derived from the record: what it supersedes, what supersedes it, and
+        its Member. Its address is `@<name>`. `links.content` answers the bytes the gate stored,
+        unchanged.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -235,6 +246,39 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /{community}/artifacts/{name}/content:
+    get:
+      operationId: getArtifactContent
+      tags: [record]
+      summary: One Artifact's stored canonical JSON
+      description: |
+        The Artifact exactly as the gate stored it, byte for byte: the document `getArtifact`
+        carries in `canonical`, without the resource around it. `links.content` names it.
+
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
+      x-anonymous: when the community's `record` collection is public
+      x-bounded: one stored Artifact
+      x-stored: the bytes the gate stored, so the body carries no `position`
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/artifactName'
+      responses:
+        '200':
+          description: The stored canonical JSON.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CanonicalArtifact'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /{community}/artifacts/{name}/properties/{property}:
     get:
       operationId: getArtifactProperty
@@ -243,8 +287,8 @@ paths:
       description: |
         The value of one header property. Its address is `@<name>.<property>`.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -275,8 +319,8 @@ paths:
         The Artifact's Objects, in the order its canonical JSON lists them. A Model may hold
         many, so the listing is paged.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -315,8 +359,8 @@ paths:
         One Object and the relationships that start or end at it. Its address is
         `@<name>.<object>`.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -346,8 +390,8 @@ paths:
       description: |
         The value of one property of an Object. Its address is `@<name>.<object>.<property>`.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -379,8 +423,8 @@ paths:
         The Artifact's relationships, in the order its canonical JSON lists them. Relationships
         carry no address, so they are reached only through their Artifact.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -422,8 +466,8 @@ paths:
         input, the Artifacts that supersede it, the Arguments extracted from it, the work that
         serves a ResearchGoal, or citations in prose.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -467,8 +511,8 @@ paths:
         distance, ordered by `created` ascending. Each entry says whether it is earlier or later
         and carries its `supersedes_rationale`.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -504,8 +548,8 @@ paths:
         `basis=current` gives the findings against the whole record now; a later supersession
         can add one. Ordered by check, then by message.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -554,8 +598,8 @@ paths:
         as the gate verifies it. A `rest` or `download` reference answers its Content Object's
         `location` and `access_method`, unverified.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -593,8 +637,8 @@ paths:
         Every handle on the roster, with whether it is registered and how many Artifacts it
         published by type. Ordered by handle ascending. This is `/symposium roster list`.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -626,8 +670,8 @@ paths:
       description: |
         One Member. Its address is `@<handle>`. A Member exposes its name and nothing within it.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -656,8 +700,8 @@ paths:
       description: |
         Every Artifact whose `published_by` is this Member, ordered by `created` ascending.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -694,8 +738,8 @@ paths:
         them. The gate's reply to a rejected submission is a different thing: it sits in the
         submission's `reply` field (`getSubmission`).
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -727,11 +771,11 @@ paths:
       tags: [members]
       summary: Who this API key acts as
       description: |
-        The key's username, its role, its scope and its expiry, and the Member it publishes as
-        where it holds `member` or `admin`.
+        The key's label, its role, its community and its expiry, and, for a `member` key,
+        the handle of the Member who created it and whom it acts as.
 
-        Roles: non-member, member, admin.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member.
+      x-roles: [non-member, member]
       x-bounded: one key
       security:
         - apiKey: []
@@ -762,8 +806,14 @@ paths:
         Artifact if the record has not moved. This is `/symposium validate` and
         `publish --check`.
 
-        Roles: member, admin.
-      x-roles: [member, admin]
+        Requires a `member` API key: one the Member created for itself on the Control API.
+        The key's Member is the one who publishes and whose submissions are read. On every
+        request the server checks that the key belongs to the community in the path
+        (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered Ed25519 key (otherwise 401).
+
+        Roles: member.
+      x-roles: [member]
       x-bounded: the findings on the one Artifact submitted
       security:
         - apiKey: []
@@ -794,12 +844,17 @@ paths:
       tags: [publishing]
       summary: Submissions and their decisions
       description: |
-        Submissions in `inbox` with the gate's decision on each. A `member` key sees its own; an
-        `admin` key sees every one. Ordered by submission time ascending, the order the gate
-        reads them in.
+        The key's own submissions in `inbox`, with the gate's decision on each. Ordered by
+        submission time ascending, the order the gate reads them in.
 
-        Roles: member, admin.
-      x-roles: [member, admin]
+        Requires a `member` API key: one the Member created for itself on the Control API.
+        The key's Member is the one who publishes and whose submissions are read. On every
+        request the server checks that the key belongs to the community in the path
+        (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered Ed25519 key (otherwise 401).
+
+        Roles: member.
+      x-roles: [member]
       security:
         - apiKey: []
       parameters:
@@ -840,8 +895,14 @@ paths:
         prefix. A submission the validator fails is refused with 422 and its findings, and
         nothing is stored. This is `/symposium publish`.
 
-        Roles: member, admin.
-      x-roles: [member, admin]
+        Requires a `member` API key: one the Member created for itself on the Control API.
+        The key's Member is the one who publishes and whose submissions are read. On every
+        request the server checks that the key belongs to the community in the path
+        (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered Ed25519 key (otherwise 401).
+
+        Roles: member.
+      x-roles: [member]
       security:
         - apiKey: []
       parameters:
@@ -885,8 +946,14 @@ paths:
         accepted, the gate's reply with its failures when rejected. A `member` key reads only
         its own.
 
-        Roles: member, admin.
-      x-roles: [member, admin]
+        Requires a `member` API key: one the Member created for itself on the Control API.
+        The key's Member is the one who publishes and whose submissions are read. On every
+        request the server checks that the key belongs to the community in the path
+        (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered Ed25519 key (otherwise 401).
+
+        Roles: member.
+      x-roles: [member]
       security:
         - apiKey: []
       parameters:
@@ -918,8 +985,8 @@ paths:
         The server re-checks the key at every event and every heartbeat, and closes the stream
         when the key is revoked or expired, or its Member leaves the roster.
 
-        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
-      x-roles: [non-member, member, admin]
+        Roles: non-member, member; anonymous when the community's `record` collection is public.
+      x-roles: [non-member, member]
       x-anonymous: when the community's `record` collection is public
       security:
         - apiKey: []
@@ -956,13 +1023,19 @@ paths:
         A `submission.received` event when a submission lands in `inbox`, a
         `submission.skipped` event when the gate's rule sets it aside, and a
         `submission.accepted` or `submission.rejected` event when the gate decides it. A
-        rejection carries the gate's reply. A `member` key receives events on its own submissions; an `admin` key
-        receives every one. Resumes from `Last-Event-ID`.
+        rejection carries the gate's reply. A `member` key receives events on its own
+        submissions. Resumes from `Last-Event-ID`.
         The server re-checks the key at every event and every heartbeat, and closes the stream
         when the key is revoked or expired, or its Member leaves the roster.
 
-        Roles: member, admin.
-      x-roles: [member, admin]
+        Requires a `member` API key: one the Member created for itself on the Control API.
+        The key's Member is the one who publishes and whose submissions are read. On every
+        request the server checks that the key belongs to the community in the path
+        (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered Ed25519 key (otherwise 401).
+
+        Roles: member.
+      x-roles: [member]
       security:
         - apiKey: []
       parameters:
@@ -988,173 +1061,6 @@ paths:
           $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyStreams'
-  /admin/api-keys:
-    get:
-      operationId: listApiKeys
-      tags: [api-keys]
-      summary: List every API key, with its value
-      description: |
-        Every API key, each with its username, its role, its scope, its creation, expiry and
-        revocation, its last use, and the key itself, decrypted for this listing, so the admin
-        can hand a lost key back. A revoked key's value is erased at revocation and answers
-        `null`. Ordered by creation ascending. This is `/symposium list-api-keys`.
-
-        Roles: admin, through the server admin's Ed25519 token only.
-      x-roles: [admin]
-      security:
-        - adminToken: []
-      parameters:
-        - $ref: '#/components/parameters/cursor'
-        - $ref: '#/components/parameters/limit'
-        - name: community
-          in: query
-          description: Only keys scoped to this community.
-          schema:
-            type: string
-            pattern: '^[A-Za-z0-9_]{1,20}$'
-        - name: username
-          in: query
-          description: Only keys for this username.
-          schema:
-            type: string
-        - name: include_revoked
-          in: query
-          description: Include revoked keys.
-          schema:
-            type: boolean
-            default: true
-      responses:
-        '200':
-          description: One page of API keys.
-          headers:
-            Cache-Control:
-              description: Always `no-store`, because the page holds secrets.
-              schema:
-                type: string
-                enum: [no-store]
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiKeyPage'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-    post:
-      operationId: createApiKey
-      tags: [api-keys]
-      summary: Create an API key
-      description: |
-        Create a key for a username with one role and a scope, and answer it once with its
-        value. A `member` key must name a handle registered on its community's roster, and
-        publishes as that Member. An `admin` key names the server's admin handle and is bound
-        to the admin's current Ed25519 key. A key scoped to the server holds `admin`. This is
-        `/symposium gen-api-key <username> <role>`.
-
-        Roles: admin, through the server admin's Ed25519 token only.
-      x-roles: [admin]
-      x-bounded: one key
-      security:
-        - adminToken: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ApiKeyCreate'
-      responses:
-        '201':
-          description: The new key, its value included.
-          headers:
-            Location:
-              description: The key's canonical URL.
-              schema:
-                type: string
-                format: uri
-            Cache-Control:
-              description: Always `no-store`, because the body holds a secret.
-              schema:
-                type: string
-                enum: [no-store]
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiKey'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '422':
-          $ref: '#/components/responses/Unprocessable'
-  /admin/api-keys/{key_id}:
-    get:
-      operationId: getApiKey
-      tags: [api-keys]
-      summary: One API key, with its value
-      description: |
-        One key, as `listApiKeys` shows it.
-
-        Roles: admin, through the server admin's Ed25519 token only.
-      x-roles: [admin]
-      x-bounded: one key
-      security:
-        - adminToken: []
-      parameters:
-        - $ref: '#/components/parameters/keyId'
-      responses:
-        '200':
-          description: The key.
-          headers:
-            Cache-Control:
-              description: Always `no-store`, because the body holds a secret.
-              schema:
-                type: string
-                enum: [no-store]
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiKey'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    delete:
-      operationId: revokeApiKey
-      tags: [api-keys]
-      summary: Revoke an API key
-      description: |
-        Revoke a key. It stops authenticating at once, its encrypted value is erased, and its
-        row stays for the record of who held it. Revoking a revoked key answers it unchanged.
-        This is `/symposium revoke-api-key <key id>`.
-
-        Roles: admin, through the server admin's Ed25519 token only.
-      x-roles: [admin]
-      x-bounded: one key
-      security:
-        - adminToken: []
-      parameters:
-        - $ref: '#/components/parameters/keyId'
-      responses:
-        '200':
-          description: The revoked key.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiKey'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
 components:
   securitySchemes:
     apiKey:
@@ -1162,18 +1068,13 @@ components:
       scheme: bearer
       bearerFormat: sak_<43 base64url characters>
       description: |
-        An API key the admin issued, sent as `Authorization: Bearer sak_…`. The `sak_` prefix
-        tells it apart from the data server's Ed25519 tokens (JWTs) and read keys (`sdr_…`),
-        which share the same header. The server matches a key by its SHA-256 digest; it
-        decrypts nothing to authenticate.
-    adminToken:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
-      description: |
-        The server admin's Ed25519 token from `POST /v1/admin/token`, the one the skill already
-        holds. The API-key operations accept it alone, so an API key, whatever its scope,
-        reads and makes no other key.
+        An API key for one community, sent as `Authorization: Bearer sak_…`: a `member` key a
+        Member created for itself, which carries its handle, or a `non-member` key the admin
+        created for an application. The server matches a key by its SHA-256 digest; it
+        decrypts nothing to authenticate. It then validates the key on every request: the key
+        must belong to the community named in the `/{community}/…` path, or the request
+        answers 403; and a `member` key's handle must still be a Member of that community, on
+        its roster with a registered Ed25519 key, or the request answers 401.
   parameters:
     community:
       name: community
@@ -1220,14 +1121,6 @@ components:
       in: path
       required: true
       description: The submission's id, the id of its file in `inbox`.
-      schema:
-        type: string
-        format: uuid
-    keyId:
-      name: key_id
-      in: path
-      required: true
-      description: The API key's id.
       schema:
         type: string
         format: uuid
@@ -1280,13 +1173,17 @@ components:
           schema:
             $ref: '#/components/schemas/Error'
     Unauthorized:
-      description: The credential is absent, unknown, expired or revoked.
+      description: |
+        The credential is absent, unknown, expired or revoked; or a `member` key's handle is
+        no longer a Member of the key's community (off its roster, or with no registered key).
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
     Forbidden:
-      description: The credential is valid and its roles or scope do not allow this.
+      description: |
+        The key is valid, and its role does not allow this, or it belongs to a community other
+        than the one in the path.
       content:
         application/json:
           schema:
@@ -1314,8 +1211,8 @@ components:
     TooManyStreams:
       description: |
         A stream cap is reached: 8 per API key, 4 per anonymous client address, 200
-        anonymous in all, or the server's `SYMPOSIUM_API_MAX_STREAMS` (default 500), whose
-        last 20 slots open only to an `admin` key. `api/DESIGN.md` §10.5 holds the rules.
+        anonymous in all, or the server's `SYMPOSIUM_DATA_API_MAX_STREAMS` (default 500).
+        `api/DESIGN.md` §10.5 holds the rules.
         Close a stream or retry later.
       content:
         application/json:
@@ -1327,18 +1224,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Error'
-    Unprocessable:
-      description: The body is well formed and its values break a rule, which `detail` names.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/Error'
   schemas:
     Error:
       type: object
       description: |
-        The one error body. `detail` is a sentence for a person, as the data server's `/v1`
-        writes it; `code` is stable for a program.
+        The one error body. `detail` is a sentence for a person; `code` is stable for a
+        program.
       required: [detail, code]
       properties:
         detail:
@@ -1747,7 +1638,7 @@ components:
             content:
               type: string
               format: uri
-              description: Where the stored canonical JSON is, on the data server's `/v1`.
+              description: The Artifact's stored canonical JSON, from `getArtifactContent`.
         canonical:
           $ref: '#/components/schemas/CanonicalArtifact'
     PropertyResource:
@@ -2010,28 +1901,23 @@ components:
     KeyRole:
       type: string
       description: |
-        The key's one role. `member` holds everything `non-member` holds, and `admin` holds
-        everything `member` holds.
-      enum: [non-member, member, admin]
-    KeyScope:
-      type: object
-      required: [kind]
-      properties:
-        kind:
-          type: string
-          enum: [community, server]
-        community:
-          $ref: '#/components/schemas/CommunityName'
+        The key's one role. `member` holds everything `non-member` holds.
+      enum: [non-member, member]
     Me:
       type: object
-      required: [username, role, scope, key_id, position]
+      required: [handle, label, role, community, key_id, position]
       properties:
-        username:
+        handle:
           type: string
+          nullable: true
+          description: The Member a `member` key acts as; null for a `non-member` key.
+        label:
+          type: string
+          description: The name the key's owner gave it.
         role:
           $ref: '#/components/schemas/KeyRole'
-        scope:
-          $ref: '#/components/schemas/KeyScope'
+        community:
+          $ref: '#/components/schemas/CommunityName'
         key_id:
           type: string
           format: uuid
@@ -2180,89 +2066,3 @@ components:
                 data:
                   $ref: '#/components/schemas/SubmissionResource'
         - $ref: '#/components/schemas/HeartbeatEvent'
-    ApiKeyCreate:
-      type: object
-      required: [username, role, scope]
-      properties:
-        username:
-          type: string
-          minLength: 1
-          maxLength: 64
-          description: |
-            For `member`, a handle registered on the scope's roster. For a server-scoped
-            `admin` key, the server's admin handle. For `non-member`, a label naming the
-            application, which matches no handle on the roster.
-        role:
-          $ref: '#/components/schemas/KeyRole'
-        scope:
-          $ref: '#/components/schemas/KeyScope'
-        expires_days:
-          type: integer
-          minimum: 1
-          maximum: 366
-          description: Absent for a key that lasts until revoked.
-        label:
-          type: string
-          maxLength: 200
-    ApiKey:
-      type: object
-      required: [id, url, username, role, scope, key, created, created_by, expires, revoked, last_used, uses]
-      properties:
-        id:
-          type: string
-          format: uuid
-        url:
-          type: string
-          format: uri
-        username:
-          type: string
-        role:
-          $ref: '#/components/schemas/KeyRole'
-        scope:
-          $ref: '#/components/schemas/KeyScope'
-        key:
-          type: string
-          nullable: true
-          pattern: ^sak_[A-Za-z0-9_-]{43}$
-          description: The key. Null once revoked.
-        label:
-          type: string
-        created:
-          type: string
-          format: date-time
-        created_by:
-          type: string
-        expires:
-          type: string
-          nullable: true
-          format: date-time
-        revoked:
-          type: string
-          nullable: true
-          format: date-time
-        revoked_by:
-          type: string
-          nullable: true
-        last_used:
-          type: string
-          nullable: true
-          format: date-time
-        uses:
-          type: integer
-    ApiKeyPage:
-      type: object
-      description: |
-        A page of API keys. Keys belong to the server, outside any record, so the page carries
-        no `position`.
-      required: [items, next]
-      properties:
-        next:
-          description: The cursor of the following page; null on the last page.
-          type: string
-          nullable: true
-          maxLength: 256
-          pattern: '^[A-Za-z0-9_-]+$'
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/ApiKey'

@@ -29,11 +29,11 @@ MIGRATION_LOCK_ID = 7_301_014
 
 
 class Settings:
-    """Reads the generated service.env plus the operator-facing SYMPOSIUM_DATA_* variables."""
+    """Reads the generated service.env plus the operator-facing SYMPOSIUM_SERVER_* and SYMPOSIUM_CONTROL_API_* variables."""
 
     def __init__(self, path: str | None = None, environ: dict | None = None):
         env = os.environ if environ is None else environ
-        self.path = Path(path or env.get("SYMPOSIUM_DATA_CONFIG", DEFAULT_CONFIG))
+        self.path = Path(path or env.get("SYMPOSIUM_SERVER_CONFIG", DEFAULT_CONFIG))
         values = {}
         for line in self.path.read_text().splitlines():
             line = line.strip()
@@ -47,23 +47,23 @@ class Settings:
         self.s3_bucket = values.get("S3_BUCKET", "symposium-data")
         self.server_id = values["SERVER_ID"]
         self.token_key_file = values["TOKEN_KEY_FILE"]
-        self.token_ttl = int(env.get("SYMPOSIUM_DATA_TOKEN_TTL", "900"))
-        self.invite_hours = int(env.get("SYMPOSIUM_DATA_INVITE_HOURS", "72"))
+        self.token_ttl = int(env.get("SYMPOSIUM_CONTROL_API_TOKEN_TTL", "900"))
+        self.invite_hours = int(env.get("SYMPOSIUM_CONTROL_API_INVITE_HOURS", "72"))
         # 0 means no quota. Counted per member, in each community, over the payload bytes
         # they uploaded first.
-        self.quota_bytes = int(env.get("SYMPOSIUM_DATA_QUOTA_BYTES", "0"))
+        self.quota_bytes = int(env.get("SYMPOSIUM_SERVER_QUOTA_BYTES", "0"))
         # Durations in seconds; fractions are allowed, so tests can run them sub-second.
-        self.pending_ttl = float(env.get("SYMPOSIUM_DATA_PENDING_TTL", "86400"))
+        self.pending_ttl = float(env.get("SYMPOSIUM_SERVER_PENDING_TTL", "86400"))
         self.janitor_interval = float(
-            env.get("SYMPOSIUM_DATA_JANITOR_INTERVAL", "3600")
+            env.get("SYMPOSIUM_SERVER_JANITOR_INTERVAL", "3600")
         )
-        self.scrub_interval = float(env.get("SYMPOSIUM_DATA_SCRUB_INTERVAL", "3600"))
-        self.scrub_batch = int(env.get("SYMPOSIUM_DATA_SCRUB_BATCH", "50"))
+        self.scrub_interval = float(env.get("SYMPOSIUM_SERVER_SCRUB_INTERVAL", "3600"))
+        self.scrub_batch = int(env.get("SYMPOSIUM_SERVER_SCRUB_BATCH", "50"))
         # how often a streaming upload refreshes its reservation and pending payload
         self.heartbeat = max(0.2, min(60.0, self.pending_ttl / 3))
         # Test-only hooks, off by default: while enabled, S3 deletes fail while the fault
         # file exists, and the quota file overrides the configured quota.
-        self.test_hooks = env.get("SYMPOSIUM_DATA_TEST_HOOKS") == "1"
+        self.test_hooks = env.get("SYMPOSIUM_SERVER_TEST_HOOKS") == "1"
 
     QUOTA_FILE = Path("/apps/data/config/test-quota")
 

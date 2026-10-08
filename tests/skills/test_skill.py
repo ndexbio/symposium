@@ -13,6 +13,7 @@ import sys
 import time
 from pathlib import Path
 
+import httpx
 from skills.test_workflow import note
 from suite import ADMIN, REPO, SKILL, Cli, community_file
 
@@ -58,12 +59,39 @@ def in_the_background(suite, cwd: Path, log: Path, *args) -> subprocess.Popen:
 
 
 def until(log: Path, text: str, seconds: float) -> bool:
+    """A background command's output reached the agent's file: what streaming is."""
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if log.exists() and text in log.read_text():
             return True
         time.sleep(0.2)
     return False
+
+
+def poll(probe, message: str, seconds: float = 30):
+    """Poll every 0.2 s until `probe` returns something truthy. -> that value."""
+    deadline = time.monotonic() + seconds
+    while True:
+        value = probe()
+        if value:
+            return value
+        assert time.monotonic() < deadline, message
+        time.sleep(0.2)
+
+
+def built(port) -> bool:
+    """`serve` answers on its port and has finished its first build (its `/__build` state)."""
+    try:
+        state = httpx.get(f"http://127.0.0.1:{port}/__build", timeout=2).json()
+    except (httpx.HTTPError, ValueError):
+        return False
+    return state.get("build", 0) >= 1
+
+
+def tools_running() -> str:
+    return subprocess.run(
+        ["pgrep", "-f", f"{REPO}/tools/(gate|serve).py"], capture_output=True, text=True
+    ).stdout
 
 
 def free_port() -> int:
@@ -305,26 +333,30 @@ def test_commands_that_keep_running_stream_their_output_and_end_with_their_agent
     gate = in_the_background(suite, tmp_path, gate_log, "gate", "--watch")
     serve = None
     try:
-        assert until(gate_log, "watching inbox", 30), gate_log.read_text()
         code, out = report(suite, tmp_path, "publish", note(tmp_path, ADMIN, "kept"))
         assert code == 0, out
-        # each decision reaches the agent as the gate prints it, while the gate keeps running
-        assert until(gate_log, "ACCEPTED", 30), gate_log.read_text()
-        serve = in_the_background(
-            suite, tmp_path, serve_log, "serve", "--port", free_port()
+        poll(
+            lambda: skill.ok(
+                tmp_path, "data", "changes", "--collection", "record", "--all"
+            )["items"],
+            "the watching gate never accepted the submission",
         )
-        assert until(serve_log, "build 1:", 30), serve_log.read_text()
+        # each decision reaches the agent as the gate prints it, while the gate keeps running
+        assert until(gate_log, "ACCEPTED", 10), gate_log.read_text()
+        assert gate.poll() is None
+        port = free_port()
+        serve = in_the_background(suite, tmp_path, serve_log, "serve", "--port", port)
+        poll(lambda: built(port), "serve never built the record", seconds=60)
+        assert until(serve_log, "build 1:", 10), serve_log.read_text()
     finally:
         for agent in (gate, serve):
             if agent is not None:
                 agent.kill()  # the agent session ends abruptly
                 agent.wait()
+    # each tool notices its agent session ended, says so, and exits
+    poll(lambda: not tools_running(), "a tool outlived its agent session")
     for log in (gate_log, serve_log):
-        assert until(log, "the agent session that started this has ended", 30), (
-            log.read_text()
-        )
-        assert "Traceback" not in log.read_text()
-    left = subprocess.run(
-        ["pgrep", "-f", f"{REPO}/tools/(gate|serve).py"], capture_output=True, text=True
-    )
-    assert left.stdout == ""
+        text = log.read_text()
+        assert "the agent session that started this has ended" in text, text
+        assert "Traceback" not in text
+    assert tools_running() == ""

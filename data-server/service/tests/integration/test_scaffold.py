@@ -21,10 +21,10 @@ def test_supervisord_runs_all_three_programs(server):
         running = sorted(
             line.split()[0] for line in out.splitlines() if " RUNNING " in line
         )
-        if running == ["data-api", "postgres", "seaweed"] or time.time() > deadline:
+        if running == ["api-server", "postgres", "seaweed"] or time.time() > deadline:
             break
         time.sleep(0.2)
-    assert running == ["data-api", "postgres", "seaweed"], out
+    assert running == ["api-server", "postgres", "seaweed"], out
 
 
 def test_banner_reports_the_built_version(server):

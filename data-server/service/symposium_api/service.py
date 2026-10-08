@@ -335,8 +335,7 @@ class ApiService(Service):
                 ],
                 "cited_by": f"{url}/cited-by",
                 "findings": f"{url}/findings",
-                "content": f"{caller.base_url}/v1/{quote(community)}/files/"
-                f"{row['file_id']}/v/latest",
+                "content": f"{url}/content",
             }
             if isinstance(header.get("produced_by"), str):
                 links["produced_by"] = self.address_url(
@@ -351,6 +350,22 @@ class ApiService(Service):
                     "canonical": row["doc"],
                 }
             )
+
+    def get_artifact_content(self, caller, *, community, name):
+        """The Artifact's canonical JSON exactly as the gate stored it."""
+        with self.connection() as conn:
+            community = self.fresh(conn, community)
+            row = self.doc_row(conn, community, name)
+            try:
+                version = self.records.version(
+                    conn, community, row["file_id"], "latest"
+                )
+                stored = self.runtime.store.open_read(version["s3_key"])["Body"].read()
+            except Exception:
+                raise ApiError(
+                    404, f"no stored content for '{row['name']}' in {community}"
+                ) from None
+        return Response(stored, media_type="application/json")
 
     def get_artifact_property(self, caller, *, community, name, property):
         with self.connection() as conn:
@@ -708,13 +723,12 @@ class ApiService(Service):
     def get_me(self, caller, *, community):
         with self.connection() as conn:
             community = self.fresh(conn, community)
-            row = self.keys.row(conn, caller.key_id)
+            row = self.keys.row(conn, caller.community, caller.key_id)
             out = {
-                "username": caller.username,
+                "handle": caller.handle,
+                "label": caller.label,
                 "role": caller.role,
-                "scope": {"kind": "community", "community": row["community"]}
-                if row["community"]
-                else {"kind": "server"},
+                "community": row["community"],
                 "key_id": str(caller.key_id),
                 "expires": iso(row["expires"]),
                 "position": self.position(conn, community),
@@ -788,7 +802,7 @@ class ApiService(Service):
         return out
 
     def visible(self, caller, row) -> bool:
-        return caller.is_admin or row["created_by"] == caller.handle
+        return row["created_by"] == caller.handle
 
     def submissions_after(self, conn, caller, community, since, want, status=None):
         """Visible submissions after inbox seq `since`, up to `want`. -> (items, last seq
@@ -1148,129 +1162,3 @@ class ApiService(Service):
             # synchronously: a client that disconnects cancels this generator, and an await
             # here would be cancelled with it, leaving the slot taken until the sweep
             self.caps.close(stream_id)
-
-    # ── API keys ───────────────────────────────────────────────────────────────────────────
-    def api_key(self, caller, row) -> dict:
-        scope = (
-            {"kind": "community", "community": row["community"]}
-            if row["community"]
-            else {"kind": "server"}
-        )
-        out = {
-            "id": str(row["id"]),
-            "url": f"{self.base(caller)}/admin/api-keys/{row['id']}",
-            "username": row["username"],
-            "role": row["role"],
-            "scope": scope,
-            "key": self.keys.value(row),
-            "created": iso(row["created"]),
-            "created_by": row["created_by"],
-            "expires": iso(row["expires"]),
-            "revoked": iso(row["revoked"]),
-            "revoked_by": row["revoked_by"],
-            "last_used": iso(row["last_used"]),
-            "uses": row["uses"],
-        }
-        if row["label"]:
-            out["label"] = row["label"]
-        return out
-
-    def create_api_key(self, caller, *, body, raw):
-        request = body.model_dump(mode="json", exclude_unset=True)
-        username, role = request["username"], request["role"]
-        scope = request["scope"]
-        with self.connection() as conn:
-            records = self.records
-            community = None
-            if scope["kind"] == "server":
-                if role != "admin":
-                    raise ApiError(
-                        422, "a key scoped to the server holds the admin role"
-                    )
-            else:
-                if not scope.get("community"):
-                    raise ApiError(422, "a community-scoped key names its community")
-                community = self.community(conn, scope["community"])
-            admin = records.config(conn, "admin")
-            if role == "admin":
-                if username != admin:
-                    raise ApiError(
-                        422, f"an admin key's username is the server's admin '{admin}'"
-                    )
-            elif role == "member":
-                if not records.on_roster(
-                    conn, community, username
-                ) or not records.active_keys(conn, community, username):
-                    raise ApiError(
-                        422, f"'{username}' is not a registered member of {community}"
-                    )
-            elif records.on_roster(conn, community, username) or username == admin:
-                raise ApiError(
-                    422,
-                    f"a non-member key's label must match no handle; '{username}' does",
-                )
-            row, _ = self.keys.create(
-                conn,
-                username=username,
-                role=role,
-                community=community,
-                label=request.get("label"),
-                expires_days=request.get("expires_days"),
-                created_by=caller.username,
-                admin_kid=caller.extras.get("admin_kid") if role == "admin" else None,
-            )
-            conn.commit()
-            out = self.api_key(caller, row)
-        return m.ApiKey.model_validate(out)
-
-    def list_api_keys(
-        self, caller, *, cursor, limit, community, username, include_revoked
-    ):
-        with self.connection() as conn:
-            self.keys.sweep(conn)  # expired values are erased before anything is listed
-        state = decode(cursor, c=str, k=str)
-        try:
-            after = (
-                (datetime.fromisoformat(state["c"]), uuid.UUID(state["k"]))
-                if "c" in state
-                else None
-            )
-        except (KeyError, ValueError):
-            raise ApiError(400, "the cursor is not one this server issued") from None
-        limit = int(plain(limit) or 100)
-        with self.connection() as conn:
-            rows = self.keys.page(
-                conn,
-                after=after,
-                limit=limit + 1,
-                community=plain(community),
-                username=plain(username),
-                include_revoked=True if include_revoked is None else include_revoked,
-            )
-            more, rows = len(rows) > limit, rows[:limit]
-            page = {
-                "items": [self.api_key(caller, r) for r in rows],
-                "next": encode(c=rows[-1]["created"].isoformat(), k=str(rows[-1]["id"]))
-                if more
-                else None,
-            }
-        return m.ApiKeyPage.model_validate(page)
-
-    def key_row(self, conn, key_id):
-        row = self.keys.row(conn, plain(key_id))
-        if row is None:
-            raise ApiError(404, f"no API key '{plain(key_id)}'")
-        return row
-
-    def get_api_key(self, caller, *, key_id):
-        with self.connection() as conn:
-            row = self.key_row(conn, key_id)
-            out = self.api_key(caller, row)
-        return m.ApiKey.model_validate(out)
-
-    def revoke_api_key(self, caller, *, key_id):
-        with self.connection() as conn:
-            self.key_row(conn, key_id)
-            row = self.keys.revoke(conn, plain(key_id), caller.username)
-            conn.commit()
-            return m.ApiKey.model_validate(self.api_key(caller, row))

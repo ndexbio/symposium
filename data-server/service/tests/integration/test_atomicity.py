@@ -42,6 +42,19 @@ def slow_body(
     return body()
 
 
+def reserved(server, *names: str, timeout: float = 30):
+    """Poll every 0.2 s until each name is reserved: its upload has passed the server's early
+    checks (the quota among them) and holds the name while its bytes stream."""
+    listed = ", ".join(f"'{n}'" for n in names)
+    query = (
+        f"SELECT count(*) FROM files WHERE state = 'reserved' AND name IN ({listed})"
+    )
+    deadline = time.time() + timeout
+    while psql(server, query) != str(len(names)):
+        assert time.time() < deadline, f"never reserved: {names}"
+        time.sleep(0.2)
+
+
 def put_stream(owner, name, data, body, timeout=120):
     return httpx.put(
         f"{owner.server.url}/v1/demo/collections/files/files/{name}",
@@ -66,7 +79,7 @@ def test_a_concurrent_duplicate_name_is_refused_before_it_uploads(demo):
 
     thread = threading.Thread(target=slow_create)
     thread.start()
-    time.sleep(0.3)  # lyra's upload is under way and holds the name
+    reserved(server, "contested.bin")  # lyra's upload is under way and holds the name
     started = time.time()
     second = vega.put("demo", "files", "contested.bin", os.urandom(4 * 1024 * 1024))
     assert second.status_code == 409, second.text
@@ -129,7 +142,7 @@ def test_concurrent_uploads_cannot_jointly_exceed_the_quota(server):
     threads = [threading.Thread(target=upload, args=(i,)) for i in range(2)]
     for t in threads:
         t.start()
-    time.sleep(0.5)  # both have passed the early quota check and wait at the gate
+    reserved(server, "q0.bin", "q1.bin")  # both passed the early quota check
     gate.set()
     for t in threads:
         t.join(60)

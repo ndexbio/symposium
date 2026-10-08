@@ -18,7 +18,8 @@ class Runtime:
     settings: Any
     tokens: Any
     admin_mode: Callable[[], Any]
-    public_url: str | None  # SYMPOSIUM_DATA_PUBLIC_URL: the base of every canonical URL
+    # SYMPOSIUM_DATA_API_PUBLIC_URL: the base of every canonical URL
+    public_url: str | None
 
 
 _wired: dict = {}

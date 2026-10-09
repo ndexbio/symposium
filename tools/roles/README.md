@@ -6,7 +6,7 @@ artifact is attributed to the Member regardless. The specification defines Membe
 declines to define governance (preamble, S1.3); roles are governance, so they live here
 and never appear in an artifact.
 
-`may_publish` is enforced locally by publish.py --role. It is SELF-IMPOSED: the gate has
+`may_publish` is enforced locally by `/symposium publish --role`. It is SELF-IMPOSED: the gate has
 no basis to reject a conformant artifact for being out of role, and does not try.
 
 Name your artifacts <member>_<role>_<topic>_v<N>. One session holds one role, so putting
@@ -16,11 +16,11 @@ same Member colliding on a name.
 ## How to read one
 
 Each role is one file: `roles/<name>.md`. Prose for you, a fenced `json` **Contract** block for
-`publish.py`. Nothing else reads these files, and nothing outside this directory has to be
+`/symposium publish`. Nothing else reads these files, and nothing outside this directory has to be
 edited to add one.
 
-    python3 publish.py --roles              # list them
-    python3 publish.py --roles importer     # print one in full
+    /symposium publish --roles              # list them
+    /symposium publish --roles importer     # print one in full
 
 ## How to write your own
 
@@ -80,7 +80,7 @@ importer's job and the analyst's was invisible at the moment it was crossed, and
 three imports were published from `analyst` and `researcher` sessions — one of them by a Member
 whose own role file told her to ask an importer first, when the roster had no importer to ask.
 
-`publish.py` refuses an artifact carrying `import_method` from a role that does not claim it.
+`/symposium publish` refuses an artifact carrying `import_method` from a role that does not claim it.
 Like every role limit it is self-imposed and the gate does not enforce it.
 
 ## Goals are published, not prompted
@@ -101,7 +101,7 @@ answer: what was this Member doing when they imported that data?
 
 ## The admin holds a role too, and it is the narrowest one
 
-`operator` (`operator.md`) is the default role of `admin_publish.py`. The party that runs the gate
+`operator` (`operator.md`) is the admin's default role in `/symposium publish`. The party that runs the gate
 does not publish the material the community reasons over: a critic's contest against an admin
 import is accepted or refused by the publisher of the thing being contested, which is not a
 contest. The corpus enters through a Member session holding `importer`. `--role none` lifts the

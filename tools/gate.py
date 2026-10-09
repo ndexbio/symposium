@@ -1,500 +1,79 @@
-"""Symposium admin gate — discover, validate, accept-or-reject on the community's server.
+"""The admin's gate: discover the members' submissions, validate them, accept or reject.
 
-The publication loop, exactly as smoke-tested 2026-08-05:
+Run it as `/symposium gate`, in the admin's session directory: the context there says which
+community, and `./record` beside it is the gate's copy of the record. One pass per run:
 
-  member  : uploads CX2 (canonical JSON in the `symposium_canonical` network attribute),
-            then grants ndex-admin READ.  Without the grant the admin cannot see it at all.
-  admin   : polls granted networks -> extracts canonical -> validates (validate)
-            ACCEPT : stamp `created`, copy into the record, fan out READ to every member,
-                     write canonical JSON to the mirror repo, index the name
-            REJECT : upload a reply artifact naming the failures; the member polls for it
+  1. a sync pass brings the copy up to date from the `record` feed, exactly as a member's;
+  2. the `inbox` feed, from the gate's cursor, plus the submissions deferred last pass, gives
+     the submissions (marked `symposium_submission`) not decided yet;
+  3. a submission is considered only when its inbox name, before the `@`, is the artifact's
+     name, prefixed with its submitter's handle, and the submitter is a member;
+  4. `order_submissions` puts them in the order a serial publication needs: an artifact after
+     anything it addresses, an output after its Analysis or deferred until it arrives;
+  5. each is validated against the record as it stands, with a provisional `created` from
+     the server's clock, and every `download` held on the data server is verified;
+  6. ACCEPT: `promote` copies the submission into `record` under the artifact's name, and the
+     server stamps `created` into it; REJECT: a reply in `inbox` only the submitter reads.
 
-Four server facts this is built around, established empirically and re-confirmed against
-NDEx 3.0.5 on symposium.ndexbio.org:
-  * THERE ARE NO GROUPS. `createGroup` answers "feature has been removed" and `groupCount` is
-    0; networksets are gone with them. Nothing here should reference either.
-  * Folders and shortcuts at /v3/files/ cascade READ, but only where the folder's owner also
-    owns the target. That is not a limitation here, because THE ADMIN OWNS THE RECORD: a
-    member's upload is a submission, and what enters the record is the admin's own copy of it.
-    Authorship is carried by `published_by` and `authors` in the artifact, never by who owns
-    the network. So one admin-owned community folder, shared READ once per member, covers
-    every artifact the gate ever accepts, and a new record copy inherits that sharing the
-    moment its shortcut lands in the folder.
+THE SERVER HOLDS EVERY DECISION. Each version the gate promotes and each reply it sends names
+the submission it decided (`symposium_submission_citation`), so a submission is decided exactly
+when a record version or a reply names it. `.gate_state.json` beside the copy only caches what
+the server says (the feed cursors, the deferred submissions, the decisions): a pass first reads
+both feeds from its cursors, so a decision written just before a crash is still seen, and a
+lost state file is rebuilt from the feeds' start. No submission is decided twice, and no reply
+is sent twice.
 
-    Set SYMPOSIUM_FOLDER to that folder's id and acceptance places a shortcut instead of
-    granting each member individually; onboarding a member becomes one folder share rather
-    than one grant per accepted artifact. Leave it unset and the gate falls back to the
-    per-network fan-out, which is slower and equivalent.
-  * a freshly uploaded private network has `indexLevel: NONE` and never appears in
-    /v2/search/network, so discovery uses the permission map, not search
-  * NDEx search TOKENISES and cannot do exact-name matching, so name uniqueness lives in the
-    mirror repo index, never in a server query
+  python gate.py              one pass
+  python gate.py --dry-run    decide and report; promote, reply and save nothing
+  python gate.py --verify     compare the copy's artifacts with the `record` feed; change nothing
+  python gate.py --rebuild    discard the copy's and the gate's caches, rebuild them, then exit
+  python gate.py --watch      a pass every SYMPOSIUM_POLL seconds (default 30), reporting each
+                              pass that accepts or rejects something. It runs until stopped,
+                              with no time limit of its own: run it in the background. ctrl-c,
+                              SIGTERM or (Windows) CTRL_BREAK stops it within a second, with
+                              exit code 0, even mid-pass. A restart resumes where it left off,
+                              and takes over from a gate still watching this session, which it
+                              stops.
 
-Networks are author-owned — creation is POST /v3/networks and returns a /v3/network/... URL —
-while the permission endpoints remain v2. Mixing the two versions is correct, not a leftover.
-
-Not yet used, and worth testing before it is: POST /v3/files/copy would make the admin-owned
-record copy server-side, instead of extracting the canonical, re-serialising it to CX2 and
-uploading it. The catch is that the gate OWNS `created` and stamps it into the canonical before
-upload, and it marks the copy as a record copy. A server-side copy reproduces the member's
-submission as submitted — unstamped, unmarked — so it needs a follow-up attribute write, and
-between the two calls an artifact with `created: null` exists where members are looking. Today's
-single upload has no such window. Adopt it only if the copy can carry the attributes, or after
-establishing that the gap is not observable.
-
-Credentials come from the environment; nothing is passed on the command line.
-
-  NDEX_ADMIN_USER / NDEX_ADMIN_PASSWORD        the gate's own account
-  SYMPOSIUM_MEMBERS=agent_lyra,agent_vega,…    members who receive read access
-
-  python gate.py --once            one pass
-  python gate.py --dry-run         validate and report; publish nothing
-  python gate.py --verify          report mirror vs server; repair nothing, publish nothing
-  python gate.py --rebuild         rebuild the mirror from the server, then exit
-  python gate.py --grant <member>  give a NEW member READ on everything already accepted
-
-THE MIRROR IS A CACHE, NOT THE RECORD. Every accepted artifact is uploaded as an
-admin-owned network carrying its whole canonical JSON, and the account listing returns that
-JSON complete — verified against a 236 KB embedded payload. So the record travels with the
-symposium rather than with this machine, and a lost mirror is recoverable in one call.
-
-What a lost mirror WOULD cost is name uniqueness, and therefore immutability: the gate refuses
-a name already in the record by consulting the mirror, so a mirror missing artifacts will
-silently accept duplicates. Every run therefore checks the mirror against the server before
-doing anything else — but as a CACHE CHECK, not a proof of equality.
-
-  Measured on this deployment 2026-08-06: a network summary carries every network attribute
-  as a `property`, so a summary costs the SAME as a full fetch — 239,715 bytes of summary for
-  a 232 KB artifact against 239,570 bytes of full network. There is no metadata-only endpoint;
-  `/v3/networks/{uuid}/summary` carries the properties too. Anything that walks summaries is
-  moving the whole record.
-
-  So the staleness check is the permission map instead: ~47 bytes per network, one call.
-  It answers exactly the question that matters — does the server hold a record copy whose
-  UUID this mirror does not know — and it is sound ONLY because artifacts are immutable and
-  this gate is their only writer, so UUID equality implies content equality.
-
-A gap is REPAIRED, not refused: the missing artifacts are fetched individually and written to
-the mirror, and the run continues. Refusing was the old behaviour and it stopped the gate
-mid-run, which is the worst moment to stop it. The run aborts only if a repair FAILS,
-which is the state in which a duplicate name could genuinely slip through.
-
-A UUID counts as known only if its artifact is actually present in the mirror directory. That
-is what makes a deleted or half-restored mirror repair itself rather than trust its own
-bookkeeping.
+Everything goes through the `symposium-data` CLI (R-I1). Exit 0 = the pass ran; 1 = no context
+in this directory (the message names `/symposium setup` and `bootstrap`), the data server could
+not be reached, or the copy differs from the record (`--verify`); 2 = `--watch` given with
+`--verify` or `--rebuild`.
 """
+
 from __future__ import annotations
 
+import contextlib
+import io
 import json
-import os
+import re
 import sys
-import time
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import timedelta
 
 import telemetry
-from ndex_io import (BASE, CANONICAL_ATTR, NON_ARTIFACT_MARKS, NON_ARTIFACT_SEGMENTS,
-                     add_shortcut, share_folder,
-                     RECORD_MARK, REPLY_MARK, auth, api as _api, extract_artifact,
-                     extract_canonical, grant_read as _grant, permission_map, to_cx2,
-                     upload_cx2 as _upload, user_uuid, load_canonical_dir)
-from validate import validate, passed, parse_instant
+from data_io import (
+    IN_REPLY_TO,
+    RECORD_MARK,
+    REPLY_MARK,
+    SUBMISSION_CITATION,
+    SUBMISSION_MARK,
+    DataError,
+    Mirror,
+    SymposiumData,
+    pause,
+    stop_on_signals,
+    take_over,
+)
+from symposium_rules.checks import skip_reason
+from sync import POLL, Sync
+from sync import STATE as SYNC_STATE
+from validate import finding, method_of, parse_instant, passed, validate
+
+# the feed cursors, the submissions waiting for their Analysis, and a decision per submission
+STATE = ".gate_state.json"
+DATA_LOCATION = "symposium-data:"
 
-MIRROR = Path(os.environ.get("SYMPOSIUM_MIRROR", "./record"))
-DRY = "--dry-run" in sys.argv
 
-ADMIN_USER, ADMIN_TOK = auth("ADMIN")
-MEMBERS = [m.strip() for m in os.environ.get("SYMPOSIUM_MEMBERS", "").split(",") if m.strip()]
-# The admin-owned community folder, shared READ once per member. Set it and acceptance drops a
-# shortcut in; leave it unset and acceptance grants each member READ on each artifact instead.
-# Deliberately an id rather than a name the gate creates: creating it is a one-time operator act
-# that should be seen to succeed, not a path this guesses at on a live record.
-FOLDER = os.environ.get("SYMPOSIUM_FOLDER", "").strip()
-
-
-def api(method, path, body=None, raw=False, tok=None):
-    return _api(method, path, tok or ADMIN_TOK, body=body, raw=raw)
-
-
-def upload_cx2(aspects, tok=None):
-    return _upload(aspects, tok or ADMIN_TOK)
-
-
-def _extract(uuid):
-    return extract_canonical(uuid, ADMIN_TOK)
-
-
-def _extract_full(uuid):
-    """-> (canonical, network_attributes, err). The attributes are needed to read the role
-    marks, which is how an event log is told apart from a submission for certain."""
-    return extract_artifact(uuid, ADMIN_TOK)
-
-
-def _marked(attrs, mark):
-    """Is a role mark set? CX2 gives real booleans; a summary's `properties` gives the strings
-    "true"/"false", and a bare truthiness test would read "false" as set."""
-    return str((attrs or {}).get(mark, "")).lower() == "true"
-
-
-def _from_summary(uuid, props):
-    """Canonical JSON out of a summary already in hand, falling back to a full fetch.
-
-    A summary carries every network attribute, so the submission has ALREADY been downloaded
-    by the time discovery has classified it; fetching the network again doubles the cost of
-    every new submission for nothing.
-
-    The fallback is not decoration. Completeness of the canonical property in a summary is
-    verified only up to ~236 KB, and a truncated payload would fail to parse rather than parse
-    wrongly — so a parse failure means "fetch it properly", never "reject it".
-    """
-    raw = (props or {}).get(CANONICAL_ATTR)
-    if raw:
-        try:
-            return json.loads(raw), props, None
-        except Exception:                                      # noqa: BLE001
-            pass
-    return _extract_full(uuid)
-
-
-# --------------------------------------------------------------------------- mirror repo
-STATE = ".gate_state.json"      # the gate's UUID bookkeeping; never the record
-
-
-def load_record():
-    MIRROR.mkdir(parents=True, exist_ok=True)
-    return load_canonical_dir(MIRROR)
-
-
-def load_state():
-    """UUID bookkeeping, and nothing else.
-
-    `record`   admin-owned record copies      uuid -> artifact name
-    `other`    admin-owned but not the record uuid -> reason (rejection replies, strays)
-    `granted`  submissions already disposed of uuid -> what happened
-
-    Every one of these is an optimisation and none of them is authoritative: losing this file
-    costs one expensive pass, not correctness. `record` in particular is cross-checked against
-    the mirror directory on every run, so it cannot vouch for an artifact that is not there.
-    """
-    try:
-        s = json.loads((MIRROR / STATE).read_text())
-    except Exception:                                          # noqa: BLE001
-        s = {}
-    return {"record": s.get("record") or {}, "other": s.get("other") or {},
-            "granted": s.get("granted") or {}}
-
-
-def save_state(state):
-    (MIRROR / STATE).write_text(json.dumps(state, indent=2, sort_keys=True) + "\n")
-
-
-def write_index(state):
-    """Rewrite index.jsonl from the mirror. Derived, never appended.
-
-    It used to be appended to as artifacts were accepted, which made it the one thing in this
-    design that could drift from the record it described — exactly what a catalog artifact was
-    rejected for. Rewriting it from the mirror at this scale costs nothing and cannot drift.
-    """
-    rows = []
-    for c in load_canonical_dir(MIRROR):
-        h = c["artifact"]
-        rows.append({"name": h.get("name"), "type": h.get("type"),
-                     "created": h.get("created"),
-                     "network": next((u for u, n in state["record"].items()
-                                      if n == h.get("name")), None)})
-    rows.sort(key=lambda r: (r["created"] or "", r["name"] or ""))
-    with (MIRROR / "index.jsonl").open("w") as fh:
-        for r in rows:
-            fh.write(json.dumps(r) + "\n")
-
-
-def write_record(canonical, uuid, state):
-    p = MIRROR / f"{canonical['artifact']['name']}.json"
-    p.write_text(json.dumps(canonical, indent=2) + "\n")
-    state["record"][uuid] = canonical["artifact"]["name"]
-    write_index(state)
-    save_state(state)
-    return p
-
-
-# --------------------------------------------------------------------------- discovery
-def discover(state):
-    """Submissions the admin can see, driven by the grant itself.
-
-    NOT by search: on this deployment a freshly uploaded private network has
-    `indexLevel: NONE` and simply does not appear in /v2/search/network, so search-based
-    discovery silently drops submissions. The permission map is exact and immediate — a
-    member's grant IS the submission signal.
-
-    The permission map costs ~47 bytes per network; a summary costs the WHOLE network, because
-    every attribute rides along in `properties`. So a UUID already disposed of is skipped
-    before its summary is fetched. Without that, every submission ever made and every event
-    log ever pushed is re-downloaded in full on every pass — and a rejected submission is
-    re-validated and re-rejected on every pass, posting a fresh reply network each time.
-
-    A DEFERRED submission is deliberately not recorded as seen: it has to be looked at again
-    when its sibling arrives.
-    """
-    st, me = api("GET", "/v2/user?valid=true")
-    if st != 200:
-        print(f"  ! cannot resolve admin account: HTTP {st}")
-        return []
-    # Paginated: the raw endpoint caps at 100 and does not say so, which silently hid every
-    # submission past the hundredth network the admin could see. See ndex_io.permission_map.
-    st, perms = permission_map(me["externalId"], ADMIN_TOK, "&permission=READ")
-    if st != 200 or not isinstance(perms, dict):
-        print(f"  ! permission listing failed: HTTP {st}")
-        return []
-    subs = []
-    for uuid, level in perms.items():
-        if level != "READ":
-            continue                       # ADMIN/WRITE = our own record copies and replies
-        if uuid in state["granted"]:
-            continue                       # already accepted, rejected, or ruled out
-        st, s = api("GET", f"/v2/network/{uuid}/summary")
-        if st != 200 or not isinstance(s, dict):
-            print(f"  ! summary {uuid[:8]} failed: HTTP {st}")
-            continue                       # transient: never recorded as seen
-        if s.get("owner") == ADMIN_USER:
-            state["granted"][uuid] = "admin-owned"
-            continue
-        # A member's event log and its closing session report both arrive through this same
-        # channel and neither is a bid for publication. Recorded as seen so the summary — which
-        # carries the entire log — is paid for once and never again. Silently: neither is an
-        # error, and a line per push per cycle is how a real failure gets missed at three o'clock.
-        if any(seg in (s.get("name") or "") for seg in NON_ARTIFACT_SEGMENTS):
-            state["granted"][uuid] = "non-artifact (name segment)"
-            continue
-        subs.append({"uuid": uuid, "name": s.get("name"), "owner": s.get("owner"),
-                     "props": {p.get("predicateString"): p.get("value")
-                               for p in (s.get("properties") or [])}})
-    return subs
-
-
-def grant_read(uuid, member_uuid):
-    return _grant(uuid, member_uuid, ADMIN_TOK)
-
-
-def member_uuids():
-    out = {}
-    for m in MEMBERS:
-        u = user_uuid(m, ADMIN_TOK)
-        if u:
-            out[m] = u
-        else:
-            print(f"  ! cannot resolve member '{m}'")
-    return out
-
-
-def server_record():
-    """Every accepted artifact, from the admin's own account. -> {name: (uuid, canonical)}
-
-    ONE listing call. Network summaries carry `properties`, and the record copies stamp the
-    whole canonical JSON into `symposium_canonical` — complete, not truncated, confirmed
-    against a 236 KB embedded table. Rejection replies live in the same account and are
-    excluded by their mark.
-
-    Search is not used and must not be: this deployment tokenises names and cannot match one
-    exactly, which is the whole reason name uniqueness never lived in a server query.
-    """
-    st, me = _api("GET", "/v2/user?valid=true", ADMIN_TOK)
-    if st != 200 or not isinstance(me, dict):
-        return None, f"cannot resolve admin account: HTTP {st}"
-    st, nets = _api("GET", f"/v2/user/{me['externalId']}/networksummary", ADMIN_TOK)
-    if st != 200 or not isinstance(nets, list):
-        return None, f"cannot list admin networks: HTTP {st}"
-    out = {}
-    for n in nets:
-        props = {p.get("predicateString"): p.get("value")
-                 for p in (n.get("properties") or [])}
-        if str(props.get(RECORD_MARK, "")).lower() != "true":
-            continue                                   # a rejection reply, or something else
-        raw = props.get(CANONICAL_ATTR)
-        if not raw:
-            continue
-        try:
-            canonical = json.loads(raw)
-        except Exception:                              # noqa: BLE001
-            continue
-        name = canonical.get("artifact", {}).get("name") or n.get("name")
-        out[name] = (n.get("externalId"), canonical)
-    return out, None
-
-
-def admin_owned_uuids():
-    """Every network this account owns, as a UUID set. -> (uuids, err)
-
-    ~47 bytes per network, one call, and it is the ONLY cheap thing on this deployment: a
-    network summary carries all of its attributes, so walking summaries moves the whole record
-    (measured: 239,715 bytes of "summary" for a 232 KB artifact). The permission map carries
-    no attributes at all.
-    """
-    st, me = _api("GET", "/v2/user?valid=true", ADMIN_TOK)
-    if st != 200 or not isinstance(me, dict):
-        return None, f"cannot resolve admin account: HTTP {st}"
-    st, perms = _api("GET", f"/v2/user/{me['externalId']}/permission"
-                            f"?type=NETWORK&permission=ADMIN", ADMIN_TOK)
-    if st != 200 or not isinstance(perms, dict):
-        return None, f"cannot list admin-owned networks: HTTP {st}"
-    return set(perms), None
-
-
-def checkpoint(record, state, repair=True):
-    """Cheap staleness check, then repair. -> (ok, added, unresolved, extra)
-
-    `ok` is None if the server could not be reached at all — a different thing from a stale
-    mirror, and not a reason to distrust what is already held.
-
-    A UUID is KNOWN only if the artifact it maps to is actually a file in the mirror. Trusting
-    the state file alone would let a mirror that lost its .json files still claim to know every
-    name, and name uniqueness is exactly what the mirror is for.
-    """
-    names = {r["artifact"]["name"] for r in record if r.get("artifact", {}).get("name")}
-    server, err = admin_owned_uuids()
-    if server is None:
-        print(f"  ! cannot reach the server to check the mirror: {err}")
-        return None, [], [], set()
-
-    known = {u for u, n in state["record"].items() if n in names} | set(state["other"])
-    unknown = server - known
-    extra = {n for u, n in state["record"].items() if u not in server and n in names}
-
-    if not repair:                          # --verify reports; it does not touch the mirror
-        return (not unknown), [], sorted(unknown), extra
-
-    # Drop bookkeeping for artifacts that are no longer in the mirror, so a restored-from-
-    # backup mirror does not carry a stale claim about what it holds.
-    for u in [u for u, n in state["record"].items() if n not in names]:
-        state["record"].pop(u)
-
-    added, unresolved = [], []
-    for uuid in sorted(unknown):
-        canonical, na, ferr = _extract_full(uuid)
-        if ferr or not canonical:
-            # Could be a rejection reply or a stray, which carry no canonical JSON and are not
-            # a gap; could equally be a network that failed to read. Tell them apart on the
-            # role mark, which a reply always carries.
-            if _marked(na, REPLY_MARK) or any(_marked(na, m) for m in NON_ARTIFACT_MARKS):
-                state["other"][uuid] = "reply-or-non-artifact"
-                continue
-            unresolved.append(uuid)
-            print(f"  ! cannot read admin-owned network {uuid[:8]}: {ferr or 'no canonical JSON'}")
-            continue
-        if not _marked(na, RECORD_MARK):
-            state["other"][uuid] = "admin-owned, not marked as record"
-            continue
-        name = canonical.get("artifact", {}).get("name")
-        if not name:
-            state["other"][uuid] = "canonical JSON carries no artifact name"
-            continue
-        (MIRROR / f"{name}.json").write_text(json.dumps(canonical, indent=2) + "\n")
-        state["record"][uuid] = name
-        names.add(name)
-        record.append(canonical)
-        added.append(name)
-    if added:
-        write_index(state)
-    save_state(state)
-    return (not unresolved), added, unresolved, extra
-
-
-def grant_backfill(member):
-    """Give a member READ on every artifact already in the record. -> exit code
-
-    Read access fans out at ACCEPT time, to whoever was in SYMPOSIUM_MEMBERS when the gate ran.
-    A Member added later therefore holds grants on nothing published before they existed — and
-    because discovery is the permission map, `sync.py` reports an empty record rather than an
-    error. It looks exactly like a broken install.
-
-    So adding a Member is two steps: create the account, then run this. It is idempotent.
-
-    With SYMPOSIUM_FOLDER set this is one call and covers the future as well as the past: the
-    member is shared the admin-owned community folder, and every record copy shortcut into it
-    — including ones accepted later — is readable through that share. Without a folder it walks
-    the record and grants each artifact separately, which works and is O(artifacts).
-    """
-    # A newly created account is NOT immediately visible to /v2/user?username=. Observed
-    # 2026-08-06: an account created and reported as isVerified:true still resolved as absent
-    # when the grant was attempted moments later, and resolved normally minutes afterwards.
-    # This is the same class of lag as the ~2s a fresh network takes to become readable, and it
-    # arrives at exactly the wrong moment — right after someone creates an account, when
-    # "no such account" reads as "the creation silently failed."
-    uuid = None
-    for attempt in range(6):
-        uuid = user_uuid(member, ADMIN_TOK)
-        if uuid:
-            if attempt:
-                print(f"  ('{member}' resolved on attempt {attempt + 1} — new accounts take a "
-                      f"moment to become visible)")
-            break
-        if attempt < 5:
-            time.sleep(5)
-    if not uuid:
-        print(f"! '{member}' does not resolve on {BASE} after 30s of retries.\n"
-              f"  If you have JUST created it, wait a minute and run this again — a new account\n"
-              f"  is not immediately visible, and this failure looks identical to one that\n"
-              f"  never got created.\n"
-              f"  If it persists, the account does not exist. Self-signup is disabled on this\n"
-              f"  deployment, so an administrator has to create it.")
-        return 1
-    # ONE CALL IF THERE IS A FOLDER. The community folder is admin-owned and so is every
-    # record copy inside it, so sharing the folder gives this member READ on the whole record
-    # at once — and on everything accepted afterwards, without anyone running this again.
-    if FOLDER:
-        st_ = share_folder(FOLDER, uuid, ADMIN_TOK)
-        if st_ not in (200, 201, 204):
-            print(f"! sharing folder {FOLDER} with {member} failed: HTTP {st_}")
-            return 1
-        print(f"shared the community folder with {member} — they can read the whole record, "
-              f"and will inherit\nwhatever is accepted from now on.")
-        print(f"\nAdd them to the gate's environment so their submissions can be validated:\n"
-              f"    export SYMPOSIUM_MEMBERS={','.join(sorted(set(MEMBERS) | {member}))}")
-        return 0
-
-    server, err = server_record()
-    if server is None:
-        print(f"! {err}")
-        return 1
-    ok = fail = 0
-    for name, (net, _canonical) in sorted(server.items()):
-        if grant_read(net, uuid):
-            ok += 1
-        else:
-            fail += 1
-            print(f"  ! could not grant READ on {name}")
-    print(f"granted {member} READ on {ok} artifact(s)" + (f", {fail} FAILED" if fail else ""))
-    if fail:
-        return 1
-    print(f"\nAdd them to the gate's environment so future acceptances include them:\n"
-          f"    export SYMPOSIUM_MEMBERS={','.join(sorted(set(MEMBERS) | {member}))}")
-    return 0
-
-
-def rebuild_mirror():
-    """Write the server's record back into the mirror. Never deletes anything local.
-
-    This is the one place a whole-account listing is the right call: it is the recovery path,
-    it runs once, and it genuinely needs every artifact's content. The per-run staleness check
-    uses `checkpoint()` instead — see the module docstring for why the difference matters.
-    """
-    server, err = server_record()
-    if server is None:
-        print(f"! {err}")
-        return 1
-    MIRROR.mkdir(parents=True, exist_ok=True)
-    state = load_state()
-    state["record"] = {}
-    for name, (uuid, canonical) in sorted(server.items()):
-        (MIRROR / f"{name}.json").write_text(json.dumps(canonical, indent=2) + "\n")
-        state["record"][uuid] = name
-    write_index(state)
-    save_state(state)
-    print(f"rebuilt {MIRROR} from the server: {len(server)} artifact(s), "
-          f"index.jsonl and {STATE} rewritten")
-    return 0
-
-
-# --------------------------------------------------------------------------- accept / reject
 def _root(addr):
     """Artifact name at the head of an address."""
     return str(addr).lstrip("@").split("#")[0].split(".")[0]
@@ -568,242 +147,325 @@ def order_submissions(subs, record_names):
     return ordered, deferred
 
 
-def accept(canonical, record, muuids, state, stamp=None, submission_uuid=None):
-    name = canonical["artifact"]["name"]
-    canonical["artifact"]["created"] = stamp or datetime.now(timezone.utc).isoformat(timespec="seconds")
-    if DRY:
-        print(f"    (dry-run) would accept {name}")
-        return True
-    st, uuid = upload_cx2(to_cx2(canonical, marks={RECORD_MARK: True}))
-    if st not in (200, 201):
-        print(f"    ! record copy failed: HTTP {st} {uuid}")
-        return False
-    # One shortcut, or one grant per member. Both end with every member able to read the
-    # record copy; the folder does it in a single call and covers members added later, because
-    # a shortcut inherits whatever the folder is shared to.
-    if FOLDER:
-        st_, body = add_shortcut(FOLDER, uuid, ADMIN_TOK)
-        if st_ not in (200, 201):
-            print(f"    ! shortcut into folder {FOLDER} failed: HTTP {st_} {body}")
-            print(f"      falling back to per-member grants for this artifact")
-            reach = _fan_out(uuid, muuids)
-        else:
-            reach = f"shortcut -> folder {FOLDER[:8]}"
-    else:
-        reach = _fan_out(uuid, muuids)
-    write_record(canonical, uuid, state)
-    if submission_uuid:
-        state["granted"][submission_uuid] = f"accepted as {name}"
-    print(f"    ACCEPTED -> record {uuid}, {reach}, mirrored")
-    return True
+class Gate:
+    def __init__(self, data: SymposiumData | None = None, mirror: Mirror | None = None,
+                 dry: bool = False):
+        self.data = data or SymposiumData()
+        self.mirror = mirror or Mirror()
+        self.dry = dry
+        self.decided = 0  # submissions accepted or rejected since the last look
 
+    # ── state: a cache of what the server says ────────────────────────────────────────────
+    def load_state(self):
+        return self.mirror.read_state(
+            STATE, {"inbox_since": 0, "record_since": 0, "deferred": [], "decisions": {}}
+        )
 
-def _fan_out(uuid, muuids):
-    ok = 0
-    for m, mu in muuids.items():
-        if mu and grant_read(uuid, mu):
-            ok += 1
-        elif mu:
-            print(f"    ! could not grant READ to {m}")
-    return f"{ok}/{len(muuids)} read grants"
+    def save_state(self, state):
+        if not self.dry:
+            self.mirror.write_state(STATE, state)
 
+    def refresh(self, state):
+        """Read both feeds from the state's cursors. Every decision the server holds that the
+        state does not (a lost state file, or a crash between a decision and its save) is
+        folded in BEFORE anything is decided. -> the new inbox items."""
+        record = self.data.changes("record", state["record_since"])
+        inbox = self.data.changes("inbox", state["inbox_since"])
+        for item in record["items"]:
+            cite = (item.get("metadata") or {}).get(SUBMISSION_CITATION)
+            if cite:
+                state["decisions"][cite] = f"accepted as {item['name']}"
+        for item in inbox["items"]:
+            meta = item.get("metadata") or {}
+            if meta.get(REPLY_MARK) and meta.get(SUBMISSION_CITATION):
+                state["decisions"][meta[SUBMISSION_CITATION]] = "rejected"
+        state["record_since"] = record["next_since"]
+        return inbox["items"], inbox["next_since"]
 
-def reject(canonical, submitted_name, findings, owner, muuids):
-    fails = [f"{x['check']}: {x['msg']}" for x in findings if x["level"] == "FAIL"]
-    reply_name = f"{ADMIN_USER}_REPLY_{submitted_name}"
-    reply = {"artifact": {"name": reply_name.replace("-", "_"), "type": "NonGroundable",
-                          "specification_version": "1.0", "published_by": f"@{ADMIN_USER}",
-                          "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                          "text": "REJECTED\n\nin_reply_to: " + submitted_name + "\n\n"
-                                  + "\n".join(f"- {x}" for x in fails)},
-             "objects": [], "relationships": []}
-    print(f"    REJECTED ({len(fails)} failures)")
-    for x in fails[:6]:
-        print(f"      - {x[:150]}")
-    if DRY:
-        return
-    st, uuid = upload_cx2(to_cx2(reply, marks={REPLY_MARK: True,
-                                                 "symposium_in_reply_to": submitted_name}))
-    if st in (200, 201):
-        mu = muuids.get(owner)
-        if mu:
-            grant_read(uuid, mu)
-            print(f"    reply posted -> {uuid} (readable by {owner})")
-        else:
-            # Access is per-network user->user grants and there is no group to fall back on,
-            # so an unresolvable owner means the reply is uploaded and reaches nobody. Saying
-            # "readable by <owner>" here, as this did, is a lie told at exactly the moment a
-            # member is sitting waiting for an answer that will never arrive.
-            print(f"    ! reply posted -> {uuid} but '{owner}' could not be resolved to a "
-                  f"user, so it was NOT shared.\n      The member is waiting on a reply they "
-                  f"cannot see. Check SYMPOSIUM_MEMBERS and the account name.")
-    else:
-        print(f"    ! reply upload failed: HTTP {st} {uuid}")
+    # ── one pass ──────────────────────────────────────────────────────────────────────────
+    def once(self) -> int:
+        sync = Sync(self.data, self.mirror, quiet=True)
+        if sync.once(sync.load_state()) is None:
+            print("! the data server could not be reached — nothing was decided")
+            return 1
+        try:
+            admin = self.data.context()["handle"]
+            state = self.load_state()
+            items, inbox_since = self.refresh(state)
+        except DataError as e:
+            print(f"! {e}")
+            return 1
+        record = self.mirror.load()
+        names = {r["artifact"]["name"] for r in record}
+        members = sync.members | {
+            r["artifact"]["published_by"].lstrip("@") for r in record
+            if r["artifact"].get("published_by")
+        }
+        print(f"gate: record holds {len(record)} artifact(s); members {sorted(members)}"
+              + ("  [DRY RUN]" if self.dry else ""))
 
+        candidates = list(state["deferred"]) + [
+            i for i in items
+            if (i.get("metadata") or {}).get(SUBMISSION_MARK) and not i.get("deleted")
+        ]
+        subs = []
+        for item in {i["citation"]: i for i in candidates}.values():
+            if item["citation"] in state["decisions"]:
+                continue
+            sub = self.admit(item, members, state)
+            if sub:
+                subs.append(sub)
+        print(f"gate: {len(subs)} submission(s) to decide\n")
 
-def run_once():
-    record = load_record()
-    state = load_state()
-    members = set(MEMBERS) | {ADMIN_USER}
-    muuids = member_uuids()
-    print(f"gate: record holds {len(record)} artifact(s); members {sorted(members)}"
-          + ("  [DRY RUN]" if DRY else ""))
+        ordered, deferred = order_submissions(subs, names)
+        state["deferred"] = [waiting["item"] for waiting, _ in deferred]
+        for waiting, missing in deferred:
+            print(f"  DEFERRED {waiting['name']}\n    waiting for: {', '.join(missing)} "
+                  f"(an Analysis is published before its outputs, spec 2.5)")
+            telemetry.emit("gate", "gate_defer", "deferred", artifact=waiting["name"],
+                           atype=waiting["canonical"]["artifact"].get("type"),
+                           submitter=waiting["owner"], waiting_for=sorted(missing))
 
-    # The mirror is how name uniqueness is enforced, so a mirror behind the server means this
-    # run could accept a name that already exists. Repair the gap and carry on; abort only if
-    # the repair fails, which is the only state in which a duplicate could actually slip in.
-    ok, added, unresolved, extra = checkpoint(record, state)
-    if added:
-        print(f"  mirror was behind by {len(added)}; fetched and repaired: "
-              f"{', '.join(sorted(added)[:5])}" + (" …" if len(added) > 5 else ""))
-    if unresolved:
-        print(f"  ! could not repair {len(unresolved)} admin-owned network(s): "
-              f"{', '.join(u[:8] for u in unresolved[:5])}")
-        print("  Name uniqueness is checked against the mirror, so running now could accept a "
-              "duplicate\n  name into an immutable record. Fix it first:\n"
-              "      python gate.py --rebuild")
-        return 1
-    if extra:
-        print(f"  note: {len(extra)} artifact(s) in the mirror are not on the server "
-              f"(deleted there?): {', '.join(sorted(extra)[:5])}")
-    names = {r["artifact"]["name"] for r in record if r.get("artifact", {}).get("name")}
-
-    raw = discover(state)
-    print(f"gate: {len(raw)} new submission(s)\n")
-
-    # Everything below marks a submission as seen only when its disposition is FINAL. A
-    # transport failure is not final; a malformed name is.
-    subs = []
-    for s in raw:
-        if s["name"] in names:
-            print(f"  {s['name']}: already in the record — skipping")
-            state["granted"][s["uuid"]] = "already in the record"
-            continue
-        canonical, na, err = _from_summary(s["uuid"], s.get("props"))
-        if any(_marked(na, m) for m in NON_ARTIFACT_MARKS):
-            state["granted"][s["uuid"]] = "non-artifact (role mark)"
-            continue                       # a log or a report, whatever it is called
-        if err:
-            print(f"  {s['name']}: ! {err}")
-            continue
-        declared = canonical.get("artifact", {}).get("name")
-        if declared != s["name"]:
-            print(f"  {s['name']}: ! network name != artifact.name '{declared}'")
-            state["granted"][s["uuid"]] = "network name != artifact.name"
-            continue
-        if not declared.startswith(f"{s['owner']}_"):
-            print(f"  {declared}: ! name is not prefixed with the owner '{s['owner']}_'")
-            state["granted"][s["uuid"]] = "name not prefixed with the owner"
-            continue
-        # THE ROSTER IS THIS ENVIRONMENT VARIABLE AND NOTHING ELSE. Groups are removed from the
-        # server, so there is no principal that enumerates the community and no way to discover
-        # a member the operator forgot to list. A submitter who is absent from it fails
-        # validation on `published_by` not resolving to a Member, which reads as a malformed
-        # address and is not; and because the fan-out is keyed on the same list, the rejection
-        # explaining that would never be shared with them either. Say it plainly instead.
-        if s["owner"] not in MEMBERS and s["owner"] != ADMIN_USER:
-            print(f"  {declared}: ! '{s['owner']}' is not in SYMPOSIUM_MEMBERS, so this "
-                  f"submission cannot be\n    validated or replied to. Add them and restart "
-                  f"the gate:\n      export SYMPOSIUM_MEMBERS="
-                  f"{','.join(sorted(set(MEMBERS) | {s['owner']}))}")
-            state["granted"][s["uuid"]] = f"submitter '{s['owner']}' not in SYMPOSIUM_MEMBERS"
-            continue
-        s["canonical"] = canonical
-        subs.append(s)
-
-    ordered, deferred = order_submissions(subs, names)
-    # NOT `members`: that name holds the member-name set built above, and rebinding it here to a
-    # list of submissions made every later validate() call raise `unhashable type: 'dict'`. The
-    # gate then exited 1 on every pass and published nothing. It stayed hidden all day because it
-    # needs a pass that has BOTH a deferral and something to validate.
-    for waiting, missing in deferred:
-        print(f"  DEFERRED {waiting['name']}\n    waiting for: {', '.join(missing)} "
-              f"(an Analysis is published before its outputs, spec 2.5)")
-        telemetry.emit("gate", "gate_defer", "deferred", artifact=waiting["name"],
-                       atype=waiting["canonical"]["artifact"].get("type"),
-                       submitter=waiting["owner"], waiting_for=sorted(missing))
-
-    # Stamps must strictly increase from one artifact to the next. `order_submissions` already
-    # orders them so one is accepted before anything addressing it, but ordering the ACCEPTS is
-    # not enough: the ORDER check requires a Ground's target to be strictly EARLIER than the
-    # artifact grounding on it, and at `timespec="seconds"` two artifacts processed in the same
-    # wall-clock second get the same stamp. On 2026-08-07 that rejected the first
-    # participant-built Argument in the record — it grounded on Data the gate had stamped in the
-    # same second, in the same pass. A member cannot avoid this, because the gate owns `created`;
-    # the gate was rejecting a correctly ordered submission for its own clock resolution. Seeded
-    # from the record so the guarantee survives a restart.
-    seen = [parse_instant(c.get("artifact", {}).get("created")) for c in record]
-    prev = max([d for d in seen if d], default=None)
-
-    for m in ordered:
-        # One artifact, one stamp, one verdict. Nothing in this loop may make two artifacts
-        # share a `created`: spec 1.9 says artifacts with an identical stamp are not earlier
-        # than one another and cannot refer to each other, so a tie is not a convenience, it
-        # is a pair of artifacts that can never cite each other for the life of the record.
-        now = datetime.now(timezone.utc).replace(microsecond=0)
-        if prev is not None and now <= prev:
-            now = prev + timedelta(seconds=1)
-        prev = now
-        stamp = now.isoformat(timespec="seconds")
-        canonical = m["canonical"]
-        canonical["artifact"]["created"] = stamp
-        print(f"  {canonical['artifact']['name']}")
-
-        f = validate(canonical, record, members)
-        if passed(f):
-            for x in f:
-                print(f"    [REVIEW {x['check']}] {x['msg'][:110]}")
-            if accept(canonical, record, muuids, state, stamp=stamp, submission_uuid=m["uuid"]):
-                record.append(canonical)
-                names.add(canonical["artifact"]["name"])
-                # REVIEW findings are logged at the moment of acceptance because they are the
-                # validator signal that SURVIVES into the record — the same findings can be
-                # recomputed tomorrow, but not the fact that the gate saw them and accepted.
-                telemetry.emit("gate", "gate_accept", "accepted",
-                               artifact=canonical["artifact"]["name"],
+        for sub in ordered:
+            canonical = sub["canonical"]
+            canonical["artifact"]["created"] = self.provisional(sub, record)
+            print(f"  {sub['name']}")
+            findings = validate(canonical, record, members) + self.verify_downloads(sub)
+            if passed(findings):
+                for x in findings:
+                    print(f"    [REVIEW {x['check']}] {x['msg'][:110]}")
+                stored = self.accept(sub)
+                if stored is None:
+                    continue           # not decided: the next pass tries it again
+                record.append(stored)
+                names.add(sub["name"])
+                state["decisions"][sub["citation"]] = f"accepted as {sub['name']}"
+                self.decided += 1
+                telemetry.emit("gate", "gate_accept", "accepted", artifact=sub["name"],
                                atype=canonical["artifact"].get("type"),
-                               submitter=m["owner"], findings=f)
-        else:
-            reject(canonical, m["name"], f, m["owner"], muuids)
-            # Final: this network will never become acceptable, and a member fixing it uploads
-            # a NEW one. Without this the same submission is re-rejected every pass and a fresh
-            # reply network is posted each time.
-            if not DRY:
-                state["granted"][m["uuid"]] = "rejected"
-            telemetry.emit("gate", "gate_reject", "rejected", artifact=m["name"],
-                           atype=canonical["artifact"].get("type"),
-                           submitter=m["owner"], findings=f, refusal=["spec"])
-    # A dry run reports; it must not write. `gate_loop.py` holds this file and §4 of the handoff
-    # tells the operator to run `--dry-run` while the loop is live: if a dry run's stale copy of
-    # `state` lands between the loop's read and write, the loop's newest grants are lost and an
-    # already-accepted submission is re-processed next pass, which fails UNIQUE and posts a
-    # rejection reply for work that is in fact in the record.
-    if not DRY:
-        save_state(state)
-    return 0
+                               submitter=sub["owner"], findings=findings)
+            else:
+                if not self.reject(sub, findings, admin):
+                    continue
+                state["decisions"][sub["citation"]] = "rejected"
+                self.decided += 1
+                telemetry.emit("gate", "gate_reject", "rejected", artifact=sub["name"],
+                               atype=canonical["artifact"].get("type"),
+                               submitter=sub["owner"], findings=findings, refusal=["spec"])
+            self.save_state(state)     # each decision is cached as soon as it is made
+        state["inbox_since"] = inbox_since
+        self.save_state(state)
+        return 0
+
+    def admit(self, item, members, state):
+        """A submission worth validating, or None. A submission that can never be one is
+        noted in the cache with why, and gets no reply: it is not an artifact submitted by a
+        member under its own name."""
+        name, owner = item["name"].partition("@")[0], item.get("created_by")
+
+        def skip(why):
+            print(f"  {item['name']}: ! {why} — skipped")
+            state["decisions"][item["citation"]] = f"skipped: {why}"
+
+        try:
+            canonical = self.data.get_json(item["citation"])
+        except (DataError, ValueError) as e:
+            return skip(f"not readable as an artifact ({e})")
+        declared = (canonical.get("artifact") or {}).get("name") \
+            if isinstance(canonical, dict) else None
+        why = skip_reason(item["name"], owner, declared, members)
+        if why:
+            return skip(why)
+        return {"item": item, "citation": item["citation"], "name": name, "owner": owner,
+                "canonical": canonical}
+
+    def provisional(self, sub, record):
+        """The `created` to validate with: the submission's own `created` on the server, or,
+        when the record has moved past it (an Analysis accepted earlier in this pass), just
+        after the newest record stamp. Both are the server's clock, so it is never later than
+        the stamp the promote assigns, and every check that something is strictly earlier
+        holds for the real stamp too."""
+        when = parse_instant(sub["item"]["created"])
+        newest = max((t for t in (parse_instant(r["artifact"].get("created")) for r in record)
+                      if t), default=None)
+        if newest is not None and newest >= when:
+            when = newest + timedelta(microseconds=1)
+        return when.isoformat()
+
+    def verify_downloads(self, sub):
+        """Every `download` held on the data server: the file exists, its sha256 is the one
+        declared, and it was stored before the submission (J5). Any other location stays
+        unverifiable, and the validator's REVIEW says so."""
+        out = []
+        for o in sub["canonical"].get("objects", []):
+            if o.get("type") != "Content" or method_of(o.get("name")) != "download":
+                continue
+            location = str(o.get("location") or "")
+            if not location.startswith(DATA_LOCATION):
+                continue
+            args = ["verify", "--cite", location, "--before", sub["item"]["created"]]
+            if o.get("sha256"):
+                args += ["--sha256", o["sha256"]]
+            try:
+                checked = self.data.run(*args)
+            except DataError as e:
+                checked = {"ok": False, "reason": str(e)}
+            if not checked.get("ok"):
+                # the reason first: the console cuts a long line, and the location is the
+                # part the submitter already knows
+                out.append(finding("DOWNLOAD", "FAIL",
+                                   f"Content '{o.get('name')}': {checked.get('reason')} "
+                                   f"({location})"))
+        return out
+
+    def accept(self, sub):
+        """Promote into `record`; the server stamps `created`. -> the stored artifact, or None
+        when the promote failed."""
+        if self.dry:
+            print(f"    (dry-run) would accept {sub['name']}")
+            return sub["canonical"]
+        try:
+            promoted = self.data.run(
+                "promote", sub["citation"], "--collection", "record", "--name", sub["name"],
+                "--metadata", json.dumps({RECORD_MARK: True, SUBMISSION_CITATION: sub["citation"]}),
+                "--stamp-json-pointer", "/artifact/created",
+            )
+            stored = self.data.get_json(promoted["citation"])
+        except DataError as e:
+            print(f"    ! promote failed, left undecided: {e}")
+            return None
+        self.mirror.write(stored)
+        print(f"    ACCEPTED -> {promoted['citation']}, created {stored['artifact']['created']}")
+        return stored
+
+    def reject(self, sub, findings, admin) -> bool:
+        """A reply in `inbox` that only the submitter reads. -> whether it was sent."""
+        fails = [f"{x['check']}: {x['msg']}" for x in findings if x["level"] == "FAIL"]
+        print(f"    REJECTED ({len(fails)} failures)")
+        for x in fails[:6]:
+            print(f"      - {x[:150]}")
+        if self.dry:
+            return True
+        reply_name = f"{admin}_REPLY_{sub['item']['name']}"
+        reply = {
+            "artifact": {
+                "name": re.sub(r"[^A-Za-z0-9_]", "_", reply_name),
+                "type": "NonGroundable",
+                "specification_version": "1.0",
+                "published_by": f"@{admin}",
+                "created": None,
+                "text": "REJECTED\n\nin_reply_to: " + sub["name"] + "\n\n"
+                        + "\n".join(f"- {x}" for x in fails),
+            },
+            "objects": [],
+            "relationships": [],
+        }
+        try:
+            self.data.put_json(reply, "inbox", reply_name, {
+                REPLY_MARK: True,
+                IN_REPLY_TO: sub["name"],
+                "recipients": [sub["owner"]],
+                SUBMISSION_CITATION: sub["citation"],
+            })
+        except DataError as e:
+            print(f"    ! reply failed, left undecided: {e}")
+            return False
+        print(f"    reply sent to {sub['owner']}")
+        return True
+
+    def watch(self) -> int:
+        """A pass every POLL seconds until stopped. A pass's report is printed when it accepted
+        or rejected something; a pass that fails is reported on the 1st, 5th and every 20th
+        failure in a row. A stop mid-pass prints what the pass had decided so far: each line
+        is a decision the admin must see."""
+        stop_on_signals()
+        lock = take_over("gate")  # noqa: F841 — held for as long as this gate watches
+        print(f"watching inbox (every {POLL}s) — ctrl-c to stop", flush=True)
+        misses = 0
+        report = io.StringIO()
+        try:
+            while True:
+                report = io.StringIO()
+                with contextlib.redirect_stdout(report):
+                    code = self.once()
+                if code:
+                    misses += 1
+                    if misses in (1, 5) or misses % 20 == 0:
+                        print(report.getvalue().rstrip(), flush=True)
+                        print(f"  ({misses} consecutive failed pass(es) — nothing is being "
+                              f"decided)", flush=True)
+                else:
+                    misses = 0
+                    if self.decided:
+                        print(report.getvalue().rstrip(), flush=True)
+                self.decided = 0
+                pause(POLL)
+        except KeyboardInterrupt:
+            if self.decided:
+                print(report.getvalue().rstrip(), flush=True)
+            print("stopped", flush=True)
+            return 0
+
+    # ── the other modes ───────────────────────────────────────────────────────────────────
+    def verify(self) -> int:
+        """The copy's artifact names against the `record` feed. Changes nothing."""
+        try:
+            feed = self.data.changes("record", 0)
+        except DataError as e:
+            print(f"! the data server could not be reached: {e}")
+            return 1
+        server = {i["name"] for i in feed["items"]
+                  if (i.get("metadata") or {}).get(RECORD_MARK) and not i.get("deleted")}
+        held = {r["artifact"]["name"] for r in self.mirror.load()}
+        print(f"copy {self.mirror.root}/: {len(held)} artifact(s); record: {len(server)}")
+        print(f"  in the record, missing from the copy: {sorted(server - held) or 'none'}")
+        print(f"  in the copy only, not in the record: {sorted(held - server) or 'none'}")
+        same = server == held
+        print("OK" if same else "THE COPY DIFFERS FROM THE RECORD — run `/symposium gate "
+                                "--rebuild`")
+        return 0 if same else 1
+
+    def rebuild(self) -> int:
+        """Discard the copy's cursor and the gate's state, and rebuild both from the server.
+        Decides nothing: the next pass reads `inbox` from the start, skipping every
+        submission the server already holds a decision for."""
+        for name in (SYNC_STATE, STATE):
+            (self.mirror.root / name).unlink(missing_ok=True)
+        sync = Sync(self.data, self.mirror, quiet=True)
+        synced = sync.once(sync.load_state())
+        if synced is None:
+            print("! the data server could not be reached — nothing was rebuilt")
+            return 1
+        state = self.load_state()
+        try:
+            self.refresh(state)
+        except DataError as e:
+            print(f"! {e}")
+            return 1
+        self.mirror.write_state(STATE, state)
+        print(f"rebuilt {self.mirror.root}/ from the server: {synced['artifacts']} artifact(s), "
+              f"{len(state['decisions'])} decision(s)")
+        return 0
+
+
+def main(argv) -> int:
+    gate = Gate(dry="--dry-run" in argv)
+    try:
+        gate.data.context()  # local: with none, the CLI's message names setup and bootstrap
+    except DataError as e:
+        print(f"! {e}")
+        return 1
+    if "--watch" in argv:
+        if "--verify" in argv or "--rebuild" in argv:
+            print("! --watch runs passes; it does not combine with --verify or --rebuild")
+            return 2
+        return gate.watch()
+    if "--rebuild" in argv:
+        return gate.rebuild()
+    if "--verify" in argv:
+        return gate.verify()
+    return gate.once()
 
 
 if __name__ == "__main__":
-    if "--grant" in sys.argv:
-        i = sys.argv.index("--grant") + 1
-        if i >= len(sys.argv):
-            sys.exit("usage: python gate.py --grant <member-account>")
-        sys.exit(grant_backfill(sys.argv[i]))
-    if "--rebuild" in sys.argv:
-        sys.exit(rebuild_mirror())
-    if "--verify" in sys.argv:
-        # Reports, repairs nothing: --verify is what you run when you want to know, and it
-        # should not change the thing it is reporting on.
-        rec = load_record()
-        st_ = load_state()
-        ok, _added, unresolved, extra = checkpoint(rec, st_, repair=False)
-        if ok is None:
-            sys.exit(2)
-        print(f"mirror {MIRROR}: {len(rec)} artifact(s)")
-        print(f"  on the server, unknown to the mirror: "
-              f"{[u[:8] for u in unresolved] or 'none'}")
-        print(f"  in the mirror only (not on the server): {sorted(extra) or 'none'}")
-        print("OK" if ok else
-              "MIRROR IS BEHIND THE SERVER — the next run repairs it, or: python gate.py --rebuild")
-        sys.exit(0 if ok else 1)
-    sys.exit(run_once())
+    sys.exit(main(sys.argv))

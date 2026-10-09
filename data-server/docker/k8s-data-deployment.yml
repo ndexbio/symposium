@@ -1,0 +1,118 @@
+# Symposium Data: Kubernetes deployment.
+#
+#   kubectl apply -f k8s-data-deployment.yml
+#
+# All state (PostgreSQL, SeaweedFS, service secrets) lives under /apps on one ReadWriteOnce
+# PVC, so the Deployment runs one replica with the Recreate strategy.
+#
+# The admin's public key (R-D4) comes from the Secret symposium-data-admin-key, mounted as the
+# directory /apps/admin-key/. The Secret is optional: without it the pod starts non-operational,
+# so the order is: apply this file, run `/symposium admin-config` against the server, then
+# create the Secret from the key file it wrote and restart the pod:
+#   kubectl create secret generic symposium-data-admin-key --from-file=admin_pub_<handle>.key
+#   kubectl rollout restart deploy/symposium-data
+# To change the admin's key, replace the Secret and restart the pod the same way: the key is
+# read at start-up.
+#
+# Pin the image to a released version (ndexbio/symposium-data:<version>) for production.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: symposium-data-pvc
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 5Gi          # size to the community's data; edit before applying
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: symposium-data
+  labels: {app: symposium-data}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app: symposium-data}
+  template:
+    metadata:
+      labels: {app: symposium-data}
+    spec:
+      initContainers:
+        - name: symposium-data-init
+          image: docker.io/ndexbio/symposium-data
+          imagePullPolicy: Always
+          command: ["sh", "-c"]
+          args:
+            - >-
+              mkdir -p /apps/data/config /apps/postgres/config /apps/postgres/data
+              /apps/seaweed/config /apps/seaweed/data &&
+              chown -R symposium:symposium /apps/data /apps/seaweed &&
+              chown postgres:postgres /apps/postgres/config /apps/postgres/data
+          volumeMounts:
+            - {name: symposium-data-storage, mountPath: /apps}
+      containers:
+        - name: symposium-data
+          image: docker.io/ndexbio/symposium-data
+          imagePullPolicy: Always
+          args: ["--api-server", "--postgres", "--seaweed"]
+          env:
+            - {name: SYMPOSIUM_SERVER_TRUSTED_PROXY, value: "10.0.0.0/8"}
+          ports:
+            - {name: http, containerPort: 8080, protocol: TCP}
+          readinessProbe:
+            httpGet: {path: /v1/status, port: 8080}
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - {name: symposium-data-storage, mountPath: /apps}
+            - name: symposium-data-admin-key
+              mountPath: /apps/admin-key
+              readOnly: true
+      volumes:
+        - name: symposium-data-storage
+          persistentVolumeClaim: {claimName: symposium-data-pvc}
+        - name: symposium-data-admin-key
+          secret: {secretName: symposium-data-admin-key, optional: true}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: symposium-data
+  labels: {app: symposium-data}
+spec:
+  type: ClusterIP
+  selector: {app: symposium-data}
+  ports:
+    - {name: http, port: 8080, targetPort: 8080, protocol: TCP}
+---
+# Example Ingress with TLS, commented out: uncomment it when the server needs a public HTTPS
+# URL, and set its host and TLS secret. Only the API port is ever exposed; SeaweedFS and
+# PostgreSQL stay inside the pod. Without it the server is reachable inside the cluster through
+# the Service, or from your machine with `kubectl port-forward svc/symposium-data 8790:8080`.
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: symposium-data
+#   annotations:
+#     # the Symposium Data API's streams (Server-Sent Events): unbuffered, and open past the
+#     # 30-second heartbeat
+#     nginx.ingress.kubernetes.io/proxy-buffering: "off"
+#     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+# spec:
+#   tls:
+#     - hosts: [data.example.org]
+#       secretName: symposium-data-tls
+#   rules:
+#     - host: data.example.org
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: symposium-data
+#                 port: {number: 8080}

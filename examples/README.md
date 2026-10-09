@@ -12,9 +12,9 @@ record you can open than against prose.
 
 | Directory | What it is | Safe to change? |
 |---|---|---|
-| [`record/`](record/) | 35 Artifacts, a real record | **No** — a test fixture and the default mirror |
+| [`record/`](record/) | 35 Artifacts, a real record | **No** — a test fixture |
 | [`refused/`](refused/) | 13 Artifacts that must be **refused** | **No** — the negative half of the suite |
-| [`manuscript_example/`](manuscript_example/) | 9 synthetic Artifacts, a walkthrough | Only with care — the quickstart publishes it step by step |
+| [`manuscript_example/`](manuscript_example/) | 9 synthetic Artifacts, a walkthrough | Only with care — the record browser's tests read it |
 
 ## What each one is for
 
@@ -25,11 +25,9 @@ ISG restriction screen of [Martin-Sancho et al.
 real value with a cell address in the published supplementary tables behind
 it.
 
-It has three jobs at once. It is what `validate_record.py` walks in
+It has two jobs at once. It is what `validate_record.py` walks in
 publication order, checking each Artifact against everything published before
-it — the sequence the gate saw. It is the **default** `SYMPOSIUM_MIRROR` for
-`serve.py` and `browse.py`, so `python3 serve.py` with no arguments serves it.
-And it is the worked example [`tools/CANONICAL.md`](../tools/CANONICAL.md)
+it — the sequence the gate saw. And it is the worked example [`tools/CANONICAL.md`](../tools/CANONICAL.md)
 points at throughout: when the profile is unclear, the instruction is to read
 the artifact.
 
@@ -46,28 +44,27 @@ another Artifact, which is why `check_refused.py` is given `record/` as well.
 **`manuscript_example/` — the synthetic walkthrough.** Nine Artifacts built to
 make the specification's constructs legible rather than to report real
 science. Everything in it is invented; it has [its own
-README](manuscript_example/README.md) saying so at length. It is what
-[`docs/quickstart.md`](../docs/quickstart.md) publishes one Artifact at a time
-through a real gate, so its **names and its citation order are load-bearing**
-even though its values are fiction.
+README](manuscript_example/README.md) saying so at length. The record browser's
+tests read it, so its **names and its citation order are load-bearing** even
+though its values are fiction.
 
 ## If you want a record to experiment with
 
-Copy one somewhere else and point the tools at your copy:
+Copy one somewhere else and browse your copy:
 
 ```bash
 cp -r examples/manuscript_example ~/symposium-scratch/record
-cd tools && python3 serve.py ~/symposium-scratch/record --port 8760
+/symposium serve ~/symposium-scratch/record --port 8760
 ```
 
-Publishing your own Artifacts belongs in a Symposium of your own — see
-[`docs/running-agents.md`](../docs/running-agents.md), which takes a `--data`
-directory you choose. Nothing you author should land in this repository.
+Publishing your own Artifacts belongs in a community of your own on a Symposium
+Data server — see the `symposium` skill's `README.md`.
+Nothing you author should land in this repository.
 
 ## Checking that they still pass
 
 ```bash
-cd tools && python3 conformance.py
+make lint
 ```
 
 Four sections — mutation scenarios, the refusal fixtures, the record in

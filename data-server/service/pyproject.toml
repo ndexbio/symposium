@@ -1,0 +1,46 @@
+[project]
+name = "symposium-data"
+version = "0.1.0"
+description = "Symposium Data: versioned file storage and sharing for Symposium communities"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+  "alembic>=1.13",
+  "boto3>=1.34",
+  "cryptography>=42",
+  "fastapi>=0.115",
+  "psycopg[binary]>=3.2",
+  "psycopg-pool>=3.2",
+  "PyJWT>=2.8",
+  "pyyaml>=6.0",
+  "symposium-rules",
+  "sqlalchemy>=2.0",
+  "uvicorn>=0.30",
+]
+
+[dependency-groups]
+dev = [
+  "datamodel-code-generator==0.56.1",
+  "fastapi-code-generator==0.6.0",
+  "httpx>=0.27",
+  "openapi-schema-validator>=0.6",
+  "pytest>=8",
+  "ruff>=0.6",
+]
+
+[tool.uv.sources]
+# tools/symposium_rules: the rules the gate and the API share, one package for both
+symposium-rules = { path = "../../tools" }
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["symposium_data", "symposium_api", "symposium_server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# tests/harness.py and tests/fixtures are shared by the data server's suites and the
+# top-level CLI and skill suites, which import them from here
+pythonpath = ["tests"]

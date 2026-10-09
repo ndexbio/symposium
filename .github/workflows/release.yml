@@ -1,0 +1,45 @@
+name: release
+
+# Publishing a GitHub release runs this; its tag's prefix picks the one job that does anything:
+#   data-server-v<version>  publishes ndexbio/symposium-data:<version> and :latest (multi-arch).
+#   symposium-v<version>    attaches dist/Symposium_skill.zip from make build. The data-server
+#                           image the bundle expects (its compat.json) is released first, by a
+#                           data-server-v* release.
+# Each job checks out the release's tag, and the tag reaches every shell line through `env`.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  push-image:
+    if: startsWith(github.event.release.tag_name, 'data-server-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - run: make -C data-server push-docker TAG="${TAG#data-server-v}"
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+
+  attach-bundle:
+    if: startsWith(github.event.release.tag_name, 'symposium-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: make build
+      - run: gh release upload "$TAG" dist/Symposium_skill.zip --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}

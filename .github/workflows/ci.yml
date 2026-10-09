@@ -1,0 +1,22 @@
+name: ci
+
+# Every pull request, whatever branch it targets, once per commit
+on:
+  pull_request:
+
+jobs:
+  test:
+    # Linux runs the whole gate, the data server's suites and their one image build included;
+    # Windows runs the skill's runtime and session suites, which need no container
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: ubuntu-latest, docker: true}
+          - {os: windows-latest, docker: false}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: make test DOCKER=${{ matrix.docker }}
+        shell: bash

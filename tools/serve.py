@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """Serve the record browser and rebuild it as the record grows.
 
-    python serve.py ../examples/record               # http://localhost:8760
-    SYMPOSIUM_MIRROR=./record python serve.py    # against a live mirror
+    python serve.py                  # ./record, this session's copy: http://localhost:8760
+    python serve.py <record dir>
+
+Run it as `/symposium serve`. The record defaults to `./record`, the copy beside the session's
+context that sync (and the gate, on the admin's machine) keeps; it stops with an error when
+that is missing.
+
+It runs until stopped, with no time limit of its own: run it in the background. ctrl-c,
+SIGTERM or (Windows) CTRL_BREAK stops it within a second, with exit code 0. A restart on the same port
+takes over from a `serve` still running there for this session, which it stops.
 
 Deliberately a full recompile on every change, with no incremental patching. A
 twenty-artifact record compiles in about 70 ms and the whole thing is linear, so at any
@@ -28,7 +36,8 @@ import time
 import traceback
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import browse                                                      # noqa: E402
+import browse  # noqa: E402
+from data_io import stop_on_signals, take_over  # noqa: E402
 
 STATE = {"build": 0, "error": None, "artifacts": 0, "at": ""}
 _LOCK = threading.Lock()
@@ -107,15 +116,16 @@ def make_handler(out_dir):
 
 
 class Server(socketserver.ThreadingTCPServer):
-    allow_reuse_address = True
+    # on macOS and Linux a restarted serve rebinds its port at once, past TIME_WAIT; on Windows
+    # SO_REUSEADDR would let two processes bind one port, and take_over has ended the old one
+    allow_reuse_address = os.name != "nt"
     daemon_threads = True
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("record_dir", nargs="?",
-                    default=os.environ.get("SYMPOSIUM_MIRROR", "../examples/record"),
-                    help="directory of canonical JSON (default: $SYMPOSIUM_MIRROR)")
+    ap.add_argument("record_dir", nargs="?", default="record",
+                    help="directory of canonical JSON (default: ./record)")
     ap.add_argument("--out", default="dist")
     ap.add_argument("--port", type=int, default=8760)
     ap.add_argument("--title", default=None)
@@ -126,19 +136,21 @@ def main(argv=None):
     record = pathlib.Path(args.record_dir).resolve()
     out = pathlib.Path(args.out).resolve()
     if not record.is_dir():
-        raise SystemExit(f"ERROR: no such record directory: {record}")
+        raise SystemExit(f"ERROR: no record copy at {record}: run `/symposium sync` here first\n"
+                         f"  (on the admin's machine, `/symposium gate` writes the gate's copy)")
 
-    rebuild(str(record), str(out), args.title)
-    threading.Thread(target=watch, args=(str(record), str(out), args.title, args.interval),
-                     daemon=True).start()
-
-    with Server(("", args.port), make_handler(out)) as httpd:
-        print(f"watching {record}")
-        print(f"serving  http://localhost:{args.port}/   (ctrl-c to stop)")
-        try:
+    stop_on_signals()
+    lock = take_over(f"serve-{args.port}")  # noqa: F841 — held for as long as this serve runs
+    try:
+        rebuild(str(record), str(out), args.title)
+        threading.Thread(target=watch, args=(str(record), str(out), args.title,
+                                             args.interval), daemon=True).start()
+        with Server(("", args.port), make_handler(out)) as httpd:
+            print(f"watching {record}", flush=True)
+            print(f"serving  http://localhost:{args.port}/   (ctrl-c to stop)", flush=True)
             httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\nstopped")
+    except KeyboardInterrupt:
+        print("\nstopped", flush=True)
     return 0
 
 

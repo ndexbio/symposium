@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Compile a Symposium CommunityRecord into a static, navigable browser.
 
-    python browse.py ../examples/record --out dist
+    python browse.py --out dist             # ./record, this session's copy of the record
+    python browse.py <record dir> --out dist
+
+The record defaults to `./record`, the copy beside the session's context that sync (and the
+gate, on the admin's machine) keeps; it stops with an error when that is missing.
 
 This file produces the element sets the page templates consume; the presentation itself
 lives in `templates.py`.
@@ -44,17 +48,23 @@ import html
 import io
 import json
 import math
-import os
 import pathlib
 import re
 import shutil
 import sys
 from collections import defaultdict
 
-from validate import (CITATION_RE, build_index, method_of,          # noqa: E402
-                         parse_address, parse_instant, resolve, validate)
+import figures as F  # noqa: E402
 import templates as T
-import figures as F                                              # noqa: E402
+from validate import (  # noqa: E402
+    CITATION_RE,
+    build_index,
+    method_of,
+    parse_address,
+    parse_instant,
+    resolve,
+    validate,
+)
 
 ARGUMENT = "Argument"
 NON_GROUNDABLE_TYPES = {"Analysis", "NonGroundable", "Message"}
@@ -94,7 +104,7 @@ def load_record(record_dir):
             # layout, never an Artifact, and a hand-edited one must not break the build.
             if path.name.startswith("."):
                 continue
-            raise SystemExit(f"ERROR: {path} is not valid JSON: {exc}")
+            raise SystemExit(f"ERROR: {path} is not valid JSON: {exc}") from exc
         if isinstance(doc, dict) and isinstance(doc.get("artifact"), dict) \
                 and doc["artifact"].get("name") and doc["artifact"].get("type"):
             arts.append(doc)
@@ -482,7 +492,6 @@ def _layout_claim(nodes, edges, primary):
     roots = [primary] if primary in by_id else []
     for i in assertions:
         walk(i, set())
-    maxd = max(depth.values()) if depth else 0
 
     col = defaultdict(list)
     for i in sorted(assertions, key=lambda x: (depth.get(x, 0), x != primary, x)):
@@ -690,7 +699,7 @@ def _layout_overview(nodes, edges, order_hint):
     for d in layers:
         layers[d].sort(key=lambda i: order_hint.get(i, 0))
     pos_in_layer = {}
-    for d, ids in layers.items():
+    for ids in layers.values():
         for k, i in enumerate(ids):
             pos_in_layer[i] = float(k)
 
@@ -855,7 +864,7 @@ def build_overview(artifacts, index, colors, pages, findings_by, pins=None, anno
     for a in artifacts:
         occupancy[(cols[a["artifact"]["name"]], order.get(a["artifact"]["type"], 7))] += 1
     band_height = defaultdict(int)
-    for (c, r), n in occupancy.items():
+    for (_c, r), n in occupancy.items():
         band_height[r] = max(band_height[r], min(n, _BAND_MAX_ROWS))
     band_top, y = {}, 0.0
     for r in sorted(band_height):
@@ -865,7 +874,7 @@ def build_overview(artifacts, index, colors, pages, findings_by, pins=None, anno
     # A session is as wide as its busiest band needs, so sessions never overlap however
     # lopsided the day was.
     sub_wide = defaultdict(int)
-    for (c, r), n in occupancy.items():
+    for (c, _r), n in occupancy.items():
         sub_wide[c] = max(sub_wide[c], -(-n // _BAND_MAX_ROWS))       # ceil
     col_x, x = {}, 0.0
     for c in sorted(set(cols.values())):
@@ -907,7 +916,7 @@ def build_overview(artifacts, index, colors, pages, findings_by, pins=None, anno
         h = a["artifact"]
         src = h["name"]
 
-        def link(addr, rel):
+        def link(addr, rel, src=src):
             p = parse_address(addr or "")
             if p and p["root"] in index and p["root"] != src:
                 agg[(src, p["root"], rel)] += 1
@@ -1575,9 +1584,9 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
             # and cites the work it answers. It is not in the graph and would otherwise
             # be invisible on the page that most needs it.
             reading = page_name(name).replace(".html", "_reading.html")
-            intro = ('<p><a href="{}"><b>Read this Argument as a document &rarr;</b></a> '
+            intro = (f'<p><a href="{html.escape(reading)}"><b>Read this Argument as a document &rarr;</b></a> '
                      '<span class="hint">verdict, purpose, rationale and every Ground in '
-                     'one place</span></p>'.format(html.escape(reading)))
+                     'one place</span></p>')
             intro += "".join(T.md_to_html(a["artifact"][k], pages)
                              for k in ("description", "text") if a["artifact"].get(k))
             (out / pages[name]).write_text(
@@ -1641,9 +1650,8 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("record_dir", nargs="?",
-                    default=os.environ.get("SYMPOSIUM_MIRROR", "../examples/record"),
-                    help="directory of canonical JSON (default: $SYMPOSIUM_MIRROR)")
+    ap.add_argument("record_dir", nargs="?", default="record",
+                    help="directory of canonical JSON (default: ./record)")
     ap.add_argument("--out", default="dist", help="output directory (default: dist)")
     ap.add_argument("--title", default=None, help="title shown on the overview")
     ap.add_argument("--quiet", action="store_true")
@@ -1651,6 +1659,10 @@ def main(argv=None):
                     help="also write one print-scaled SVG per Argument to DIR "
                          "(relative to --out): full labels, no chrome, preset layout")
     args = ap.parse_args(argv)
+    if not pathlib.Path(args.record_dir).is_dir():
+        raise SystemExit(f"ERROR: no record copy at {args.record_dir}/: run `/symposium sync` "
+                         f"here first\n  (on the admin's machine, `/symposium gate` writes the "
+                         f"gate's copy)")
     compile_record(args.record_dir, args.out, title=args.title, quiet=args.quiet,
                    figures_dir=args.figures)
     return 0

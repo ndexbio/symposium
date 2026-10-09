@@ -30,9 +30,10 @@ is sent twice.
   python gate.py --watch      a pass every SYMPOSIUM_POLL seconds (default 30), reporting each
                               pass that accepts or rejects something. It runs until stopped,
                               with no time limit of its own: run it in the background. ctrl-c,
-                              SIGTERM or (Windows) CTRL_BREAK stops it at once, with exit code
-                              0, even mid-pass. A restart resumes where it left off, and takes
-                              over from a gate still watching this session, which it stops.
+                              SIGTERM or (Windows) CTRL_BREAK stops it within a second, with
+                              exit code 0, even mid-pass. A restart resumes where it left off,
+                              and takes over from a gate still watching this session, which it
+                              stops.
 
 Everything goes through the `symposium-data` CLI (R-I1). Exit 0 = the pass ran; 1 = no context
 in this directory (the message names `/symposium setup` and `bootstrap`), the data server could
@@ -47,7 +48,6 @@ import io
 import json
 import re
 import sys
-import time
 from datetime import timedelta
 
 import telemetry
@@ -60,6 +60,7 @@ from data_io import (
     DataError,
     Mirror,
     SymposiumData,
+    pause,
     stop_on_signals,
     take_over,
 )
@@ -398,7 +399,7 @@ class Gate:
                     if self.decided:
                         print(report.getvalue().rstrip(), flush=True)
                 self.decided = 0
-                time.sleep(POLL)
+                pause(POLL)
         except KeyboardInterrupt:
             if self.decided:
                 print(report.getvalue().rstrip(), flush=True)

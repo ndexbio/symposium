@@ -22,17 +22,19 @@ from data_io import replace_text  # noqa: E402
 
 WINDOWS = os.name == "nt"
 # a stand-in watcher: the stop handlers, the session's lock when it names one, a file saying
-# it is ready, then a long wait that only a stop ends
+# it is ready with its own pid, then a long wait that only a stop ends. (On Windows a
+# virtualenv's python.exe is a launcher running the interpreter as its child, so the pid that
+# holds the lock is the one the interpreter reports, not the launcher's Popen.pid.)
 WATCHER = """
-import pathlib, sys, time
+import os, pathlib, sys
 sys.path.insert(0, sys.argv[1])
-from data_io import stop_on_signals, take_over
+from data_io import pause, stop_on_signals, take_over
 stop_on_signals()
 lock = take_over(sys.argv[2]) if sys.argv[2] else None
 ready = pathlib.Path(sys.argv[3])
-ready.write_text("ready")
+ready.write_text(f"ready {os.getpid()}")
 try:
-    time.sleep(600)
+    pause(600)
 except KeyboardInterrupt:
     ready.write_text("stopped")
     sys.exit(0)
@@ -60,7 +62,12 @@ def poll(probe, message: str, seconds: float = 10):
 
 
 def says(path: Path, word: str) -> bool:
-    return path.exists() and path.read_text() == word
+    return path.exists() and path.read_text().split(" ")[0] == word
+
+
+def reported_pid(path: Path) -> int:
+    """The pid the stand-in wrote beside "ready": the interpreter's own."""
+    return int(path.read_text().split()[1])
 
 
 def graceful_stop(process: subprocess.Popen):
@@ -111,7 +118,7 @@ def test_a_restarted_watcher_takes_over_and_exactly_one_runs(tmp_path):
         assert code == 0 or WINDOWS
         assert second.poll() is None
         pid = int((tmp_path / ".symposium" / "gate.pid").read_text())
-        assert pid == second.pid
+        assert pid == reported_pid(second_ready)
     finally:
         for process in (first, second):
             if process is not None:

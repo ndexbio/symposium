@@ -9,7 +9,7 @@ context that sync (and the gate, on the admin's machine) keeps; it stops with an
 that is missing.
 
 It runs until stopped, with no time limit of its own: run it in the background. ctrl-c,
-SIGTERM or (Windows) CTRL_BREAK stops it at once, with exit code 0. A restart on the same port
+SIGTERM or (Windows) CTRL_BREAK stops it within a second, with exit code 0. A restart on the same port
 takes over from a `serve` still running there for this session, which it stops.
 
 Deliberately a full recompile on every change, with no incremental patching. A

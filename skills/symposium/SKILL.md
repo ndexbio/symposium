@@ -70,8 +70,8 @@ with no time limit of its own. For each one:
   output and relay each new line into the conversation. Output the user is not shown is a
   fault; for `gate --watch`, each line is a decision the admin must see.
 - **Tell the user it is running,** and that they stop it by asking you; stop it when they ask by
-  sending the process SIGINT or SIGTERM (on Windows, CTRL_BREAK or ctrl-c). It stops at once,
-  even mid-pass, with exit code 0 and a last line saying so.
+  sending the process SIGINT or SIGTERM (on Windows, CTRL_BREAK or ctrl-c). It stops within a
+  second, even mid-pass, with exit code 0 and a last line saying so.
 
 Each one also stops on its own, with a last line saying so, when the agent session that started
 it ends.

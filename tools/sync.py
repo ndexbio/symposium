@@ -20,7 +20,7 @@ community, and `./record` beside it is the copy it keeps.
   python sync.py --watch    # a pass every SYMPOSIUM_POLL seconds (default 30)
 
 `--watch` runs until stopped, with no time limit of its own: run it in the background. ctrl-c,
-SIGTERM or (Windows) CTRL_BREAK stops it at once, with exit code 0, even mid-pass. A restart
+SIGTERM or (Windows) CTRL_BREAK stops it within a second, with exit code 0, even mid-pass. A restart
 resumes where the copy left off, and takes over from a sync still watching this session, which
 it stops.
 
@@ -39,7 +39,6 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 from datetime import datetime, timezone
 
 from data_io import (
@@ -49,6 +48,7 @@ from data_io import (
     DataError,
     Mirror,
     SymposiumData,
+    pause,
     stop_on_signals,
     take_over,
 )
@@ -257,7 +257,7 @@ def main(argv):
                     misses = 0
             except Exception as e:
                 print(f"  ! sync error (will retry): {e}", flush=True)
-            time.sleep(POLL)
+            pause(POLL)
     except KeyboardInterrupt:
         print("stopped", flush=True)
         return 0

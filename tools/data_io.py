@@ -48,7 +48,9 @@ def stop_on_signals():
     """Stop as ctrl-c does on the other signals a process is asked to stop with: SIGTERM on
     macOS and Linux, and on Windows SIGBREAK (CTRL_BREAK_EVENT, sent to a process started in
     its own process group); Windows delivers no SIGTERM between processes. Each raises
-    KeyboardInterrupt in the main thread, inside whatever call it is blocked in."""
+    KeyboardInterrupt in the main thread. On macOS and Linux it cuts short whatever call the
+    thread is blocked in; on Windows a SIGBREAK lands once that call returns, which `pause`
+    keeps to a second while a loop waits, and a CLI call in progress to its own length."""
     if threading.current_thread() is not threading.main_thread():
         return
 
@@ -56,6 +58,19 @@ def stop_on_signals():
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGBREAK if WINDOWS else signal.SIGTERM, stop)
+
+
+def pause(seconds: float):
+    """Wait `seconds`, in slices of at most 1 s. On macOS and Linux any signal cuts a sleep
+    short, but on Windows only ctrl-c (SIGINT) wakes one: a CTRL_BREAK (SIGBREAK) is handled
+    only once the sleep returns, so a wait in slices is what lets it stop a loop within a
+    second. The wait in all is the same, so the loop's cadence is unchanged."""
+    deadline = time.monotonic() + seconds
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return
+        time.sleep(min(left, 1.0))
 
 
 def replace_text(path: Path, text: str, attempts: int = 20):

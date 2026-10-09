@@ -84,7 +84,7 @@ prints one JSON object: `setup`, `bootstrap`, `use`, `port`, the admin commands 
 with no time limit of its own. Your agent starts each one in the background and shows you every
 line it prints as it appears, so you follow the gate's decisions, the copy's updates and the
 browser's rebuilds in the conversation. Ask the agent to stop one: SIGINT, SIGTERM or, on
-Windows, CTRL_BREAK stops it at once, even mid-pass. Each also stops on its own, with a last
+Windows, CTRL_BREAK stops it within a second, even mid-pass. Each also stops on its own, with a last
 line saying so, when the agent session that started it ends: on macOS and Linux it finishes
 cleanly, as with ctrl-c; on Windows it is ended at once, which is safe because every write is
 atomic and the server holds every decision.

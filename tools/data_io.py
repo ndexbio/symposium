@@ -15,8 +15,12 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import subprocess
+import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 NO_RUNTIME = (
@@ -32,6 +36,124 @@ RECORD_MARK = "symposium_record"
 REPLY_MARK = "symposium_reply"
 IN_REPLY_TO = "symposium_in_reply_to"
 SUBMISSION_CITATION = "symposium_submission_citation"
+
+
+# ── the commands that keep running (`gate --watch`, `sync --watch`, `serve`) ────────────────
+WINDOWS = os.name == "nt"
+# where a session keeps its watchers' locks: beside the context, in the session's directory
+LOCKS = Path(".symposium")
+
+
+def stop_on_signals():
+    """Stop as ctrl-c does on the other signals a process is asked to stop with: SIGTERM on
+    macOS and Linux, and on Windows SIGBREAK (CTRL_BREAK_EVENT, sent to a process started in
+    its own process group); Windows delivers no SIGTERM between processes. Each raises
+    KeyboardInterrupt in the main thread. On macOS and Linux it cuts short whatever call the
+    thread is blocked in; on Windows a SIGBREAK lands once that call returns, which `pause`
+    keeps to a second while a loop waits, and a CLI call in progress to its own length."""
+    if threading.current_thread() is not threading.main_thread():
+        return
+
+    def stop(*_):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGBREAK if WINDOWS else signal.SIGTERM, stop)
+
+
+def pause(seconds: float):
+    """Wait `seconds`, in slices of at most 1 s. On macOS and Linux any signal cuts a sleep
+    short, but on Windows only ctrl-c (SIGINT) wakes one: a CTRL_BREAK (SIGBREAK) is handled
+    only once the sleep returns, so a wait in slices is what lets it stop a loop within a
+    second. The wait in all is the same, so the loop's cadence is unchanged."""
+    deadline = time.monotonic() + seconds
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return
+        time.sleep(min(left, 1.0))
+
+
+def replace_text(path: Path, text: str, attempts: int = 20):
+    """Write `path` whole or not at all: a sibling `.tmp` file, then an atomic rename. A stop
+    at any point leaves the old file or the new one. On Windows the rename fails while
+    another process holds the file open, so it is retried every 0.1 s, for up to 2 s."""
+    staged = path.with_name(path.name + ".tmp")
+    staged.write_text(text)
+    for attempt in range(attempts):
+        try:
+            os.replace(staged, path)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                staged.unlink(missing_ok=True)
+                raise
+            time.sleep(0.1)
+
+
+def _locked(handle) -> bool:
+    """Take the exclusive lock on an open file without waiting. -> whether it was taken."""
+    try:
+        if WINDOWS:
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return True
+    except OSError:
+        return False
+
+
+def _holder(pid_file: Path) -> int | None:
+    try:
+        return int(pid_file.read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _end(pid: int, hard: bool):
+    try:
+        if WINDOWS or not hard:
+            os.kill(pid, signal.SIGTERM)  # on Windows, TerminateProcess
+        else:
+            os.kill(pid, signal.SIGKILL)
+    except (OSError, ValueError):
+        pass  # it has ended already
+
+
+def take_over(name: str, wait: float = 10.0):
+    """Become the one `name` watcher of this session. A watcher still running, an orphan an
+    agent left behind or one it restarted, is asked to stop (SIGTERM; Windows has only
+    TerminateProcess), and after `wait` seconds it is killed. The lock is the OS's, so it
+    falls to whoever runs next the moment its holder dies, however it died; a pid is
+    signalled only while its lock is held, so a reused pid is never hit. -> the open lock
+    file, which the caller keeps for as long as it runs."""
+    LOCKS.mkdir(exist_ok=True)
+    lock_file, pid_file = LOCKS / f"{name}.lock", LOCKS / f"{name}.pid"
+    handle = open(lock_file, "a+")
+    pid, hard, deadline = None, False, time.monotonic() + wait
+    while not _locked(handle):
+        if pid is None:
+            # a holder that has just started may not have written its pid yet
+            pid = _holder(pid_file)
+            if pid is not None:
+                print(f"taking over from the {name} watcher already running (pid {pid})",
+                      flush=True)
+                _end(pid, hard=False)
+                deadline = time.monotonic() + wait
+        elif time.monotonic() >= deadline and not hard:
+            _end(pid, hard=True)
+            hard, deadline = True, time.monotonic() + wait
+        if time.monotonic() >= deadline:
+            handle.close()
+            sys.exit(f"! the {name} watcher (pid {pid}) would not stop")
+        time.sleep(0.2)
+    # the pid sits in its own file: on Windows a locked byte cannot be read by anyone else
+    replace_text(pid_file, f"{os.getpid()}\n")
+    return handle
 
 
 class DataError(Exception):
@@ -165,7 +287,7 @@ class Mirror:
     def write(self, canonical: dict):
         self.root.mkdir(parents=True, exist_ok=True)
         name = canonical["artifact"]["name"]
-        (self.root / f"{name}.json").write_text(json.dumps(canonical, indent=2) + "\n")
+        replace_text(self.root / f"{name}.json", json.dumps(canonical, indent=2) + "\n")
 
     def read_state(self, name: str, default: dict) -> dict:
         try:
@@ -175,4 +297,4 @@ class Mirror:
 
     def write_state(self, name: str, state: dict):
         self.root.mkdir(parents=True, exist_ok=True)
-        (self.root / name).write_text(json.dumps(state, indent=2) + "\n")
+        replace_text(self.root / name, json.dumps(state, indent=2) + "\n")

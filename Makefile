@@ -22,7 +22,7 @@ SUITES := tests/symposium-data tests/skills tests/api
 # DOCKER=false (CI's Windows job): only the suites that need no container
 DOCKER ?= true
 NO_DOCKER_SUITES := tests/skills/test_agent_process.py tests/skills/test_sessions.py \
-	tests/skills/test_long_running.py \
+	tests/skills/test_long_running.py tests/skills/test_watch_primitives.py \
 	tests/skills/test_runtime.py tests/api
 # The OpenAPI linter for the API contract (api/openapi.yaml), pinned; it runs through npx.
 REDOCLY := 2.59.0

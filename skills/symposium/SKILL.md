@@ -56,13 +56,22 @@ Sessions are kept by the skill under `~/.symposium/` (`admin/<community>/` for t
 
 ## Commands that keep running
 
-`gate --watch`, `sync --watch` and `serve` run until they are stopped. For each one:
+`gate --watch`, `sync --watch` and `serve` run until they are stopped: each is an endless loop
+with no time limit of its own. For each one:
 
-- **Start it in the background**, so the conversation stays usable while it runs.
+- **Start it as a background process, for the longest time your environment allows.** Never run
+  it as a foreground call, and never wrap it in `timeout`: it is meant to run for hours.
+- **If your environment stops it at its time limit, start it again,** and tell the user it was
+  restarted. Many agent environments cap background processes (Claude Code's unattended
+  sessions stop them after 30 minutes by default). A restart is safe: it resumes where the last
+  run left off, so nothing is missed and nothing is decided twice, and it takes over from any
+  copy of itself still running on the session.
 - **Show the user every line it prints, as it appears,** for as long as it runs: follow its
   output and relay each new line into the conversation. Output the user is not shown is a
   fault; for `gate --watch`, each line is a decision the admin must see.
-- **Tell the user it is running,** and that they stop it by asking you; stop it when they ask.
+- **Tell the user it is running,** and that they stop it by asking you; stop it when they ask by
+  sending the process SIGINT or SIGTERM (on Windows, CTRL_BREAK or ctrl-c). It stops within a
+  second, even mid-pass, with exit code 0 and a last line saying so.
 
 Each one also stops on its own, with a last line saying so, when the agent session that started
 it ends.

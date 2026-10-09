@@ -17,7 +17,12 @@ Run it as `/symposium sync`, in the session's working directory: the context the
 community, and `./record` beside it is the copy it keeps.
 
   python sync.py            # one pass
-  python sync.py --watch    # poll every SYMPOSIUM_POLL seconds (default 30)
+  python sync.py --watch    # a pass every SYMPOSIUM_POLL seconds (default 30)
+
+`--watch` runs until stopped, with no time limit of its own: run it in the background. ctrl-c,
+SIGTERM or (Windows) CTRL_BREAK stops it within a second, with exit code 0, even mid-pass. A restart
+resumes where the copy left off, and takes over from a sync still watching this session, which
+it stops.
 
 A pass also lists the gate's replies addressed to you (a rejected submission): they are never
 part of the record.
@@ -34,7 +39,6 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 from datetime import datetime, timezone
 
 from data_io import (
@@ -44,6 +48,9 @@ from data_io import (
     DataError,
     Mirror,
     SymposiumData,
+    pause,
+    stop_on_signals,
+    take_over,
 )
 from validate import parse_address, passed, validate
 
@@ -234,22 +241,26 @@ def main(argv):
             print(f"  up to date — {result['artifacts']} artifact(s)")
         return 0
 
-    print(f"watching {sync.mirror.root}/ (every {POLL}s) — ctrl-c to stop")
+    stop_on_signals()
+    lock = take_over("sync")  # noqa: F841 — held for as long as this sync watches
+    print(f"watching {sync.mirror.root}/ (every {POLL}s) — ctrl-c to stop", flush=True)
     misses = 0
-    while True:
-        try:
-            if sync.once(state) is None:
-                misses += 1
-                if misses in (1, 5) or misses % 20 == 0:
-                    print(f"  ({misses} consecutive failed poll(s) — the copy is not being "
-                          f"updated)")
-            else:
-                misses = 0
-        except KeyboardInterrupt:
-            return 0
-        except Exception as e:
-            print(f"  ! sync error (will retry): {e}")
-        time.sleep(POLL)
+    try:
+        while True:
+            try:
+                if sync.once(state) is None:
+                    misses += 1
+                    if misses in (1, 5) or misses % 20 == 0:
+                        print(f"  ({misses} consecutive failed poll(s) — the copy is not "
+                              f"being updated)", flush=True)
+                else:
+                    misses = 0
+            except Exception as e:
+                print(f"  ! sync error (will retry): {e}", flush=True)
+            pause(POLL)
+    except KeyboardInterrupt:
+        print("stopped", flush=True)
+        return 0
 
 
 if __name__ == "__main__":

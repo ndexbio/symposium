@@ -13,6 +13,10 @@ every data interaction runs the `symposium-data` CLI (R-I1).
     gate [--dry-run|--verify|--rebuild|--watch]
                                            admins: decide the submissions waiting in inbox
     serve [<record dir>] [--port N]        browse ./record (or a record dir), rebuilt as it changes
+                                           `--watch` and `serve` run until stopped, with no time
+                                           limit of their own: start them in the background, and
+                                           again if the agent's limit stops them; a restart resumes
+                                           and takes over. SIGINT or SIGTERM stops one within a second.
     port <ndex_credentials_file> <url>     admins: port a community's record (port-ndex)
     admin-config | roster | invite | rebind-key | suspect-after | purge | export | import
                                            admins: the server admin's commands

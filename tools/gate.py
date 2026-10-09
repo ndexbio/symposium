@@ -27,8 +27,12 @@ is sent twice.
   python gate.py --dry-run    decide and report; promote, reply and save nothing
   python gate.py --verify     compare the copy's artifacts with the `record` feed; change nothing
   python gate.py --rebuild    discard the copy's and the gate's caches, rebuild them, then exit
-  python gate.py --watch      a pass every SYMPOSIUM_POLL seconds (default 30) until stopped,
-                              reporting each pass that accepts or rejects something
+  python gate.py --watch      a pass every SYMPOSIUM_POLL seconds (default 30), reporting each
+                              pass that accepts or rejects something. It runs until stopped,
+                              with no time limit of its own: run it in the background. ctrl-c,
+                              SIGTERM or (Windows) CTRL_BREAK stops it at once, with exit code
+                              0, even mid-pass. A restart resumes where it left off, and takes
+                              over from a gate still watching this session, which it stops.
 
 Everything goes through the `symposium-data` CLI (R-I1). Exit 0 = the pass ran; 1 = no context
 in this directory (the message names `/symposium setup` and `bootstrap`), the data server could
@@ -56,6 +60,8 @@ from data_io import (
     DataError,
     Mirror,
     SymposiumData,
+    stop_on_signals,
+    take_over,
 )
 from symposium_rules.checks import skip_reason
 from sync import POLL, Sync
@@ -369,11 +375,15 @@ class Gate:
     def watch(self) -> int:
         """A pass every POLL seconds until stopped. A pass's report is printed when it accepted
         or rejected something; a pass that fails is reported on the 1st, 5th and every 20th
-        failure in a row."""
+        failure in a row. A stop mid-pass prints what the pass had decided so far: each line
+        is a decision the admin must see."""
+        stop_on_signals()
+        lock = take_over("gate")  # noqa: F841 — held for as long as this gate watches
         print(f"watching inbox (every {POLL}s) — ctrl-c to stop", flush=True)
         misses = 0
-        while True:
-            try:
+        report = io.StringIO()
+        try:
+            while True:
                 report = io.StringIO()
                 with contextlib.redirect_stdout(report):
                     code = self.once()
@@ -389,8 +399,11 @@ class Gate:
                         print(report.getvalue().rstrip(), flush=True)
                 self.decided = 0
                 time.sleep(POLL)
-            except KeyboardInterrupt:
-                return 0
+        except KeyboardInterrupt:
+            if self.decided:
+                print(report.getvalue().rstrip(), flush=True)
+            print("stopped", flush=True)
+            return 0
 
     # ── the other modes ───────────────────────────────────────────────────────────────────
     def verify(self) -> int:

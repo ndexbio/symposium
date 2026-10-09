@@ -80,12 +80,20 @@ prints one JSON object: `setup`, `bootstrap`, `use`, `port`, the admin commands 
 `roster`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import`), the key commands
 (`gen-api-key`, `list-api-keys`, `revoke-api-key`) and `data …`.
 
-**Commands that keep running** (`gate --watch`, `sync --watch`, `serve`): your agent starts each
-one in the background and shows you every line it prints as it appears, so you follow the gate's
-decisions, the copy's updates and the browser's rebuilds in the conversation. Ask the agent to
-stop one. Each also stops on its own, with a last line saying so, when the agent session that
-started it ends: on macOS and Linux it finishes cleanly, as with ctrl-c; on Windows it is ended
-at once, which is safe for the gate because the server holds every decision.
+**Commands that keep running** (`gate --watch`, `sync --watch`, `serve`): each runs until stopped,
+with no time limit of its own. Your agent starts each one in the background and shows you every
+line it prints as it appears, so you follow the gate's decisions, the copy's updates and the
+browser's rebuilds in the conversation. Ask the agent to stop one: SIGINT, SIGTERM or, on
+Windows, CTRL_BREAK stops it at once, even mid-pass. Each also stops on its own, with a last
+line saying so, when the agent session that started it ends: on macOS and Linux it finishes
+cleanly, as with ctrl-c; on Windows it is ended at once, which is safe because every write is
+atomic and the server holds every decision.
+
+Agents limit how long a background process may run: Claude Code's unattended sessions (CI, the
+Agent SDK, `claude -p`) stop one after 30 minutes by default, and 2 hours at most unless raised
+with `BASH_DEFAULT_TIMEOUT_MS` and `BASH_MAX_TIMEOUT_MS`; interactive sessions set no limit. When
+the limit stops a watch, the agent starts it again. A restart resumes where the last run left
+off, and takes over from any copy of itself still running on the session, so exactly one runs.
 
 ## 2. Deploying a data server
 

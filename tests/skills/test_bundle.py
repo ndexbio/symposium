@@ -22,10 +22,10 @@ BUNDLE = REPO / "dist" / "Symposium_skill.zip"
 CLI = "skills/symposium/toolchain/tools/symposium-data"
 # the repository's Symposium base, shipped whole at its repository paths under toolchain/
 SHIPPED_FOLDERS = ("spec", "tools", "server", "examples")
-# and the data server's operator docs (its top-level *.md but its developer README) and manifest
+# and the data server's operator docs (its top-level *.md but its developer README) and chart
 SHIPPED_FILES = (
     ":(glob)data-server/*.md",
-    "data-server/docker/k8s-data-deployment.yml",
+    "data-server/helm",
 )
 NOT_SHIPPED = {"tools/bundle.py", "tools/pyproject.toml", "data-server/README.md"}
 LINK = re.compile(r"\]\(([^)\s]+)\)")
@@ -120,7 +120,9 @@ def test_the_bundle_holds_the_skill_with_its_toolchain_and_the_stamped_cli(insta
         "skills/symposium/toolchain/tools/roles/README.md",
         "skills/symposium/toolchain/spec/symposium_specification.md",
         "skills/symposium/toolchain/data-server/RUNBOOK.md",
-        "skills/symposium/toolchain/data-server/docker/k8s-data-deployment.yml",
+        "skills/symposium/toolchain/data-server/helm/symposium-helm/Chart.yaml",
+        "skills/symposium/toolchain/data-server/helm/symposium-helm/values.yaml",
+        "skills/symposium/toolchain/data-server/helm/symposium-helm/templates/deployment.yaml",
         f"{CLI}/cli.py",
         f"{CLI}/main.py",
         f"{CLI}/keystore.py",

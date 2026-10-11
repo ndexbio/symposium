@@ -2,12 +2,9 @@
 test_admin_key_file.py and the unit tests."""
 
 import time
-from pathlib import Path
 
 import httpx
 from harness import IMAGE, VERSION, docker
-
-DOCKER_DIR = Path(__file__).resolve().parents[3] / "docker"
 
 
 def test_supervisord_runs_all_three_programs(server):
@@ -44,24 +41,6 @@ def test_first_boot_secrets_are_owner_only_and_sentinels_exist(server):
     assert all(line.startswith("600 ") for line in out[:4]), out
     assert any(line.endswith("postgres/config/.initialized") for line in out)
     assert any(line.endswith("seaweed/config/.initialized") for line in out)
-
-
-def test_kubeconform_accepts_the_manifests():
-    manifests = sorted(p.name for p in DOCKER_DIR.glob("k8s-*.yml"))
-    assert manifests, "no Kubernetes manifests found"
-    result = docker(
-        "run",
-        "--rm",
-        "-v",
-        f"{DOCKER_DIR}:/m:ro",
-        "ghcr.io/yannh/kubeconform:v0.6.7",
-        "-strict",
-        "-summary",
-        *[f"/m/{name}" for name in manifests],
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-    assert "Invalid: 0, Errors: 0" in result.stdout
 
 
 def _status_until(server, predicate, timeout=15):

@@ -74,7 +74,7 @@ def apps(tmp_path):
 
 def place(apps, handle, content, where="."):
     """A key file in /apps (where `docker cp` puts it) or in /apps/admin-key (the directory
-    Kubernetes mounts from the Secret)."""
+    the Helm chart mounts from its Secret)."""
     (apps / where).mkdir(exist_ok=True)
     path = apps / where / f"admin_pub_{handle}.key"
     path.write_text(content if isinstance(content, str) else json.dumps(content))

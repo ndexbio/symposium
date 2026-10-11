@@ -1,0 +1,12 @@
+apiVersion: v2
+name: symposium-helm
+description: The Symposium Data server (the image ndexbio/symposium-data) on Kubernetes
+type: application
+# the chart's own version, released as symposium-helm-v<version>
+version: 0.1.0
+# the data-server image it deploys: always data-server/service/pyproject.toml's version
+appVersion: "0.1.0"
+home: https://github.com/ndexbio/symposium
+sources:
+  - https://github.com/ndexbio/symposium/tree/main/data-server/helm/symposium-helm
+keywords: [symposium, symposium-data]

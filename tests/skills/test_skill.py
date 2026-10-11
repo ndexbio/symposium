@@ -356,7 +356,8 @@ def test_commands_that_keep_running_stream_their_output_and_end_with_their_agent
     # each tool notices its agent session ended, says so, and exits
     poll(lambda: not tools_running(), "a tool outlived its agent session")
     for log in (gate_log, serve_log):
-        text = log.read_text()
-        assert "the agent session that started this has ended" in text, text
-        assert "Traceback" not in text
+        # the skill writes its last line once the tool has exited, so it can trail it
+        ended = until(log, "the agent session that started this has ended", 10)
+        assert ended, log.read_text()
+        assert "Traceback" not in log.read_text()
     assert tools_running() == ""

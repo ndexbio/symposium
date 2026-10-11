@@ -8,7 +8,7 @@ The record and its files live on a **Symposium Data server**, which the skill re
 
 ## In the repository
 
-[`spec/symposium_specification.md`](spec/symposium_specification.md) is the normative document. [`AGENTS.md`](AGENTS.md) is what an AI assistant reads before working in the repository; `CLAUDE.md` points at it. `make lint`, `make test`, `make build` and `make deploy-local` are the only targets.
+[`spec/symposium_specification.md`](spec/symposium_specification.md) is the normative document. [`AGENTS.md`](AGENTS.md) is what an AI assistant reads before working in the repository; `CLAUDE.md` points at it. `make lint`, `make test`, `make build` and `make deploy-local` are the targets; `make test` is `make test-data` (the data server's suites) then `make test-suite` (the top-level suite), which CI runs as two jobs side by side.
 
 **[Symposium skill](skills/symposium/README.md)**: the `symposium` skill is how every admin and member works with a Symposium; users activate the skill in agent prompt with `/symposium <command>`, and the skill does the rest. 
 

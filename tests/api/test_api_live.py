@@ -213,6 +213,10 @@ ARGUMENT_G = artifact(
     [{"rel": "grounded_by", "source": "a_primary", "target": "g_score"}],
 )
 RECORD = [NOTE_A, DATA_D, NOTE_B1, NOTE_B2, MESSAGE_C, ARGUMENT_G]
+# RECORD as the gate accepts it, one pass per batch: the API validates a submission against the
+# record as it stands, so one that cites a pending artifact waits for the next pass (B1 cites A,
+# B2 supersedes B1); a pass keeps the order it is given, so `created` still follows RECORD
+BATCHES = [[NOTE_A, DATA_D], [NOTE_B1], [NOTE_B2, MESSAGE_C, ARGUMENT_G]]
 ADDRESS = "@lyra_data_d_v1.values#csv.row=BST2&col=Score"
 
 
@@ -306,10 +310,12 @@ def world(suite, server, cli, admin_dir):
     }
     keys["non-member"] = key_value(cli.ok(admin_dir, "gen-api-key", "viewer app"))
     api = Api(server)
-    for doc in RECORD:
-        publisher = doc["artifact"]["published_by"].lstrip("@")
-        response = api.call("POST", "/demo/submissions", keys[publisher], doc)
-        assert response.status_code == 201, response.text
+    assert [doc for batch in BATCHES for doc in batch] == RECORD
+    for batch in BATCHES:
+        for doc in batch:
+            publisher = doc["artifact"]["published_by"].lstrip("@")
+            response = api.call("POST", "/demo/submissions", keys[publisher], doc)
+            assert response.status_code == 201, response.text
         gate(suite, admin_dir)
     return {
         "api": api,

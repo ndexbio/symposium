@@ -1,21 +1,26 @@
-# Symposium. The only targets are lint, test, build and deploy-local.
+# Symposium. The targets are lint, test (test-data and test-suite), build and deploy-local.
 #   make lint           the API's generated code against api/openapi.yaml, ruff over all
 #                       Python, then the toolchain's conformance suite
-#   make test           lint, then the API contract's OpenAPI lint (node and npx), then the
-#                       data server's suites (its one image build), then the top-level
-#                       suite against that same image. It is the single gate.
+#   make test           lint, then the API contract's OpenAPI lint (node and npx), then
+#                       test-data, then test-suite. It is the single gate.
 #                       DOCKER=false runs only the suites that need no container
 #                       (tests/skills/test_agent_process.py, test_sessions.py, test_runtime.py,
 #                       and tests/api)
 #                       K8S=true also runs the data server's Helm chart on a throwaway kind
-#                       cluster (make -C data-server helm-e2e); CI's Linux job sets it
+#                       cluster (make -C data-server helm-e2e); CI's test-data job sets it
+#   make test-data      the data server's suites, its image build first (make -C data-server
+#                       test), and the kind test with K8S=true
+#   make test-suite     lint and the OpenAPI lint, then the top-level suite against the data
+#                       server's image, built first (from cache, when test-data just built it)
+#                       CI runs test-data and test-suite as two Linux jobs, side by side
 #   make build          lint, then dist/Symposium_skill.zip: the symposium skill, with the
 #                       symposium-data CLI inside it (R-I8)
 #   make deploy-local   build, then install the skill from the zip into $(SKILLS)
 # The data server has its own Makefile: make -C data-server test runs its suites alone.
 
 UV := uv run --project data-server/service --frozen
-# The image `make -C data-server test` builds: the top-level suites run against the same one.
+# The image the data server's Makefile builds (its test, or build-docker): the top-level suites
+# run against the same one.
 IMAGE := ndexbio/symposium-data
 TAG := $(shell sed -n 's/^version = "\(.*\)"/\1/p' data-server/service/pyproject.toml)
 # The top-level suite (tests/): the CLI's tests, then the skill's, on one container, then the
@@ -23,7 +28,7 @@ TAG := $(shell sed -n 's/^version = "\(.*\)"/\1/p' data-server/service/pyproject
 SUITES := tests/symposium-data tests/skills tests/api
 # DOCKER=false (CI's Windows job): only the suites that need no container
 DOCKER ?= true
-# K8S=true (CI's Linux job): also the Helm chart's live test on kind; off by default locally
+# K8S=true (CI's test-data job): also the Helm chart's live test on kind; off by default locally
 K8S ?= false
 NO_DOCKER_SUITES := tests/skills/test_agent_process.py tests/skills/test_sessions.py \
 	tests/skills/test_long_running.py tests/skills/test_watch_primitives.py \
@@ -33,7 +38,7 @@ REDOCLY := 2.59.0
 BUNDLE := dist/Symposium_skill.zip
 SKILLS ?= $(HOME)/.claude/skills
 
-.PHONY: lint test build deploy-local
+.PHONY: lint api-lint test test-data test-suite build deploy-local
 
 lint:
 	$(UV) python data-server/service/codegen/generate.py --check
@@ -41,16 +46,24 @@ lint:
 	$(UV) ruff format --check data-server tools/symposium-data tests skills
 	cd tools && python3 conformance.py
 
+api-lint:
+	npx --yes @redocly/cli@$(REDOCLY) lint --config api/redocly.yaml api/openapi.yaml
+
 ifeq ($(DOCKER),false)
 test:
 	SYMPOSIUM_TEST_DOCKER=false $(UV) pytest -c tests/pytest.ini $(NO_DOCKER_SUITES)
 else
-test: lint
-	npx --yes @redocly/cli@$(REDOCLY) lint --config api/redocly.yaml api/openapi.yaml
+# the lints first, so either fails before any suite runs; make runs each once
+test: lint api-lint test-data test-suite
+endif
+
+test-data:
 	$(MAKE) -C data-server test K8S=$(K8S)
+
+test-suite: lint api-lint
+	$(MAKE) -C data-server build-docker
 	SYMPOSIUM_DATA_TEST_IMAGE=$(IMAGE):$(TAG) SYMPOSIUM_DATA_TEST_VERSION=$(TAG) \
 		$(UV) pytest -c tests/pytest.ini $(SUITES)
-endif
 
 build: lint
 	python3 tools/bundle.py $(BUNDLE)

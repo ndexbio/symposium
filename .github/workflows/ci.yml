@@ -6,18 +6,20 @@ on:
 
 jobs:
   test:
-    # Linux runs the whole gate, the data server's suites and their one image build included,
-    # and the Helm chart's live test on a throwaway kind cluster inside the runner (K8S=true);
-    # Windows runs the skill's runtime and session suites, which need no container
+    # Linux runs the whole gate as two jobs side by side, each building the data server's image:
+    # test-data runs the data server's suites and the Helm chart's live test on a throwaway kind
+    # cluster inside the runner (K8S=true); test-suite runs the lints and the top-level suite.
+    # Windows runs the skill's runtime and session suites, which need no container.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {os: ubuntu-latest, docker: true, k8s: true}
-          - {os: windows-latest, docker: false, k8s: false}
+          - {os: ubuntu-latest, target: test-data, docker: true, k8s: true}
+          - {os: ubuntu-latest, target: test-suite, docker: true, k8s: false}
+          - {os: windows-latest, target: test, docker: false, k8s: false}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: make test DOCKER=${{ matrix.docker }} K8S=${{ matrix.k8s }}
+      - run: make ${{ matrix.target }} DOCKER=${{ matrix.docker }} K8S=${{ matrix.k8s }}
         shell: bash

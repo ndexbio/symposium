@@ -6,7 +6,7 @@ A single Docker image that runs Symposium Data, the versioned file store Symposi
 - **PostgreSQL 16**: the server's records: configuration, owner identities, rosters, grants, invites, collections, files, versions, metadata and read keys. All of it is managed by Alembic migrations;
 - **SeaweedFS**: the internal S3 store for file contents. It is never exposed; the API service streams every byte.
 
-**To run a server**, start with `RUNBOOK.md`: `docker run` (or the Kubernetes manifest), then place the admin's key file. The image is published as [`ndexbio/symposium-data` on Docker Hub](https://hub.docker.com/r/ndexbio/symposium-data), one tag per release plus `:latest`, so `docker run` pulls it: running a server needs no local build. This README covers the build (for developing the server), the make targets and both APIs.
+**To run a server**, start with `RUNBOOK.md`: `docker run`, or the Helm chart on Kubernetes, then place the admin's key file. The image is published as [`ndexbio/symposium-data` on Docker Hub](https://hub.docker.com/r/ndexbio/symposium-data), one tag per release plus `:latest`, and the chart as `oci://registry-1.docker.io/ndexbio/symposium-helm`, so running a server needs no local build. This README covers the build (for developing the server), the make targets and both APIs.
 
 ## Layout
 
@@ -19,32 +19,42 @@ A single Docker image that runs Symposium Data, the versioned file store Symposi
 | `docker/Dockerfile` | Multi-stage build: `runtime-base` (PostgreSQL, supervisor, gosu, SeaweedFS with a pinned sha256), then `builder` (installs the locked wheel into `/opt/venv`), then `deploy`. |
 | `docker/supervisord/` | One config snippet per service. `start.sh` assembles them. |
 | `docker/scripts/start.sh` | Container start-up: version banner, first-boot secrets, PostgreSQL init, then starts supervisord. |
-| `docker/k8s-data-deployment.yml` | Kubernetes deployment on a single ReadWriteOnce PVC, with the admin key from a Secret. |
-| `RUNBOOK.md` | How to deploy (Docker or Kubernetes), place the admin key, host many communities, port, export and import, verify and tear down. |
+| `helm/symposium-helm/` | The Helm chart: the server on Kubernetes, on a single ReadWriteOnce PVC, exposed through a Gateway API HTTPRoute or an Ingress, with the admin key from its values. Its `README.md` lists every value. |
+| `RUNBOOK.md` | How to choose a deployment and run it (Docker, Docker Desktop's Kubernetes or a remote cluster, with the chart), place the admin key, port a community off NDEx (port-ndex), host many communities, export and import, verify and tear down. |
 | `PORT_NDEX.md` | The port-ndex: copying a community's record from NDEx into an empty community here. |
 
 ## Make targets
 
-These four targets are the only ones. Run them from this folder, or from the repository root with `make -C data-server <target>`. The repository's top-level `make test` runs this `test` as part of its single gate. Image targets run no tests.
+These are the only targets. Run them from this folder, or from the repository root with `make -C data-server <target>`. The repository's top-level `make test` runs this `test` as part of its single gate. Image and chart targets run no tests.
 
 | Target | What it does |
 |---|---|
 | `lint` | `ruff check` and `ruff format --check` on `service/`. |
-| `test` | `lint` and `build-docker`, then the unit suites, then the integration suites against that image, on one `sdtest-*` container for the whole session. |
+| `test` | `lint` and `build-docker`, then the unit suites, then the integration suites against that image, on one `sdtest-*` container for the whole session; the chart's lint, render and kubeconform checks are among them. `K8S=true` (the default is `false`; CI's Linux job sets it) then runs `helm-e2e`. |
 | `build-docker` | Builds and tags the image `ndexbio/symposium-data:$(TAG)` locally, for developing the server; running one uses the published image from Docker Hub instead. The image also takes `../tools` (the `symposium_rules` package) and `../api` (the contract), as the named build contexts `rules` and `api`. |
 | `push-docker` | A buildx multi-arch (`linux/amd64`, `linux/arm64`) build and push of `:$(TAG)` and `:latest`. It is used by the release workflow, on a `data-server-v<version>` GitHub release. |
+| `helm-package` | `helm lint --strict`, then `dist/symposium-helm-<version>.tgz`, the chart's version from `helm/symposium-helm/Chart.yaml`. |
+| `helm-push` | Pushes that package to Docker Hub, as `oci://registry-1.docker.io/ndexbio/symposium-helm:<version>`. It refuses unless `CHART_TAG` is the chart's version and the image it deploys (its `appVersion`) is on Docker Hub, and needs `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. It is used by the release workflow, on a `symposium-helm-v<version>` GitHub release. |
+| `helm-attach` | Attaches that package to the `symposium-helm-v<version>` GitHub release (`gh`), with the same `CHART_TAG` check. |
+| `helm-e2e` | The chart's live test: a kind cluster made for it on this machine's Docker, with its own kubeconfig, and deleted after it, running the chart this commit packaged with the image this commit built (loaded into the cluster, never pulled) through install, the admin key, uninstall and reinstall on the kept volume. |
+| `k8s-tools` | Fetches the pinned `helm`, `kind` and `kubectl` for this machine (linux or darwin, amd64 or arm64) into `.tools/`, each checked against its sha256. The chart targets use only these. |
 
-`TAG` defaults to the version in `service/pyproject.toml`; override it with `make build-docker TAG=1.2.3`. The image is built with `DATA_VERSION=$(TAG)`. The container prints `symposium-data <version>` as its first line of output, and `GET /v1/status` reports the same version. `/v1/status` also reports health: it answers **503**, with `"postgres"` or `"s3"` set to `"unavailable"`, whenever either dependency is down. The Kubernetes readiness probe relies on this. It reports the server's `mode` too (see "The admin key file").
+`TAG` defaults to the version in `service/pyproject.toml`; override it with `make build-docker TAG=1.2.3`. The image is built with `DATA_VERSION=$(TAG)`. The container prints `symposium-data <version>` as its first line of output, and `GET /v1/status` reports the same version. `/v1/status` also reports health: it answers **503**, with `"postgres"` or `"s3"` set to `"unavailable"`, whenever either dependency is down. The chart's readiness probe relies on this. It reports the server's `mode` too (see "The admin key file").
 
-**Requirements:** Docker and [uv](https://docs.astral.sh/uv/). `uv` installs Python 3.11 and the locked dependencies itself.
+**Requirements:** Docker and [uv](https://docs.astral.sh/uv/). `uv` installs Python 3.11 and the locked dependencies itself, and the chart targets fetch their own pinned tools.
 
 ## Releases
 
-Publishing a GitHub release tagged `data-server-v<version>` runs the `push-image` job of `.github/workflows/release.yml`; the release tag's prefix alone gates it, and a pushed tag on its own runs nothing. That job runs `make push-docker TAG=<version>`, which publishes `ndexbio/symposium-data:<version>` and `:latest`. It needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
+Publishing a GitHub release runs `.github/workflows/release.yml`, and the release tag's prefix picks its one job; a pushed tag on its own runs nothing. The data server has two releases, each versioned on its own:
+
+- **`data-server-v<version>`**, the image: the `push-image` job runs `make push-docker TAG=<version>`, which publishes `ndexbio/symposium-data:<version>` and `:latest`.
+- **`symposium-helm-v<version>`**, the chart: the `push-chart` job runs `make helm-push helm-attach CHART_TAG=<version>`, which publishes `oci://registry-1.docker.io/ndexbio/symposium-helm:<version>` and attaches `symposium-helm-<version>.tgz` to the release. `<version>` is the chart's own `version`; its `appVersion` is the image it deploys, which a unit test keeps equal to `service/pyproject.toml`'s version, so a new image always comes with a new chart.
+
+Release the image first, then the chart, then the skill (`symposium-v<version>`). Both jobs need the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`, an organization access token with push on `ndexbio/symposium-data` and `ndexbio/symposium-helm`.
 
 ## The admin key file
 
-Nobody has a shell on the server (R-D7): every admin operation is an admin-only route. The admin's **public** key is a file, `admin_pub_<handle>.key`, holding the public JWK that Symposium's `admin-config` writes (mode 0644). It goes in `/apps/` (copied into the host directory mounted there) or in `/apps/admin-key/` (where the Kubernetes manifest mounts the Secret holding it). The API reads it at every start-up (R-D4):
+Nobody has a shell on the server (R-D7): every admin operation is an admin-only route. The admin's **public** key is a file, `admin_pub_<handle>.key`, holding the public JWK that Symposium's `admin-config` writes (mode 0644). It goes in `/apps/` (copied into the host directory mounted there) or in `/apps/admin-key/` (where the Helm chart mounts the Secret holding it). The API reads it at every start-up (R-D4):
 
 | At start-up | Result |
 |---|---|
@@ -221,8 +231,10 @@ uv run --project data-server/service python data-server/service/codegen/generate
 The repository's `make lint` regenerates into a scratch directory and fails if the committed
 code differs.
 
-**Ingress.** The streams need response buffering off and a read timeout above their
-30-second heartbeat; the commented Ingress in `docker/k8s-data-deployment.yml` carries both.
+**Proxies.** The streams need response buffering off and a read timeout above their
+30-second heartbeat. The Helm chart's HTTPRoute turns the route's timeouts off; behind an
+Ingress, the controller's settings go in the chart's `expose.ingress.annotations` (the
+runbook, "On a remote cluster").
 
 ### Quickstart: from an empty server to `curl`
 

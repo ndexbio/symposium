@@ -598,14 +598,15 @@ class Commands:
             "public_key_file": str(key_file),
             "created": created,
             "steps": [
-                f"place {key_file} on the server: for a local container, copy it into "
-                "the directory of your machine mounted on /apps (`cp "
-                f"{key_file} <that directory>/`), or `docker cp {key_file} "
-                "<container>:/apps/`; on Kubernetes, `kubectl create secret generic "
-                f"symposium-data-admin-key --from-file={key_file}` "
-                "(k8s-data-deployment.yml mounts it in /apps/admin-key/)",
-                "restart the server (`docker restart <container>`, or `kubectl rollout "
-                "restart deploy/symposium-data`)",
+                f"with Docker: place {key_file} on the server, by copying it into the "
+                f"directory of your machine mounted on /apps (`cp {key_file} <that "
+                f"directory>/`) or with `docker cp {key_file} <container>:/apps/`, then "
+                "restart it (`docker restart <container>`)",
+                "or on Kubernetes, with the Helm chart: add `adminKey: {handle: "
+                f"{args.handle}}}` to the install's values file and run `helm upgrade "
+                "<release> <chart> -n <namespace> --version <chart version> -f <values "
+                f"file> --set-file adminKey.publicKey={key_file}`, which restarts the "
+                "server (the data server's RUNBOOK.md, 5.3: the admin key on Kubernetes)",
                 f"check that GET {url}/v1/status reports this fingerprint, then run "
                 "`/symposium bootstrap`",
             ],

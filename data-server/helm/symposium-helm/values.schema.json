@@ -1,0 +1,88 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string"},
+        "pullPolicy": {"enum": ["Always", "IfNotPresent", "Never"]}
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size": {"type": "string", "minLength": 1},
+        "className": {"type": "string"},
+        "keep": {"type": "boolean"}
+      }
+    },
+    "adminKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "handle": {
+          "type": "string",
+          "pattern": "^$|^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+        },
+        "publicKey": {"type": "string"},
+        "existingSecret": {"type": "string"}
+      }
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["ClusterIP", "NodePort", "LoadBalancer"]},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535}
+      }
+    },
+    "expose": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"enum": ["none", "gateway", "ingress"]},
+        "gateway": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "parentRefs": {"type": "array", "items": {"type": "object"}},
+            "hostnames": {"type": "array", "items": {"type": "string"}},
+            "timeouts": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "request": {"type": "string"},
+                "backendRequest": {"type": "string"}
+              }
+            }
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "className": {"type": "string"},
+            "host": {"type": "string"},
+            "tlsSecret": {"type": "string"},
+            "annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+          }
+        }
+      }
+    },
+    "trustedProxy": {"type": "string", "minLength": 1},
+    "publicUrl": {"type": "string"},
+    "env": {
+      "type": "object",
+      "propertyNames": {"pattern": "^SYMPOSIUM_[A-Z0-9_]+$"},
+      "additionalProperties": {"type": ["string", "number", "boolean"]}
+    },
+    "resources": {"type": "object"},
+    "podSecurityContext": {"type": "object"},
+    "securityContext": {"type": "object"}
+  }
+}

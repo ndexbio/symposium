@@ -1,10 +1,14 @@
 name: release
 
 # Publishing a GitHub release runs this; its tag's prefix picks the one job that does anything:
-#   data-server-v<version>  publishes ndexbio/symposium-data:<version> and :latest (multi-arch).
-#   symposium-v<version>    attaches dist/Symposium_skill.zip from make build. The data-server
-#                           image the bundle expects (its compat.json) is released first, by a
-#                           data-server-v* release.
+#   data-server-v<version>     publishes ndexbio/symposium-data:<version> and :latest (multi-arch).
+#   symposium-helm-v<version>  publishes the Helm chart symposium-helm-<version>.tgz to
+#                              oci://registry-1.docker.io/ndexbio/symposium-helm and attaches it
+#                              to the release; refused unless <version> is the chart's own and
+#                              the image it deploys (its appVersion) is already on Docker Hub.
+#   symposium-v<version>       attaches dist/Symposium_skill.zip from make build.
+# Release them in that order: the image, the chart that deploys it, then the skill, whose
+# compat.json names that image.
 # Each job checks out the release's tag, and the tag reaches every shell line through `env`.
 on:
   release:
@@ -43,3 +47,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name }}
+
+  push-chart:
+    if: startsWith(github.event.release.tag_name, 'symposium-helm-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      # the pinned helm comes from the Makefile (make k8s-tools), as in CI
+      - run: make -C data-server helm-push helm-attach CHART_TAG="${TAG#symposium-helm-v}"
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}

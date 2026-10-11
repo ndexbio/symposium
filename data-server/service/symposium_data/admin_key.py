@@ -1,6 +1,6 @@
 """The admin key file (R-D4): who the server admin is, decided at every start-up from
-`admin_pub_<handle>.key`, in `/apps/` or in `/apps/admin-key/` (where Kubernetes mounts it from
-a Secret), and the backup of the established admin.
+`admin_pub_<handle>.key`, in `/apps/` or in `/apps/admin-key/` (where the Helm chart mounts it
+from a Secret), and the backup of the established admin.
 
 Nobody has a shell on the server, so the key file is the only way the admin's key is given or
 changed. The API reads it when it starts and never writes to the apps directory itself; the

@@ -162,7 +162,7 @@ def restarted(server) -> dict:
 
 
 def test_the_key_file_is_read_from_the_mounted_directory_too(server):
-    # where the Kubernetes manifest mounts the Secret holding it: /apps/admin-key/
+    # where the Helm chart mounts the Secret holding it: /apps/admin-key/
     mounted = f"/apps/admin-key/admin_pub_{ADMIN}.key"
     saved = server.exec("cat", BACKUP).stdout
     try:

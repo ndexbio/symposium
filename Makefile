@@ -7,6 +7,8 @@
 #                       DOCKER=false runs only the suites that need no container
 #                       (tests/skills/test_agent_process.py, test_sessions.py, test_runtime.py,
 #                       and tests/api)
+#                       K8S=true also runs the data server's Helm chart on a throwaway kind
+#                       cluster (make -C data-server helm-e2e); CI's Linux job sets it
 #   make build          lint, then dist/Symposium_skill.zip: the symposium skill, with the
 #                       symposium-data CLI inside it (R-I8)
 #   make deploy-local   build, then install the skill from the zip into $(SKILLS)
@@ -21,6 +23,8 @@ TAG := $(shell sed -n 's/^version = "\(.*\)"/\1/p' data-server/service/pyproject
 SUITES := tests/symposium-data tests/skills tests/api
 # DOCKER=false (CI's Windows job): only the suites that need no container
 DOCKER ?= true
+# K8S=true (CI's Linux job): also the Helm chart's live test on kind; off by default locally
+K8S ?= false
 NO_DOCKER_SUITES := tests/skills/test_agent_process.py tests/skills/test_sessions.py \
 	tests/skills/test_long_running.py tests/skills/test_watch_primitives.py \
 	tests/skills/test_runtime.py tests/api
@@ -43,7 +47,7 @@ test:
 else
 test: lint
 	npx --yes @redocly/cli@$(REDOCLY) lint --config api/redocly.yaml api/openapi.yaml
-	$(MAKE) -C data-server test
+	$(MAKE) -C data-server test K8S=$(K8S)
 	SYMPOSIUM_DATA_TEST_IMAGE=$(IMAGE):$(TAG) SYMPOSIUM_DATA_TEST_VERSION=$(TAG) \
 		$(UV) pytest -c tests/pytest.ini $(SUITES)
 endif

@@ -2,7 +2,7 @@
 installed renders manifests kubeconform accepts, what it renders holds what the server needs,
 and the settings that make no sense together are refused with a message. Helm and kubeconform
 run as pinned containers, so Docker is all this needs. The chart on a live cluster is
-tests/k8s (make test K8S=true)."""
+tests/k8s, which `make test` runs on kind."""
 
 from pathlib import Path
 

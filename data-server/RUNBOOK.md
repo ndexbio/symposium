@@ -272,5 +272,15 @@ curl -s <url>/v1/status
 
 - **Docker, keeping the data:** `docker rm -f symposium-data`. The directory, and the key file in it, stay, so the next `docker run` on it starts operational.
 - **Docker, deleting everything:** remove the container, then the directory it mounted.
-- **Kubernetes, keeping the data:** `helm uninstall symposium-data -n symposium`. It keeps the volume, so a later `helm install` with the same release name and namespace is the same server, already bound to its admin.
+- **Kubernetes, keeping the data:** `helm uninstall symposium-data -n symposium`. It keeps the volume (the PVC), which is named after the release. **The release name decides which data a server has:**
+  - **Reinstalling with the same release name, in the same namespace,** mounts that kept volume again: it is the same server, with its data, already bound to its admin.
+  - **A different release name** gets a new, empty volume and a new server; the kept one stays untouched until you delete it.
+
+  Before reinstalling with the same name, wait for the old pod to be gone. The uninstall returns before it has stopped, and until then it still runs on that volume:
+
+  ```bash
+  kubectl -n symposium wait --for=delete pod -l app.kubernetes.io/instance=symposium-data --timeout=5m
+  ```
+
+  It returns at once when there is no pod left.
 - **Kubernetes, deleting the data:** after the uninstall, run `kubectl -n symposium delete pvc symposium-data`.

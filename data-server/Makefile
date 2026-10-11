@@ -1,7 +1,7 @@
 # Symposium Data server: the image, and the Helm chart that deploys it on Kubernetes.
 #   make test                      lint, the image build, unit suites, integration suites (the
-#                                  chart's lint and render checks among them); K8S=true adds the
-#                                  chart's live test on a throwaway kind cluster (helm-e2e)
+#                                  chart's lint and render checks among them), then the chart's
+#                                  live test on a throwaway kind cluster (helm-e2e)
 #   make build-docker TAG=1.2.3    the image, tagged; image targets run no tests
 #   make push-docker TAG=1.2.3     multi-arch push of :TAG and :latest (the release workflow, on a
 #                                  data-server-v<version> GitHub release)
@@ -18,7 +18,6 @@ IMAGE ?= ndexbio/symposium-data
 TAG ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' service/pyproject.toml)
 PLATFORMS ?= linux/amd64,linux/arm64
 UV := uv run --frozen
-K8S ?= false
 
 .PHONY: lint test build-docker push-docker helm-package helm-push helm-attach helm-e2e \
 	k8s-tools chart-tag
@@ -26,13 +25,11 @@ K8S ?= false
 lint:
 	cd service && $(UV) ruff check . && $(UV) ruff format --check .
 
-test: lint build-docker $(if $(filter true,$(K8S)),k8s-tools helm-package)
+test: lint build-docker k8s-tools helm-package
 	cd service && $(UV) pytest tests/unit
 	cd service && SYMPOSIUM_DATA_TEST_IMAGE=$(IMAGE):$(TAG) SYMPOSIUM_DATA_TEST_VERSION=$(TAG) \
 		$(UV) pytest tests/integration
-ifeq ($(K8S),true)
 	$(E2E)
-endif
 
 # the API's shared rules and contract, from outside this directory, as named build contexts
 CONTEXTS := --build-context rules=../tools --build-context api=../api

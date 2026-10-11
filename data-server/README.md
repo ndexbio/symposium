@@ -30,7 +30,7 @@ These are the only targets. Run them from this folder, or from the repository ro
 | Target | What it does |
 |---|---|
 | `lint` | `ruff check` and `ruff format --check` on `service/`. |
-| `test` | `lint` and `build-docker`, then the unit suites, then the integration suites against that image, on one `sdtest-*` container for the whole session; the chart's lint, render and kubeconform checks are among them. `K8S=true` (the default is `false`; CI's Linux job sets it) then runs `helm-e2e`. |
+| `test` | `lint` and `build-docker`, then the unit suites, then the integration suites against that image, on one `sdtest-*` container for the whole session; the chart's lint, render and kubeconform checks are among them. Then `helm-e2e`. |
 | `build-docker` | Builds and tags the image `ndexbio/symposium-data:$(TAG)` locally, for developing the server; running one uses the published image from Docker Hub instead. The image also takes `../tools` (the `symposium_rules` package) and `../api` (the contract), as the named build contexts `rules` and `api`. |
 | `push-docker` | A buildx multi-arch (`linux/amd64`, `linux/arm64`) build and push of `:$(TAG)` and `:latest`. It is used by the release workflow, on a `data-server-v<version>` GitHub release. |
 | `helm-package` | `helm lint --strict`, then `dist/symposium-helm-<version>.tgz`, the chart's version from `helm/symposium-helm/Chart.yaml`. |

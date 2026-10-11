@@ -1,12 +1,12 @@
 """The Helm chart on a live Kubernetes cluster: a kind cluster made for this test and deleted
 after it, on this machine's Docker, with its own kubeconfig, so no other cluster is ever
 touched. It installs the chart this commit packaged with the image this commit built, loaded
-into the cluster and never pulled. Run it with `make test K8S=true` or
-`make -C data-server helm-e2e`, which fetch the pinned helm, kind and kubectl.
+into the cluster and never pulled. `make test` runs it, and `make -C data-server helm-e2e`
+runs it alone; both fetch the pinned helm, kind and kubectl.
 
 The runbook's path, end to end: install, non-operational; the admin key set by `helm upgrade`,
 which restarts the pod into operational mode; `helm uninstall`, which keeps the volume; and a
-new install on it, which is the same server again. Every wait polls."""
+new install on it, which is the same server again. Every wait polls or watches."""
 
 from __future__ import annotations
 
@@ -38,6 +38,8 @@ NODE = "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e362
 NAMESPACE = "symposium"
 RELEASE = "symposium-data"
 HANDLE = "demo-admin"
+# the release's pods
+SELECTOR = f"app.kubernetes.io/instance={RELEASE}"
 
 
 class Cluster:
@@ -101,7 +103,7 @@ class Cluster:
             "get",
             "pods",
             "-l",
-            f"app.kubernetes.io/instance={RELEASE}",
+            SELECTOR,
             "-o",
             "jsonpath={.items[*].metadata.name}",
         ).stdout
@@ -236,8 +238,11 @@ def test_the_chart_installs_takes_its_admin_key_and_keeps_its_data(cluster, tmp_
         assert (status["admin"], status["fingerprint"]) == (HANDLE, fingerprint)
     assert first_pod not in cluster.pods()  # a new pod: the key's checksum rolled it
 
-    # uninstalled: the volume, and the server on it, are kept
-    cluster.helm("uninstall", RELEASE, "--wait")
+    # uninstalled: the volume, and the server on it, are kept; the old pod is gone before
+    # anything mounts that volume again (Recreate orders a Deployment's own pods, not those
+    # of the one an uninstall deleted); with no pod left, the wait returns at once
+    cluster.helm("uninstall", RELEASE)
+    cluster.kubectl("wait", "--for=delete", "pod", "-l", SELECTOR, "--timeout=5m")
     pvc = cluster.kubectl(
         "get", "pvc", RELEASE, "-o", "jsonpath={.status.phase}"
     ).stdout

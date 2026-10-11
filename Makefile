@@ -6,10 +6,8 @@
 #                       DOCKER=false runs only the suites that need no container
 #                       (tests/skills/test_agent_process.py, test_sessions.py, test_runtime.py,
 #                       and tests/api)
-#                       K8S=true also runs the data server's Helm chart on a throwaway kind
-#                       cluster (make -C data-server helm-e2e); CI's test-data job sets it
-#   make test-data      the data server's suites, its image build first (make -C data-server
-#                       test), and the kind test with K8S=true
+#   make test-data      the data server's suites, its image build first, and its Helm chart's
+#                       live test on a throwaway kind cluster (make -C data-server test)
 #   make test-suite     lint and the OpenAPI lint, then the top-level suite against the data
 #                       server's image, built first (from cache, when test-data just built it)
 #                       CI runs test-data and test-suite as two Linux jobs, side by side
@@ -28,8 +26,6 @@ TAG := $(shell sed -n 's/^version = "\(.*\)"/\1/p' data-server/service/pyproject
 SUITES := tests/symposium-data tests/skills tests/api
 # DOCKER=false (CI's Windows job): only the suites that need no container
 DOCKER ?= true
-# K8S=true (CI's test-data job): also the Helm chart's live test on kind; off by default locally
-K8S ?= false
 NO_DOCKER_SUITES := tests/skills/test_agent_process.py tests/skills/test_sessions.py \
 	tests/skills/test_long_running.py tests/skills/test_watch_primitives.py \
 	tests/skills/test_runtime.py tests/api
@@ -58,7 +54,7 @@ test: lint api-lint test-data test-suite
 endif
 
 test-data:
-	$(MAKE) -C data-server test K8S=$(K8S)
+	$(MAKE) -C data-server test
 
 test-suite: lint api-lint
 	$(MAKE) -C data-server build-docker

@@ -22,3 +22,6 @@ server/community.json
 
 # build output
 dist/
+
+# the data server Makefile's pinned helm, kind and kubectl
+data-server/.tools/

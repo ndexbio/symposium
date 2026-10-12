@@ -1,0 +1,79 @@
+# The Symposium Data server on Kubernetes. Keep one values file per install and pass it, with
+# --version, to every `helm install` and `helm upgrade` (README.md, "Upgrading").
+
+image:
+  repository: ndexbio/symposium-data
+  # empty: the chart's appVersion, the data-server release this chart was made for
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# All state (PostgreSQL, SeaweedFS, the service's secrets) lives on one ReadWriteOnce volume
+# mounted on /apps, so the server runs as one replica, replaced (not rolled) on every change.
+storage:
+  size: 5Gi
+  # empty: the cluster's default StorageClass
+  className: ""
+  # true: `helm uninstall` keeps the volume and its data; delete the PVC to remove them
+  keep: true
+
+# The admin's public key file, admin_pub_<handle>.key, from `/symposium admin-config`. Until it
+# is set the server runs non-operational. Set handle here, and the file's contents with
+#   --set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<handle>.key
+# A change to either restarts the server, which then binds (or rebinds) that key.
+adminKey:
+  handle: ""
+  publicKey: ""
+  # or the name of a Secret made some other way, holding the one key admin_pub_<handle>.key;
+  # the chart cannot see a change to it, so restart the server after changing it
+  existingSecret: ""
+
+service:
+  # ClusterIP inside a cluster; LoadBalancer on Docker Desktop, which serves it on localhost
+  type: ClusterIP
+  port: 8080
+
+# How the server is reached from outside the cluster: none, gateway or ingress.
+#   none     the Service only: in the cluster, `kubectl port-forward`, or a LoadBalancer Service
+#   gateway  a Gateway API HTTPRoute attached to a Gateway the cluster already runs (the
+#            recommended way to publish it; the Gateway holds the hostname's TLS certificate)
+#   ingress  an Ingress, for a cluster that exposes services through an Ingress controller
+expose:
+  mode: none
+  gateway:
+    # the Gateway (or Gateways) to attach to, e.g. [{name: public, namespace: gateways}]
+    parentRefs: []
+    # e.g. [data.example.org]; empty: every hostname the Gateway's listener accepts
+    hostnames: []
+    # the Data API's streams (Server-Sent Events) stay open for hours: "0s" disables the
+    # route's request timeouts
+    timeouts:
+      request: "0s"
+      backendRequest: "0s"
+  ingress:
+    className: ""
+    host: ""
+    # the Secret holding the host's TLS certificate; empty: TLS is terminated elsewhere
+    tlsSecret: ""
+    # the controller's own settings, chiefly for the streams: unbuffered, and a read timeout
+    # well past their 30-second heartbeat (the runbook lists them for common controllers)
+    annotations: {}
+
+# SYMPOSIUM_SERVER_TRUSTED_PROXY: the only address (or CIDR) whose X-Forwarded-* headers are
+# trusted. When exposed, set it to the network your gateway's or controller's pods run in.
+trustedProxy: "127.0.0.1"
+# SYMPOSIUM_DATA_API_PUBLIC_URL: the base of every URL the Data API answers, e.g.
+# https://data.example.org; empty: the request's own URL
+publicUrl: ""
+# any other SYMPOSIUM_* setting (data-server README, "Configuration"), as NAME: value
+env: {}
+
+# PostgreSQL, SeaweedFS and the API share the one pod
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+
+# The init container runs as root to give the volume's directories to their owners, so a
+# namespace enforcing the restricted Pod Security Standard cannot run this chart.
+podSecurityContext: {}
+securityContext: {}

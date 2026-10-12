@@ -1,8 +1,8 @@
-"""The S3 health check answers within a readiness probe's 1 s timeout, whether the store is
-down or hung."""
+"""The S3 health check fits inside a readiness probe's 1 s timeout by how its client is
+configured, never by how fast a machine happens to be: one attempt, half a second to connect
+and half a second to read. Whether the store is down or hung, it answers unhealthy."""
 
 import socket
-import time
 
 import pytest
 
@@ -30,19 +30,17 @@ def listener():
     sock.close()
 
 
-def timed_health(store) -> tuple[bool, float]:
-    start = time.monotonic()
-    healthy = store.healthy()
-    return healthy, time.monotonic() - start
+def test_the_probe_makes_one_attempt_within_the_probe_timeout(tmp_path, listener):
+    config = store_at(tmp_path, listener.getsockname()[1]).probe.meta.config
+    assert config.retries["total_max_attempts"] == 1
+    assert config.connect_timeout + config.read_timeout <= 1
 
 
-def test_a_stopped_store_is_unhealthy_at_once(tmp_path, listener):
+def test_a_stopped_store_is_unhealthy(tmp_path, listener):
     port = listener.getsockname()[1]
     listener.close()  # nothing listens on the port now
-    healthy, elapsed = timed_health(store_at(tmp_path, port))
-    assert healthy is False and elapsed < 1
+    assert store_at(tmp_path, port).healthy() is False
 
 
-def test_a_hung_store_is_unhealthy_within_the_probe_timeout(tmp_path, listener):
-    healthy, elapsed = timed_health(store_at(tmp_path, listener.getsockname()[1]))
-    assert healthy is False and elapsed < 1
+def test_a_hung_store_is_unhealthy(tmp_path, listener):
+    assert store_at(tmp_path, listener.getsockname()[1]).healthy() is False

@@ -15,6 +15,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from harness import MAX_WAIT
 from skills.test_workflow import note
 from suite import REPO
 
@@ -22,10 +23,10 @@ BUNDLE = REPO / "dist" / "Symposium_skill.zip"
 CLI = "skills/symposium/toolchain/tools/symposium-data"
 # the repository's Symposium base, shipped whole at its repository paths under toolchain/
 SHIPPED_FOLDERS = ("spec", "tools", "server", "examples")
-# and the data server's operator docs (its top-level *.md but its developer README) and manifest
+# and the data server's operator docs (its top-level *.md but its developer README) and chart
 SHIPPED_FILES = (
     ":(glob)data-server/*.md",
-    "data-server/docker/k8s-data-deployment.yml",
+    "data-server/helm",
 )
 NOT_SHIPPED = {"tools/bundle.py", "tools/pyproject.toml", "data-server/README.md"}
 LINK = re.compile(r"\]\(([^)\s]+)\)")
@@ -34,7 +35,11 @@ LINK = re.compile(r"\]\(([^)\s]+)\)")
 def make(*args) -> subprocess.CompletedProcess:
     # the real environment: make runs lint before it builds
     return subprocess.run(
-        ["make", "-s", *args], cwd=REPO, capture_output=True, text=True, timeout=600
+        ["make", "-s", *args],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=MAX_WAIT,
     )
 
 
@@ -79,7 +84,7 @@ def run_skill(skill: Path, cwd: Path, env: dict, *args) -> subprocess.CompletedP
         env=env,
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=MAX_WAIT,
     )
 
 
@@ -120,7 +125,9 @@ def test_the_bundle_holds_the_skill_with_its_toolchain_and_the_stamped_cli(insta
         "skills/symposium/toolchain/tools/roles/README.md",
         "skills/symposium/toolchain/spec/symposium_specification.md",
         "skills/symposium/toolchain/data-server/RUNBOOK.md",
-        "skills/symposium/toolchain/data-server/docker/k8s-data-deployment.yml",
+        "skills/symposium/toolchain/data-server/helm/symposium-helm/Chart.yaml",
+        "skills/symposium/toolchain/data-server/helm/symposium-helm/values.yaml",
+        "skills/symposium/toolchain/data-server/helm/symposium-helm/templates/deployment.yaml",
         f"{CLI}/cli.py",
         f"{CLI}/main.py",
         f"{CLI}/keystore.py",
@@ -188,7 +195,7 @@ def test_the_conformance_suite_runs_from_the_installed_skill(installed):
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=MAX_WAIT,
     )
     assert result.returncode == 0, result.stdout[-3000:] + result.stderr
     assert "everything behaved as specified" in result.stdout

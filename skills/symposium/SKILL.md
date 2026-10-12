@@ -86,7 +86,7 @@ it ends.
 
 1. **Where will the data server run?**
    - **On your machine:** `docker run` of the `ndexbio/symposium-data` image ([local deployment](README.md#2-deploying-a-data-server)).
-   - **Hosted remotely:** Kubernetes, with the manifest that ships with the skill ([remote deployment](README.md#2-deploying-a-data-server)).
+   - **On your machine's Kubernetes (Docker Desktop), or hosted remotely:** the data server's Helm chart, `oci://registry-1.docker.io/ndexbio/symposium-helm` ([Kubernetes deployment](README.md#2-deploying-a-data-server)).
 2. **Provision admin key, once per data server:** `/symposium admin-config` makes your admin key on your machine and writes its public key file; place public key file on the server([admin setup](README.md#2-deploying-a-data-server)).
 3. **The community and its members:** write `community.json` (its name, its members' handles, the server's URL) and run `/symposium bootstrap`. It writes one invite file per member: hand each to its member out of band ([community setup](README.md#2-deploying-a-data-server)).
 4. **Administer it:** `/symposium gate --watch` accepts or rejects the members' submissions as they arrive; publish your own artifacts with `/symposium publish`; read the record with `/symposium serve` ([using the skill](README.md#1-using-the-skill)).
@@ -144,19 +144,31 @@ agent> /symposium gate --verify
 agent> /symposium serve
 ```
 
-**A new remote hosted Symposium (admin) on Kubernetes:** 
-The k8s deployment manifest .yml file is included within installed skill at `~/.claude/skills/symposium/toolchain/data-server/docker/k8s-data-deployment.yml` and `data-server/docker/k8s-data-deployment.yml` in the repo.
+**A new remote hosted Symposium (admin) on Kubernetes:**
+The data server's Helm chart is published on Docker Hub, `oci://registry-1.docker.io/ndexbio/symposium-helm`; Helm 3.8 or later installs it straight from there. It also ships within the installed skill, at `~/.claude/skills/symposium/toolchain/data-server/helm/symposium-helm` (`data-server/helm/symposium-helm` in the repo). The runbook (`toolchain/data-server/RUNBOOK.md`), "Run it on Kubernetes with Helm", explains every choice below.
 
 ```bash
-# start the data server , set the image version in the .yml to <version> provided by `/symposium --help` 
-# reveiw the manifest first to decide if you want the ingress activated for inbound http over ssl access or you have
-# alternate routing ssl proxy approach to expose the http port of data server.
-$ kubectl apply -f k8s-data-deployment.yml                  
+# values.yaml: how the server is published. Through the cluster's Gateway (Gateway API): ask the
+# cluster's operators which Gateway to attach to; or `expose.mode: ingress` for an Ingress controller
+$ cat > values.yaml <<'YAML'
+expose:
+  mode: gateway
+  gateway:
+    parentRefs: [{name: <gateway>, namespace: <its namespace>}]
+    hostnames: [<k8s_host>]
+publicUrl: https://<k8s_host>
+trustedProxy: <the gateway's pod network>
+YAML
 
-# one time admin config 
-agent> /symposium admin-config --handle <admin> --data-server-url https://<k8s_data_server_ingress_url>
-$ kubectl create secret generic symposium-data-admin-key --from-file=$HOME/.symposium/admin/admin_pub_<admin>.key
-$ kubectl rollout restart deploy/symposium-data
+# start the data server; the chart's appVersion is the image it deploys, the <version> provided by `/symposium --help`
+$ helm show chart oci://registry-1.docker.io/ndexbio/symposium-helm --version <chart version>
+$ helm install symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm --version <chart version> \
+    -n symposium --create-namespace -f values.yaml
+
+# one time admin config: add `adminKey: {handle: <admin>}` to values.yaml, then hand the chart the key; it restarts the server
+agent> /symposium admin-config --handle <admin> --data-server-url https://<k8s_host>
+$ helm upgrade symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm --version <chart version> \
+    -n symposium -f values.yaml --set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<admin>.key
 
 # manage the members of community, the community.json can idempotently be reloaded to add new members
 $ echo '{"community": "<name>", "handles": ["lyra"], "data-server-url": "https://<k8s_host>"}' > community.json

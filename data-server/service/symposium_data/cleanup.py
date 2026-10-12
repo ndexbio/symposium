@@ -42,21 +42,21 @@ class Cleanup:
         self.db, self.store, self.records = db, store, records
 
     def discard_pending(self, pid) -> bool:
-        """An unreferenced upload: bytes first, row second. -> True when fully removed."""
+        """An unreferenced upload: bytes first, row second, both under the row's lock, so a
+        commit can never turn it ready while its bytes are being removed. -> True when there is
+        nothing left to do: removed, already gone, or held by a commit in progress."""
         with self.db.connection() as conn:
-            row = self.records.pending_payload(conn, pid)
-        if row is None:
-            return True
-        try:
-            self.store.remove(row["s3_key"], row["upload_id"])
-        except Exception:
-            log.warning(
-                "could not remove the bytes of pending payload %s; will retry", pid
-            )
-            with self.db.connection() as conn:
+            row = self.records.claim_pending(conn, pid)
+            if row is None:
+                return True
+            try:
+                self.store.remove(row["s3_key"], row["upload_id"])
+            except Exception:
+                log.warning(
+                    "could not remove the bytes of pending payload %s; will retry", pid
+                )
                 self.records.expire_pending(conn, pid)
-            return False
-        with self.db.connection() as conn:
+                return False
             self.records.drop_pending(conn, pid)
         return True
 

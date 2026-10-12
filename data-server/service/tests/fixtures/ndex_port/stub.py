@@ -64,7 +64,7 @@ class NdexStub:
             return json.dumps(self.whoami)
         if parts[:2] == ["v2", "user"] and parts[3:] == ["permission"]:
             self.held.set()
-            self.released.wait(timeout=30)
+            self.released.wait()  # set by the test, or by close() at the latest
             self.listing_pages += 1
             return self.page(self.listing, query)
         if parts[:2] == ["v3", "networks"] and len(parts) == 3:

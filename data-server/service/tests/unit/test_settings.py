@@ -50,6 +50,14 @@ def test_durations_accept_fractions_of_a_second(tmp_path):
     assert s.heartbeat == 1 / 3  # the upload heartbeat follows the pending TTL
 
 
+def test_the_upload_heartbeat_can_be_set_apart_from_the_pending_ttl(tmp_path):
+    path = tmp_path / "service.env"
+    path.write_text(SERVICE_ENV)
+    s = Settings(str(path), environ={"SYMPOSIUM_SERVER_HEARTBEAT": "0.2"})
+    assert (s.pending_ttl, s.heartbeat) == (86400.0, 0.2)
+    assert Settings(str(path), environ={}).heartbeat == 60.0
+
+
 def test_the_quota_file_overrides_the_quota_only_with_test_hooks(tmp_path, monkeypatch):
     path = tmp_path / "service.env"
     path.write_text(SERVICE_ENV)

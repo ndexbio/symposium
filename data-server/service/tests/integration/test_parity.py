@@ -7,7 +7,6 @@ import json
 import tarfile
 from datetime import datetime
 
-import httpx
 import pytest
 from conftest import (
     Owner,
@@ -18,6 +17,7 @@ from conftest import (
     purge,
     set_roster,
 )
+from harness import HTTP
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def demo(server):
 
 
 def changes(server, headers, collection, since=0, limit=100, community="demo"):
-    return httpx.get(
+    return HTTP.get(
         f"{server.url}/v1/{community}/collections/{collection}/changes",
         params={"since": since, "limit": limit},
         headers=headers,
@@ -47,7 +47,7 @@ def every_change(server, headers, collection, limit=3, community="demo") -> list
 
 
 def query(server, headers, collection, contains, since=0, limit=100):
-    return httpx.post(
+    return HTTP.post(
         f"{server.url}/v1/demo/collections/{collection}/query",
         json={"contains": contains, "since": since, "limit": limit},
         headers=headers,
@@ -55,7 +55,7 @@ def query(server, headers, collection, contains, since=0, limit=100):
 
 
 def promote(admin, file_id, n, collection="record", **body):
-    return httpx.post(
+    return HTTP.post(
         admin.url(f"/files/{file_id}/v/{n}/promote"),
         json={"collection": collection, **body},
         headers=admin.headers(),
@@ -63,7 +63,7 @@ def promote(admin, file_id, n, collection="record", **body):
 
 
 def verify(owner, cite, **params):
-    return httpx.get(
+    return HTTP.get(
         owner.url("/verify"),
         params={"cite": cite, **params},
         headers=owner.headers(),
@@ -139,13 +139,13 @@ def test_find_and_query_by_metadata(demo):
     assert query(server, lyra.headers(), "files", ["kind"]).status_code == 422
 
     url = f"{server.url}/v1/demo/collections/files/find"
-    hit = httpx.get(url, params={"name": "d.json"}, headers=lyra.headers())
+    hit = HTTP.get(url, params={"name": "d.json"}, headers=lyra.headers())
     assert hit.status_code == 200
     assert hit.json()["file_id"] == data.json()["file_id"]
     assert hit.headers["etag"] == '"v1"'
-    deleted = httpx.get(url, params={"name": "gone.json"}, headers=lyra.headers())
+    deleted = HTTP.get(url, params={"name": "gone.json"}, headers=lyra.headers())
     assert deleted.json()["file_deleted"]  # a deleted file still holds its name
-    missing = httpx.get(url, params={"name": "nope"}, headers=lyra.headers())
+    missing = HTTP.get(url, params={"name": "nope"}, headers=lyra.headers())
     assert missing.status_code == 404
 
 
@@ -162,18 +162,16 @@ def test_hash_lookup_finds_every_readable_copy(demo):
     bob.put("other", "files", "three.csv", content)
 
     url = f"{server.url}/v1/demo/sha256/{sha}"
-    seen = httpx.get(url, headers=lyra.headers()).json()["items"]
+    seen = HTTP.get(url, headers=lyra.headers()).json()["items"]
     assert sorted(i["name"] for i in seen) == ["one.csv", "two.csv"]
     # hash lookup stays inside its community, even for the admin
-    assert len(httpx.get(url, headers=admin.headers()).json()["items"]) == 2
-    elsewhere = httpx.get(f"{server.url}/v1/other/sha256/{sha}", headers=bob.headers())
+    assert len(HTTP.get(url, headers=admin.headers()).json()["items"]) == 2
+    elsewhere = HTTP.get(f"{server.url}/v1/other/sha256/{sha}", headers=bob.headers())
     assert [i["name"] for i in elsewhere.json()["items"]] == ["three.csv"]
     # content is deduplicated within a community, never across: one payload each
     stored = psql(server, f"SELECT count(*) FROM payloads WHERE sha256 = '{sha}'")
     assert stored == "2"
-    bad = httpx.get(
-        f"{server.url}/v1/demo/sha256/{sha.upper()}", headers=lyra.headers()
-    )
+    bad = HTTP.get(f"{server.url}/v1/demo/sha256/{sha.upper()}", headers=lyra.headers())
     assert bad.status_code == 400
 
 
@@ -209,7 +207,7 @@ def test_promote_stamps_the_server_clock_into_the_record(demo):
     assert record["content_type"] == "application/json"
     # credited to its submitter, who may therefore key it (R-G4, R-E2)
     assert record["created_by"] == "lyra" and record["key_id"] is None
-    keyed = httpx.post(
+    keyed = HTTP.post(
         f"{server.url}/v1/demo/collections/record/keys",
         json={"label": "reviewer", "file_id": record["file_id"]},
         headers=lyra.headers(),
@@ -251,7 +249,7 @@ def test_a_failing_promote_leaves_nothing_behind(demo):
         server,
         "INSERT INTO files (id, community, collection, name, state, reserved_by, reserved_at) "
         "VALUES (gen_random_uuid(), 'demo', 'record', 'goal.json', 'reserved', 'vega', "
-        "now() + interval '1 second')",
+        "now())",
     )
     assert promote(admin, fid, 1, **pointer).status_code == 409
     assert psql(server, "SELECT count(*) FROM payloads WHERE state = 'pending'") == "0"
@@ -295,7 +293,7 @@ def test_verify_checks_existence_hash_and_strict_ordering(demo):
     assert hidden == unknown.json() and not hidden["exists"]
     assert not verify(admin, "other:abc").json()["exists"]
     assert verify(admin, cite, before="yesterday").status_code == 400
-    anonymous = httpx.get(f"{server.url}/v1/demo/verify", params={"cite": cite})
+    anonymous = HTTP.get(f"{server.url}/v1/demo/verify", params={"cite": cite})
     assert anonymous.status_code == 401
 
     assert purge(admin, data["file_id"], 1).status_code == 200
@@ -308,7 +306,7 @@ def test_verify_checks_existence_hash_and_strict_ordering(demo):
 def export(admin, community, path):
     """Stream the community's export through the route into `path`."""
     url = f"{admin.server.url}/v1/{community}/export"
-    with httpx.stream("GET", url, headers=admin.headers(), timeout=600) as r:
+    with HTTP.stream("GET", url, headers=admin.headers()) as r:
         assert r.status_code == 200, r.read()
         with open(path, "wb") as out:
             for chunk in r.iter_bytes():
@@ -319,11 +317,10 @@ def export(admin, community, path):
 def import_(admin, path):
     """Upload an export through the route. -> the response."""
     with open(path, "rb") as source:
-        return httpx.post(
+        return HTTP.post(
             f"{admin.server.url}/v1/communities/import",
             content=source.read(),
             headers=admin.headers(),
-            timeout=600,
         )
 
 
@@ -363,18 +360,18 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
     secret = lyra.put("demo", "files", "secret.csv", b"remove me").json()
     purged = secret["citation"]
     assert purge(admin, secret["file_id"], 1).status_code == 200
-    httpx.post(
+    HTTP.post(
         f"{source.url}/v1/demo/collections",
         json={"name": "project"},
         headers=lyra.headers(),
     )
-    httpx.put(
+    HTTP.put(
         f"{source.url}/v1/demo/collections/project/grants",
         json={"handle": "vega", "perm": "read"},
         headers=lyra.headers(),
     )
     shared = lyra.put("demo", "project", "shared.csv", b"for vega").json()["file_id"]
-    key = httpx.post(
+    key = HTTP.post(
         f"{source.url}/v1/demo/collections/project/keys",
         json={"label": "reviewer"},
         headers=lyra.headers(),
@@ -410,7 +407,7 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
     vega2 = Owner(target, "vega", key=vega.key)
     assert lyra2.get(fid, 2).content == b"1,2,3,4"
     assert vega2.get(shared).content == b"for vega"  # the grant survived
-    read = httpx.get(
+    read = HTTP.get(
         f"{target.url}/v1/demo/files/{shared}/v/1",
         headers={"Authorization": f"Bearer {key}"},
     )

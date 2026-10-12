@@ -11,11 +11,10 @@ import json
 import time
 from pathlib import Path
 
-import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from harness import IMAGE, TEST_ENV, Server
+from harness import HTTP, IMAGE, MAX_WAIT, TEST_ENV, Server
 
 ADMIN = "demo-admin"
 
@@ -102,7 +101,7 @@ class Owner:
         return f"{self.server.url}/v1/{self.community}{path}"
 
     def challenge(self) -> str:
-        r = httpx.post(self.url("/auth/challenge"), json={"handle": self.handle})
+        r = HTTP.post(self.url("/auth/challenge"), json={"handle": self.handle})
         r.raise_for_status()
         return r.json()["nonce"]
 
@@ -121,12 +120,12 @@ class Owner:
         }
         if invite is not None:
             body["invite"] = invite
-        return httpx.post(self.url("/owners"), json=body)
+        return HTTP.post(self.url("/owners"), json=body)
 
     def token_response(self, key: OwnerKey | None = None):
         key = key or self.key
         nonce = self.challenge()
-        return httpx.post(
+        return HTTP.post(
             self.url("/auth/token"),
             json={"handle": self.handle, "nonce": nonce, "signature": key.sign(nonce)},
         )
@@ -149,11 +148,10 @@ class Owner:
         headers = {**self.headers(), **file_headers(data, metadata)}
         if content_type:
             headers["Content-Type"] = content_type
-        return httpx.put(
+        return HTTP.put(
             f"{self.server.url}/v1/{community}/collections/{collection}/files/{name}",
             content=data,
             headers=headers,
-            timeout=600,
         )
 
     def version(self, file_id, data: bytes | None = None, metadata=None):
@@ -164,30 +162,28 @@ class Owner:
             data = b""
         else:
             headers.update(file_headers(data, metadata))
-        return httpx.post(
+        return HTTP.post(
             self.url(f"/files/{file_id}/versions"),
             content=data,
             headers=headers,
-            timeout=600,
         )
 
     def delete(self, file_id, reason=None):
         params = {"reason": reason} if reason else {}
-        return httpx.delete(
+        return HTTP.delete(
             self.url(f"/files/{file_id}"),
             params=params,
             headers=self.headers(),
         )
 
     def get(self, file_id, ref="latest", headers=None):
-        return httpx.get(
+        return HTTP.get(
             self.url(f"/files/{file_id}/v/{ref}"),
             headers={**self.headers(), **(headers or {})},
-            timeout=600,
         )
 
     def stat(self, file_id, ref="latest"):
-        return httpx.get(
+        return HTTP.get(
             self.url(f"/files/{file_id}/v/{ref}/stat"), headers=self.headers()
         )
 
@@ -197,14 +193,14 @@ class Admin(Owner):
     community. `community` only selects which community's routes it calls."""
 
     def challenge(self) -> str:
-        r = httpx.post(self.server.url + "/v1/admin/challenge")
+        r = HTTP.post(self.server.url + "/v1/admin/challenge")
         r.raise_for_status()
         return r.json()["nonce"]
 
     def token_response(self, key: OwnerKey | None = None):
         key = key or self.key
         nonce = self.challenge()
-        return httpx.post(
+        return HTTP.post(
             self.server.url + "/v1/admin/token",
             json={"nonce": nonce, "signature": key.sign(nonce)},
         )
@@ -244,7 +240,7 @@ def set_quota(server: Server, quota_bytes: int):
 
 def purge(admin: Admin, file_id, n: int, community: str = "demo"):
     """The admin frees one version's content through the purge route. -> the response."""
-    return httpx.post(
+    return HTTP.post(
         f"{admin.server.url}/v1/{community}/files/{file_id}/v/{n}/purge",
         headers=admin.headers(),
     )
@@ -254,6 +250,19 @@ def psql(server: Server, sql: str) -> str:
     return server.exec(
         "gosu", "postgres", "psql", "-tA", "-d", "symposium_data", "-c", sql
     ).stdout.strip()
+
+
+# A timestamp older than the server's pending TTL (one day): what the janitor's next pass
+# (server.sweep()) treats as abandoned. A test ages a row with it instead of waiting.
+EXPIRED = "now() - interval '2 days'"
+
+
+def until_sql(server: Server, query: str, expected: str, message: str):
+    """Poll `query` every 0.2 s until it answers `expected`."""
+    deadline = time.monotonic() + MAX_WAIT
+    while (answer := psql(server, query)) != expected:
+        assert time.monotonic() < deadline, f"{message}: {answer!r}"
+        time.sleep(0.2)
 
 
 def community_with(server: Server, members=("lyra", "vega", "rigel")):
@@ -273,7 +282,7 @@ def community_with(server: Server, members=("lyra", "vega", "rigel")):
 def invite(admin: Admin, community: str, handle: str, hours: int | None = None):
     """The admin issues an invite through the API, as bootstrap does. -> the response."""
     body = {"handle": handle} if hours is None else {"handle": handle, "hours": hours}
-    return httpx.post(
+    return HTTP.post(
         f"{admin.server.url}/v1/{community}/invites", json=body, headers=admin.headers()
     )
 
@@ -291,7 +300,7 @@ def init_admin(server: Server) -> Admin:
 
 
 def create_community(server: Server, admin: Admin, community: str):
-    r = httpx.post(
+    r = HTTP.post(
         f"{server.url}/v1/communities",
         json={"name": community},
         headers=admin.headers(),
@@ -306,14 +315,14 @@ def set_roster(server: Server, admin: Admin, community: str, handles: list) -> d
     create_community(server, admin, community)
     url = f"{server.url}/v1/{community}/roster"
     current = {
-        m["handle"] for m in httpx.get(url, headers=admin.headers()).json()["roster"]
+        m["handle"] for m in HTTP.get(url, headers=admin.headers()).json()["roster"]
     }
     added, removed = sorted(set(handles) - current), sorted(current - set(handles))
     for handle in added:
-        r = httpx.post(f"{url}/{handle}", headers=admin.headers())
+        r = HTTP.post(f"{url}/{handle}", headers=admin.headers())
         assert r.status_code == 201, r.text
     for handle in removed:
-        r = httpx.delete(f"{url}/{handle}", headers=admin.headers())
+        r = HTTP.delete(f"{url}/{handle}", headers=admin.headers())
         assert r.status_code == 200, r.text
     return {"added": added, "removed": removed}
 
@@ -379,13 +388,13 @@ def consistency(server: Server) -> dict:
     }
 
 
-def assert_consistent(server: Server, timeout: float = 30):
-    """Every write either fully happened or left nothing; poll briefly for cleanup that runs
-    after a client disconnect."""
-    deadline = time.time() + timeout
+def assert_consistent(server: Server):
+    """Every write either fully happened or left nothing; polls for the cleanup a request runs
+    once it has seen its client disconnect."""
+    deadline = time.monotonic() + MAX_WAIT
     while True:
         state = consistency(server)
-        if not any(state.values()) or time.time() > deadline:
+        if not any(state.values()) or time.monotonic() > deadline:
             break
         time.sleep(0.2)
     assert not any(state.values()), state

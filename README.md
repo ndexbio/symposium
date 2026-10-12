@@ -8,11 +8,11 @@ The record and its files live on a **Symposium Data server**, which the skill re
 
 ## In the repository
 
-[`spec/symposium_specification.md`](spec/symposium_specification.md) is the normative document. [`AGENTS.md`](AGENTS.md) is what an AI assistant reads before working in the repository; `CLAUDE.md` points at it. `make lint`, `make test`, `make build` and `make deploy-local` are the only targets.
+[`spec/symposium_specification.md`](spec/symposium_specification.md) is the normative document. [`AGENTS.md`](AGENTS.md) is what an AI assistant reads before working in the repository; `CLAUDE.md` points at it. `make lint`, `make test`, `make build` and `make deploy-local` are the only targets; `make test` builds what the suites share once, then runs every suite side by side.
 
 **[Symposium skill](skills/symposium/README.md)**: the `symposium` skill is how every admin and member works with a Symposium; users activate the skill in agent prompt with `/symposium <command>`, and the skill does the rest. 
 
-**[Symposium Data server](data-server/README.md)**: the data file store a Symposium's community record and files live on, a Docker image. Checkout the [runbook](data-server/RUNBOOK.md) which covers operating it.
+**[Symposium Data server](data-server/README.md)**: the data file store a Symposium's community record and files live on, a Docker image, deployable with Docker or, on Kubernetes, with its Helm chart. Checkout the [runbook](data-server/RUNBOOK.md), which walks through choosing a deployment and operating it.
 
 ## Installing Symposium as agentic Skill
 

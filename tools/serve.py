@@ -127,7 +127,8 @@ def main(argv=None):
     ap.add_argument("record_dir", nargs="?", default="record",
                     help="directory of canonical JSON (default: ./record)")
     ap.add_argument("--out", default="dist")
-    ap.add_argument("--port", type=int, default=8760)
+    ap.add_argument("--port", type=int, default=8760,
+                    help="the port to serve on; 0 takes any free one, and says which")
     ap.add_argument("--title", default=None)
     ap.add_argument("--interval", type=float, default=2.0,
                     help="seconds between checks of the record directory")
@@ -140,14 +141,23 @@ def main(argv=None):
                          f"  (on the admin's machine, `/symposium gate` writes the gate's copy)")
 
     stop_on_signals()
-    lock = take_over(f"serve-{args.port}")  # noqa: F841 — held for as long as this serve runs
+    if args.port == 0:
+        # a port of its own, bound first: no other serve can hold it, so none is taken over
+        httpd = Server(("", 0), make_handler(out))
+        port = httpd.server_address[1]
+        lock = take_over(f"serve-{port}")  # noqa: F841 — held for as long as this serve runs
+    else:
+        # a serve still on this port is ended first, so the port is free to bind
+        port = args.port
+        lock = take_over(f"serve-{port}")  # noqa: F841 — held for as long as this serve runs
+        httpd = Server(("", port), make_handler(out))
     try:
         rebuild(str(record), str(out), args.title)
         threading.Thread(target=watch, args=(str(record), str(out), args.title,
                                              args.interval), daemon=True).start()
-        with Server(("", args.port), make_handler(out)) as httpd:
+        with httpd:
             print(f"watching {record}", flush=True)
-            print(f"serving  http://localhost:{args.port}/   (ctrl-c to stop)", flush=True)
+            print(f"serving  http://localhost:{port}/   (ctrl-c to stop)", flush=True)
             httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nstopped", flush=True)

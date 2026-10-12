@@ -63,6 +63,7 @@ from data_io import (
     pause,
     stop_on_signals,
     take_over,
+    uninterrupted,
 )
 from symposium_rules.checks import skip_reason
 from sync import POLL, Sync
@@ -231,28 +232,31 @@ class Gate:
             canonical["artifact"]["created"] = self.provisional(sub, record)
             print(f"  {sub['name']}")
             findings = validate(canonical, record, members) + self.verify_downloads(sub)
-            if passed(findings):
-                for x in findings:
-                    print(f"    [REVIEW {x['check']}] {x['msg'][:110]}")
-                stored = self.accept(sub)
-                if stored is None:
-                    continue           # not decided: the next pass tries it again
-                record.append(stored)
-                names.add(sub["name"])
-                state["decisions"][sub["citation"]] = f"accepted as {sub['name']}"
-                self.decided += 1
-                telemetry.emit("gate", "gate_accept", "accepted", artifact=sub["name"],
-                               atype=canonical["artifact"].get("type"),
-                               submitter=sub["owner"], findings=findings)
-            else:
-                if not self.reject(sub, findings, admin):
-                    continue
-                state["decisions"][sub["citation"]] = "rejected"
-                self.decided += 1
-                telemetry.emit("gate", "gate_reject", "rejected", artifact=sub["name"],
-                               atype=canonical["artifact"].get("type"),
-                               submitter=sub["owner"], findings=findings, refusal=["spec"])
-            self.save_state(state)     # each decision is cached as soon as it is made
+            # a decision is written to the server, shown, counted and cached together: a stop
+            # that comes meanwhile waits for it to be whole
+            with uninterrupted():
+                if passed(findings):
+                    for x in findings:
+                        print(f"    [REVIEW {x['check']}] {x['msg'][:110]}")
+                    stored = self.accept(sub)
+                    if stored is None:
+                        continue       # not decided: the next pass tries it again
+                    record.append(stored)
+                    names.add(sub["name"])
+                    state["decisions"][sub["citation"]] = f"accepted as {sub['name']}"
+                    self.decided += 1
+                    telemetry.emit("gate", "gate_accept", "accepted", artifact=sub["name"],
+                                   atype=canonical["artifact"].get("type"),
+                                   submitter=sub["owner"], findings=findings)
+                else:
+                    if not self.reject(sub, findings, admin):
+                        continue
+                    state["decisions"][sub["citation"]] = "rejected"
+                    self.decided += 1
+                    telemetry.emit("gate", "gate_reject", "rejected", artifact=sub["name"],
+                                   atype=canonical["artifact"].get("type"),
+                                   submitter=sub["owner"], findings=findings, refusal=["spec"])
+                self.save_state(state)  # each decision is cached as soon as it is made
         state["inbox_since"] = inbox_since
         self.save_state(state)
         return 0

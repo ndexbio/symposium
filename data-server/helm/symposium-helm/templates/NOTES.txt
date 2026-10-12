@@ -1,0 +1,27 @@
+Symposium Data {{ include "symposium.tag" . }} is starting in namespace {{ .Release.Namespace }}: its first start takes a few minutes.
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "symposium.name" . }}
+
+Its URL:
+{{- if eq .Values.expose.mode "gateway" }}
+  https://{{ .Values.expose.gateway.hostnames | first | default "<a hostname of your Gateway>" }}  (through the HTTPRoute {{ include "symposium.name" . }})
+{{- else if eq .Values.expose.mode "ingress" }}
+  {{ if .Values.expose.ingress.tlsSecret }}https{{ else }}http{{ end }}://{{ .Values.expose.ingress.host }}  (through the Ingress {{ include "symposium.name" . }})
+{{- else if eq .Values.service.type "LoadBalancer" }}
+  http://localhost:{{ .Values.service.port }}  on Docker Desktop; elsewhere, the address in
+  kubectl -n {{ .Release.Namespace }} get svc {{ include "symposium.name" . }}
+{{- else }}
+  http://127.0.0.1:8790  while this runs:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "symposium.name" . }} 8790:{{ .Values.service.port }}
+{{- end }}
+{{ if or .Values.adminKey.publicKey .Values.adminKey.existingSecret }}
+The admin key is set ({{ if .Values.adminKey.existingSecret }}Secret {{ .Values.adminKey.existingSecret }}{{ else }}admin_pub_{{ .Values.adminKey.handle }}.key{{ end }}): GET <URL>/v1/status reports
+"mode": "operational" and the fingerprint `/symposium admin-config` showed.
+{{- else }}
+No admin key is set yet, so the server is non-operational. Next:
+  /symposium admin-config --handle <handle> --data-server-url <URL>
+then put `adminKey: {handle: <handle>}` in your values file and run
+  helm upgrade {{ .Release.Name }} <this chart> -n {{ .Release.Namespace }} --version {{ .Chart.Version }} -f <your values file> \
+    --set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<handle>.key
+and pass that same --set-file on every later upgrade.
+{{- end }}

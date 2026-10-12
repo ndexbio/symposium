@@ -10,6 +10,7 @@ import tarfile
 from pathlib import Path
 
 from fixtures.ndex_port.stub import CREDENTIALS, NdexStub
+from harness import MAX_WAIT
 from suite import CLI, community_file
 
 
@@ -133,11 +134,11 @@ def test_only_one_port_runs_at_a_time(server, admin_dir, cli, tmp_path):
         text=True,
     )
     try:
-        assert stub.held.wait(timeout=30), "the first port never reached the listing"
+        assert stub.held.wait(MAX_WAIT), "the first port never reached the listing"
         code, out = port(cli, other, stub)
         assert code == 1 and out["status"] == 409
         stub.released.set()
-        stdout, _ = first.communicate(timeout=60)
+        stdout, _ = first.communicate(timeout=MAX_WAIT)
         assert json.loads(stdout)["state"] == "ok"
     finally:
         stub.close()

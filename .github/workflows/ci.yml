@@ -6,8 +6,10 @@ on:
 
 jobs:
   test:
-    # Linux runs the whole gate, the data server's suites and their one image build included;
-    # Windows runs the skill's runtime and session suites, which need no container
+    # Linux runs the whole gate, `make test`: the data server's one image build, then every
+    # suite side by side, its Helm chart's live test on a throwaway kind cluster inside the
+    # runner among them. Windows runs the skill's runtime and session suites, which need no
+    # container.
     strategy:
       fail-fast: false
       matrix:

@@ -22,6 +22,7 @@ def test_admin_config_reuses_its_key_and_only_new_key_replaces_it(
     assert first["fingerprint"] == server.status()["fingerprint"]
     assert mode(first["public_key_file"]) == 0o644
     assert any("docker cp" in step for step in first["steps"])
+    assert any("--set-file adminKey.publicKey=" in step for step in first["steps"])
     assert "warning" not in first
 
     code, other = cli(

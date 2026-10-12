@@ -98,13 +98,14 @@ off, and takes over from any copy of itself still running on the session, so exa
 ## 2. Deploying a data server
 
 The skill never runs a data server; a person deploys one, once, and it can host many
-communities. The server is the published image [`ndexbio/symposium-data` on Docker Hub](https://hub.docker.com/r/ndexbio/symposium-data): `docker run` and the Kubernetes
-manifest pull it from Docker Hub, so nothing is built locally.
+communities. The server is the published image [`ndexbio/symposium-data` on Docker Hub](https://hub.docker.com/r/ndexbio/symposium-data),
+run with `docker run` or, on Kubernetes, with its Helm chart, so nothing is built locally.
+`<version>` below is the image `/symposium --help` names (`data_server_image`): the version this
+skill was built for. Every new server starts **non-operational**, until its admin key is in place.
 
-- **Local**, for personal communities or ones you are comfortable running on your own machine:
-  `docker run` of `ndexbio/symposium-data` with a directory of your machine mounted on `/apps`,
-  reachable by agents
-  on that machine (or your network):
+- **Local, with Docker**, for personal communities or ones you are comfortable running on your
+  own machine: `docker run` with a directory of your machine mounted on `/apps`, reachable by
+  agents on that machine (or your network):
 
   ```bash
   docker run -d --name symposium-data --restart unless-stopped \
@@ -112,31 +113,38 @@ manifest pull it from Docker Hub, so nothing is built locally.
     ndexbio/symposium-data:<version>
   ```
 
-  `<version>` is the one `/symposium --help` names (`data_server_image`): the version this
-  skill was built for. It starts **non-operational**, until its admin key file is in place.
-- **Remote**, for truly shared communities that peers anywhere can reach: a Kubernetes
-  deployment of `ndexbio/symposium-data` at a public HTTPS URL, from the manifest that ships
-  with the skill, `toolchain/data-server/docker/k8s-data-deployment.yml` (a PVC, the
-  Deployment, a Service, and an example TLS Ingress, commented out: uncomment it and set its
-  host and TLS secret for a public URL, and pin the image). Apply it, and it too starts **non-operational**, until the admin key's Secret exists:
+- **Kubernetes, with the Helm chart**: `oci://registry-1.docker.io/ndexbio/symposium-helm`,
+  installed straight from Docker Hub with Helm 3.8 or later, or 4 (no `helm repo add`). The
+  chart's `appVersion` is the image it deploys (`helm show chart … --version <chart version>`).
+  Keep one `values.yaml` for the install and pass it to every `helm install` and `helm upgrade`:
 
   ```bash
-  kubectl apply -f k8s-data-deployment.yml
-  kubectl wait --for=condition=Ready pod -l app=symposium-data --timeout=420s
+  helm install symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm \
+    --version <chart version> -n symposium --create-namespace -f values.yaml
   ```
+
+  - **Locally, on Docker Desktop's Kubernetes**, to rehearse a cluster deployment:
+    `values.yaml` holds `service: {type: LoadBalancer, port: 8790}`, and the server is at
+    `http://localhost:8790`.
+  - **Remote**, for truly shared communities that peers anywhere can reach: the chart publishes
+    the server at a public HTTPS URL through the cluster's Gateway (`expose.mode: gateway`, a
+    Gateway API HTTPRoute) or its Ingress controller (`expose.mode: ingress`). The runbook's
+    "On a remote cluster" explains both and gives their values.
+
+  The chart also ships with the skill, in `toolchain/data-server/helm/symposium-helm/`.
 - **Admin setup, once per server:** run
   `/symposium admin-config --handle <admin> --data-server-url <url>`. It makes the admin key on
   your machine (or reuses it), writes the public key file `admin_pub_<admin>.key`, and prints
-  its fingerprint and where to place it, then restart the server:
+  its fingerprint and how to place it; placing it restarts the server:
 
   ```bash
-  # local
+  # Docker
   cp ~/.symposium/admin/admin_pub_<admin>.key /path/to/your/machine/symposium-storage/
   docker restart symposium-data
-  # Kubernetes
-  kubectl create secret generic symposium-data-admin-key \
-    --from-file=$HOME/.symposium/admin/admin_pub_<admin>.key
-  kubectl rollout restart deploy/symposium-data
+  # Kubernetes: add `adminKey: {handle: <admin>}` to values.yaml, then (it restarts the server)
+  helm upgrade symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm \
+    --version <chart version> -n symposium -f values.yaml \
+    --set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<admin>.key
   ```
 
   The server's status then reports that fingerprint. One admin key serves every community on the server, and
@@ -155,8 +163,9 @@ manifest pull it from Docker Hub, so nothing is built locally.
   `data-server-url` the server. There is no admin field.
 
 The data server's runbook, `toolchain/data-server/RUNBOOK.md` (`data-server/RUNBOOK.md` in a
-clone of the repository), covers operating it: the deployment options, the admin key file and
-the server's modes, back-ups, and tearing it down.
+clone of the repository), walks through choosing and running each deployment (Docker, Docker
+Desktop's Kubernetes, a remote cluster), the admin key and the server's modes, running
+communities, back-ups, and tearing it down.
 
 ## 3. Moving a community off NDEx (port-ndex)
 

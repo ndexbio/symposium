@@ -14,7 +14,7 @@ The zip holds:
                              tools/symposium-data/, stamped with compat.json: the data-server
                              version this bundle was built for, R-I5), server/, examples/, and
                              the data server's operator docs (its top-level *.md but its
-                             developer README) and Kubernetes manifest
+                             developer README) and its Helm chart, data-server/helm/
 
 Only repository-maintenance files stay out: this script (NOT_SHIPPED), and everything outside
 TOOLCHAIN (AGENTS.md, CLAUDE.md, the Makefile, CI, tests, and the data server's source; the
@@ -42,7 +42,7 @@ TOOLCHAIN = (
     "server",
     "examples",
     "data-server/*.md",
-    "data-server/docker/k8s-data-deployment.yml",
+    "data-server/helm",
 )
 # inside TOOLCHAIN, but repository maintenance: never shipped
 NOT_SHIPPED = {"tools/bundle.py", "tools/pyproject.toml", "data-server/README.md"}

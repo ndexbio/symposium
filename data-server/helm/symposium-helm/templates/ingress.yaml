@@ -1,0 +1,32 @@
+{{- if eq .Values.expose.mode "ingress" }}
+{{- $ingress := .Values.expose.ingress }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "symposium.name" . }}
+  labels:
+    {{- include "symposium.labels" . | nindent 4 }}
+  {{- with $ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with $ingress.tlsSecret }}
+  tls:
+    - hosts: [{{ $ingress.host | quote }}]
+      secretName: {{ . }}
+  {{- end }}
+  rules:
+    - host: {{ $ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "symposium.name" . }}
+                port: {number: {{ .Values.service.port }}}
+{{- end }}

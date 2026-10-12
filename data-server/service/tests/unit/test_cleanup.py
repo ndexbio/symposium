@@ -21,7 +21,7 @@ class FakeRecords:
         self.pending, self.purging = dict(pending or {}), dict(purging or {})
         self.expired, self.events = [], []
 
-    def pending_payload(self, _conn, pid):
+    def claim_pending(self, _conn, pid):
         return self.pending.get(pid)
 
     def drop_pending(self, _conn, pid):

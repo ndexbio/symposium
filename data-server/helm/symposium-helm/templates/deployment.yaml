@@ -1,0 +1,83 @@
+{{- include "symposium.validate" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "symposium.name" . }}
+  labels:
+    {{- include "symposium.labels" . | nindent 4 }}
+spec:
+  # one ReadWriteOnce volume: one replica, replaced rather than rolled
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      {{- include "symposium.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "symposium.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/admin-key: {{ include "symposium.adminKeyChecksum" . }}
+    spec:
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: symposium-data-init
+          image: {{ include "symposium.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["sh", "-c"]
+          args:
+            - >-
+              mkdir -p /apps/data/config /apps/postgres/config /apps/postgres/data
+              /apps/seaweed/config /apps/seaweed/data &&
+              chown -R symposium:symposium /apps/data /apps/seaweed &&
+              chown postgres:postgres /apps/postgres/config /apps/postgres/data
+          volumeMounts:
+            - {name: storage, mountPath: /apps}
+      containers:
+        - name: symposium-data
+          image: {{ include "symposium.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--api-server", "--postgres", "--seaweed"]
+          env:
+            - {name: SYMPOSIUM_SERVER_TRUSTED_PROXY, value: {{ .Values.trustedProxy | quote }}}
+            {{- with .Values.publicUrl }}
+            - {name: SYMPOSIUM_DATA_API_PUBLIC_URL, value: {{ . | quote }}}
+            {{- end }}
+            {{- range $name, $value := .Values.env }}
+            - {name: {{ $name }}, value: {{ $value | toString | quote }}}
+            {{- end }}
+          ports:
+            - {name: http, containerPort: 8080, protocol: TCP}
+          # /v1/status answers 200 once PostgreSQL and the file store are up, operational or
+          # not, and 503 while either is down. A first start initialises both: up to 7 min.
+          startupProbe:
+            httpGet: {path: /v1/status, port: http}
+            periodSeconds: 5
+            failureThreshold: 84
+          readinessProbe:
+            httpGet: {path: /v1/status, port: http}
+            periodSeconds: 5
+            failureThreshold: 6
+          # no liveness probe: a 503 means PostgreSQL or the file store is down, which a
+          # restart of the pod would not mend
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - {name: storage, mountPath: /apps}
+            # the admin's public key file, read at start-up (R-D4)
+            - {name: admin-key, mountPath: /apps/admin-key, readOnly: true}
+      volumes:
+        - name: storage
+          persistentVolumeClaim: {claimName: {{ include "symposium.name" . }}}
+        # optional: without it the server starts non-operational, until the key is set
+        - name: admin-key
+          secret: {secretName: {{ include "symposium.adminKeySecret" . }}, optional: true}

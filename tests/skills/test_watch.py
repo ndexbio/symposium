@@ -1,13 +1,14 @@
 """The commands that keep running, against the suite's data server: `gate.py --watch`,
-`sync.py --watch` and `serve.py` each run until stopped, stop at once on a signal with exit
-code 0 however long their wait (SYMPOSIUM_POLL is 600 here), even mid-pass, and a restart
-takes over from the one still running on the session. Readiness is the state each command
-leaves (the lock it holds, its state file, `serve`'s `/__build`), never its output."""
+`sync.py --watch` and `serve.py` each run until stopped, stop on a signal with exit code 0 well
+before their wait would end (their poll is ten times MAX_WAIT here), even mid-decision, and a
+restart takes over from the one still running on the session. Readiness is the state each
+command leaves (the lock it holds, its state file, `serve`'s `/__build`) or the line it prints
+when it is done, never a guess at how long anything takes."""
 
 import json
 import os
+import re
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -15,22 +16,20 @@ from pathlib import Path
 
 import httpx
 import pytest
+from harness import HTTP, MAX_WAIT, Output
 from skills.test_workflow import TOOLS, note, tool
 from suite import enroll
 
 WINDOWS = os.name == "nt"
 STOPS = [signal.SIGINT] + ([] if WINDOWS else [signal.SIGTERM])
+# far longer than any wait here may last, so a command that waited it out fails the test
+POLL = str(int(10 * MAX_WAIT))
+SERVING = re.compile(r"serving  http://localhost:(\d+)/")
 
 
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
-
-
-def poll(probe, message: str, seconds: float = 120):
+def poll(probe, message: str):
     """Poll every 0.2 s until `probe` returns something truthy. -> that value."""
-    deadline = time.monotonic() + seconds
+    deadline = time.monotonic() + MAX_WAIT
     while True:
         value = probe()
         if value:
@@ -41,31 +40,42 @@ def poll(probe, message: str, seconds: float = 120):
 
 def built(port: int) -> bool:
     try:
-        state = httpx.get(f"http://127.0.0.1:{port}/__build", timeout=2).json()
+        state = HTTP.get(f"http://127.0.0.1:{port}/__build").json()
     except (httpx.HTTPError, ValueError):
         return False
     return state.get("build", 0) >= 1
 
 
 class Watch:
-    """One command that keeps running, in a session's directory, its output in a file."""
+    """One command that keeps running, in a session's directory. `serve` takes a free port of
+    its own (`--port 0`) unless it is given one, and `port` is the one it says it serves on."""
 
-    def __init__(self, suite, cwd: Path, command: str, out: Path, port: int = 0):
+    def __init__(self, suite, cwd: Path, command: str, port: int = 0, env=None):
         script, args = {
             "gate": ("gate.py", ["--watch"]),
             "sync": ("sync.py", ["--watch"]),
             "serve": ("serve.py", ["--port", str(port)]),
         }[command]
-        self.command, self.cwd, self.port, self.out = command, cwd, port, out
-        self.lock = f"serve-{port}" if command == "serve" else command
+        self.command, self.cwd = command, cwd
         self.started = time.time()
         self.process = subprocess.Popen(
             [sys.executable, str(TOOLS / script), *args],
             cwd=cwd,
-            env={**suite.env, "SYMPOSIUM_POLL": "600", "PYTHONUNBUFFERED": "1"},
-            stdout=out.open("w"),
+            env={
+                **suite.env,
+                "SYMPOSIUM_POLL": POLL,
+                "PYTHONUNBUFFERED": "1",
+                **(env or {}),
+            },
+            stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            text=True,
         )
+        self.output = Output(self.process.stdout)
+        self.port = 0
+        if command == "serve":
+            self.port = int(SERVING.search(self.output.wait_for("serving")).group(1))
+        self.lock = f"serve-{self.port}" if command == "serve" else command
 
     def holds_the_lock(self) -> bool:
         """This process is the session's watcher: its pid is in the lock's pid file, which is
@@ -86,15 +96,14 @@ class Watch:
         state = self.cwd / "record" / f".{self.command}_state.json"
         return state.exists() and state.stat().st_mtime >= self.started
 
-    def output(self) -> str:
-        return self.out.read_text()
-
-    def stop(self, stop=signal.SIGINT) -> tuple[int, float]:
-        """-> (exit code, seconds from the signal to the exit)."""
-        sent = time.monotonic()
+    def stop(self, stop=signal.SIGINT) -> int:
+        """Signal it and wait for it to exit. -> its exit code."""
         self.process.send_signal(stop)
-        code = self.process.wait(timeout=30)
-        return code, time.monotonic() - sent
+        return self.process.wait(MAX_WAIT)
+
+    def ended(self) -> str:
+        """Everything it printed, once it has exited."""
+        return self.output.end()
 
     def kill(self):
         if self.process.poll() is None:
@@ -115,56 +124,85 @@ def session(suite, cli, admin_dir):
 
 @pytest.mark.parametrize("command", ["gate", "sync", "serve"])
 @pytest.mark.parametrize("stop", STOPS, ids=lambda s: s.name)
-def test_each_watch_stops_at_once_on_a_signal(suite, session, tmp_path, command, stop):
-    watch = Watch(suite, session, command, tmp_path / "out.log", free_port())
+def test_each_watch_stops_at_once_on_a_signal(suite, session, command, stop):
+    watch = Watch(suite, session, command)
     try:
         poll(watch.passed_once, f"{command} never finished its first pass")
-        code, seconds = watch.stop(stop)
-        out = watch.output()
+        code = watch.stop(
+            stop
+        )  # within MAX_WAIT: long before its wait would have ended
+        out = watch.ended()
         assert code == 0, out
-        assert seconds < 2, f"{command} took {seconds:.1f}s, not its 600 s wait"
         assert "Traceback" not in out and "stopped" in out, out
     finally:
         watch.kill()
 
 
-def test_a_gate_stopped_mid_pass_stops_cleanly_and_shows_its_decisions(
+# Stands in for the CLI: on `promote` it says so (a file) and waits for the test to let it go
+# on (another file), then runs the real CLI. The gate is then exactly mid-decision.
+HELD_PROMOTE = """
+import json, os, subprocess, sys, time
+here = os.environ["HELD_PROMOTE_DIR"]
+if sys.argv[1:2] == ["promote"]:
+    open(os.path.join(here, "promoting"), "w").close()
+    while not os.path.exists(os.path.join(here, "go-on")):
+        time.sleep(0.05)
+real = json.loads(os.environ["REAL_SYMPOSIUM_DATA_CLI"])
+sys.exit(subprocess.call(real + sys.argv[1:]))
+"""
+
+
+def test_a_stop_during_a_decision_waits_for_it_and_shows_it(
     suite, cli, session, tmp_path
 ):
     lyra = session / "lyra"
     assert tool(suite, lyra, "publish.py", note(lyra, "lyra", "midpass"))[0] == 0
-    watch = Watch(suite, session, "gate", tmp_path / "out.log")
+    stand_in = tmp_path / "held_promote.py"
+    stand_in.write_text(HELD_PROMOTE)
+    watch = Watch(
+        suite,
+        session,
+        "gate",
+        env={
+            "SYMPOSIUM_DATA_CLI": json.dumps([sys.executable, str(stand_in)]),
+            "REAL_SYMPOSIUM_DATA_CLI": suite.env["SYMPOSIUM_DATA_CLI"],
+            "HELD_PROMOTE_DIR": str(tmp_path),
+        },
+    )
     try:
-        poll(watch.holds_the_lock, "the gate never started watching")
-        code, _ = watch.stop(signal.SIGINT)  # its first pass has just begun
-        out = watch.output()
+        poll(lambda: (tmp_path / "promoting").exists(), "the gate never promoted")
+        watch.process.send_signal(
+            signal.SIGINT
+        )  # mid-decision: its promote is under way
+        (tmp_path / "go-on").touch()
+        code = watch.process.wait(MAX_WAIT)
+        out = watch.ended()
         assert code == 0 and "Traceback" not in out, out
-        state = session / "record" / ".gate_state.json"
-        json.loads(state.read_text())  # whole, however the stop fell
+        assert "ACCEPTED" in out and "stopped" in out, (
+            out
+        )  # the decision, whole and shown
         record = cli.ok(session, "changes", "--collection", "record", "--all")["items"]
-        if any(i["name"] == "lyra_note_midpass_v1" for i in record):
-            assert "ACCEPTED" in out, out  # a decision made is a decision shown
+        assert "lyra_note_midpass_v1" in [i["name"] for i in record]
+        state = json.loads((session / "record" / ".gate_state.json").read_text())
+        assert any(d.startswith("accepted as") for d in state["decisions"].values())
     finally:
         watch.kill()
 
 
 @pytest.mark.parametrize("command", ["gate", "sync", "serve"])
-def test_a_restarted_watch_takes_over_and_exactly_one_runs(
-    suite, session, tmp_path, command
-):
-    port = free_port()
-    first = Watch(suite, session, command, tmp_path / "first.log", port)
+def test_a_restarted_watch_takes_over_and_exactly_one_runs(suite, session, command):
+    first = Watch(suite, session, command)
     second = None
     try:
         poll(first.passed_once, f"the first {command} never finished its first pass")
-        second = Watch(suite, session, command, tmp_path / "second.log", port)
-        assert first.process.wait(timeout=30) == 0, first.output()
-        assert "stopped" in first.output()
+        second = Watch(suite, session, command, port=first.port)
+        assert first.process.wait(MAX_WAIT) == 0, first.ended()
+        assert "stopped" in first.ended()
         poll(second.holds_the_lock, f"the second {command} never took the lock")
         assert second.process.poll() is None
-        assert "taking over" in second.output()
+        second.output.wait_for("taking over")
         if command == "serve":
-            poll(lambda: built(port), "the restarted serve never answered on its port")
+            poll(lambda: built(first.port), "the restarted serve never answered")
     finally:
         for watch in (first, second):
             if watch is not None:

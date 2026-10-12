@@ -59,8 +59,14 @@ class Settings:
         )
         self.scrub_interval = float(env.get("SYMPOSIUM_SERVER_SCRUB_INTERVAL", "3600"))
         self.scrub_batch = int(env.get("SYMPOSIUM_SERVER_SCRUB_BATCH", "50"))
-        # how often a streaming upload refreshes its reservation and pending payload
-        self.heartbeat = max(0.2, min(60.0, self.pending_ttl / 3))
+        # how often a streaming upload refreshes its reservation and pending payload: by
+        # default a third of the pending TTL, within 0.2 s and 60 s
+        self.heartbeat = float(
+            env.get(
+                "SYMPOSIUM_SERVER_HEARTBEAT",
+                str(max(0.2, min(60.0, self.pending_ttl / 3))),
+            )
+        )
         # Test-only hooks, off by default: while enabled, S3 deletes fail while the fault
         # file exists, and the quota file overrides the configured quota.
         self.test_hooks = env.get("SYMPOSIUM_SERVER_TEST_HOOKS") == "1"

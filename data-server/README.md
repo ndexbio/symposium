@@ -25,12 +25,14 @@ A single Docker image that runs Symposium Data, the versioned file store Symposi
 
 ## Make targets
 
-These are the only targets. Run them from this folder, or from the repository root with `make -C data-server <target>`. The repository's top-level `make test` runs this `test` as part of its single gate. Image and chart targets run no tests.
+These are the only targets. Run them from this folder, or from the repository root with `make -C data-server <target>`. The repository's top-level `make test` runs the same steps as this `test`, with the top-level suite beside these, as its single gate. Image and chart targets run no tests.
 
 | Target | What it does |
 |---|---|
 | `lint` | `ruff check` and `ruff format --check` on `service/`. |
-| `test` | `lint` and `build-docker`, then the unit suites, then the integration suites against that image, on one `sdtest-*` container for the whole session; the chart's lint, render and kubeconform checks are among them. Then `helm-e2e`. |
+| `test` | `lint`, `build-docker`, `k8s-tools` and `helm-package`, then `service-suites` and `chart-e2e` side by side, each one's output in its own log under `dist/test-logs/`, printed once both have finished. No test depends on how fast the machine is: every wait is for an event or a state, and `MAX_PER_TEST_WAIT` (seconds, default `120`) is the one limit on all of them, reached only when something hangs. |
+| `service-suites` | The unit suites, then the integration suites against the image already built, on one `sdtest-*` container for the whole session; the chart's lint, render and kubeconform checks are among them. |
+| `chart-e2e` | `helm-e2e`'s test on the image and package already made. |
 | `build-docker` | Builds and tags the image `ndexbio/symposium-data:$(TAG)` locally, for developing the server; running one uses the published image from Docker Hub instead. The image also takes `../tools` (the `symposium_rules` package) and `../api` (the contract), as the named build contexts `rules` and `api`. |
 | `push-docker` | A buildx multi-arch (`linux/amd64`, `linux/arm64`) build and push of `:$(TAG)` and `:latest`. It is used by the release workflow, on a `data-server-v<version>` GitHub release. |
 | `helm-package` | `helm lint --strict`, then `dist/symposium-helm-<version>.tgz`, the chart's version from `helm/symposium-helm/Chart.yaml`. |
@@ -467,6 +469,7 @@ Data API (`/api/v1`) alone.
 | `SYMPOSIUM_SERVER_QUOTA_BYTES` | `0` (none) | Per-member limit, in each community, on the bytes of content the member uploaded first, through either API. The server admin's own writes are exempt. |
 | `SYMPOSIUM_SERVER_PENDING_TTL` | `86400` | Age, in seconds, after which the janitor removes an upload that never completed. |
 | `SYMPOSIUM_SERVER_JANITOR_INTERVAL` | `3600` | How often, in seconds, the janitor runs. |
+| `SYMPOSIUM_SERVER_HEARTBEAT` | a third of the pending TTL, within 0.2 and 60 | How often, in seconds, an upload in progress refreshes its timestamps, so the janitor never removes it. |
 | `SYMPOSIUM_SERVER_SCRUB_INTERVAL` | `3600` | How often, in seconds, the integrity scrub runs. |
 | `SYMPOSIUM_SERVER_SCRUB_BATCH` | `50` | How many payloads each scrub pass re-hashes, least recently checked first. |
 | `SYMPOSIUM_SERVER_WORKERS` | `1` | uvicorn worker processes, each serving both APIs. Every worker serves any request; the Data API's stream caps are counted in PostgreSQL. |

@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from harness import MAX_WAIT
 from suite import REPO, enroll
 
 TOOLS = REPO / "tools"
@@ -21,7 +22,7 @@ def tool(suite, cwd: Path, script: str, *args) -> tuple[int, str]:
         env=suite.env,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=MAX_WAIT,
     )
     return result.returncode, result.stdout + result.stderr
 

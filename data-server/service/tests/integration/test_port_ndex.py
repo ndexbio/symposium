@@ -16,6 +16,7 @@ from pathlib import Path
 import httpx
 import pytest
 from conftest import (
+    EXPIRED,
     Owner,
     assert_consistent,
     create_community,
@@ -26,6 +27,7 @@ from conftest import (
     store_counts,
 )
 from fixtures.ndex_port.stub import CREDENTIALS, FIXTURES, NdexStub, attributes
+from harness import HTTP, MAX_WAIT
 
 DATA_SERVER = Path(__file__).parents[3]
 TOOLS = DATA_SERVER.parent / "tools"
@@ -64,7 +66,7 @@ def recorded_artifacts() -> list:
 
 
 def start_port(server, headers, url, community="demo"):
-    return httpx.post(
+    return HTTP.post(
         f"{server.url}/v1/{community}/port-ndex",
         # 4 networks per page, so the 10 recorded networks take 3 listing pages
         json={"ndex_url": url, "credentials": CREDENTIALS, "page_size": 4},
@@ -72,16 +74,16 @@ def start_port(server, headers, url, community="demo"):
     )
 
 
-def port_outcome(server, admin, port_id, community="demo", timeout=30) -> dict:
+def port_outcome(server, admin, port_id, community="demo") -> dict:
     """Poll the port until it is no longer running. -> its view."""
-    deadline = time.time() + timeout
+    deadline = time.monotonic() + MAX_WAIT
     while True:
-        view = httpx.get(
+        view = HTTP.get(
             f"{server.url}/v1/{community}/port-ndex/{port_id}", headers=admin.headers()
         ).json()
         if view["state"] != "running":
             return view
-        assert time.time() < deadline, f"the port never finished: {view}"
+        assert time.monotonic() < deadline, f"the port never finished: {view}"
         time.sleep(0.2)
 
 
@@ -96,7 +98,7 @@ def run_port(server, admin, url, community="demo") -> dict:
 def everything(server, headers, collection) -> list:
     items, since = [], 0
     while True:
-        page = httpx.get(
+        page = HTTP.get(
             f"{server.url}/v1/demo/collections/{collection}/changes",
             params={"since": since, "limit": 4},
             headers=headers,
@@ -155,7 +157,7 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
     )  # only its recipient reads a reply
     assert vega.get(ported[0]["file_id"]).status_code == 200
     vegas = next(i for i in ported if i["created_by"] == "vega")
-    keyed = httpx.post(
+    keyed = HTTP.post(
         f"{server.url}/v1/demo/collections/record/keys",
         json={"label": "reviewer", "file_id": vegas["file_id"]},
         headers=vega.headers(),
@@ -174,7 +176,7 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
         cwd=TOOLS,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=MAX_WAIT,
     )
     assert validated.returncode == 0, validated.stdout + validated.stderr
     assert "9 artifacts: 0 FAIL" in validated.stdout
@@ -256,7 +258,7 @@ def test_a_file_that_lands_while_the_port_runs_fails_it(demo):
     try:
         started = start_port(server, admin.headers(), stub.url)
         assert started.status_code == 202, started.text
-        assert stub.held.wait(timeout=10), "the port never reached the listing"
+        assert stub.held.wait(MAX_WAIT), "the port never reached the listing"
         landed = admin.put("demo", "files", "landed.csv", b"written mid-port")
         assert landed.status_code == 201, landed.text
         stub.released.set()
@@ -274,14 +276,14 @@ def test_a_file_that_lands_while_the_port_runs_fails_it(demo):
 def test_a_port_cut_off_by_a_restart_leaves_no_bytes(demo, stub):
     # a second session holds a lock on the community's collections, as a member's write does,
     # so the real port uploads every payload and then waits at its commit; the API process is
-    # killed there
+    # killed there. The session holds the lock until the test ends it, never by itself.
     server, admin = demo
     lock = subprocess.Popen(
         ["docker", "exec", "-e", "PGAPPNAME=port-lock", server.name]
         + ["gosu", "postgres", "psql", "-d", "symposium_data", "-c"]
         + [
             "SELECT 1 FROM collections WHERE community = 'demo' FOR NO KEY UPDATE; "
-            "SELECT pg_sleep(60)"
+            "SELECT pg_sleep(86400)"
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -314,29 +316,32 @@ def test_a_port_cut_off_by_a_restart_leaves_no_bytes(demo, stub):
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
             "WHERE application_name = 'port-lock'",
         )
-        lock.wait(timeout=30)
+        lock.wait(MAX_WAIT)
     server.wait()
-    # the transaction never committed, and the janitor removes the pending bytes
+    # the transaction never committed: its uploads stopped beating, and once they are older
+    # than the pending TTL the janitor removes them, bytes first
     assert psql(server, "SELECT count(*) FROM files") == "0"
+    psql(server, f"UPDATE payloads SET created = {EXPIRED} WHERE state = 'pending'")
+    assert server.sweep() == 0
     assert_consistent(server)
     assert store_counts(server)[0] == 0
 
 
-def poll_until(probe, message, timeout=30):
+def poll_until(probe, message):
     """Poll every 0.2 s until `probe` returns something truthy. -> that value."""
-    deadline = time.time() + timeout
+    deadline = time.monotonic() + MAX_WAIT
     while True:
         value = probe()
         if value:
             return value
-        assert time.time() < deadline, message
+        assert time.monotonic() < deadline, message
         time.sleep(0.2)
 
 
 def port_view_after_restart(server, admin, port_id) -> dict | None:
     """The port's view once it is no longer running; None while the API restarts."""
     try:
-        view = httpx.get(
+        view = HTTP.get(
             f"{server.url}/v1/demo/port-ndex/{port_id}", headers=admin.headers()
         ).json()
     except httpx.HTTPError:
@@ -348,27 +353,27 @@ def test_a_port_is_refused_before_any_ndex_call(demo, stub):
     server, admin = demo
     assert start_port(server, admin.headers(), stub.url, "nowhere").status_code == 404
     assert start_port(server, {}, stub.url).status_code == 401
-    httpx.post(f"{server.url}/v1/demo/roster/lyra", headers=admin.headers())
+    HTTP.post(f"{server.url}/v1/demo/roster/lyra", headers=admin.headers())
     lyra = Owner(server, "lyra")
     enroll(admin, lyra, "demo")
     assert start_port(server, lyra.headers(), stub.url).status_code == 403
     status_url = f"{server.url}/v1/demo/port-ndex/{uuid.uuid4()}"
-    assert httpx.get(status_url, headers=admin.headers()).status_code == 404
-    assert httpx.get(status_url).status_code == 401
-    assert httpx.get(status_url, headers=lyra.headers()).status_code == 403
-    httpx.post(
+    assert HTTP.get(status_url, headers=admin.headers()).status_code == 404
+    assert HTTP.get(status_url).status_code == 401
+    assert HTTP.get(status_url, headers=lyra.headers()).status_code == 403
+    HTTP.post(
         f"{server.url}/v1/demo/collections",
         json={"name": "project"},
         headers=lyra.headers(),
     )
-    read_key = httpx.post(
+    read_key = HTTP.post(
         f"{server.url}/v1/demo/collections/project/keys",
         json={"label": "reviewer"},
         headers=lyra.headers(),
     ).json()["key"]
     by_key = {"Authorization": f"Bearer {read_key}"}
     assert start_port(server, by_key, stub.url).status_code == 403
-    assert httpx.get(status_url, headers=by_key).status_code == 403
+    assert HTTP.get(status_url, headers=by_key).status_code == 403
 
     create_community(server, admin, "full")
     admin.put("full", "files", "data.csv", b"already here")
@@ -384,7 +389,7 @@ def test_one_port_runs_at_a_time(demo):
     try:
         first = start_port(server, admin.headers(), stub.url)
         assert first.status_code == 202, first.text
-        assert stub.held.wait(timeout=10), "the port never reached the listing"
+        assert stub.held.wait(MAX_WAIT), "the port never reached the listing"
         second = start_port(server, admin.headers(), stub.url, "other")
         assert second.status_code == 409 and "another port" in second.json()["detail"]
         stub.released.set()
@@ -411,7 +416,16 @@ PORT_LINES = {
     "README.md",
     "RUNBOOK.md",
 }
-SKIPPED_DIRS = {".venv", "__pycache__", ".ruff_cache", ".pytest_cache"}
+# what tools and runs make, never source: caches, the pinned tools, and dist/ (the chart package
+# and the logs of a test run, written while this suite runs)
+SKIPPED_DIRS = {
+    ".venv",
+    "__pycache__",
+    ".ruff_cache",
+    ".pytest_cache",
+    ".tools",
+    "dist",
+}
 IMPORTS_PORT = re.compile(
     r"^\s*(from\s+\S*port_ndex\s+import|import\s+\S*port_ndex|from\s+\.\s+import\s+port_ndex)"
 )

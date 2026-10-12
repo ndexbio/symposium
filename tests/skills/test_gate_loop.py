@@ -8,10 +8,10 @@ import json
 import signal
 import subprocess
 import sys
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from harness import MAX_WAIT, Output
 from skills.test_workflow import TOOLS, note, submissions, tool
 from suite import enroll
 
@@ -284,18 +284,18 @@ def test_the_gate_watches_inbox_until_stopped(suite, admin_dir, cli):
         stderr=subprocess.STDOUT,
         text=True,
     )
+    output = Output(watching.stdout)
     try:
-        # submitted after the gate started: a later pass accepts it
+        # submitted after the gate started: a later pass accepts it, and says so as it does
         assert tool(suite, lyra, "publish.py", note(lyra, "lyra", "watched"))[0] == 0
-        deadline = time.monotonic() + 60
-        while not records(cli, admin_dir) and time.monotonic() < deadline:
-            time.sleep(0.2)
+        output.wait_for("ACCEPTED")
         assert [i["name"] for i in records(cli, admin_dir)] == ["lyra_note_watched_v1"]
     finally:
         watching.send_signal(signal.SIGINT)
-        out, _ = watching.communicate(timeout=30)
-    assert watching.returncode == 0, out
-    assert "watching inbox (every 1s)" in out and "ACCEPTED" in out
+        code = watching.wait(MAX_WAIT)
+    out = output.end()
+    assert code == 0, out
+    assert "watching inbox (every 1s)" in out
 
 
 def test_watch_does_not_combine_with_verify_or_rebuild(suite, admin_dir):

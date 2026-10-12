@@ -13,6 +13,7 @@ Standard library only, Python 3.9+, like the rest of tools/.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import signal
@@ -58,6 +59,28 @@ def stop_on_signals():
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGBREAK if WINDOWS else signal.SIGTERM, stop)
+
+
+@contextlib.contextmanager
+def uninterrupted():
+    """A step that must finish once begun, such as the gate's decision: written to the server,
+    recorded, shown and counted together, or not made at all. A stop that arrives during it
+    (ctrl-c, or the signal stop_on_signals handles) is held until the step ends, then stops
+    the process as it would have. A CLI call the step makes is not cut short by it; a ctrl-c
+    in a terminal reaches that call too, which then fails and leaves the step undone."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    held = []
+    stops = (signal.SIGINT, signal.SIGBREAK if WINDOWS else signal.SIGTERM)
+    previous = {stop: signal.signal(stop, lambda *_: held.append(True)) for stop in stops}
+    try:
+        yield
+    finally:
+        for stop, handler in previous.items():
+            signal.signal(stop, handler)
+    if held:
+        raise KeyboardInterrupt
 
 
 def pause(seconds: float):

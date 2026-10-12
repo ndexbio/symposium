@@ -13,7 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import os
-import socket
+import re
 import subprocess
 import time
 import uuid
@@ -25,6 +25,7 @@ import pytest
 import yaml
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from harness import HTTP, MAX_WAIT, Output
 
 from symposium_data.auth import PublicKeys
 
@@ -36,8 +37,12 @@ KUBECTL = os.environ.get("SYMPOSIUM_K8S_KUBECTL", "")
 # kind v0.33.0's node image, by digest as kind requires
 NODE = "kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5"
 NAMESPACE = "symposium"
+# helm's and kubectl's own waits; each command gets twice that, so a hang fails the test with
+# the tool's own message
+WAIT = f"{int(MAX_WAIT)}s"
 RELEASE = "symposium-data"
 HANDLE = "demo-admin"
+FORWARDING = re.compile(r"Forwarding from 127\.0\.0\.1:(\d+)")
 # the release's pods
 SELECTOR = f"app.kubernetes.io/instance={RELEASE}"
 
@@ -50,13 +55,13 @@ class Cluster:
         self.kubeconfig = workdir / "kubeconfig"
         self.env = {**os.environ, "KUBECONFIG": str(self.kubeconfig)}
 
-    def run(self, *cmd, check=True, timeout=900) -> subprocess.CompletedProcess:
+    def run(self, *cmd, check=True) -> subprocess.CompletedProcess:
         result = subprocess.run(
             [str(c) for c in cmd],
             env=self.env,
             capture_output=True,
             text=True,
-            timeout=timeout,
+            timeout=2 * MAX_WAIT,
         )
         if check and result.returncode != 0:
             raise AssertionError(
@@ -76,7 +81,7 @@ class Cluster:
             "--kubeconfig",
             self.kubeconfig,
             "--wait",
-            "180s",
+            WAIT,
         )
         self.run(KIND, "load", "docker-image", IMAGE, "--name", self.name)
 
@@ -113,25 +118,29 @@ class Cluster:
     def forwarded(self):
         """The server's URL on this machine, through a port-forward to its Service, for as
         long as the block runs. A pod restart ends a port-forward, so each phase opens its
-        own."""
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
+        own. kubectl picks the local port and says which ("Forwarding from 127.0.0.1:N"), so
+        no other process can take it in between."""
         forward = subprocess.Popen(
             [
                 KUBECTL,
                 "--namespace",
                 NAMESPACE,
                 "port-forward",
+                "--address",
+                "127.0.0.1",
                 f"svc/{RELEASE}",
-                f"{port}:8080",
+                ":8080",
             ],
             env=self.env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
         )
         try:
-            yield f"http://127.0.0.1:{port}"
+            bound = FORWARDING.search(
+                Output(forward.stdout).wait_for("Forwarding from")
+            )
+            yield f"http://127.0.0.1:{bound.group(1)}"
         finally:
             forward.kill()
             forward.wait()
@@ -162,13 +171,13 @@ def cluster(tmp_path_factory):
         cluster.delete()
 
 
-def status_until(url: str, predicate, message: str, timeout: float = 300) -> dict:
+def status_until(url: str, predicate, message: str) -> dict:
     """Poll /v1/status every 0.5 s until `predicate` holds for its answer."""
-    deadline = time.monotonic() + timeout
+    deadline = time.monotonic() + MAX_WAIT
     last = None
     while True:
         try:
-            last = httpx.get(f"{url}/v1/status", timeout=5).json()
+            last = HTTP.get(f"{url}/v1/status").json()
             if predicate(last):
                 return last
         except (httpx.HTTPError, ValueError):
@@ -204,7 +213,7 @@ def test_the_chart_installs_takes_its_admin_key_and_keeps_its_data(cluster, tmp_
     values_file = tmp_path / "values.yaml"
     values_file.write_text(yaml.safe_dump(values))
     # every install and upgrade passes the one values file, as the runbook does
-    install = ("-f", values_file, "--wait", "--timeout", "8m")
+    install = ("-f", values_file, "--wait", "--timeout", WAIT)
 
     # installed: up, and non-operational until the admin key is set
     cluster.helm("install", RELEASE, CHART, "--create-namespace", *install)
@@ -242,7 +251,7 @@ def test_the_chart_installs_takes_its_admin_key_and_keeps_its_data(cluster, tmp_
     # anything mounts that volume again (Recreate orders a Deployment's own pods, not those
     # of the one an uninstall deleted); with no pod left, the wait returns at once
     cluster.helm("uninstall", RELEASE)
-    cluster.kubectl("wait", "--for=delete", "pod", "-l", SELECTOR, "--timeout=5m")
+    cluster.kubectl("wait", "--for=delete", "pod", "-l", SELECTOR, f"--timeout={WAIT}")
     pvc = cluster.kubectl(
         "get", "pvc", RELEASE, "-o", "jsonpath={.status.phase}"
     ).stdout

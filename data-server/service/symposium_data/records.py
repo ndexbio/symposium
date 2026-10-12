@@ -657,10 +657,16 @@ class Records:
             raise QuotaExceeded("this upload would exceed the owner's quota")
         try:
             with conn.transaction():
-                conn.execute(
+                turned = conn.execute(
                     "UPDATE payloads SET state = 'ready', sha256 = %s, size = %s, upload_id = NULL "
                     "WHERE id = %s AND state = 'pending'",
                     (sha, size, pid),
+                ).rowcount
+            if turned == 0:
+                # the janitor expired this upload (its bytes are gone) before this commit
+                # reached it: nothing may point at it
+                raise Conflict(
+                    "the upload expired before it was committed; send it again"
                 )
             return pid, None
         except psycopg.errors.UniqueViolation:
@@ -675,18 +681,20 @@ class Records:
             (community, owner),
         )
 
-    def touch_pending(self, conn, pid, file_id=None):
+    def touch_pending(self, conn, pid, file_id=None) -> bool:
         """Heartbeat of an upload in progress: the janitor expires only work that has stopped,
-        never a long upload that is still streaming."""
-        conn.execute(
+        never a long upload that is still streaming. -> False when the janitor has already
+        expired it."""
+        touched = conn.execute(
             "UPDATE payloads SET created = now() WHERE id = %s AND state = 'pending'",
             (pid,),
-        )
+        ).rowcount
         if file_id is not None:
             conn.execute(
                 "UPDATE files SET reserved_at = now() WHERE id = %s AND state = 'reserved'",
                 (file_id,),
             )
+        return touched > 0
 
     def touch_pending_many(self, conn, pids: list):
         """Heartbeat of a batch still waiting for its commit (an import, a port)."""
@@ -695,9 +703,13 @@ class Records:
             (list(pids),),
         )
 
-    def pending_payload(self, conn, pid):
+    def claim_pending(self, conn, pid):
+        """Inside the caller's transaction: lock a pending payload to remove it. -> its row, or
+        None when it is gone or a commit holds it (that commit decides its fate, never both).
+        A commit that comes after waits for this transaction, then finds the row gone."""
         return conn.execute(
-            "SELECT id, s3_key, upload_id FROM payloads WHERE id = %s AND state = 'pending'",
+            "SELECT id, s3_key, upload_id FROM payloads WHERE id = %s AND state = 'pending' "
+            "FOR UPDATE SKIP LOCKED",
             (pid,),
         ).fetchone()
 

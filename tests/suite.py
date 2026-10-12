@@ -16,11 +16,9 @@ import os
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
-import httpx
-from harness import IMAGE, TEST_ENV, Server, docker
+from harness import IMAGE, MAX_WAIT, TEST_ENV, Server, docker
 
 REPO = Path(__file__).resolve().parents[1]
 CLI_DIR = REPO / "tools" / "symposium-data"
@@ -44,7 +42,7 @@ class Cli:
             env=env or self.env,
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=MAX_WAIT,
         )
         try:
             out = json.loads(result.stdout)
@@ -110,29 +108,11 @@ class Suite:
         shutil.rmtree(self.root, ignore_errors=True)
 
 
-def status_until(server: Server, predicate, message: str, timeout: float = 30) -> dict:
-    """Poll /v1/status every 0.2 s, through an API restart, until `predicate` holds."""
-    deadline = time.time() + timeout
-    while True:
-        try:
-            status = httpx.get(server.url + "/v1/status", timeout=5).json()
-            if predicate(status):
-                return status
-        except httpx.HTTPError:
-            pass
-        assert time.time() < deadline, message
-        time.sleep(0.2)
-
-
 def place_admin_key(server: Server, key_file: Path, fingerprint: str):
     """What the operator does with `admin-config`'s file: copy it in, restart the server."""
     docker("cp", str(key_file), f"{server.name}:/apps/{key_file.name}")
-    server.restart_api()
-    status_until(
-        server,
-        lambda s: s.get("fingerprint") == fingerprint,
-        "the server never bound the admin key",
-    )
+    status = server.restarted()
+    assert status.get("fingerprint") == fingerprint, status
 
 
 def community_file(

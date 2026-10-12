@@ -1,8 +1,8 @@
 """What keeps the commands that keep running (`gate --watch`, `sync --watch`, `serve`) safe to
-stop and to restart, on any OS and with no server: a stop by signal ends the loop at once with
-exit code 0; one watcher per session, a restarted one taking over; and writes that are whole
-or not at all. Each process here reports its state through files the tests poll, never its
-output."""
+stop and to restart, on any OS and with no server: a stop by signal ends the loop with exit
+code 0 long before its wait would; one watcher per session, a restarted one taking over; and
+writes that are whole or not at all. Each process here reports its state through files the
+tests poll, and what it says through its output, read whole once it has exited."""
 
 import os
 import signal
@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 import pytest
+from harness import MAX_WAIT, Output
 from suite import REPO
 
 TOOLS = REPO / "tools"
@@ -22,7 +23,8 @@ from data_io import replace_text  # noqa: E402
 
 WINDOWS = os.name == "nt"
 # a stand-in watcher: the stop handlers, the session's lock when it names one, a file saying
-# it is ready with its own pid, then a long wait that only a stop ends. (On Windows a
+# it is ready with its own pid, then a wait far longer than MAX_WAIT that only a stop ends, so
+# a watcher that waited it out fails the test. (On Windows a
 # virtualenv's python.exe is a launcher running the interpreter as its child, so the pid that
 # holds the lock is the one the interpreter reports, not the launcher's Popen.pid.)
 WATCHER = """
@@ -34,7 +36,7 @@ lock = take_over(sys.argv[2]) if sys.argv[2] else None
 ready = pathlib.Path(sys.argv[3])
 ready.write_text(f"ready {os.getpid()}")
 try:
-    pause(600)
+    pause(float(sys.argv[4]))
 except KeyboardInterrupt:
     ready.write_text("stopped")
     sys.exit(0)
@@ -43,16 +45,22 @@ except KeyboardInterrupt:
 
 def start(cwd: Path, lock_name: str, ready: Path) -> subprocess.Popen:
     flags = subprocess.CREATE_NEW_PROCESS_GROUP if WINDOWS else 0
-    return subprocess.Popen(
-        [sys.executable, "-c", WATCHER, str(TOOLS), lock_name, str(ready)],
+    process = subprocess.Popen(
+        [sys.executable, "-c", WATCHER, str(TOOLS), lock_name, str(ready)]
+        + [str(10 * MAX_WAIT)],
         cwd=cwd,
         creationflags=flags,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
     )
+    process.output = Output(process.stdout)
+    return process
 
 
-def poll(probe, message: str, seconds: float = 10):
+def poll(probe, message: str):
     """Poll every 0.1 s until `probe` returns something truthy. -> that value."""
-    deadline = time.monotonic() + seconds
+    deadline = time.monotonic() + MAX_WAIT
     while True:
         value = probe()
         if value:
@@ -84,10 +92,8 @@ def test_a_stop_signal_ends_the_wait_at_once_with_exit_code_0(tmp_path):
     watcher = start(tmp_path, "", ready)
     try:
         poll(lambda: says(ready, "ready"), "the watcher never started")
-        stopped_at = time.monotonic()
         graceful_stop(watcher)
-        assert watcher.wait(timeout=10) == 0
-        assert time.monotonic() - stopped_at < 2  # not after its 600 s wait
+        assert watcher.wait(MAX_WAIT) == 0  # long before its wait would have ended
         assert says(ready, "stopped")
     finally:
         watcher.kill()
@@ -100,7 +106,7 @@ def test_ctrl_c_ends_the_wait_the_same_way(tmp_path):
     try:
         poll(lambda: says(ready, "ready"), "the watcher never started")
         watcher.send_signal(signal.SIGINT)
-        assert watcher.wait(timeout=10) == 0
+        assert watcher.wait(MAX_WAIT) == 0
     finally:
         watcher.kill()
 
@@ -114,7 +120,7 @@ def test_a_restarted_watcher_takes_over_and_exactly_one_runs(tmp_path):
         second = start(tmp_path, "gate", second_ready)
         poll(lambda: says(second_ready, "ready"), "the second watcher never took over")
         # the first was stopped for it: gracefully where the OS can (exit 0), else terminated
-        code = first.wait(timeout=10)
+        code = first.wait(MAX_WAIT)
         assert code == 0 or WINDOWS
         assert second.poll() is None
         pid = int((tmp_path / ".symposium" / "gate.pid").read_text())
@@ -132,16 +138,14 @@ def test_a_killed_watcher_leaves_no_stale_lock(tmp_path):
     poll(lambda: says(first_ready, "ready"), "the first watcher never started")
     first.kill()  # no chance to release anything itself
     first.wait()
-    started = time.monotonic()
     second = start(tmp_path, "sync", second_ready)
     try:
         poll(lambda: says(second_ready, "ready"), "the lock outlived its holder")
-        assert (
-            time.monotonic() - started < 5
-        )  # taken at once, not after a takeover wait
     finally:
         second.kill()
         second.wait()
+    # taken as a free lock: there was no holder left to take over from
+    assert "taking over" not in second.output.end()
 
 
 def test_watchers_of_different_names_run_side_by_side(tmp_path):
@@ -170,11 +174,21 @@ def test_a_write_is_whole_and_leaves_no_temporary_file(tmp_path):
 
 def test_a_write_waits_out_a_reader_holding_the_file(tmp_path):
     """On Windows a reader holding the file blocks the rename until it lets go; elsewhere the
-    rename goes through at once. Either way the write lands whole."""
-    target = tmp_path / "state.json"
+    rename goes through at once. Either way the write lands whole. The reader lets go once the
+    write has begun (its staged file exists, or it is already done), and the write retries for
+    as long as MAX_WAIT."""
+    target, staged = tmp_path / "state.json", tmp_path / "state.json.tmp"
     target.write_text("old\n")
     reader = open(target)
-    threading.Timer(0.3, reader.close).start()
-    replace_text(target, "new\n")
+    writer = threading.Thread(
+        target=replace_text, args=(target, "new\n", int(10 * MAX_WAIT))
+    )
+    writer.start()
+    poll(
+        lambda: staged.exists() or target.read_text() == "new\n",
+        "the write never began",
+    )
+    reader.close()
+    writer.join(MAX_WAIT)
     assert target.read_text() == "new\n"
-    assert not (tmp_path / "state.json.tmp").exists()
+    assert not staged.exists()

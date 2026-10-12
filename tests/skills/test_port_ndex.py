@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from fixtures.ndex_port.stub import CREDENTIALS, FIXTURES, NdexStub, attributes
+from harness import MAX_WAIT
 from suite import ADMIN, SKILL, community_file
 
 
@@ -94,13 +95,13 @@ def test_a_port_while_another_runs_is_refused(server, skill, tmp_path):
         text=True,
     )
     try:
-        assert stub.held.wait(timeout=30), "the first port never reached the listing"
+        assert stub.held.wait(MAX_WAIT), "the first port never reached the listing"
         # switching now changes only the commands after it: the running port keeps demo's
         skill.ok(other_dir, "use", "other", ADMIN)
         code, out = skill(other_dir, "port", credentials_file(other_dir), stub.url)
         assert code == 1 and out["status"] == 409
         stub.released.set()
-        stdout, _ = first.communicate(timeout=60)
+        stdout, _ = first.communicate(timeout=MAX_WAIT)
         ported = json.loads(stdout)
         assert ported["state"] == "ok" and ported["session"] == f"demo/{ADMIN}"
     finally:

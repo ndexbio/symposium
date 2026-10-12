@@ -5,14 +5,13 @@ import base64
 import hashlib
 import os
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from itertools import pairwise
 
-import httpx
 import pytest
 from conftest import (
+    EXPIRED,
     assert_consistent,
     community_with,
     psql,
@@ -20,6 +19,7 @@ from conftest import (
     repr_digest,
     set_quota,
 )
+from harness import HTTP
 
 SIZE = 5 * 1024 * 1024  # 5 MiB, streamed in 1 MiB chunks (below one 8 MiB S3 part)
 
@@ -71,22 +71,20 @@ def test_a_streamed_upload_round_trips_verified(demo):
         "Repr-Digest": "sha-256=:" + base64.b64encode(digest).decode() + ":",
         "X-Data-Size": str(SIZE),
     }
-    r = httpx.put(
+    r = HTTP.put(
         f"{lyra.server.url}/v1/demo/collections/files/files/big.bin",
         content=body(),
         headers=headers,
-        timeout=120,
     )
     assert r.status_code == 201, r.text
     assert r.json()["size"] == SIZE
 
     down = hashlib.sha256()
     size = 0
-    with httpx.stream(
+    with HTTP.stream(
         "GET",
         f"{lyra.server.url}/v1/demo/files/{r.json()['file_id']}/v/1",
         headers=lyra.headers(),
-        timeout=120,
     ) as resp:
         assert resp.status_code == 200
         for chunk in resp.iter_bytes(1024 * 1024):
@@ -100,11 +98,10 @@ def test_digest_mismatch_leaves_no_payload_row_or_object(demo):
     lyra = owners["lyra"]
     before = psql(server, "SELECT count(*) FROM payloads")
     data = os.urandom(12 * 1024 * 1024)  # large enough to use a multipart upload
-    r = httpx.put(
+    r = HTTP.put(
         f"{server.url}/v1/demo/collections/files/files/bad.bin",
         content=data,
         headers={**lyra.headers(), "Repr-Digest": repr_digest(b"something else")},
-        timeout=300,
     )
     assert r.status_code == 400
     assert psql(server, "SELECT count(*) FROM payloads") == before
@@ -149,7 +146,7 @@ def test_versions_links_and_metadata_rules(demo):
 
 
 def _versions(owner, fid):
-    r = httpx.get(
+    r = HTTP.get(
         f"{owner.server.url}/v1/demo/files/{fid}/versions", headers=owner.headers()
     )
     assert r.status_code == 200, r.text
@@ -205,7 +202,7 @@ def test_errors(demo):
     assert lyra.stat(missing, 1).status_code == 404
     fid = lyra.put("demo", "files", "f.txt", b"x").json()["file_id"]
     assert lyra.stat(fid, 9).status_code == 404
-    assert httpx.get(f"{server.url}/v1/demo/files/{fid}/v/1").status_code == 401
+    assert HTTP.get(f"{server.url}/v1/demo/files/{fid}/v/1").status_code == 401
 
 
 def test_inbox_submissions_are_private_to_submitter_admin_and_recipients(demo):
@@ -265,7 +262,7 @@ def test_suspect_versions_are_flagged(demo):
     lyra = owners["lyra"]
     early = lyra.put("demo", "files", "early.txt", b"before").json()
     # suspicion starts after the instant: the early version, created at it, is not suspect
-    flagged = httpx.put(
+    flagged = HTTP.put(
         f"{server.url}/v1/demo/owners/lyra/suspect-after",
         json={"at": early["created"]},
         headers=admin.headers(),
@@ -309,24 +306,18 @@ def test_purge_answers_410_and_frees_bytes_when_unshared(demo):
 
 
 def test_janitor_sweeps_stale_pending_payloads(server):
-    # the session server's pending TTL is 1 s, and the janitor runs every 0.5 s
     community_with(server, ("lyra",))
     psql(
         server,
         "INSERT INTO payloads (id, state, s3_key, first_owner, created) VALUES "
         "('11111111-1111-1111-1111-111111111111', 'pending', 'payloads/stale', 'lyra', "
-        "now() - interval '1 hour')",
+        f"{EXPIRED})",
     )
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        if psql(server, "SELECT count(*) FROM payloads WHERE state = 'pending'") == "0":
-            break
-        time.sleep(0.2)
+    assert server.sweep() == 0
     assert psql(server, "SELECT count(*) FROM payloads WHERE state = 'pending'") == "0"
 
 
 def test_scrub_flags_corrupted_content(server):
-    # the session server's scrub runs every 0.5 s
     _, owners = community_with(server, ("lyra",))
     lyra = owners["lyra"]
     bad = lyra.put("demo", "files", "rot.bin", b"original bytes").json()
@@ -342,10 +333,6 @@ def test_scrub_flags_corrupted_content(server):
         "from symposium_data.runtime import Settings, PayloadStore;"
         f"PayloadStore(Settings()).put_bytes('{key}', b'bit rot')",
     )
-    deadline = time.time() + 10
-    while time.time() < deadline:
-        if lyra.stat(bad["file_id"], 1).json()["integrity"] == "mismatch":
-            break
-        time.sleep(0.2)
+    assert server.scrub() == 1
     assert lyra.stat(bad["file_id"], 1).json()["integrity"] == "mismatch"
     assert lyra.stat(good["file_id"], 1).json()["integrity"] == "ok"

@@ -27,6 +27,7 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
+from harness import HTTP, MAX_WAIT
 from openapi_schema_validator import OAS30Validator
 from suite import CLI_DIR, REPO, enroll
 
@@ -239,7 +240,7 @@ def tool(suite, cwd: Path, script: str, *args) -> tuple[int, str]:
         env=suite.env,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=MAX_WAIT,
     )
     return result.returncode, result.stdout + result.stderr
 
@@ -268,7 +269,7 @@ def session_token(suite, directory: Path) -> str:
         env=suite.env,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=MAX_WAIT,
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.strip()
@@ -278,7 +279,7 @@ class Api:
     def __init__(self, server):
         self.root = server.url
         self.base = server.url + "/api/v1"
-        self.http = httpx.Client(timeout=30)
+        self.http = httpx.Client(timeout=MAX_WAIT)
 
     def call(self, method, path, credential=None, body=None, headers=None):
         headers = dict(headers or {})
@@ -356,9 +357,7 @@ def test_every_operation_answers_as_the_contract_says(world, suite, server):
     check("getOpenApiJson", "GET", "/openapi.json", None, status=200)
     state = check("getRecord", "GET", "/demo/record", status=200).json()
     assert state["counts"]["artifacts"] == len(RECORD)
-    status = httpx.get(
-        api.base.removesuffix("/api/v1") + "/v1/status", timeout=10
-    ).json()
+    status = HTTP.get(api.base.removesuffix("/api/v1") + "/v1/status").json()
     # one server-wide figure, naming no community: /v1/status answers anyone
     assert status["api_index"] == {"behind": 0}
 
@@ -592,9 +591,7 @@ def follow(api, credential=None, path="/demo/streams/record") -> threading.Event
 
     def read():
         headers = {"Authorization": f"Bearer {credential}"} if credential else {}
-        with api.http.stream(
-            "GET", api.base + path, headers=headers, timeout=60
-        ) as response:
+        with api.http.stream("GET", api.base + path, headers=headers) as response:
             assert response.status_code == 200
             opened.set()
             for _ in response.iter_lines():
@@ -602,7 +599,7 @@ def follow(api, credential=None, path="/demo/streams/record") -> threading.Event
         ended.set()
 
     threading.Thread(target=read, daemon=True).start()
-    assert opened.wait(30), f"the stream on {path} never opened"
+    assert opened.wait(MAX_WAIT), f"the stream on {path} never opened"
     return ended
 
 
@@ -674,7 +671,7 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     revoked = cli.ok(lyra_dir, "revoke-api-key", issued["id"])
     assert revoked["revoked"] is not None
     assert api.call("GET", "/demo/me", key).status_code == 401
-    assert ended.wait(30), "the stream outlived its key's revocation"
+    assert ended.wait(MAX_WAIT), "the stream outlived its key's revocation"
     # and its label is free again
     assert (
         api.control(
@@ -694,7 +691,7 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
         short["id"],
     )
     assert api.call("GET", "/demo/me", short_key).status_code == 401
-    assert ended.wait(30), "the stream outlived its key's expiry"
+    assert ended.wait(MAX_WAIT), "the stream outlived its key's expiry"
 
     # removing a Member from the roster revokes every key it made, closing its streams,
     # and it can make no new one
@@ -704,7 +701,7 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     removed = cli.ok(admin_dir, "roster", "remove", "--handle", "vega")
     assert removed["api_keys_revoked"] >= 1
     assert api.call("GET", "/demo/me", vega).status_code == 401
-    assert ended.wait(30), "the stream outlived its member's roster entry"
+    assert ended.wait(MAX_WAIT), "the stream outlived its member's roster entry"
     revoked_by = sql(
         server,
         "SELECT DISTINCT revoked_by FROM api_keys WHERE handle = 'vega' "
@@ -832,9 +829,10 @@ def test_publishing_matches_validate_and_the_gate(world, suite, cli, tmp_path):
 
 
 # ── streams ────────────────────────────────────────────────────────────────────────────────
-def frames(response, until, seconds: float = 60) -> list[dict]:
-    """SSE frames as {id, event, data}, read until `until(frames)` holds."""
-    out, current, deadline = [], {}, time.time() + seconds
+def frames(response, until) -> list[dict]:
+    """SSE frames as {id, event, data}, read until `until(frames)` holds. The stream's
+    heartbeat brings a frame at least every few seconds, so the limit is always checked."""
+    out, current, deadline = [], {}, time.monotonic() + MAX_WAIT
     for line in response.iter_lines():
         if line == "" and current:
             out.append(current)
@@ -845,7 +843,7 @@ def frames(response, until, seconds: float = 60) -> list[dict]:
             field, _, value = line.partition(":")
             value = value.lstrip(" ")
             current[field] = json.loads(value) if field == "data" else value
-        assert time.time() < deadline, f"{len(out)} frames in {seconds}s: {out[-3:]}"
+        assert time.monotonic() < deadline, f"{len(out)} frames: {out[-3:]}"
     return out
 
 
@@ -864,8 +862,10 @@ def test_streams_deliver_resume_and_cap(world, suite, cli):
         assert response.status_code == 201
         gate(suite, admin_dir)
 
-    with api.http.stream("GET", url, headers=auth, timeout=60) as response:
-        threading.Timer(0.5, publish, ("one",)).start()
+    # the server fixes where a stream starts before it answers: what is published once the
+    # stream has answered reaches it
+    with api.http.stream("GET", url, headers=auth) as response:
+        publish("one")
         artifact_frames = [
             f for f in frames(response, seen("artifact")) if f["event"] == "artifact"
         ]
@@ -875,16 +875,16 @@ def test_streams_deliver_resume_and_cap(world, suite, cli):
 
     publish("two")
     with api.http.stream(
-        "GET", url, headers={**auth, "Last-Event-ID": resume_from}, timeout=60
+        "GET", url, headers={**auth, "Last-Event-ID": resume_from}
     ) as response:
         first = frames(response, seen("artifact"))[-1]
     assert first["event"] == "artifact" and first["data"]["name"] == "lyra_note_two_v1"
 
     # submissions: received, then accepted, for the submitter
     with api.http.stream(
-        "GET", api.base + "/demo/streams/submissions", headers=auth, timeout=60
+        "GET", api.base + "/demo/streams/submissions", headers=auth
     ) as response:
-        threading.Timer(0.5, publish, ("three",)).start()
+        publish("three")
         events = [
             f
             for f in frames(
@@ -904,7 +904,7 @@ def test_streams_deliver_resume_and_cap(world, suite, cli):
     opened = []
     try:
         for _ in range(8):
-            stream = api.http.stream("GET", url, headers=auth, timeout=60)
+            stream = api.http.stream("GET", url, headers=auth)
             response = stream.__enter__()
             assert response.status_code == 200
             opened.append(stream)
@@ -921,7 +921,7 @@ def test_streams_deliver_resume_and_cap(world, suite, cli):
     opened = []
     try:
         for _ in range(4):
-            stream = api.http.stream("GET", url, timeout=60)
+            stream = api.http.stream("GET", url)
             assert stream.__enter__().status_code == 200
             opened.append(stream)
         with api.http.stream("GET", url) as fifth:
@@ -933,11 +933,9 @@ def test_streams_deliver_resume_and_cap(world, suite, cli):
 
 def test_the_v1_api_is_unchanged_beside_it(server, admin_dir, cli):
     """The data server's own routes and bodies are untouched by the API mounted beside them."""
-    status = httpx.get(server.url + "/v1/status", timeout=10).json()
+    status = HTTP.get(server.url + "/v1/status").json()
     assert status["mode"] == "operational"
-    missing = httpx.get(
-        server.url + "/v1/demo/collections/record/find?name=x", timeout=10
-    )
+    missing = HTTP.get(server.url + "/v1/demo/collections/record/find?name=x")
     assert missing.status_code in (401, 404) and set(missing.json()) == {"detail"}
     assert re.match(r"^\d", status["api"])
 
@@ -1127,7 +1125,9 @@ def test_an_anonymous_stream_ends_when_the_record_turns_private(world, cli):
     cli.ok(admin_dir, "collection", "set-public", "--collection", "record", "--public")
     ended = follow(world["api"])
     cli.ok(admin_dir, "collection", "set-public", "--collection", "record", "--private")
-    assert ended.wait(30), "the anonymous stream outlived its record turning private"
+    assert ended.wait(MAX_WAIT), (
+        "the anonymous stream outlived its record turning private"
+    )
 
 
 def refused_checks(output: str) -> set:

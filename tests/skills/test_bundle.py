@@ -15,6 +15,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from harness import MAX_WAIT
 from skills.test_workflow import note
 from suite import REPO
 
@@ -34,7 +35,11 @@ LINK = re.compile(r"\]\(([^)\s]+)\)")
 def make(*args) -> subprocess.CompletedProcess:
     # the real environment: make runs lint before it builds
     return subprocess.run(
-        ["make", "-s", *args], cwd=REPO, capture_output=True, text=True, timeout=600
+        ["make", "-s", *args],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        timeout=MAX_WAIT,
     )
 
 
@@ -79,7 +84,7 @@ def run_skill(skill: Path, cwd: Path, env: dict, *args) -> subprocess.CompletedP
         env=env,
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=MAX_WAIT,
     )
 
 
@@ -190,7 +195,7 @@ def test_the_conformance_suite_runs_from_the_installed_skill(installed):
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         capture_output=True,
         text=True,
-        timeout=600,
+        timeout=MAX_WAIT,
     )
     assert result.returncode == 0, result.stdout[-3000:] + result.stderr
     assert "everything behaved as specified" in result.stdout

@@ -6,7 +6,6 @@ what the skill says when something is missing; and the workflow commands (`publi
 import json
 import re
 import shlex
-import socket
 import stat
 import subprocess
 import sys
@@ -14,6 +13,7 @@ import time
 from pathlib import Path
 
 import httpx
+from harness import HTTP, MAX_WAIT, Output
 from skills.test_workflow import note
 from suite import ADMIN, REPO, SKILL, Cli, community_file
 
@@ -34,43 +34,36 @@ def report(suite, cwd: Path, *args) -> tuple[int, str]:
         env=suite.env,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=MAX_WAIT,
     )
     return result.returncode, result.stdout + result.stderr
 
 
-# a stand-in agent: a long-lived process that starts the command's shell, and keeps running
-STAND_IN_AGENT = "import subprocess, sys, time; subprocess.Popen(['sh', '-c', sys.argv[1]]); time.sleep(300)"
+# a stand-in agent: a process that starts the command's shell and runs until it is ended; the
+# shell, the skill and its tool all write to the agent's output, as a background command does
+STAND_IN_AGENT = (
+    "import subprocess, sys, threading; subprocess.Popen(['sh', '-c', sys.argv[1]]); "
+    "threading.Event().wait()"
+)
 
 
-def in_the_background(suite, cwd: Path, log: Path, *args) -> subprocess.Popen:
-    """A command an agent runs in the background, its output going to a file; -> the agent."""
+def in_the_background(suite, cwd: Path, *args) -> tuple[subprocess.Popen, Output]:
+    """A command an agent runs in the background. -> (the agent, the command's output). The
+    output ends only once every process writing to it has exited."""
     command = shlex.join([sys.executable, str(SKILL), *map(str, args)])
-    return subprocess.Popen(
-        [
-            sys.executable,
-            "-c",
-            STAND_IN_AGENT,
-            f"{command} > {shlex.quote(str(log))} 2>&1",
-        ],
+    agent = subprocess.Popen(
+        [sys.executable, "-c", STAND_IN_AGENT, f"{command} 2>&1"],
         cwd=cwd,
         env={**suite.env, "SYMPOSIUM_POLL": "1"},
+        stdout=subprocess.PIPE,
+        text=True,
     )
+    return agent, Output(agent.stdout)
 
 
-def until(log: Path, text: str, seconds: float) -> bool:
-    """A background command's output reached the agent's file: what streaming is."""
-    deadline = time.monotonic() + seconds
-    while time.monotonic() < deadline:
-        if log.exists() and text in log.read_text():
-            return True
-        time.sleep(0.2)
-    return False
-
-
-def poll(probe, message: str, seconds: float = 30):
+def poll(probe, message: str):
     """Poll every 0.2 s until `probe` returns something truthy. -> that value."""
-    deadline = time.monotonic() + seconds
+    deadline = time.monotonic() + MAX_WAIT
     while True:
         value = probe()
         if value:
@@ -82,22 +75,10 @@ def poll(probe, message: str, seconds: float = 30):
 def built(port) -> bool:
     """`serve` answers on its port and has finished its first build (its `/__build` state)."""
     try:
-        state = httpx.get(f"http://127.0.0.1:{port}/__build", timeout=2).json()
+        state = HTTP.get(f"http://127.0.0.1:{port}/__build").json()
     except (httpx.HTTPError, ValueError):
         return False
     return state.get("build", 0) >= 1
-
-
-def tools_running() -> str:
-    return subprocess.run(
-        ["pgrep", "-f", f"{REPO}/tools/(gate|serve).py"], capture_output=True, text=True
-    ).stdout
-
-
-def free_port() -> int:
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        return probe.getsockname()[1]
 
 
 def test_help_names_the_data_server_image_and_prepares_nothing(skill, suite, tmp_path):
@@ -329,35 +310,30 @@ def test_commands_that_keep_running_stream_their_output_and_end_with_their_agent
     skill.ok(
         tmp_path, "bootstrap", "--community-file", community_file(tmp_path, server)
     )
-    gate_log, serve_log = tmp_path / "gate.log", tmp_path / "serve.log"
-    gate = in_the_background(suite, tmp_path, gate_log, "gate", "--watch")
+    gate, gate_out = in_the_background(suite, tmp_path, "gate", "--watch")
     serve = None
     try:
         code, out = report(suite, tmp_path, "publish", note(tmp_path, ADMIN, "kept"))
         assert code == 0, out
-        poll(
-            lambda: skill.ok(
-                tmp_path, "data", "changes", "--collection", "record", "--all"
-            )["items"],
-            "the watching gate never accepted the submission",
-        )
         # each decision reaches the agent as the gate prints it, while the gate keeps running
-        assert until(gate_log, "ACCEPTED", 10), gate_log.read_text()
-        assert gate.poll() is None
-        port = free_port()
-        serve = in_the_background(suite, tmp_path, serve_log, "serve", "--port", port)
-        poll(lambda: built(port), "serve never built the record", seconds=60)
-        assert until(serve_log, "build 1:", 10), serve_log.read_text()
+        gate_out.wait_for("ACCEPTED")
+        assert "stopped" not in gate_out.text()
+        record = skill.ok(
+            tmp_path, "data", "changes", "--collection", "record", "--all"
+        )
+        assert [i["name"] for i in record["items"]] == [f"{ADMIN}_note_kept_v1"]
+        serve, serve_out = in_the_background(suite, tmp_path, "serve", "--port", 0)
+        port = re.search(r"localhost:(\d+)", serve_out.wait_for("serving")).group(1)
+        poll(lambda: built(port), "serve never built the record")
+        assert "build 1:" in serve_out.text()
     finally:
         for agent in (gate, serve):
             if agent is not None:
                 agent.kill()  # the agent session ends abruptly
                 agent.wait()
-    # each tool notices its agent session ended, says so, and exits
-    poll(lambda: not tools_running(), "a tool outlived its agent session")
-    for log in (gate_log, serve_log):
-        # the skill writes its last line once the tool has exited, so it can trail it
-        ended = until(log, "the agent session that started this has ended", 10)
-        assert ended, log.read_text()
-        assert "Traceback" not in log.read_text()
-    assert tools_running() == ""
+    # each tool notices its agent session ended, says so, and exits: its output ends only once
+    # the tool and the skill around it have both exited, the skill's last line written
+    for output in (gate_out, serve_out):
+        out = output.end()
+        assert "the agent session that started this has ended" in out, out
+        assert "Traceback" not in out

@@ -876,7 +876,8 @@ async def stream_upload(
 
     def heartbeat():
         with db.connection() as conn:
-            records.touch_pending(conn, pid, file_id)
+            if not records.touch_pending(conn, pid, file_id):
+                raise Conflict("the upload expired before it finished; send it again")
 
     writer = MultipartWriter(store, key, on_upload_started=started)
     upload = Upload(pid, "", 0)
@@ -892,6 +893,9 @@ async def stream_upload(
             declared_size is not None and writer.size != declared_size
         ):
             refuse(400, "the body does not match its declared Repr-Digest or size")
+        # one last beat before completing it in S3: an upload the janitor expired while its
+        # body was in flight stops here, before anything is completed or committed
+        await run_in_threadpool(heartbeat)
         await run_in_threadpool(writer.finish)
     except BaseException:
         await run_in_threadpool(writer.abort)

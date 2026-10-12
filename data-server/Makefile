@@ -1,7 +1,10 @@
 # Symposium Data server: the image, and the Helm chart that deploys it on Kubernetes.
-#   make test                      lint, the image build, unit suites, integration suites (the
-#                                  chart's lint and render checks among them), then the chart's
-#                                  live test on a throwaway kind cluster (helm-e2e)
+#   make test                      lint, the image build, the pinned Kubernetes tools and the
+#                                  chart package, then side by side (make/side-by-side.mk): the
+#                                  unit and integration suites (service-suites; the chart's lint
+#                                  and render checks among them) and the chart's live test on a
+#                                  throwaway kind cluster (chart-e2e). MAX_PER_TEST_WAIT
+#                                  (seconds, default 120) is the one limit on any wait in them
 #   make build-docker TAG=1.2.3    the image, tagged; image targets run no tests
 #   make push-docker TAG=1.2.3     multi-arch push of :TAG and :latest (the release workflow, on a
 #                                  data-server-v<version> GitHub release)
@@ -18,17 +21,30 @@ IMAGE ?= ndexbio/symposium-data
 TAG ?= $(shell sed -n 's/^version = "\(.*\)"/\1/p' service/pyproject.toml)
 PLATFORMS ?= linux/amd64,linux/arm64
 UV := uv run --frozen
+# The one limit, in seconds, on any wait in the test suites (SYMPOSIUM_TEST_MAX_WAIT to them)
+MAX_PER_TEST_WAIT ?= 120
+export SYMPOSIUM_TEST_MAX_WAIT := $(MAX_PER_TEST_WAIT)
 
-.PHONY: lint test build-docker push-docker helm-package helm-push helm-attach helm-e2e \
-	k8s-tools chart-tag
+include ../make/side-by-side.mk
+
+.PHONY: lint test service-suites chart-e2e build-docker push-docker helm-package helm-push \
+	helm-attach helm-e2e k8s-tools chart-tag
 
 lint:
 	cd service && $(UV) ruff check . && $(UV) ruff format --check .
 
 test: lint build-docker k8s-tools helm-package
+	$(call side_by_side,service-suites chart-e2e)
+
+# The suites themselves, on what `test` (or the repository's `make test`) made first: the unit
+# suites, then the integration suites against the image
+service-suites:
 	cd service && $(UV) pytest tests/unit
 	cd service && SYMPOSIUM_DATA_TEST_IMAGE=$(IMAGE):$(TAG) SYMPOSIUM_DATA_TEST_VERSION=$(TAG) \
 		$(UV) pytest tests/integration
+
+# the chart's live test on the image and the package already made
+chart-e2e:
 	$(E2E)
 
 # the API's shared rules and contract, from outside this directory, as named build contexts
@@ -120,10 +136,11 @@ helm-push: chart-tag helm-package
 helm-attach: chart-tag helm-package
 	gh release upload "symposium-helm-v$(CHART_VERSION)" $(PACKAGE) --clobber
 
-# the image this commit builds, on a kind cluster that exists only for the test
+# the image this commit builds, on a kind cluster that exists only for the test; with no pytest
+# cache, which the integration suites running beside it keep in the same directory
 E2E = cd service && SYMPOSIUM_DATA_TEST_IMAGE=$(IMAGE):$(TAG) SYMPOSIUM_K8S_CHART=$(CURDIR)/$(PACKAGE) \
 	SYMPOSIUM_K8S_HELM=$(CURDIR)/$(HELM) SYMPOSIUM_K8S_KIND=$(CURDIR)/$(KIND) \
-	SYMPOSIUM_K8S_KUBECTL=$(CURDIR)/$(KUBECTL) $(UV) pytest tests/k8s
+	SYMPOSIUM_K8S_KUBECTL=$(CURDIR)/$(KUBECTL) $(UV) pytest -p no:cacheprovider tests/k8s
 
 helm-e2e: build-docker k8s-tools helm-package
 	$(E2E)

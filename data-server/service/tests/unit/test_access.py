@@ -244,3 +244,33 @@ def test_only_authentication_reads_the_bearer_header():
         if re.search(r"\bbearer\(|headers\.get\(\"authorization\"", text):
             readers.append(path.relative_to(SERVICE).as_posix())
     assert readers == ["symposium_data/access/authn.py"]
+
+
+def test_a_keyless_server_wide_request_touches_no_database():
+    """/v1/status answers while PostgreSQL is down: with no key and no community, authorize
+    has nothing to look up."""
+    from symposium_data import access
+    from symposium_data.access import authz
+
+    class Broken:
+        def connection(self):
+            raise AssertionError("authorize opened a connection")
+
+    saved = dict(authz._wired)
+    access.wire(
+        db=Broken(),
+        records=RECORDS,
+        keys=KEYS,
+        contract=SimpleNamespace(rules={"getStatus": Rule(("admin",), "always")}),
+        public_url="https://data.example.org",
+    )
+    try:
+        dependency = access.authorize("getStatus")
+        who = dependency(SimpleNamespace(**vars(request()), path_params={}))
+        assert who.anonymous and who.base_url == "https://data.example.org"
+        keyed = SimpleNamespace(**vars(request("sak_admin")), path_params={})
+        with pytest.raises(AssertionError, match="opened a connection"):
+            dependency(keyed)  # a key is looked up, so it needs the database
+    finally:
+        authz._wired.clear()
+        authz._wired.update(saved)

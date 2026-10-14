@@ -219,6 +219,7 @@ The server reads `admin_pub_<handle>.key` at every start-up, from `/apps/` or `/
   - **Issue:** `/symposium gen-api-key <label> --non-member` in a member's session, or `gen-api-key <label>` in the admin's. The key goes to a 0600 file, and the server keeps its hash and a sealed copy its issuer can read back.
   - **Grant:** `PUT /v1/<community>/collections/<collection>/grants {"api_key_id": "<key id>", "perm": "read"}`, by the collection's owner or the admin. A key is granted `read` only.
   - **Public:** `PUT /v1/<community>/collections/<collection>/public {"public": true}` opens a collection to reads with no key at all. `inbox` stays private.
+  - **Browser apps:** list the origins they are served from in `SYMPOSIUM_SERVER_CORS_ORIGINS` (with Helm, the `corsOrigins` value), so a browser lets them call the API.
   - **A leaked key:** its issuer or the admin revokes it, and the revocation takes effect from the next request:
 
     ```bash

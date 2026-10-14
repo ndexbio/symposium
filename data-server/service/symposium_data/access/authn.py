@@ -21,6 +21,18 @@ def bearer(request: Request) -> str | None:
     return header.split(None, 1)[1].strip()
 
 
+def presents_key(request: Request) -> bool:
+    return bearer(request) is not None
+
+
+def anonymous(request: Request, base_url: str = "") -> Caller:
+    return Caller(
+        kind=ANONYMOUS_KIND,
+        base_url=base_url,
+        client_addr=request.client.host if request.client else None,
+    )
+
+
 def standing(
     conn, records, row: KeyRow, community: str | None
 ) -> tuple[int, str] | None:
@@ -59,11 +71,7 @@ def authenticate(
 ) -> Caller:
     """The caller behind `request`, anonymous when it presents no key. A key that is not one,
     is unknown, revoked or expired, or has lost its standing is refused here."""
-    caller = Caller(
-        kind=ANONYMOUS_KIND,
-        base_url=base_url,
-        client_addr=request.client.host if request.client else None,
-    )
+    caller = anonymous(request, base_url)
     credential = bearer(request)
     if credential is None:
         return caller

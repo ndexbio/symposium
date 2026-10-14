@@ -64,6 +64,9 @@ trustedProxy: "127.0.0.1"
 # SYMPOSIUM_SERVER_PUBLIC_URL: the base of every URL the API answers, e.g.
 # https://data.example.org; empty: the request's own URL
 publicUrl: ""
+# SYMPOSIUM_SERVER_CORS_ORIGINS: the browser origins allowed to call the API, e.g.
+# ["https://app.example.org"]; empty: none
+corsOrigins: []
 # any other SYMPOSIUM_* setting (data-server README, "Configuration"), as NAME: value
 env: {}
 

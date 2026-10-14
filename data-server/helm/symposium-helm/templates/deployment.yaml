@@ -46,6 +46,9 @@ spec:
             {{- with .Values.publicUrl }}
             - {name: SYMPOSIUM_SERVER_PUBLIC_URL, value: {{ . | quote }}}
             {{- end }}
+            {{- with .Values.corsOrigins }}
+            - {name: SYMPOSIUM_SERVER_CORS_ORIGINS, value: {{ join "," . | quote }}}
+            {{- end }}
             {{- range $name, $value := .Values.env }}
             - {name: {{ $name }}, value: {{ $value | toString | quote }}}
             {{- end }}

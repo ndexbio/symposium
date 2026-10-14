@@ -6,13 +6,26 @@ document is valid OpenAPI; these check that it says what Symposium needs it to s
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
 import pytest
 import yaml
 
-API = Path(__file__).resolve().parents[2] / "api"
+REPO = Path(__file__).resolve().parents[2]
+API = REPO / "api"
+SERVICE = REPO / "data-server" / "service"
+# the tags of the routes that set a community up; the rest read and write its data
+CONTROL_TAGS = {
+    "server",
+    "sign-in",
+    "communities",
+    "roster",
+    "keys",
+    "collections",
+    "admin",
+}
 # The roles an API key may hold: `member` holds everything `non-member` holds; `admin` is the
 # server admin's session, which acts as no Member.
 ROLES = ("non-member", "member", "admin")
@@ -127,11 +140,14 @@ def test_every_operation_states_its_security(spec):
 
 
 def test_the_api_takes_api_keys_alone(spec):
+    """One credential, an API key. The admin's sign-in pair is the one route under `/admin`:
+    every other admin operation lives under its community, or under `/communities`."""
     assert list(spec["components"]["securitySchemes"]) == ["apiKey"]
     for path, method, op in operations(spec):
-        assert not path.startswith("/admin"), (
-            f"{method.upper()} {path} is an admin path"
-        )
+        assert not path.startswith("/admin") or path in (
+            "/admin/challenge",
+            "/admin/token",
+        ), f"{method.upper()} {path} is an admin path"
         if op["x-roles"] == ["member"]:
             continue  # acts as a Member, which the admin is not
         assert "admin" in op["x-roles"], f"{method.upper()} {path} refuses the admin"
@@ -169,6 +185,8 @@ def test_the_record_is_read_only(spec):
 
 
 def test_every_growing_listing_is_paged(spec):
+    """A page is `items` with the cursor to the next: `next` (paged by `cursor` and `limit`) or
+    `next_since` (paged by `since` and `limit`, as a collection's feed is)."""
     for path, method, op in operations(spec):
         where = f"{method.upper()} {path}"
         schema = success_json(spec, op)
@@ -178,10 +196,18 @@ def test_every_growing_listing_is_paged(spec):
         listing = any(
             deref(spec, p).get("type") == "array" for p in properties.values()
         )
-        paged = "next" in properties
-        if paged:
+        paged = "items" in properties and bool({"next", "next_since"} & set(properties))
+        if paged and "next" in properties:
             assert {"cursor", "limit"} <= params(spec, op), (
                 f"{where}: `next` without cursor/limit"
+            )
+        if paged and "next_since" in properties:
+            body = op.get("requestBody", {}).get("content", {}).get("application/json")
+            taken = params(spec, op) | (
+                set(flatten(spec, body["schema"])[0]) if body else set()
+            )
+            assert {"since", "limit"} <= taken, (
+                f"{where}: `next_since` without since/limit"
             )
         if listing and not paged:
             assert op.get("x-bounded"), (
@@ -192,6 +218,10 @@ def test_every_growing_listing_is_paged(spec):
 def test_every_read_of_the_record_states_its_position(spec):
     for path, method, op in operations(spec):
         if method != "get" or not path.startswith("/{community}"):
+            continue
+        if not op.get(
+            "x-generated"
+        ):  # the record's reads, not the files' or the control's
             continue
         if op.get("x-stored"):  # answers the stored bytes themselves, untouched
             continue
@@ -214,8 +244,12 @@ def test_every_stream_resumes_from_a_cursor(spec):
 
 
 def test_every_error_shares_one_body(spec):
+    """Every refusal answers the Error body. `getStatus` is the one exception: its 503 is the
+    health report itself, the same body as its 200."""
     for path, _method, op in operations(spec):
         for code, response in op["responses"].items():
+            if op["operationId"] == "getStatus" and code == "503":
+                continue
             if code[0] in "45":
                 schema = deref(spec, response)["content"]["application/json"]["schema"]
                 assert schema == {"$ref": "#/components/schemas/Error"}, (
@@ -275,3 +309,72 @@ def test_the_design_maps_every_command_to_a_real_endpoint(spec, design):
         assert set(named) <= set(routes), f"{command} names {named}"
         listed = {e.split("?")[0] for e in re.findall(r"`([A-Z]+ /[^`]+)`", endpoints)}
         assert listed == {routes[n] for n in named}, command
+
+
+# ── one contract for every route ───────────────────────────────────────────────────────────
+def hand_written_routes() -> set:
+    """(METHOD, path) of every route `symposium_data/app.py` declares, read from its source:
+    the app reads the server's settings as it is imported, so it is not imported here."""
+    tree = ast.parse(
+        (SERVICE / "symposium_data" / "app.py").read_text(encoding="utf-8")
+    )
+    routes = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr in METHODS
+                and getattr(decorator.func.value, "id", None) == "app"
+            ):
+                path = decorator.args[0].value
+                assert path.startswith("/v1/"), path
+                routes.add((decorator.func.attr.upper(), path.removeprefix("/v1")))
+    return routes
+
+
+def generated_routes() -> set:
+    """(METHOD, path) of every route in `symposium_api/generated/routers/`."""
+    routes = set()
+    for module in (SERVICE / "symposium_api" / "generated" / "routers").glob("*.py"):
+        for method, path in re.findall(
+            r"@router\.(get|post|put|delete)\(\s*['\"]([^'\"]+)['\"]",
+            module.read_text(encoding="utf-8"),
+        ):
+            routes.add((method.upper(), path))
+    return routes
+
+
+def test_the_contract_describes_every_route_of_the_server(spec):
+    """Every route the server answers is in the contract, and every operation in the contract
+    is a route: the hand-written ones in `app.py`, and the generated ones it marks."""
+    contract = {(method.upper(), path) for path, method, _ in operations(spec)}
+    generated = {
+        (method.upper(), path)
+        for path, method, op in operations(spec)
+        if op.get("x-generated")
+    }
+    assert generated == generated_routes()
+    assert contract - generated == hand_written_routes()
+
+
+def test_every_hand_written_route_takes_the_contracts_rule(spec):
+    """Each hand-written route depends on `authorize` for its own operation, so the rule the
+    contract states is the rule the route applies."""
+    source = (SERVICE / "symposium_data" / "app.py").read_text(encoding="utf-8")
+    authorized = set(re.findall(r'Depends\(authorize\("(\w+)"\)\)', source))
+    hand_written = {
+        op["operationId"] for _, _, op in operations(spec) if not op.get("x-generated")
+    }
+    assert authorized == hand_written
+
+
+def test_a_session_is_asked_for_by_control_operations_alone(spec):
+    for path, method, op in operations(spec):
+        where = f"{method.upper()} {path}"
+        tags = set(op["tags"])
+        assert tags <= CONTROL_TAGS or not tags & CONTROL_TAGS, where
+        if op.get("x-session"):
+            assert tags <= CONTROL_TAGS, f"{where}: x-session on a data operation"

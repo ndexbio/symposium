@@ -46,6 +46,7 @@ helm install symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm --
 | `expose.ingress.annotations` | `{}` | The controller's own settings for the streams. |
 | `trustedProxy` | `127.0.0.1` | `SYMPOSIUM_SERVER_TRUSTED_PROXY`. When the server is exposed, set it to the network your gateway's or controller's pods run in. |
 | `publicUrl` | `""` | `SYMPOSIUM_SERVER_PUBLIC_URL`, for example `https://data.example.org`. |
+| `corsOrigins` | `[]` | `SYMPOSIUM_SERVER_CORS_ORIGINS`: the browser origins allowed to call the API, for example `["https://app.example.org"]`. |
 | `env` | `{}` | Any other `SYMPOSIUM_*` setting, as `NAME: value`. |
 | `resources` | requests of 250m CPU and 1Gi memory | PostgreSQL, SeaweedFS and the API share the one pod. |
 | `podSecurityContext`, `securityContext` | `{}` | The init container runs as root to give the volume's directories to their owners, so the chart can't run in a namespace that enforces the `restricted` Pod Security Standard. |

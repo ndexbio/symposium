@@ -29,7 +29,7 @@ from pathlib import Path
 import httpx
 import pytest
 import yaml
-from harness import HTTP, MAX_WAIT
+from harness import HTTP, MAX_WAIT, TEST_ENV, Server
 from openapi_schema_validator import OAS30Validator
 from suite import CLI_DIR, REPO, enroll
 
@@ -505,7 +505,8 @@ def test_every_operation_answers_as_the_contract_says(world, suite, server):
     check("getRecord", "GET", "/demo/record", None, status=401)
     check("getRecord", "GET", "/elsewhere/record", status=404)
 
-    assert called == set(OPERATIONS), f"never called: {set(OPERATIONS) - called}"
+    record = {name for name, (_, _, op) in OPERATIONS.items() if op.get("x-generated")}
+    assert called == record, f"never called: {record - called}"
 
 
 # ── roles ──────────────────────────────────────────────────────────────────────────────────
@@ -541,6 +542,14 @@ def test_every_role_gets_exactly_the_access_the_table_states(world, cli):
     answers a caller who may read `record` (by a grant, or because it is public)."""
     table = role_table()
     assert set(table) == set(OPERATIONS)
+    # the record's operations; the hand-written ones are checked live with their own state
+    # (test_every_route_of_the_server_answers_as_the_contract_says, and the data server's
+    # access matrix)
+    table = {
+        name: roles
+        for name, roles in table.items()
+        if OPERATIONS[name][2].get("x-generated")
+    }
     keys, admin = world["keys"], world["admin_session"]
     for public in (False, True):
         cli.ok(
@@ -1324,3 +1333,520 @@ def test_publishing_takes_write_on_inbox(world, cli, server):
     # checking stores nothing, so it needs no write grant
     checked = api.call("POST", "/demo/submissions/check", lyra, note("lyra", "blocked"))
     assert checked.status_code == 200
+
+
+# ── every route of /v1, against the one contract ───────────────────────────────────────────
+def admin_signature(suite, admin_dir: Path) -> dict:
+    """A fresh admin challenge, signed with the admin's key from the keystore, as the CLI
+    signs one: the body of an admin sign-in."""
+    code = (
+        f"import json, sys; sys.path.insert(0, {str(CLI_DIR)!r}); "
+        "from main import Commands; from keystore import ADMIN_SCOPE; "
+        "c = Commands(); ctx = c.context.load(); "
+        "server = c.server_for(ctx['data-server-url'], ctx['community']); "
+        "nonce = server.request('POST', '/v1/admin/challenge', auth=False)['nonce']; "
+        "sig = c.keystore(ctx['server_id']).sign(ADMIN_SCOPE, ctx['handle'], nonce.encode()); "
+        "print(json.dumps({'nonce': nonce, 'signature': sig}))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=admin_dir,
+        env=suite.env,
+        capture_output=True,
+        text=True,
+        timeout=MAX_WAIT,
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
+class Ed25519Key:
+    """A Member's key, made here as the skill makes one on the Member's machine."""
+
+    def __init__(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        self.private = Ed25519PrivateKey.generate()
+        raw = self.private.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        self.jwk = {"kty": "OKP", "crv": "Ed25519", "x": b64u(raw)}
+
+    def sign(self, message: str) -> str:
+        return b64u(self.private.sign(message.encode()))
+
+
+def b64u(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def digest_header(data: bytes) -> dict:
+    return {
+        "Repr-Digest": "sha-256=:"
+        + base64.b64encode(hashlib.sha256(data).digest()).decode()
+        + ":",
+        "Content-Type": "application/octet-stream",
+    }
+
+
+def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cli):
+    """Every hand-written operation, called live and validated against the contract, errors
+    included; with the record's operations, already called above, every operation in it."""
+    api, keys, admin = world["api"], world["keys"], world["admin_session"]
+    lyra_dir = world["sessions"]["lyra"]
+    lyra = session_key(suite, lyra_dir)
+    called = set()
+
+    def check(
+        operation_id, method, path, credential=None, body=None, status=None, **kw
+    ):
+        headers = kw.pop("headers", {})
+        if credential:
+            headers["Authorization"] = f"Bearer {credential}"
+        response = api.http.request(
+            method, api.base + path, json=body, headers=headers, **kw
+        )
+        conforms(operation_id, response)
+        if status is not None:
+            assert response.status_code == status, (operation_id, response.text)
+        called.add(operation_id)
+        return response
+
+    # the server, and signing in
+    check("getStatus", "GET", "/status", status=200)
+    check("adminChallenge", "POST", "/admin/challenge", status=200)
+    signed = admin_signature(suite, world["admin_dir"])
+    session = check("adminSignIn", "POST", "/admin/token", body=signed, status=200)
+    assert session.headers["cache-control"] == "no-store"
+    assert session.json()["key"].startswith("sak_")
+    check("adminSignIn", "POST", "/admin/token", body=signed, status=401)  # spent
+
+    # communities
+    check("listCommunities", "GET", "/communities", admin, status=200)
+    check("createCommunity", "POST", "/communities", admin, {"name": "other"}, 201)
+    check("createCommunity", "POST", "/communities", admin, {"name": "other"}, 200)
+    check("createCommunity", "POST", "/communities", lyra, {"name": "mine"}, 403)
+    exported = check("exportCommunity", "GET", "/other/export", admin, status=200)
+    check(
+        "importCommunity",
+        "POST",
+        "/communities/import",
+        admin,
+        status=409,  # `other` exists here already
+        content=exported.content,
+        headers={"Content-Type": "application/x-tar"},
+    )
+    port = check(
+        "startPortNdex",
+        "POST",
+        "/other/port-ndex",
+        admin,
+        {
+            "ndex_url": "http://127.0.0.1:9",
+            "credentials": {"username": "u", "password": "p"},
+        },
+        202,
+    ).json()
+    check("getPortNdex", "GET", f"/other/port-ndex/{port['id']}", admin, status=200)
+
+    # a new Member: the roster, an invite, registration, sign-in, rotation and rebind
+    check("addMember", "POST", "/demo/roster/nova", admin, status=201)
+    check("addMember", "POST", "/demo/roster/nova", admin, status=200)
+    check("listRoster", "GET", "/demo/roster", lyra, status=200)
+    check("listRoster", "GET", "/demo/roster", keys["non-member"], status=403)
+    invite = check(
+        "createInvite", "POST", "/demo/invites", admin, {"handle": "nova"}, 201
+    ).json()
+    check("listInvites", "GET", "/demo/invites", admin, status=200)
+    nova = Ed25519Key()
+
+    def challenge(handle):
+        return check(
+            "challenge",
+            "POST",
+            "/demo/auth/challenge",
+            body={"handle": handle},
+            status=200,
+        ).json()["nonce"]
+
+    nonce = challenge("nova")
+    registration = {
+        "handle": "nova",
+        "public_jwk": nova.jwk,
+        "nonce": nonce,
+        "signature": nova.sign(nonce),
+        "invite": invite["invite"],
+    }
+    check("register", "POST", "/demo/owners", body=registration, status=201)
+    mallory = Ed25519Key()
+    nonce = challenge("mallory")
+    check(
+        "register",
+        "POST",
+        "/demo/owners",
+        body={
+            "handle": "mallory",
+            "public_jwk": mallory.jwk,
+            "nonce": nonce,
+            "signature": mallory.sign(nonce),
+            "invite": invite["invite"],
+        },
+        status=403,  # not on the roster
+    )
+    nonce = challenge("nova")
+    nova_session = check(
+        "signIn",
+        "POST",
+        "/demo/auth/token",
+        body={"handle": "nova", "nonce": nonce, "signature": nova.sign(nonce)},
+        status=200,
+    ).json()["key"]
+    rotated = Ed25519Key()
+    nonce = challenge("nova")
+    check(
+        "rotateKey",
+        "POST",
+        "/demo/owners/nova/keys",
+        nova_session,
+        {"public_jwk": rotated.jwk, "nonce": nonce, "signature": rotated.sign(nonce)},
+        201,
+    )
+    check("rotateKey", "POST", "/demo/owners/nova/keys", keys["lyra"], {}, 403)
+    check("rebindMember", "POST", "/demo/owners/nova/rebind", admin, status=200)
+    check(
+        "setSuspectAfter",
+        "PUT",
+        "/demo/owners/vega/suspect-after",
+        admin,
+        {"at": "2026-10-01T12:00:00+00:00"},
+        200,
+    )
+    check("removeMember", "DELETE", "/demo/roster/nova", admin, status=200)
+    check("removeMember", "DELETE", "/demo/roster/nova", admin, status=404)
+
+    # API keys
+    made = check(
+        "createApiKey", "POST", "/demo/api-keys", lyra, {"label": "contract"}, 201
+    ).json()
+    check("createApiKey", "POST", "/demo/api-keys", keys["lyra"], {"label": "x"}, 403)
+    check("listApiKeys", "GET", "/demo/api-keys", lyra, status=200)
+    check("getApiKey", "GET", f"/demo/api-keys/{made['id']}", lyra, status=200)
+    check("revokeApiKey", "DELETE", f"/demo/api-keys/{made['id']}", lyra, status=200)
+    check("getApiKey", "GET", f"/demo/api-keys/{uuid.uuid4()}", lyra, status=404)
+
+    # collections and grants
+    check("createCollection", "POST", "/demo/collections", lyra, {"name": "lab"}, 201)
+    check("createCollection", "POST", "/demo/collections", lyra, {"name": "lab"}, 409)
+    viewer_id = next(
+        k["id"]
+        for k in cli.ok(world["admin_dir"], "list-api-keys")["keys"]
+        if k["label"] == "viewer app"
+    )
+    grant = {"api_key_id": viewer_id, "perm": "read"}
+    check("setGrant", "PUT", "/demo/collections/lab/grants", lyra, grant, 200)
+    check(
+        "setGrant",
+        "PUT",
+        "/demo/collections/lab/grants",
+        lyra,
+        {**grant, "perm": "write"},
+        400,
+    )
+    check(
+        "setPublic", "PUT", "/demo/collections/lab/public", lyra, {"public": False}, 200
+    )
+    check(
+        "setPublic",
+        "PUT",
+        "/demo/collections/inbox/public",
+        admin,
+        {"public": True},
+        403,
+    )
+
+    # files
+    data = b"gene,score\nBST2,0.06\n"
+    put = check(
+        "putFile",
+        "PUT",
+        "/demo/collections/lab/files/scores.csv",
+        keys["lyra"],
+        status=201,
+        content=data,
+        headers=digest_header(data),
+    ).json()
+    fid = put["file_id"]
+    check(
+        "putFile",
+        "PUT",
+        "/demo/collections/lab/files/other.csv",
+        keys["non-member"],
+        status=403,
+        content=data,
+        headers=digest_header(data),
+    )
+    newer = data + b"LY6E,0.24\n"
+    check(
+        "addFileVersion",
+        "POST",
+        f"/demo/files/{fid}/versions",
+        keys["lyra"],
+        status=201,
+        content=newer,
+        headers=digest_header(newer),
+    )
+    check(
+        "addFileVersion",
+        "POST",
+        f"/demo/files/{fid}/versions",
+        keys["lyra"],
+        status=412,
+        content=newer,
+        headers={**digest_header(newer), "If-Match": '"v1"'},
+    )
+    viewer = keys["non-member"]
+    check("getFileContent", "GET", f"/demo/files/{fid}/v/1", viewer, status=200)
+    check("getFileContent", "GET", f"/demo/files/{fid}/v/1", status=401)
+    check(
+        "statFileVersion", "GET", f"/demo/files/{fid}/v/latest/stat", viewer, status=200
+    )
+    check("listFileVersions", "GET", f"/demo/files/{fid}/versions", viewer, status=200)
+    check("listChanges", "GET", "/demo/collections/lab/changes", viewer, status=200)
+    check(
+        "queryCollection",
+        "POST",
+        "/demo/collections/lab/query",
+        viewer,
+        {"contains": {}},
+        200,
+    )
+    check(
+        "findFile",
+        "GET",
+        "/demo/collections/lab/find?name=scores.csv",
+        viewer,
+        status=200,
+    )
+    check("findByHash", "GET", f"/demo/sha256/{put['sha256']}", viewer, status=200)
+    check(
+        "verifyCitation",
+        "GET",
+        f"/demo/verify?cite={urllib.parse.quote(put['citation'])}",
+        viewer,
+        status=200,
+    )
+    check(
+        "promoteVersion",
+        "POST",
+        f"/demo/files/{fid}/v/2/promote",
+        admin,
+        {"collection": "lab", "name": "copy.csv"},
+        201,
+    )
+    check(
+        "deleteFile",
+        "DELETE",
+        f"/demo/files/{fid}?reason=done",
+        keys["lyra"],
+        status=200,
+    )
+    check("purgeVersion", "POST", f"/demo/files/{fid}/v/1/purge", admin, status=200)
+    gone = check("getFileContent", "GET", f"/demo/files/{fid}/v/1", viewer, status=410)
+    assert gone.json()["code"] == "gone" and gone.json()["file_id"] == fid
+
+    hand_written = {
+        op["operationId"]
+        for _, _, op in OPERATIONS.values()
+        if not op.get("x-generated")
+    }
+    assert called == hand_written, f"never called: {hand_written - called}"
+
+
+REQUEST_BODIES = """
+import json
+from symposium_server import app
+document = app.openapi()
+schemas = document["components"]["schemas"]
+out = {}
+for path, item in document["paths"].items():
+    for method, op in item.items():
+        body = op.get("requestBody", {}).get("content", {}).get("application/json")
+        if not body:
+            continue
+        schema = body["schema"]
+        # an optional body is `anyOf: [the model, null]`
+        schema = next((s for s in schema.get("anyOf", []) if "$ref" in s), schema)
+        if "$ref" in schema:
+            schema = schemas[schema["$ref"].split("/")[-1]]
+        out[f"{method.upper()} {path}"] = {
+            "properties": sorted(schema.get("properties", {})),
+            "required": sorted(schema.get("required", [])),
+        }
+print(json.dumps(out))
+"""
+
+
+def test_every_request_body_is_the_one_the_contract_states(server):
+    """The hand-written routes read their bodies with pydantic models; inside the container,
+    the app's own request schemas are compared with the contract's, field by field."""
+    result = server.exec("/opt/venv/bin/python", "-c", REQUEST_BODIES)
+    assert result.returncode == 0, result.stderr[-2000:]
+    served = json.loads(result.stdout.strip().splitlines()[-1])
+    compared = 0
+    for operation_id, (method, path, op) in OPERATIONS.items():
+        body = op.get("requestBody", {}).get("content", {}).get("application/json")
+        if op.get("x-generated") or not body:
+            continue
+        schema = deref(body["schema"])
+        if "allOf" in schema:
+            schema = {k: v for part in schema["allOf"] for k, v in deref(part).items()}
+        route = f"{method} /v1{path}"
+        assert route in served, f"{operation_id}: the server reads no JSON body"
+        assert served[route]["properties"] == sorted(schema.get("properties", {})), (
+            operation_id
+        )
+        assert served[route]["required"] == sorted(schema.get("required", [])), (
+            operation_id
+        )
+        compared += 1
+    assert compared >= 15
+
+
+# ── a data file an Artifact cites, read on the same API ────────────────────────────────────
+def test_a_cited_file_is_read_through_its_collections_access(world, suite, cli):
+    api, keys, admin_dir = world["api"], world["keys"], world["admin_dir"]
+    lyra_dir = world["sessions"]["lyra"]
+    lyra = session_key(suite, lyra_dir)
+    api.control("POST", "/demo/collections", lyra, {"name": "lab"})
+    data = b"gene,score\nBST2,0.06\n"
+    put = api.http.put(
+        api.base + "/demo/collections/lab/files/scores.csv",
+        content=data,
+        headers={**digest_header(data), "Authorization": f"Bearer {keys['lyra']}"},
+    ).json()
+    cited = json.loads(json.dumps(DATA_D))
+    cited["artifact"]["name"] = "lyra_data_e_v1"
+    cited["objects"].append(
+        {
+            "name": "scores_download",
+            "type": "Content",
+            "groundable": True,
+            "description": "The scores as a file on the data server.",
+            "addressing_method": "the whole file",
+            "location": put["citation"],
+            "access_method": "GET its location_url with an API key that may read it",
+            "sha256": put["sha256"],
+        }
+    )
+    made = api.call("POST", "/demo/submissions", keys["lyra"], cited)
+    assert made.status_code == 201, made.text
+    gate(suite, admin_dir)
+
+    address = "@lyra_data_e_v1.scores_download"
+    resolved = api.call(
+        "GET",
+        "/demo/resolve?address=" + urllib.parse.quote(address, safe=""),
+        keys["non-member"],
+    )
+    conforms("resolveAddress", resolved)
+    url = resolved.json()["location_url"]
+    assert url == f"{api.base}/demo/files/{put['file_id']}/v/1"
+    obj = api.call(
+        "GET",
+        "/demo/artifacts/lyra_data_e_v1/objects/scores_download",
+        keys["non-member"],
+    )
+    conforms("getObject", obj)
+    assert obj.json()["location_url"] == url
+
+    dashboard = {"Authorization": f"Bearer {keys['non-member']}"}
+    assert api.http.get(url, headers=dashboard).status_code == 403  # `record` only
+    grant = {"api_key_id": viewer_id(cli, admin_dir), "perm": "read"}
+    api.control("PUT", "/demo/collections/lab/grants", lyra, grant)
+    fetched = api.http.get(url, headers=dashboard)
+    assert fetched.status_code == 200 and fetched.content == data
+    api.control(
+        "PUT", "/demo/collections/lab/grants", lyra, {**grant, "granted": False}
+    )
+    assert api.http.get(url, headers=dashboard).status_code == 403
+    assert api.http.get(url).status_code == 401
+    api.control("PUT", "/demo/collections/lab/public", lyra, {"public": True})
+    assert api.http.get(url).content == data
+
+
+def viewer_id(cli, admin_dir) -> str:
+    return next(
+        k["id"]
+        for k in cli.ok(admin_dir, "list-api-keys")["keys"]
+        if k["label"] == "viewer app"
+    )
+
+
+# ── limits and browser access ──────────────────────────────────────────────────────────────
+def test_a_json_body_is_at_most_8_mib_and_a_file_streams_past_it(world):
+    api, lyra = world["api"], world["keys"]["lyra"]
+    big = b'{"artifact": {"text": "' + b"x" * (8 * 1024 * 1024) + b'"}}'
+    headers = {"Authorization": f"Bearer {lyra}", "Content-Type": "application/json"}
+    by_length = api.http.post(
+        api.base + "/demo/submissions", content=big, headers=headers
+    )
+    assert by_length.status_code == 413
+    conforms("submitArtifact", by_length)
+
+    def chunks():
+        for start in range(0, len(big), 1024 * 1024):
+            yield big[start : start + 1024 * 1024]
+
+    by_chunks = api.http.post(
+        api.base + "/demo/submissions", content=chunks(), headers=headers
+    )
+    assert by_chunks.status_code == 413, by_chunks.text
+    assert by_chunks.json()["code"] == "too_large"
+
+    file = b"y" * (9 * 1024 * 1024)
+    stored = api.http.put(
+        api.base + "/demo/collections/files/files/big.bin",
+        content=file,
+        headers={**digest_header(file), "Authorization": f"Bearer {lyra}"},
+    )
+    assert stored.status_code == 201, stored.text
+    assert stored.json()["size"] == len(file)
+
+
+def test_browser_origins_are_allowed_only_when_configured(server):
+    origin = {"Origin": "https://app.example"}
+    plain = HTTP.get(server.url + "/v1/status", headers=origin)
+    assert "access-control-allow-origin" not in plain.headers
+
+    cors = Server({**TEST_ENV, "SYMPOSIUM_SERVER_CORS_ORIGINS": "https://app.example"})
+    try:
+        cors.start()
+        allowed = HTTP.get(cors.url + "/v1/status", headers=origin)
+        assert allowed.headers["access-control-allow-origin"] == "https://app.example"
+        exposed = allowed.headers["access-control-expose-headers"]
+        assert {"ETag", "Link", "Repr-Digest", "X-Data-Citation"} <= set(
+            h.strip() for h in exposed.split(",")
+        )
+        preflight = HTTP.request(
+            "OPTIONS",
+            cors.url + "/v1/demo/record",
+            headers={
+                **origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "Authorization",
+            },
+        )
+        assert preflight.status_code == 200
+        assert preflight.headers["access-control-allow-origin"] == "https://app.example"
+        elsewhere = HTTP.request(
+            "OPTIONS",
+            cors.url + "/v1/demo/record",
+            headers={
+                "Origin": "https://elsewhere.example",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert "access-control-allow-origin" not in elsewhere.headers
+    finally:
+        cors.remove()

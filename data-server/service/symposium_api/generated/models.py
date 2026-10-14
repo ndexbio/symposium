@@ -309,6 +309,12 @@ class ObjectResource(BaseModel):
             description="The Artifact's relationships, narrowed to those touching this Object."
         ),
     ]
+    location_url: Annotated[
+        Optional[AnyUrl],
+        Field(
+            description="Where a `symposium-data:<file id>@v<n>` location is read on this API: the file\nversion's content (`getFileContent`), which its collection's access governs.\n"
+        ),
+    ] = None
     position: Position
 
 
@@ -432,13 +438,19 @@ class Resolution(BaseModel):
     location: Annotated[
         Optional[str],
         Field(
-            description="For `rest` and `download`, the Content Object's `location`."
+            description="For a Content Object, or an address through one, the Object's `location`.\n"
         ),
     ] = None
     access_method: Annotated[
         Optional[str],
         Field(
-            description="For `rest` and `download`, the Content Object's `access_method`."
+            description="For a Content Object, or an address through one, the Object's `access_method`.\n"
+        ),
+    ] = None
+    location_url: Annotated[
+        Optional[AnyUrl],
+        Field(
+            description="Where a `symposium-data:<file id>@v<n>` location is read on this API: the file\nversion's content (`getFileContent`), which its collection's access governs.\n"
         ),
     ] = None
     position: Position

@@ -49,6 +49,12 @@ class Settings:
         # seconds a session key lasts after an Ed25519 sign-in
         self.session_ttl = float(env.get("SYMPOSIUM_SERVER_SESSION_TTL", "900"))
         self.invite_hours = int(env.get("SYMPOSIUM_SERVER_INVITE_HOURS", "72"))
+        # browser origins allowed to call the API (CORS); none by default
+        self.cors_origins = [
+            origin.strip()
+            for origin in env.get("SYMPOSIUM_SERVER_CORS_ORIGINS", "").split(",")
+            if origin.strip()
+        ]
         # 0 means no quota. Counted per member, in each community, over the payload bytes
         # they uploaded first.
         self.quota_bytes = int(env.get("SYMPOSIUM_SERVER_QUOTA_BYTES", "0"))

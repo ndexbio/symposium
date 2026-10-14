@@ -74,7 +74,7 @@ Every admin operation is an admin-only API route. The admin's **public** key is 
 
 ## The Symposium API
 
-The data server serves one REST API at `/v1`. Its routes fall in two groups: the **Data API**, for reading and writing a community's data, and the **Control API**, for setting a community up. [`api/openapi.yaml`](../api/openapi.yaml) is its OpenAPI v3 contract, also served at `/v1/openapi.yaml` and `/v1/openapi.json`: every path, parameter, request and response body, error and security scheme of the record's routes. Because it is standard OpenAPI, it works with the tools of the OpenAPI ecosystem, such as OpenAPI Generator, `openapi-typescript`, `openapi-python-client` and oapi-codegen, which turn it into a typed client for your language in minutes, as well as with documentation viewers and mock servers.
+The data server serves one REST API at `/v1`. Its routes fall in two groups: the **Data API**, for reading and writing a community's data, and the **Control API**, for setting a community up. [`api/openapi.yaml`](../api/openapi.yaml) is its OpenAPI v3 contract, also served at `/v1/openapi.yaml` and `/v1/openapi.json`: every path, parameter, request and response body, error and security scheme of every route. Because it is standard OpenAPI, it works with the tools of the OpenAPI ecosystem, such as OpenAPI Generator, `openapi-typescript`, `openapi-python-client` and oapi-codegen, which turn it into a typed client for your language in minutes, as well as with documentation viewers and mock servers.
 
 ### Keys
 
@@ -86,7 +86,7 @@ Every request carries one API key, `Authorization: Bearer sak_…`. The key iden
 | member key | `/symposium gen-api-key <label>` | until revoked | you, a Member |
 | non-member key | `/symposium gen-api-key <label> --non-member` | until revoked | an application, with the collections it is granted |
 
-Handle an API key like any API key: keep it on a server or in a secret store, send it over HTTPS only, and revoke it if it leaks. Admin routes and key management take a session key; long-running streams take an issued key.
+Handle an API key like any API key: keep it on a server or in a secret store, send it over HTTPS only, and revoke it if it leaks. A browser app calls through its own backend, or, from an origin the server allows (`SYMPOSIUM_SERVER_CORS_ORIGINS`), with a key granted only what that app may show. Admin routes and key management take a session key; long-running streams take an issued key.
 
 ### Access
 
@@ -105,7 +105,7 @@ The Data API reads and writes a community's data. It has two views:
 - **the record**, in the [Symposium specification's model](../spec/symposium_specification.md): Artifacts, Objects, properties, relationships, Members and addresses;
 - **the files** stored in collections, including the data files Artifacts cite.
 
-Every route is under `/v1/{community}`. Listings page with `cursor` and `limit`. Record reads carry a `position`, the record's cursor at the time of the read.
+Every route is under `/v1/{community}`. Listings page with `cursor` and `limit`. Record reads carry a `position`, the record's cursor at the time of the read. A JSON request body is at most 8 MiB (`413` past it); a file's content streams, with no limit but the Member's quota.
 
 **The record.** These routes take `read` on `record`. They answer without a key when `record` is public.
 
@@ -121,7 +121,7 @@ Every route is under `/v1/{community}`. Listings page with `cursor` and `limit`.
 | `GET /artifacts/{name}/cited-by` | Later Artifacts that cite it |
 | `GET /artifacts/{name}/supersession` | Its supersession chain |
 | `GET /artifacts/{name}/findings` | The validator's findings on it |
-| `GET /resolve?address=` | What an address points at |
+| `GET /resolve?address=` | What an address points at; for a Content Object whose `location` is a file on this server, its `location_url` |
 | `GET /members`, `/members/{handle}` | The community's Members and what each has published |
 | `GET /members/{handle}/artifacts`, `/members/{handle}/messages` | A Member's Artifacts, and the Messages addressed to them |
 
@@ -324,10 +324,13 @@ Every read answers a `position`; send its `cursor` as `Last-Event-ID` to resume 
 /symposium data collection grant --collection lab --api-key <dashboard key id> --perm read
 ```
 
-`put` prints the file's citation, `symposium-data:<file id>@v1`. The dashboard reads it with its key:
+`put` prints the file's citation, `symposium-data:<file id>@v1`. An Artifact cites it as a `download` Content Object whose `location` is that citation (`tools/CANONICAL.md`). Once such an Artifact, say `agent_lyra_data_scores_v1` with its Object `scores_download`, is in the record, resolving the Object answers where to read the file, and the dashboard reads it with its key:
 
 ```bash
-curl -s -H "$H" $API/demo/files/<file id>/v/1 -o scores.csv
+curl -s -H "$H" "$API/demo/resolve?address=%40agent_lyra_data_scores_v1.scores_download" \
+  | jq -r .location_url
+# http://127.0.0.1:8790/v1/demo/files/<file id>/v/1
+curl -s -H "$H" http://127.0.0.1:8790/v1/demo/files/<file id>/v/1 -o scores.csv
 ```
 
 **11. Retire keys.** Each owner retires its own. In `agent_lyra`'s session:
@@ -421,6 +424,7 @@ Every setting is a `SYMPOSIUM_SERVER_*` environment variable.
 | Variable | Default | Meaning |
 |---|---|---|
 | `SYMPOSIUM_SERVER_PUBLIC_URL` | (the request's URL) | The base of every canonical `url` the API answers, such as `https://data.example.org`. |
+| `SYMPOSIUM_SERVER_CORS_ORIGINS` | (none) | The browser origins allowed to call the API, comma-separated, such as `https://app.example.org`. |
 | `SYMPOSIUM_SERVER_TRUSTED_PROXY` | `127.0.0.1` | The one address whose `X-Forwarded-*` headers are trusted. |
 | `SYMPOSIUM_SERVER_SESSION_TTL` | `900` | Lifetime, in seconds, of the session key an Ed25519 sign-in answers. |
 | `SYMPOSIUM_SERVER_INVITE_HOURS` | `72` | Default invite lifetime, in hours. |

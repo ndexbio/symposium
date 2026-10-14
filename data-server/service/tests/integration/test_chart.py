@@ -203,7 +203,23 @@ def test_a_new_admin_key_restarts_the_pod(tmp_path):
     assert checksum("other-admin", KEY) != first
 
 
-def test_the_gateway_route_keeps_the_data_apis_streams_open(tmp_path):
+def test_the_server_settings_render_as_its_environment(tmp_path):
+    values = {
+        "publicUrl": "https://data.example.org",
+        "corsOrigins": ["https://app.example.org", "https://lab.example.org"],
+    }
+    [container] = pod(render(tmp_path, values))["spec"]["containers"]
+    env = {e["name"]: e["value"] for e in container["env"]}
+    assert env["SYMPOSIUM_SERVER_PUBLIC_URL"] == "https://data.example.org"
+    assert env["SYMPOSIUM_SERVER_CORS_ORIGINS"] == (
+        "https://app.example.org,https://lab.example.org"
+    )
+    [container] = pod(render(tmp_path, {}))["spec"]["containers"]
+    names = {e["name"] for e in container["env"]}
+    assert not names & {"SYMPOSIUM_SERVER_PUBLIC_URL", "SYMPOSIUM_SERVER_CORS_ORIGINS"}
+
+
+def test_the_gateway_route_keeps_the_apis_streams_open(tmp_path):
     route = render(tmp_path, GATEWAY, "--api-versions", GATEWAY_API)["HTTPRoute"]
     assert route["spec"]["parentRefs"] == [{"name": "public", "namespace": "gateways"}]
     assert route["spec"]["hostnames"] == ["data.example.org"]

@@ -76,3 +76,16 @@ def test_the_quota_file_overrides_the_quota_only_with_test_hooks(tmp_path, monke
     override.write_text("1000")
     assert hooked.quota() == 1000
     assert plain.quota() == 500
+
+
+def test_cors_origins_are_a_comma_separated_list(tmp_path):
+    path = tmp_path / "service.env"
+    path.write_text(SERVICE_ENV)
+    assert Settings(str(path), environ={}).cors_origins == []
+    s = Settings(
+        str(path),
+        environ={
+            "SYMPOSIUM_SERVER_CORS_ORIGINS": " https://app.example.org,,https://lab.example.org "
+        },
+    )
+    assert s.cors_origins == ["https://app.example.org", "https://lab.example.org"]

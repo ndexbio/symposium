@@ -37,9 +37,25 @@ versioned and released separately, each under its own heading.
 - **`GET /v1/{community}/me`** reports the calling key: its kind, role, Member, label, grants
   and signing key. It replaces `whoami`.
 - **Every refusal answers one body, `{detail, code}`.**
+- **One contract for every route.** [`api/openapi.yaml`](api/openapi.yaml) now describes the
+  data server's own routes too, files, communities, sign-in, the roster, keys and
+  collections, each with the roles it allows; every route applies the rule the contract
+  states.
+- **A cited file is read on the same API.** Resolving a Content Object whose `location` is a
+  `symposium-data:` citation, or reading the Object, answers its `location_url`, the file
+  version's content, which its collection's access governs.
+
+### Added
+
+- **The 8 MiB limit on a request body is enforced** (413). A file's content and an import
+  stream past it, bounded by the quota.
+- **Browser apps**: `SYMPOSIUM_SERVER_CORS_ORIGINS` (the Helm chart's `corsOrigins`) lists the
+  origins allowed to call the API.
 
 ### Removed
 
+- **FastAPI's generated `/docs`, `/redoc` and `/openapi.json`.** The contract is served at
+  `/v1/openapi.yaml` and `/v1/openapi.json`.
 - **Read keys (`sdr_…`)** and their routes and commands (`keys mint|list|revoke`,
   `get --read-key-file`). A file has its collection's access: share it with a grant to a
   `non-member` key, or by making its collection public.

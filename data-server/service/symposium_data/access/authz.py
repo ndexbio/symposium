@@ -1,9 +1,8 @@
 """Authorization at the door: who may call an operation at all.
 
-Every generated route depends on `authorize("<operationId>")`, which applies that operation's
-`x-roles`, `x-session` and `x-anonymous` as `contract.Contract.rules` reads them. The hand-written
-routes apply the same checks through `caller_for` and the `require_*` helpers. What a caller may
-then do to a collection, the collection decides: its owner, its grants and whether it is public
+Every route of `/v1`, generated or hand-written, depends on `authorize("<operationId>")`, which
+applies that operation's `x-roles`, `x-session` and `x-anonymous` as `contract.Contract.rules`
+reads them. What a caller may then do to a collection, the collection decides: its owner, its grants and whether it is public
 (`records.can_read` and the checks beside it).
 """
 
@@ -12,7 +11,7 @@ from __future__ import annotations
 from fastapi import HTTPException, Request
 
 from ..wire import valid_community
-from .authn import authenticate
+from .authn import anonymous, authenticate, presents_key
 from .caller import Caller
 from .contract import Rule
 
@@ -56,30 +55,6 @@ def caller_for(conn, request: Request, community: str | None) -> Caller:
     )
 
 
-def require_key(caller: Caller) -> Caller:
-    if caller.anonymous:
-        raise HTTPException(401, "an API key is required: Authorization: Bearer sak_…")
-    return caller
-
-
-def require_session(caller: Caller) -> Caller:
-    """Changing access, keys or the server takes a session key: an issued key cannot widen
-    what any key may do."""
-    require_key(caller)
-    if caller.kind != "session":
-        raise HTTPException(
-            403, "this takes a session key: sign in with your Ed25519 key"
-        )
-    return caller
-
-
-def require_admin(caller: Caller) -> Caller:
-    require_session(caller)
-    if not caller.admin:
-        raise HTTPException(403, "only the admin may do this")
-    return caller
-
-
 def check(rule: Rule, caller: Caller) -> Caller:
     """`caller` when `rule` lets it call; refused otherwise. An anonymous caller passes only an
     operation that answers without a key; the operation then reads only public collections."""
@@ -106,6 +81,10 @@ def authorize(operation_id: str):
 
     def dependency(request: Request) -> Caller:
         rule = _wired["contract"].rules[operation_id]
+        name = request.path_params.get("community")
+        if name is None and not presents_key(request):
+            # nothing to look up: /v1/status answers even while PostgreSQL is down
+            return check(rule, anonymous(request, base_url(request)))
         with _wired["db"].connection() as conn:
             community = resolve_community(
                 conn, _wired["records"], request.path_params.get("community")

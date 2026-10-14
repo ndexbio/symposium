@@ -1,4 +1,7 @@
-"""Generate the API's server code from the contract: `symposium_api/generated/`.
+"""Generate the record routes' server code from the contract: `symposium_api/generated/`.
+
+Only the operations the contract marks `x-generated: true` are generated; the rest of `/v1` is
+hand-written in `symposium_data/app.py` and described by the same contract.
 
     python codegen/generate.py           regenerate it from ../../api/openapi.yaml
     python codegen/generate.py --check   regenerate into a scratch directory and fail if the
@@ -19,6 +22,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import yaml
+
 SERVICE = Path(__file__).resolve().parents[1]
 CONTRACT = SERVICE.parents[1] / "api" / "openapi.yaml"
 TEMPLATES = SERVICE / "codegen" / "templates"
@@ -38,15 +43,71 @@ GENERATOR = [
 ]
 
 
+def generated_only(contract: Path, into: Path) -> Path:
+    """A copy of the contract holding only its `x-generated` operations. -> its path, named
+    `openapi.yaml` as the generator reports its input."""
+    document = yaml.safe_load(contract.read_text(encoding="utf-8"))
+    paths = {}
+    for path, item in document["paths"].items():
+        kept = {
+            method: op
+            for method, op in item.items()
+            if isinstance(op, dict) and op.get("x-generated")
+        }
+        if kept:
+            paths[path] = kept
+    document["paths"] = paths
+    document["components"] = reached(document["components"], paths)
+    target = into / "openapi.yaml"
+    target.write_text(yaml.safe_dump(document, sort_keys=False, allow_unicode=True))
+    return target
+
+
+def reached(components: dict, paths: dict) -> dict:
+    """The components the kept operations reach, through every `$ref` they hold, and no others:
+    the generated models are the record routes' alone."""
+    wanted, queue = set(), [paths]
+    while queue:
+        node = queue.pop()
+        if isinstance(node, dict):
+            ref = node.get("$ref")
+            if (
+                isinstance(ref, str)
+                and ref.startswith("#/components/")
+                and ref not in wanted
+            ):
+                wanted.add(ref)
+                section, name = ref.removeprefix("#/components/").split("/")
+                queue.append(components[section][name])
+            queue.extend(node.values())
+        elif isinstance(node, list):
+            queue.extend(node)
+    kept = {}
+    for section, items in components.items():
+        if section == "securitySchemes":
+            kept[section] = items
+            continue
+        chosen = {
+            name: item
+            for name, item in items.items()
+            if f"#/components/{section}/{name}" in wanted
+        }
+        if chosen:
+            kept[section] = chosen
+    return kept
+
+
 def generate(output: Path) -> None:
     """Write the generated package into `output`, formatted the way the repository formats."""
     if output.exists():
         shutil.rmtree(output)
-    subprocess.run(
-        [*GENERATOR, "--input", str(CONTRACT), "--output", str(output)],
-        check=True,
-        capture_output=True,
-    )
+    with tempfile.TemporaryDirectory() as scratch:
+        source = generated_only(CONTRACT, Path(scratch))
+        subprocess.run(
+            [*GENERATOR, "--input", str(source), "--output", str(output)],
+            check=True,
+            capture_output=True,
+        )
     # the header names the input as the generator saw it; make it the repository path
     for path in output.rglob("*.py"):
         text = path.read_text()

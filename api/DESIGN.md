@@ -37,10 +37,15 @@ npx --yes @redocly/cli@2.59.0 lint --config api/redocly.yaml api/openapi.yaml
 
 `make test` runs it, then `tests/api/`, and CI runs `make test`.
 
-The server code that mirrors the contract is generated from it, never written by hand:
-`fastapi-code-generator` writes the routers and the service interface from the templates in
+The contract describes every route of `/v1`. The record's routes, the operations it marks
+`x-generated: true`, are generated from it, never written by hand: `fastapi-code-generator`
+writes their routers and service interface from the templates in
 `data-server/service/codegen/templates/`, and `datamodel-code-generator` writes the Pydantic
-models. After a change to `api/openapi.yaml`, regenerate and commit:
+models of the schemas they reach. The other routes are hand-written in
+`data-server/service/symposium_data/app.py`; each depends on `authorize` for its own
+operation, so the rule the contract states is the rule it applies, and
+`tests/api/test_openapi.py` checks that the contract and the server list the same routes.
+After a change to `api/openapi.yaml`, regenerate and commit:
 
 ```bash
 uv run --project data-server/service python data-server/service/codegen/generate.py
@@ -231,7 +236,10 @@ answers anonymously while the community's `record` collection is public.
 
 ### 3.2 Endpoint × role
 
-`tests/api/test_openapi.py` checks this table against `x-roles` in the contract.
+`tests/api/test_openapi.py` checks this table against `x-roles` in the contract. The rows from
+`getStatus` on are the hand-written routes, the ones that set a community up and its files.
+Routes marked `x-session` in the contract also take a session key, and the collection a route
+touches decides the rest (§3.1).
 
 | Operation | Method and path | non-member | member | admin |
 |---|---|---|---|---|
@@ -261,6 +269,46 @@ answers anonymously while the community's `record` collection is public.
 | listSubmissions | GET /{community}/submissions |  | ✓ own |  |
 | getSubmission | GET /{community}/submissions/{submission} |  | ✓ own |  |
 | streamSubmissions | GET /{community}/streams/submissions |  | ✓ own |  |
+| getStatus | GET /status | ✓ | ✓ | ✓ |
+| adminChallenge | POST /admin/challenge | ✓ | ✓ | ✓ |
+| adminSignIn | POST /admin/token | ✓ | ✓ | ✓ |
+| listCommunities | GET /communities |  |  | ✓ |
+| createCommunity | POST /communities |  |  | ✓ |
+| importCommunity | POST /communities/import |  |  | ✓ |
+| exportCommunity | GET /{community}/export |  |  | ✓ |
+| startPortNdex | POST /{community}/port-ndex |  |  | ✓ |
+| getPortNdex | GET /{community}/port-ndex/{port_id} |  |  | ✓ |
+| challenge | POST /{community}/auth/challenge | ✓ | ✓ | ✓ |
+| signIn | POST /{community}/auth/token | ✓ | ✓ | ✓ |
+| register | POST /{community}/owners | ✓ | ✓ | ✓ |
+| rotateKey | POST /{community}/owners/{handle}/keys |  | ✓ |  |
+| rebindMember | POST /{community}/owners/{handle}/rebind |  |  | ✓ |
+| setSuspectAfter | PUT /{community}/owners/{handle}/suspect-after |  |  | ✓ |
+| listRoster | GET /{community}/roster |  | ✓ | ✓ |
+| addMember | POST /{community}/roster/{handle} |  |  | ✓ |
+| removeMember | DELETE /{community}/roster/{handle} |  |  | ✓ |
+| listInvites | GET /{community}/invites |  |  | ✓ |
+| createInvite | POST /{community}/invites |  |  | ✓ |
+| listApiKeys | GET /{community}/api-keys |  | ✓ | ✓ |
+| createApiKey | POST /{community}/api-keys |  | ✓ | ✓ |
+| getApiKey | GET /{community}/api-keys/{key_id} |  | ✓ | ✓ |
+| revokeApiKey | DELETE /{community}/api-keys/{key_id} |  | ✓ | ✓ |
+| createCollection | POST /{community}/collections |  | ✓ | ✓ |
+| setGrant | PUT /{community}/collections/{collection}/grants |  | ✓ | ✓ |
+| setPublic | PUT /{community}/collections/{collection}/public |  | ✓ | ✓ |
+| putFile | PUT /{community}/collections/{collection}/files/{name} |  | ✓ | ✓ |
+| listFileVersions | GET /{community}/files/{file_id}/versions | ✓ | ✓ | ✓ |
+| addFileVersion | POST /{community}/files/{file_id}/versions |  | ✓ | ✓ |
+| deleteFile | DELETE /{community}/files/{file_id} |  | ✓ | ✓ |
+| getFileContent | GET /{community}/files/{file_id}/v/{ref} | ✓ | ✓ | ✓ |
+| statFileVersion | GET /{community}/files/{file_id}/v/{ref}/stat | ✓ | ✓ | ✓ |
+| purgeVersion | POST /{community}/files/{file_id}/v/{n}/purge |  |  | ✓ |
+| promoteVersion | POST /{community}/files/{file_id}/v/{n}/promote |  |  | ✓ |
+| listChanges | GET /{community}/collections/{collection}/changes | ✓ | ✓ | ✓ |
+| queryCollection | POST /{community}/collections/{collection}/query | ✓ | ✓ | ✓ |
+| findFile | GET /{community}/collections/{collection}/find | ✓ | ✓ | ✓ |
+| findByHash | GET /{community}/sha256/{sha} | ✓ | ✓ | ✓ |
+| verifyCitation | GET /{community}/verify | ✓ | ✓ | ✓ |
 
 "own" means rows about the key's Member: its submissions, and the replies addressed to it.
 
@@ -510,7 +558,9 @@ rule (the first writer, the admin, and `metadata.recipients`) applies to every k
   endpoint, a new optional field, a new event type) stay in v1. A breaking change opens
   `/v2` beside it. `info.version` tracks the contract.
 - **Limits.**
-  - A request body is at most 8 MiB, which answers 413. `/v1` sets none.
+  - A request body is at most 8 MiB, which answers 413: at once from its `Content-Length`,
+    or once the bytes read pass it. A file's content (`putFile`, `addFileVersion`) and an
+    import stream, with no limit but the quota.
   - An Artifact's embedded payload is at most 250 KB, as `publish.py` refuses today, which
     answers 422 with a finding. The validator reviews any payload over 50 KB.
   - The per-Member quota, `SYMPOSIUM_SERVER_QUOTA_BYTES`, applies to submissions as it does
@@ -634,6 +684,11 @@ same test for the same reason.
   the route's timeouts off (`timeouts: {request: 0s, backendRequest: 0s}`), and its Ingress
   takes the controller's own settings in `expose.ingress.annotations`.
 - **TLS** stays where it is today: the deployment's gateway, ingress or proxy terminates it.
+- **Browsers.** `SYMPOSIUM_SERVER_CORS_ORIGINS` (the Helm chart's `corsOrigins`) lists the
+  origins a browser app may call the API from. None by default. The server then allows the
+  `Authorization`, `Content-Type`, `Repr-Digest`, `If-Match`, `Range`, `Last-Event-ID` and
+  `X-Data-*` request headers, and exposes `ETag`, `Link`, `Location`, `Repr-Digest`,
+  `Content-Range` and `X-Data-*`.
 - **Health.** `GET /v1/status` stays the health check. Once the server is operational it
   also reports `api_index.behind`, the server-wide count of record versions the index has
   yet to fold in.

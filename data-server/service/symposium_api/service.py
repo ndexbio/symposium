@@ -168,6 +168,15 @@ class ApiService(Service):
     def base(caller: Caller) -> str:
         return caller.base_url + API
 
+    def location_url(self, caller, community, location) -> str | None:
+        """Where a `symposium-data:` location is read on this API: the cited file version's
+        content. None for any other location."""
+        cited = parse_citation(location)
+        if cited is None:
+            return None
+        file_id, n = cited
+        return f"{self.base(caller)}/{quote(community)}/files/{file_id}/v/{n}"
+
     def artifact_url(self, caller, community, name) -> str:
         return (
             f"{self.base(caller)}/{quote(community)}/artifacts/{quote(name, safe='')}"
@@ -443,16 +452,18 @@ class ApiService(Service):
             row, obj = self.object_of(conn, community, name, object)
             address = f"@{row['name']}.{obj['name']}"
             url = self.artifact_url(caller, community, row["name"])
-            return m.ObjectResource.model_validate(
-                {
-                    "url": self.address_url(caller, community, address, "object"),
-                    "address": address,
-                    "artifact_url": url,
-                    "object": obj,
-                    "relationships_url": f"{url}/relationships",
-                    "position": self.position(conn, community),
-                }
-            )
+            out = {
+                "url": self.address_url(caller, community, address, "object"),
+                "address": address,
+                "artifact_url": url,
+                "object": obj,
+                "relationships_url": f"{url}/relationships",
+                "position": self.position(conn, community),
+            }
+            location = self.location_url(caller, community, obj.get("location"))
+            if location:
+                out["location_url"] = location
+            return m.ObjectResource.model_validate(out)
 
     def get_object_property(self, caller, *, community, name, object, property):
         with self.connection() as conn:
@@ -653,11 +664,16 @@ class ApiService(Service):
             if info.get("property") and not info.get("method"):
                 out["value"] = holder[info["property"]]
             if info.get("method"):
-                method = info["method_obj"]
+                content = info["method_obj"]
                 out["verified"] = not verify_content(info)
-                for key in ("location", "access_method"):
-                    if isinstance(method.get(key), str):
-                        out[key] = method[key]
+            else:
+                content = holder if kind == "object" else {}
+            for key in ("location", "access_method"):
+                if isinstance(content.get(key), str):
+                    out[key] = content[key]
+            location = self.location_url(caller, community, out.get("location"))
+            if location:
+                out["location_url"] = location
             return m.Resolution.model_validate(out)
 
     # ── members ────────────────────────────────────────────────────────────────────────────

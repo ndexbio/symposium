@@ -16,35 +16,20 @@ class Runtime:
     records: Any
     store: Any
     settings: Any
-    tokens: Any
     admin_mode: Callable[[], Any]
-    # SYMPOSIUM_DATA_API_PUBLIC_URL: the base of every canonical URL
+    # SYMPOSIUM_SERVER_PUBLIC_URL: the base of every canonical URL
     public_url: str | None
 
 
 _wired: dict = {}
 
 
-def wire(runtime: Runtime, service, keys, contract, streams) -> None:
-    _wired.update(
-        runtime=runtime, service=service, keys=keys, contract=contract, streams=streams
-    )
+def wire(runtime: Runtime, service) -> None:
+    _wired.update(runtime=runtime, service=service)
 
 
 def runtime() -> Runtime:
     return _wired["runtime"]
-
-
-def keys():
-    return _wired["keys"]
-
-
-def contract():
-    return _wired["contract"]
-
-
-def streams():
-    return _wired["streams"]
 
 
 def service_provider():

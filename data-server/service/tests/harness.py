@@ -48,13 +48,14 @@ TEST_ENV = {
     "SYMPOSIUM_SERVER_TEST_HOOKS": "1",
     # an upload's heartbeat, so a test can see one without streaming for a minute
     "SYMPOSIUM_SERVER_HEARTBEAT": "0.2",
-    # the API's stream heartbeat, which also paces each stream's key re-check
-    "SYMPOSIUM_DATA_API_HEARTBEAT": "2",
+    # the streams' heartbeat, which also paces each stream's key and access re-check
+    "SYMPOSIUM_SERVER_STREAM_HEARTBEAT": "2",
 }
 
 SUPERVISORCTL = ("supervisorctl", "-c", "/tmp/supervisord.conf")
 
-# Run inside the container: empty every data table and the bucket, keeping the admin binding.
+# Run inside the container: empty every data table and the bucket, keeping the admin binding
+# and the admin's sessions, as a test's admin signed in before the reset.
 RESET = """
 import os, psycopg
 from symposium_data.runtime import PayloadStore, Settings
@@ -63,9 +64,10 @@ store = PayloadStore(settings)
 with psycopg.connect(settings.database_url) as conn:
     conn.execute(
         "TRUNCATE communities, owners, owner_keys, challenges, roster, grants, invites, "
-        "collections, files, versions, payloads, read_keys, ports, api_keys, api_streams, "
+        "collections, files, versions, payloads, ports, api_streams, "
         "api_index, api_citations, api_index_position CASCADE"
     )
+    conn.execute("DELETE FROM api_keys WHERE role <> 'admin'")
 for page in store.s3.get_paginator("list_objects_v2").paginate(Bucket=store.bucket):
     for item in page.get("Contents", []):
         store.s3.delete_object(Bucket=store.bucket, Key=item["Key"])
@@ -82,14 +84,17 @@ for hook in (store.FAULT_FILE, Settings.QUOTA_FILE):
 # server's own code and settings, exactly as the API process runs it; it prints the job's result.
 JOB = """
 import sys
+from pathlib import Path
+from symposium_data.api_keys import ApiKeys, Sealer, key_file_from
 from symposium_data.jobs import Jobs
 from symposium_data.records import Records
 from symposium_data.runtime import Database, PayloadStore, Settings
 settings = Settings()
 db = Database(settings)
 db.open()
+keys = ApiKeys(Sealer(key_file_from(Path(settings.path))))
 try:
-    print(getattr(Jobs(settings, db, PayloadStore(settings), Records()), sys.argv[1])())
+    print(getattr(Jobs(settings, db, PayloadStore(settings), Records(), keys), sys.argv[1])())
 finally:
     db.pool.close()
 """

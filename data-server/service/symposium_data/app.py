@@ -1,8 +1,13 @@
-"""The Symposium Control API, `/v1`. Every byte is streamed by this service; S3 is never exposed.
+"""The hand-written routes of `/v1`: communities, sign-in, the roster, API keys, collections
+and files. Every byte is streamed by this service; S3 is never exposed. The record's routes are
+generated from the contract and mounted beside these by `symposium_server`.
 
 Communities are tenants (R-G8): every community-dependent route is under /v1/{community}/...,
 with collection-scoped routes under collections/{collection}/ and file routes under files/{id}/.
 Only /v1/status, /v1/communities and the server admin's sign-in (/v1/admin/...) are server-wide.
+
+Every request presents one API key or none (`access`). A sign-in with an Ed25519 key answers a
+session key; collections decide what a key may read and write.
 
 Nobody has a shell on the server (R-D7): every admin operation is an admin-only route, and the
 admin's key comes from the key file on the volume (R-D4). Without a usable one the server is
@@ -31,15 +36,17 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
-from . import API_VERSION, version
+from . import API_VERSION, access, version
+from .access import Caller, caller_for, require_admin, require_key, require_session
 from .admin_key import AdminKeyFile, AdminMode
 from .api_keys import ApiKeys, LabelInUse, Sealer, key_file_from
 from .archive import Archive, Malformed, Refused
-from .auth import PublicKeys, Secrets, Tokens
+from .auth import PublicKeys, Secrets
 from .jobs import Jobs
 from .records import (
     Conflict,
     Forbidden,
+    Invalid,
     NotFound,
     PreconditionFailed,
     QuotaExceeded,
@@ -69,9 +76,9 @@ store = PayloadStore(settings)
 records = Records()
 keys = PublicKeys()
 secrets = Secrets()
-tokens = Tokens(settings.token_key_file, settings.server_id, settings.token_ttl)
 api_keys = ApiKeys(Sealer(key_file_from(Path(settings.path))))
-jobs = Jobs(settings, db, store, records)
+access.wire(db=db, records=records, keys=api_keys)
+jobs = Jobs(settings, db, store, records, api_keys)
 cleanup = jobs.cleanup
 archive = Archive(db, store, records, cleanup, settings.heartbeat)
 log = logging.getLogger("symposium_data.app")
@@ -121,6 +128,11 @@ async def _forbidden(_request, error):
 @app.exception_handler(Conflict)
 async def _conflict(_request, error):
     return JSONResponse({"detail": str(error)}, status_code=409)
+
+
+@app.exception_handler(Invalid)
+async def _invalid(_request, error):
+    return JSONResponse({"detail": str(error)}, status_code=400)
 
 
 # Callables that add to /v1/status once the server is operational and healthy: the
@@ -208,16 +220,6 @@ def refuse(status: int, message: str, conn=None):
     raise HTTPException(status, message)
 
 
-READ_KEY_PREFIX = "sdr_"
-
-
-def bearer(request: Request) -> str | None:
-    header = request.headers.get("authorization", "")
-    if not header.lower().startswith("bearer "):
-        return None
-    return header.split(None, 1)[1].strip()
-
-
 def community_of(conn, name: str) -> str:
     """The community a path names, as it was created; 404 for a non-slug or unknown name,
     without touching the database for a non-slug (R-G8)."""
@@ -229,36 +231,22 @@ def community_of(conn, name: str) -> str:
     return found
 
 
-def owner_of(conn, request: Request, community: str | None) -> tuple[str, str]:
-    """The (handle, kid) behind a valid bearer token whose key is still active. A member's
-    token is valid only in its own community; the server admin's token in every community.
-    `community` None accepts only the admin. Read keys never authorize anything but reads."""
-    credential = bearer(request)
-    if credential is None:
-        refuse(401, "a bearer token is required")
-    if credential.startswith(READ_KEY_PREFIX):
-        refuse(403, "a read key can only read")
-    claims = tokens.read(credential)
-    if claims is None:
-        refuse(401, "the token is not valid or has expired")
-    if claims.get("adm"):
-        if not records.admin_key_is_active(conn, claims["kid"]):
-            refuse(401, "the token's key is no longer active")
-        return claims["sub"], claims["kid"]
-    if community is None:
-        refuse(403, "only the admin may do this")
-    if claims.get("com") != community:
-        refuse(401, "the token is for another community")
-    if not records.key_is_active(conn, community, claims["sub"], claims["kid"]):
-        refuse(401, "the token's key is no longer active")
-    return claims["sub"], claims["kid"]
+def signed_in(conn, request: Request, community: str | None) -> Caller:
+    """The caller behind a request that needs a key: 401 without one."""
+    return require_key(caller_for(conn, request, community))
 
 
-def require_admin(conn, request: Request, community: str | None = None) -> str:
-    handle, _ = owner_of(conn, request, community)
-    if not records.is_admin(conn, handle):
-        refuse(403, "only the admin may do this")
-    return handle
+def as_admin(conn, request: Request, community: str | None = None) -> str:
+    """The admin's handle, from the admin's session key; refused for anyone else."""
+    return require_admin(caller_for(conn, request, community)).handle
+
+
+def as_member(conn, request: Request, community: str) -> Caller:
+    """A Member of this community, or the admin, with any key that acts as one."""
+    caller = signed_in(conn, request, community)
+    if caller.role == "non-member":
+        refuse(403, "a non-member key may not do this; it takes member, admin")
+    return caller
 
 
 def checked_new_key(conn, community: str, handle: str, body) -> tuple[str, dict]:
@@ -288,20 +276,35 @@ def admin_challenge():
     return {"nonce": nonce, "expires_in": 300}
 
 
+def session_out(row, key: str) -> dict:
+    return {
+        "key": key,
+        "expires": iso(row["expires"]),
+        "expires_in": settings.session_ttl,
+        "kid": row["ed25519_kid"],
+    }
+
+
 @app.post("/v1/admin/token")
-def admin_token(body: AdminTokenIn):
-    """The server admin's token: signed by the admin's key, valid in every community."""
+def admin_token(body: AdminTokenIn, response: Response):
+    """The server admin's session key: signed in with the admin's key, valid in every
+    community."""
     with db.connection() as conn:
         admin = records.config(conn, "admin")
         if not records.take_challenge(conn, None, admin, body.nonce):
             refuse(401, "the challenge is unknown, spent or expired", conn)
         for key in records.admin_keys(conn):
             if keys.verify(key["jwk"], body.nonce.encode(), body.signature):
-                return {
-                    "token": tokens.issue(admin, key["kid"]),
-                    "expires_in": tokens.ttl,
-                    "kid": key["kid"],
-                }
+                row, session = api_keys.create_session(
+                    conn,
+                    community=None,
+                    role="admin",
+                    handle=admin,
+                    ed25519_kid=key["kid"],
+                    ttl_seconds=settings.session_ttl,
+                )
+                response.headers["Cache-Control"] = "no-store"
+                return session_out(row, session)
         refuse(401, "the signature does not match the admin's key", conn)
 
 
@@ -316,7 +319,7 @@ def create_community(body: CommunityIn, request: Request, response: Response):
             "'status', 'communities' or 'admin'",
         )
     with db.connection() as conn:
-        admin = require_admin(conn, request)
+        admin = as_admin(conn, request)
         try:
             created = records.create_community(conn, body.name, admin)
         except Conflict as e:
@@ -329,7 +332,7 @@ def create_community(body: CommunityIn, request: Request, response: Response):
 @app.get("/v1/communities")
 def list_communities(request: Request):
     with db.connection() as conn:
-        require_admin(conn, request)
+        as_admin(conn, request)
         return {
             "communities": [
                 {"name": r["name"], "created": iso(r["created"])}
@@ -349,18 +352,25 @@ def challenge(community: str, body: ChallengeIn):
 
 
 @app.post("/v1/{community}/auth/token")
-def token(community: str, body: TokenIn):
+def token(community: str, body: TokenIn, response: Response):
+    """A Member's session key: signed in with one of its active Ed25519 keys, valid only in
+    this community."""
     with db.connection() as conn:
         community = community_of(conn, community)
         if not records.take_challenge(conn, community, body.handle, body.nonce):
             refuse(401, "the challenge is unknown, spent or expired", conn)
         for key in records.active_keys(conn, community, body.handle):
             if keys.verify(key["jwk"], body.nonce.encode(), body.signature):
-                return {
-                    "token": tokens.issue(body.handle, key["kid"], community),
-                    "expires_in": tokens.ttl,
-                    "kid": key["kid"],
-                }
+                row, session = api_keys.create_session(
+                    conn,
+                    community=community,
+                    role="member",
+                    handle=body.handle,
+                    ed25519_kid=key["kid"],
+                    ttl_seconds=settings.session_ttl,
+                )
+                response.headers["Cache-Control"] = "no-store"
+                return session_out(row, session)
         refuse(401, "the signature does not match an active key of this handle", conn)
 
 
@@ -389,48 +399,21 @@ def register(community: str, body: RegisterIn):
 
 @app.post("/v1/{community}/owners/{handle}/keys", status_code=201)
 def rotate(community: str, handle: str, body: RotateIn, request: Request):
-    """Replace the caller's key in this community. Signed by the current token and proven by
-    the new key; the old key is retired, not deleted, so attribution survives."""
+    """Replace the caller's key in this community. Signed in with a session of the current key
+    and proven by the new key; the old key is retired, not deleted, so attribution survives, and
+    the sessions it signed in end."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        current, _ = owner_of(conn, request, community)
-        if current != handle or records.is_admin(conn, current):
+        caller = require_session(caller_for(conn, request, community))
+        if caller.handle != handle or caller.admin:
             refuse(403, "an owner may rotate only their own key")
         kid, jwk = checked_new_key(conn, community, handle, body)
         if records.key_on_record(conn, community, kid):
             refuse(409, "that key is already on record", conn)
+        retired = [k["kid"] for k in records.active_keys(conn, community, handle)]
         records.rotate(conn, community, handle, kid, jwk)
+        api_keys.end_sessions(conn, retired, "rotation")
         return {"handle": handle, "kid": kid}
-
-
-@app.get("/v1/{community}/whoami")
-def whoami(community: str, request: Request):
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        handle, kid = owner_of(conn, request, community)
-        if records.is_admin(conn, handle):
-            return {
-                "handle": handle,
-                "kid": kid,
-                "community": community,
-                "admin": True,
-                "grants": [],
-                "suspect_after": None,
-            }
-        owner = records.owner(conn, community, handle)
-        return {
-            "handle": handle,
-            "kid": kid,
-            "community": community,
-            "admin": False,
-            "grants": [
-                {"collection": collection, "perm": perm}
-                for collection, perm in records.grants(conn, community, handle)
-            ],
-            "suspect_after": owner["suspect_after"].isoformat()
-            if owner["suspect_after"]
-            else None,
-        }
 
 
 @app.get("/v1/{community}/roster")
@@ -440,7 +423,7 @@ def roster(community: str, request: Request):
     the admin may: members validate addresses to one another (`@handle`) against it."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        owner_of(conn, request, community)  # a member of this community, or the admin
+        as_member(conn, request, community)
         return {
             "community": community,
             "roster": [
@@ -467,7 +450,7 @@ def add_member(community: str, handle: str, request: Request, response: Response
     handle = roster_handle(handle)
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        as_admin(conn, request, community)
         try:
             added = records.add_to_roster(conn, community, handle)
         except Forbidden as e:
@@ -484,7 +467,7 @@ def remove_member(community: str, handle: str, request: Request):
     handle = roster_handle(handle)
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        as_admin(conn, request, community)
         removed = records.remove_from_roster(conn, community, handle)
         if not removed:
             refuse(404, f"'{handle}' is not on the {community} roster")
@@ -504,7 +487,7 @@ def create_invite(community: str, body: InviteIn, request: Request):
     GET .../invites only while pending."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        as_admin(conn, request, community)
         if not records.on_roster(conn, community, body.handle):
             refuse(403, f"'{body.handle}' is not on the {community} roster")
         return mint_invite(conn, community, body.handle, body.hours)
@@ -530,7 +513,7 @@ def list_invites(community: str, request: Request):
     again (admin only). Used, expired and revoked invites are never listed."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        as_admin(conn, request, community)
         return {
             "community": community,
             "invites": [
@@ -544,22 +527,18 @@ def list_invites(community: str, request: Request):
         }
 
 
-# ── the Data API's keys (api/DESIGN.md §4): a Member makes its own, the admin makes app keys ─
+# ── API keys: a signed-in caller issues keys for applications ─────────────────────────────────
 class ApiKeyIn(BaseModel):
     label: str = Field(min_length=1, max_length=200)
+    # by default a Member's own key, and for the admin a key for an application
+    role: str | None = Field(default=None, pattern=r"^(member|non-member)$")
     expires_days: int | None = Field(default=None, ge=1, le=366)
 
 
-def key_owner(conn, request: Request, community: str) -> tuple[str, bool]:
-    """(handle, is admin) behind the request's Ed25519 token, in this community."""
-    handle, _ = owner_of(conn, request, community)
-    return handle, records.is_admin(conn, handle)
-
-
 def api_key_out(row, reveal: bool) -> dict:
-    """One key as its caller sees it. Its value only when `reveal` (the key's owner), and null
-    once revoked."""
-    out = {
+    """One issued key as its caller sees it. Its value only when `reveal` (the key's owner),
+    and null once revoked."""
+    return {
         "id": str(row["id"]),
         "community": row["community"],
         "role": row["role"],
@@ -572,14 +551,14 @@ def api_key_out(row, reveal: bool) -> dict:
         "revoked": iso(row["revoked"]),
         "revoked_by": row["revoked_by"],
         "last_used": iso(row["last_used"]),
-        "uses": row["uses"],
     }
-    return out
 
 
-def owns(row, handle: str, admin: bool) -> bool:
-    """A Member owns its own keys; the admin owns the application (`non-member`) keys."""
-    return row["handle"] is None if admin else row["handle"] == handle
+def owns(row, caller: Caller) -> bool:
+    """Whoever issued a key owns it; the admin also owns every non-member key."""
+    return row["created_by"] == caller.handle or (
+        caller.admin and row["role"] == "non-member"
+    )
 
 
 def api_key_id(key_id: str) -> uuid.UUID:
@@ -589,29 +568,41 @@ def api_key_id(key_id: str) -> uuid.UUID:
         refuse(404, f"no API key '{key_id}'")
 
 
+def key_manager(conn, request: Request, community: str) -> Caller:
+    """Issuing, listing and revoking keys takes a session: the admin's, or a registered
+    Member's."""
+    caller = require_session(caller_for(conn, request, community))
+    if not caller.admin and not (
+        records.on_roster(conn, community, caller.handle)
+        and records.active_keys(conn, community, caller.handle)
+    ):
+        refuse(403, f"'{caller.handle}' is not a registered member of {community}")
+    return caller
+
+
 @app.post("/v1/{community}/api-keys", status_code=201)
 def create_api_key(
     community: str, body: ApiKeyIn, request: Request, response: Response
 ):
-    """A Data API key for this community, answered once with its value. A Member's token makes
-    a `member` key bound to that Member, which publishes as it; the admin's token makes a
-    `non-member` key for an application. Its label names it among its owner's live keys."""
+    """An issued API key for this community, answered once with its value. A Member makes
+    `member` keys, which act as itself, and `non-member` keys for applications; the admin makes
+    `non-member` keys. A non-member key reads the collections its owners grant it. Its label
+    names it among its issuer's live keys."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, admin = key_owner(conn, request, community)
-        if not admin and not (
-            records.on_roster(conn, community, handle)
-            and records.active_keys(conn, community, handle)
-        ):
-            refuse(403, f"'{handle}' is not a registered member of {community}")
+        caller = key_manager(conn, request, community)
+        role = body.role or ("non-member" if caller.admin else "member")
+        if role == "member" and caller.admin:
+            refuse(400, "the admin is not a Member: it issues non-member keys")
         try:
             row, _ = api_keys.create(
                 conn,
                 community=community,
-                handle=None if admin else handle,
+                role=role,
+                handle=caller.handle if role == "member" else None,
                 label=body.label,
                 expires_days=body.expires_days,
-                created_by=handle,
+                created_by=caller.handle,
             )
         except LabelInUse:
             refuse(409, f"a live key is already labelled '{body.label}'")
@@ -629,9 +620,9 @@ def list_api_keys(
     limit: int = Query(default=100, ge=1, le=1000),
     include_revoked: bool = True,
 ):
-    """A Member's own keys, with their values; for the admin, every key in the community, the
-    application keys with their values and the Members' keys without. Expired keys' values
-    are erased before anything is listed."""
+    """The keys the caller issued, with their values; for the admin, every issued key in the
+    community, the non-member keys with their values and the Members' keys without. Expired
+    keys' values are erased before anything is listed."""
     after = None
     if cursor:
         try:
@@ -643,7 +634,7 @@ def list_api_keys(
             refuse(400, "the cursor is not one this server issued")
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, admin = key_owner(conn, request, community)
+        caller = key_manager(conn, request, community)
         api_keys.sweep(conn)
         conn.commit()
         rows = api_keys.page(
@@ -651,7 +642,7 @@ def list_api_keys(
             community=community,
             after=after,
             limit=limit + 1,
-            handle=None if admin else handle,
+            issuer=None if caller.admin else caller.handle,
             include_revoked=include_revoked,
         )
     more, rows = len(rows) > limit, rows[:limit]
@@ -664,36 +655,36 @@ def list_api_keys(
     response.headers["Cache-Control"] = "no-store"
     return {
         "community": community,
-        "items": [api_key_out(r, reveal=owns(r, handle, admin)) for r in rows],
+        "items": [api_key_out(r, reveal=owns(r, caller)) for r in rows],
         "next": following,
     }
 
 
 @app.get("/v1/{community}/api-keys/{key_id}")
 def get_api_key(community: str, key_id: str, request: Request, response: Response):
-    """One key: a Member reads its own, with its value; the admin reads any key of the
+    """One issued key: its issuer reads it with its value; the admin reads any key of the
     community, a Member's without its value."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, admin = key_owner(conn, request, community)
+        caller = key_manager(conn, request, community)
         row = api_keys.row(conn, community, api_key_id(key_id))
-        if row is None or not (admin or row["handle"] == handle):
+        if row is None or not (caller.admin or row["created_by"] == caller.handle):
             refuse(404, f"no API key '{key_id}' in {community}")
         response.headers["Cache-Control"] = "no-store"
-        return api_key_out(row, reveal=owns(row, handle, admin))
+        return api_key_out(row, reveal=owns(row, caller))
 
 
 @app.delete("/v1/{community}/api-keys/{key_id}")
 def revoke_api_key(community: str, key_id: str, request: Request):
-    """Revoke a key its caller owns: a Member its own, the admin an application key. It stops
-    authenticating at once, its value is erased, and its row stays as the record."""
+    """Revoke a key its caller owns: its issuer's, or any non-member key for the admin. It
+    stops authenticating at once, its value is erased, and its row stays as the record."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, admin = key_owner(conn, request, community)
+        caller = key_manager(conn, request, community)
         row = api_keys.row(conn, community, api_key_id(key_id))
-        if row is None or not owns(row, handle, admin):
+        if row is None or not owns(row, caller):
             refuse(404, f"no API key '{key_id}' in {community}")
-        row = api_keys.revoke(conn, community, row["id"], handle)
+        row = api_keys.revoke(conn, community, row["id"], caller.handle)
         conn.commit()
         return api_key_out(row, reveal=False)
 
@@ -709,10 +700,12 @@ def rebind(community: str, handle: str, request: Request, body: RebindIn | None 
     handle = roster_handle(handle)
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        as_admin(conn, request, community)
         if not records.on_roster(conn, community, handle):
             refuse(404, f"'{handle}' is not on the {community} roster")
+        kids = [k["kid"] for k in records.active_keys(conn, community, handle)]
         retired = records.retire_keys(conn, community, handle)
+        api_keys.end_sessions(conn, kids, "rebind")
         hours = body.hours if body else None
         return {"retired_keys": retired, **mint_invite(conn, community, handle, hours)}
 
@@ -729,7 +722,7 @@ def suspect_after(community: str, handle: str, body: SuspectIn, request: Request
     handle = roster_handle(handle)
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        as_admin(conn, request, community)
         if not records.set_suspect_after(conn, community, handle, body.at):
             refuse(404, f"no owner '{handle}' in {community}")
     return {
@@ -758,7 +751,7 @@ def export(community: str, request: Request):
     every stored payload. Written by a thread into a pipe, so no copy lands on disk."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        as_admin(conn, request, community)
     reader, writer = pipe()
 
     def produce():
@@ -795,7 +788,7 @@ async def import_community(request: Request):
 
     def authorize():
         with db.connection() as conn:
-            require_admin(conn, request)
+            as_admin(conn, request)
 
     await run_in_threadpool(authorize)
     reader, writer = pipe()
@@ -959,10 +952,11 @@ async def put_file(community: str, collection: str, name: str, request: Request)
     def reserve():
         with db.connection() as conn:
             found = community_of(conn, community)
-            handle, kid = owner_of(conn, request, found)
+            caller = signed_in(conn, request, found)
+            handle, kid = caller.handle, caller.ed25519_kid
             if not records.collection_exists(conn, found, collection):
                 refuse(404, f"no collection {found}/{collection}")
-            if not records.can_create(conn, handle, found, collection):
+            if not records.can_create(conn, caller.principal(), found, collection):
                 refuse(403, f"no write access to {found}/{collection}")
             return (
                 found,
@@ -1029,9 +1023,10 @@ async def put_version(community: str, file_id: uuid.UUID, request: Request):
     def check():
         with db.connection() as conn:
             found = community_of(conn, community)
-            handle, kid = owner_of(conn, request, found)
+            caller = signed_in(conn, request, found)
+            handle, kid = caller.handle, caller.ed25519_kid
             row = records.file_row(conn, found, file_id)
-            if not records.can_modify(conn, handle, row):
+            if not records.can_modify(conn, caller.principal(), row):
                 refuse(403, "only the file's creator or the admin may add versions")
             head = records.latest_version(conn, file_id)
             if expected is not None and head["n"] != expected:
@@ -1087,9 +1082,10 @@ def delete_file(
     expected = wire(parse_if_match, request.headers.get("if-match"))
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, kid = owner_of(conn, request, community)
+        caller = signed_in(conn, request, community)
+        handle, kid = caller.handle, caller.ed25519_kid
         row = records.file_row(conn, community, file_id)
-        if not records.can_modify(conn, handle, row):
+        if not records.can_modify(conn, caller.principal(), row):
             refuse(403, "only the file's creator or the admin may delete it")
         try:
             n = records.tombstone(conn, file_id, handle, kid, reason, expected)
@@ -1107,7 +1103,7 @@ def purge(community: str, file_id: uuid.UUID, n: int, request: Request):
     When S3 refuses, the payload stays purging and the janitor finishes the job."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        as_admin(conn, request, community)
         records.version(
             conn, community, file_id, n
         )  # 404 unless it is this community's
@@ -1119,30 +1115,16 @@ def purge(community: str, file_id: uuid.UUID, n: int, request: Request):
     return result
 
 
-def reader_of(conn, request: Request, community: str) -> tuple[str | None, dict | None]:
-    """Who is reading: (handle, None) for a signed-in owner, (None, key) for a read key of
-    this community, (None, None) for an anonymous request (enough only for a public
-    collection)."""
-    credential = bearer(request)
-    if credential is None:
-        return None, None
-    if credential.startswith(READ_KEY_PREFIX):
-        key = records.use_key(conn, community, secrets.digest(credential))
-        if key is None:
-            refuse(401, "the read key is not valid, has expired, or was revoked")
-        return None, key
-    return owner_of(conn, request, community)[0], None
-
-
 def readable(request: Request, community: str, file_id, ref):
-    """-> (community, stat, s3 key) of a version the caller may read."""
+    """-> (community, stat, s3 key) of a version the caller may read: any caller, a key or
+    none, as the version's collection allows."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, key = reader_of(conn, request, community)
+        caller = caller_for(conn, request, community)
         row = records.version(conn, community, file_id, ref)
-        if not records.can_read(conn, handle, row, key):
-            if handle is None and key is None:
-                refuse(401, "sign in, or use a read key, to read this file")
+        if not records.can_read(conn, caller.principal(), row):
+            if caller.anonymous:
+                refuse(401, "use an API key to read this file")
             refuse(403, "no read access to this file")
         return community, records.stat(conn, row), row["s3_key"]
 
@@ -1211,40 +1193,21 @@ class PublicIn(BaseModel):
 
 
 class GrantIn(BaseModel):
-    handle: str = Field(pattern=NAME)
+    """A grant names a roster Member by `handle`, or a non-member API key by `api_key_id`."""
+
+    handle: str | None = Field(default=None, pattern=NAME)
+    api_key_id: uuid.UUID | None = None
     perm: str = Field(pattern=r"^(read|write)$")
     granted: bool = True
 
 
-class KeyIn(BaseModel):
-    label: str = Field(min_length=1, max_length=200)
-    file_id: uuid.UUID | None = None
-    expires_hours: int | None = Field(default=None, ge=1, le=24 * 366)
-
-
-def key_view(row) -> dict:
-    """A read key as it may be shown: never its secret."""
-    return {
-        "id": str(row["id"]),
-        "label": row["label"],
-        "community": row["community"],
-        "collection": row["collection"],
-        "file_id": str(row["file_id"]) if row["file_id"] else None,
-        "created_by": row["created_by"],
-        "created": iso(row["created"]),
-        "expires": iso(row["expires"]),
-        "revoked": iso(row["revoked"]),
-        "uses": row["uses"],
-        "last_used": iso(row["last_used"]),
-    }
-
-
-def require_manager(conn, request, community, collection) -> str:
-    handle, _ = owner_of(conn, request, community)
+def require_manager(conn, request, community, collection) -> Caller:
+    """Changing who may use a collection takes the session of its owner or the admin."""
+    caller = require_session(caller_for(conn, request, community))
     records.collection_row(conn, community, collection)
-    if not records.can_manage(conn, handle, community, collection):
+    if not records.can_manage(conn, caller.principal(), community, collection):
         refuse(403, "only the collection's owner or the admin may do this")
-    return handle
+    return caller
 
 
 @app.post("/v1/{community}/collections", status_code=201)
@@ -1252,22 +1215,21 @@ def create_collection(community: str, body: CollectionIn, request: Request):
     """A roster member, or the admin, creates a collection and becomes its owner (R-D3)."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, _ = owner_of(conn, request, community)
-        if not (
-            records.is_admin(conn, handle) or records.on_roster(conn, community, handle)
-        ):
-            refuse(403, f"'{handle}' is not on the {community} roster")
-        records.create_collection(conn, community, body.name, handle)
+        caller = as_member(conn, request, community)
+        if not (caller.admin or records.on_roster(conn, community, caller.handle)):
+            refuse(403, f"'{caller.handle}' is not on the {community} roster")
+        records.create_collection(conn, community, body.name, caller.handle)
         return {
             "community": community,
             "name": body.name,
-            "owner": handle,
+            "owner": caller.handle,
             "public": False,
         }
 
 
 @app.put("/v1/{community}/collections/{collection}/public")
 def set_public(community: str, collection: str, body: PublicIn, request: Request):
+    """The owner opens a collection to reads without a key, or closes it again."""
     with db.connection() as conn:
         community = community_of(conn, community)
         require_manager(conn, request, community, collection)
@@ -1277,93 +1239,28 @@ def set_public(community: str, collection: str, body: PublicIn, request: Request
 
 @app.put("/v1/{community}/collections/{collection}/grants")
 def set_grant(community: str, collection: str, body: GrantIn, request: Request):
-    """The owner grants (or withdraws) read or write to a roster member (R-D3)."""
+    """The owner grants (or withdraws) read or write to a roster Member, or read to a
+    non-member API key (R-D3)."""
     with db.connection() as conn:
         community = community_of(conn, community)
         require_manager(conn, request, community, collection)
         records.set_grant(
-            conn, community, collection, body.handle, body.perm, body.granted
+            conn,
+            community,
+            collection,
+            body.perm,
+            body.granted,
+            handle=body.handle,
+            api_key_id=body.api_key_id,
         )
         return {
             "community": community,
             "collection": collection,
             "handle": body.handle,
+            "api_key_id": str(body.api_key_id) if body.api_key_id else None,
             "perm": body.perm,
             "granted": body.granted,
         }
-
-
-@app.post("/v1/{community}/collections/{collection}/keys", status_code=201)
-def mint_key(community: str, collection: str, body: KeyIn, request: Request):
-    """A read key for non-members (R-E2): for the whole collection by its owner, or for one
-    file by the collection's owner or that file's creator. The secret is shown only here."""
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        handle, _ = owner_of(conn, request, community)
-        records.collection_row(conn, community, collection)
-        manager = records.can_manage(conn, handle, community, collection)
-        if body.file_id is None:
-            if not manager:
-                refuse(
-                    403, "only the collection's owner or the admin may key a collection"
-                )
-        else:
-            row = records.file_row(conn, community, body.file_id)
-            if row["collection"] != collection:
-                refuse(404, f"no such file in {community}/{collection}")
-            creator = records.first_writer(conn, body.file_id) == handle and (
-                records.on_roster(conn, community, handle)
-            )
-            if not (manager or creator):
-                refuse(
-                    403, "only the file's creator or the collection's owner may key it"
-                )
-        secret = secrets.new(READ_KEY_PREFIX)
-        row = records.mint_key(
-            conn,
-            community,
-            collection,
-            body.file_id,
-            body.label,
-            handle,
-            body.expires_hours,
-            secrets.digest(secret),
-        )
-        return {**key_view(row), "key": secret}
-
-
-@app.get("/v1/{community}/collections/{collection}/keys")
-def list_keys(community: str, collection: str, request: Request):
-    """The owner and the admin see every key of the collection; others only the keys they
-    minted. Secrets are never listed."""
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        handle, _ = owner_of(conn, request, community)
-        records.collection_row(conn, community, collection)
-        mine_only = not records.can_manage(conn, handle, community, collection)
-        rows = records.list_keys(
-            conn, community, collection, created_by=handle if mine_only else None
-        )
-        return {"keys": [key_view(r) for r in rows]}
-
-
-@app.delete("/v1/{community}/keys/{key_id}")
-def revoke_key(community: str, key_id: uuid.UUID, request: Request):
-    """Revoke a read key: refused from the very next request on (R-E5)."""
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        handle, _ = owner_of(conn, request, community)
-        row = records.key_row(conn, community, key_id)
-        if not (
-            row["created_by"] == handle
-            or records.can_manage(conn, handle, row["community"], row["collection"])
-        ):
-            refuse(
-                403,
-                "only the key's minter, the collection's owner or the admin may revoke it",
-            )
-        records.revoke_key(conn, key_id)
-        return key_view(records.key_row(conn, community, key_id))
 
 
 # ── parity: the change feed, lookups, promote and verify (R-G) ──────────────────────────────
@@ -1384,25 +1281,24 @@ class PromoteIn(BaseModel):
 
 
 def lister(conn, request: Request, community: str, collection: str):
-    """Who may list a collection -> (handle, key); refuses everyone else."""
-    handle, key = reader_of(conn, request, community)
+    """Who may list a collection -> their principal; refuses everyone else."""
+    caller = caller_for(conn, request, community)
     records.collection_row(conn, community, collection)
-    if not records.can_read_collection(conn, handle, community, collection, key):
-        if handle is None and key is None:
-            refuse(401, "sign in, or use a read key, to read this collection")
+    who = caller.principal()
+    if not records.can_read_collection(conn, who, community, collection):
+        if caller.anonymous:
+            refuse(401, "use an API key to read this collection")
         refuse(403, f"no read access to {community}/{collection}")
-    return handle, key
+    return who
 
 
-def page(conn, handle, key, rows, since: int, limit: int) -> dict:
+def page(conn, who, rows, since: int, limit: int) -> dict:
     """One page of a seq-ordered listing. `more` and `next_since` come from the rows scanned,
     not the rows shown, so a reader who sees only some rows still pages to the end and never
     meets a silent cap."""
     return {
         "items": [
-            records.stat(conn, r)
-            for r in rows
-            if records.can_read(conn, handle, r, key)
+            records.stat(conn, r) for r in rows if records.can_read(conn, who, r)
         ],
         "next_since": rows[-1]["seq"] if rows else since,
         "more": len(rows) == limit,
@@ -1420,9 +1316,9 @@ def changes(
     """Every version written into the collection after seq `since`, in seq order (R-G3)."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, key = lister(conn, request, community, collection)
+        who = lister(conn, request, community, collection)
         rows = records.changes(conn, community, collection, since, limit)
-        return page(conn, handle, key, rows, since, limit)
+        return page(conn, who, rows, since, limit)
 
 
 @app.post("/v1/{community}/collections/{collection}/query")
@@ -1430,11 +1326,11 @@ def query(community: str, collection: str, body: QueryIn, request: Request):
     """Versions whose metadata contains `contains`, paged like changes (R-G6)."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, key = lister(conn, request, community, collection)
+        who = lister(conn, request, community, collection)
         rows = records.query(
             conn, community, collection, body.contains, body.since, body.limit
         )
-        return page(conn, handle, key, rows, body.since, body.limit)
+        return page(conn, who, rows, body.since, body.limit)
 
 
 @app.get("/v1/{community}/collections/{collection}/find")
@@ -1443,14 +1339,14 @@ def find(community: str, collection: str, name: str, request: Request):
     file still holds its name."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, key = lister(conn, request, community, collection)
+        who = lister(conn, request, community, collection)
         file_id = records.find_name(conn, community, collection, name)
         if file_id is None:
             refuse(404, f"no file named '{name}' in {community}/{collection}")
         row = records.version(
             conn, community, file_id, records.latest_version(conn, file_id)["n"]
         )
-        if not records.can_read(conn, handle, row, key):
+        if not records.can_read(conn, who, row):
             refuse(404, f"no file named '{name}' in {community}/{collection}")
         return JSONResponse(records.stat(conn, row), headers={"ETag": etag(row["n"])})
 
@@ -1462,12 +1358,12 @@ def by_hash(community: str, sha: str, request: Request):
         refuse(400, "a sha256 is 64 lowercase hex characters")
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, key = reader_of(conn, request, community)
+        who = caller_for(conn, request, community).principal()
         return {
             "items": [
                 records.stat(conn, r)
                 for r in records.by_hash(conn, community, sha)
-                if records.can_read(conn, handle, r, key)
+                if records.can_read(conn, who, r)
             ]
         }
 
@@ -1488,9 +1384,7 @@ def promote(
     pointer = body.stamp_json_pointer
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, _ = owner_of(conn, request, community)
-        if not records.is_admin(conn, handle):
-            refuse(403, "only the admin promotes")
+        handle = as_admin(conn, request, community)
         source = records.version(conn, community, file_id, n)
         records.collection_row(conn, community, body.collection)
         name = name or source["name"]
@@ -1577,7 +1471,7 @@ def verify(
     when = wire(parse_instant, before) if before else None
     with db.connection() as conn:
         community = community_of(conn, community)
-        handle, _ = owner_of(conn, request, community)
+        who = caller_for(conn, request, community).principal()
         cited = parse_citation(cite)
         if cited is None:
             return {
@@ -1590,7 +1484,7 @@ def verify(
             row = records.version(conn, community, *cited)
         except NotFound:
             return missing
-        if not records.can_read(conn, handle, row):
+        if not records.can_read(conn, who, row):
             return missing
         return records.verify(row, when, sha256)
 
@@ -1630,7 +1524,7 @@ def start_port(community: str, body: PortIn, request: Request):
 
     with db.connection() as conn:
         community = community_of(conn, community)
-        admin = require_admin(conn, request, community)
+        admin = as_admin(conn, request, community)
         if records.holds_files(conn, community):
             refuse(
                 400, f"community '{community}' holds files; a port-ndex needs it empty"
@@ -1658,7 +1552,7 @@ def start_port(community: str, body: PortIn, request: Request):
 def port_status(community: str, port_id: uuid.UUID, request: Request):
     with db.connection() as conn:
         community = community_of(conn, community)
-        require_admin(conn, request, community)
+        as_admin(conn, request, community)
         row = records.port(conn, community, port_id)
         if row is None:
             refuse(404, f"no port-ndex {port_id} in {community}")

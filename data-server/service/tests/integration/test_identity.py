@@ -1,7 +1,8 @@
-"""Identity: registration, tokens, the roster, invites, rotation, rebind and suspicion."""
+"""Identity: registration, sign-in and session keys, the roster, invites, rotation, rebind and
+suspicion."""
 
 import pytest
-from conftest import Owner, OwnerKey, enroll, init_admin, invite, set_roster
+from conftest import Owner, OwnerKey, enroll, init_admin, invite, psql, set_roster
 from harness import HTTP
 
 
@@ -58,7 +59,13 @@ def test_registration_requires_proof_of_possession(community):
     assert r.status_code == 401
 
 
-def test_tokens_need_the_registered_key_and_a_fresh_challenge(community):
+def me(owner, headers=None):
+    return HTTP.get(
+        owner.url("/me"), headers=owner.headers() if headers is None else headers
+    )
+
+
+def test_sign_in_needs_the_registered_key_and_a_fresh_challenge(community):
     server, admin = community
     lyra = Owner(server, "lyra")
     enroll(admin, lyra, "demo")
@@ -66,22 +73,53 @@ def test_tokens_need_the_registered_key_and_a_fresh_challenge(community):
     assert lyra.token_response(key=OwnerKey()).status_code == 401
     nonce = lyra.challenge()
     body = {"handle": "lyra", "nonce": nonce, "signature": lyra.key.sign(nonce)}
-    assert HTTP.post(server.url + "/v1/demo/auth/token", json=body).status_code == 200
+    signed_in = HTTP.post(server.url + "/v1/demo/auth/token", json=body)
+    assert signed_in.status_code == 200
+    session = signed_in.json()
+    assert session["key"].startswith("sak_") and len(session["key"]) == 47
+    assert session["expires"] and session["kid"]
+    assert signed_in.headers["cache-control"] == "no-store"
     assert HTTP.post(server.url + "/v1/demo/auth/token", json=body).status_code == 401
 
-    me = HTTP.get(lyra.url("/whoami"), headers=lyra.headers()).json()
-    assert me["handle"] == "lyra" and me["community"] == "demo"
-    assert me["admin"] is False
-    assert me["grants"] == [
+    mine = me(lyra, lyra.headers(session["key"])).json()
+    assert mine["handle"] == "lyra" and mine["community"] == "demo"
+    assert (mine["kind"], mine["role"], mine["kid"]) == (
+        "session",
+        "member",
+        session["kid"],
+    )
+    assert mine["grants"] == [
         {"collection": "files", "perm": "read"},
         {"collection": "files", "perm": "write"},
         {"collection": "inbox", "perm": "write"},
         {"collection": "record", "perm": "read"},
     ]
 
-    assert HTTP.get(lyra.url("/whoami")).status_code == 401
-    bad = {"Authorization": "Bearer not-a-token"}
-    assert HTTP.get(lyra.url("/whoami"), headers=bad).status_code == 401
+    assert me(lyra, {}).status_code == 401
+    for bad in (
+        "not-a-key",
+        "sak_" + "A" * 43,
+        "sdr_" + "A" * 43,
+        "eyJhbGciOiJFZERTQSJ9.e30.x",
+    ):
+        assert me(lyra, {"Authorization": f"Bearer {bad}"}).status_code == 401, bad
+
+
+def test_a_session_ends_when_it_expires(community):
+    server, admin = community
+    lyra = Owner(server, "lyra")
+    enroll(admin, lyra, "demo")
+    session = lyra.token()
+    assert me(lyra, lyra.headers(session)).status_code == 200
+    lyras = "kind = 'session' AND handle = 'lyra'"
+    psql(
+        server,
+        f"UPDATE api_keys SET expires = now() - interval '1 second' WHERE {lyras}",
+    )
+    assert me(lyra, lyra.headers(session)).status_code == 401
+    assert psql(server, f"SELECT count(*) FROM api_keys WHERE {lyras}") != "0"
+    server.sweep()  # the janitor deletes ended sessions
+    assert psql(server, f"SELECT count(*) FROM api_keys WHERE {lyras}") == "0"
 
 
 def test_only_the_admin_sets_the_roster(community):
@@ -95,7 +133,13 @@ def test_only_the_admin_sets_the_roster(community):
     assert HTTP.post(f"{url}/mallory", headers=lyra.headers()).status_code == 403
     assert HTTP.delete(f"{url}/vega", headers=lyra.headers()).status_code == 403
     assert HTTP.post(f"{url}/mallory").status_code == 401
-    assert HTTP.get(admin.url("/whoami"), headers=admin.headers()).json()["admin"]
+    mine = me(admin).json()
+    assert (mine["role"], mine["kind"], mine["handle"]) == (
+        "admin",
+        "session",
+        admin.handle,
+    )
+    assert mine["grants"] == []
 
 
 def test_removing_a_member_revokes_membership_but_keeps_identity(community):
@@ -103,11 +147,14 @@ def test_removing_a_member_revokes_membership_but_keeps_identity(community):
     vega = Owner(server, "vega")
     assert enroll(admin, vega, "demo").status_code == 201
 
+    session = vega.headers()
+    assert me(vega, session).status_code == 200
+
     result = set_roster(server, admin, "demo", ["lyra", "rigel"])
     assert result["removed"] == ["vega"] and result["added"] == []
 
-    me = HTTP.get(vega.url("/whoami"), headers=vega.headers()).json()
-    assert me["handle"] == "vega" and me["grants"] == []
+    # off the roster, its session ends, and it cannot sign in to act as a Member again
+    assert me(vega, session).status_code == 401
     assert Owner(server, "vega").register("demo").status_code == 403
     # R-D6: removal revokes the grants themselves, not just the roster entry
     revoked = server.exec(
@@ -142,15 +189,11 @@ def test_key_rotation_retires_the_old_key(community):
     )
     assert r.status_code == 201, r.text
 
-    assert (
-        HTTP.get(lyra.url("/whoami"), headers=lyra.headers(old_token)).status_code
-        == 401
-    )
-    assert lyra.token_response().status_code == 401  # the old key cannot sign in
+    # the old key's sessions end with it, and it cannot sign in again
+    assert me(lyra, lyra.headers(old_token)).status_code == 401
+    assert lyra.token_response().status_code == 401
     rotated = Owner(server, "lyra", key=new_key)
-    assert (
-        HTTP.get(rotated.url("/whoami"), headers=rotated.headers()).status_code == 200
-    )
+    assert me(rotated).status_code == 200
 
     rigel = Owner(server, "rigel")
     enroll(admin, rigel, "demo")
@@ -179,8 +222,7 @@ def test_suspect_after_is_recorded_and_reported(community):
     flagged = suspect_after(server, admin, "lyra", "2026-10-01T12:00:00+00:00")
     assert flagged.status_code == 200, flagged.text
     assert flagged.json()["suspect_after"].startswith("2026-10-01T12:00:00")
-    me = HTTP.get(lyra.url("/whoami"), headers=lyra.headers()).json()
-    assert me["suspect_after"].startswith("2026-10-01T12:00:00")
+    assert me(lyra).json()["suspect_after"].startswith("2026-10-01T12:00:00")
 
     assert suspect_after(server, admin, "lyra", "yesterday").status_code == 422
     no_zone = suspect_after(server, admin, "lyra", "2026-10-01T12:00:00")
@@ -215,15 +257,12 @@ def test_rebind_retires_keys_and_only_the_fresh_invite_works(community):
     assert rebound.status_code == 200, rebound.text
     assert rebound.json()["retired_keys"] == 1
     fresh = rebound.json()["invite"]
-    assert HTTP.get(lyra.url("/whoami"), headers=old_headers).status_code == 401
+    assert me(lyra, old_headers).status_code == 401
 
     replacement = Owner(server, "lyra")
     assert replacement.register("demo", invite=first).status_code == 403  # spent invite
     assert replacement.register("demo", invite=fresh).status_code == 201
-    assert (
-        HTTP.get(replacement.url("/whoami"), headers=replacement.headers()).status_code
-        == 200
-    )
+    assert me(replacement).status_code == 200
     nobody = HTTP.post(
         f"{server.url}/v1/demo/owners/mallory/rebind", headers=admin.headers()
     )

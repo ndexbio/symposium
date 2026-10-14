@@ -184,20 +184,16 @@ def test_any_member_reads_the_whole_roster(demo):
     )  # no invite secrets
 
     assert HTTP.get(roster_url(server)).status_code == 401
-    HTTP.post(
-        f"{server.url}/v1/demo/collections",
-        json={"name": "project"},
-        headers=lyra.headers(),
-    )
-    key = HTTP.post(
-        f"{server.url}/v1/demo/collections/project/keys",
-        json={"label": "reviewer"},
-        headers=lyra.headers(),
-    ).json()["key"]
+    key = lyra.issue("dashboard", role="non-member")["key"]
     by_key = HTTP.get(roster_url(server), headers={"Authorization": f"Bearer {key}"})
-    assert by_key.status_code == 403  # a read key only reads files
+    assert by_key.status_code == 403  # a non-member key acts as no Member
+    member_key = lyra.issue("notebook")["key"]
+    by_member_key = HTTP.get(
+        roster_url(server), headers={"Authorization": f"Bearer {member_key}"}
+    )
+    assert by_member_key.status_code == 200  # a member key acts as its Member
     set_roster(server, admin, "other", ["bob"])
     bob = Owner(server, "bob")
     enroll(admin, bob, "other")
     elsewhere = HTTP.get(roster_url(server), headers=bob.headers())
-    assert elsewhere.status_code == 401  # a token is good only in its own community
+    assert elsewhere.status_code == 403  # a key is good only in its own community

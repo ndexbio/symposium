@@ -11,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import AsyncIterator
 
-from symposium_api.caller import Caller
+from symposium_data.access import Caller
 
 from .dependencies import *
 

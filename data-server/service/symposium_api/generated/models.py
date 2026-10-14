@@ -467,25 +467,22 @@ class MemberPage(Page):
 class KeyRole(StrEnum):
     non_member = "non-member"
     member = "member"
+    admin = "admin"
 
 
-class Me(BaseModel):
-    handle: Annotated[
-        Optional[str],
-        Field(
-            description="The Member a `member` key acts as; null for a `non-member` key."
-        ),
-    ]
-    label: Annotated[str, Field(description="The name the key's owner gave it.")]
-    role: KeyRole
-    community: CommunityName
-    key_id: UUID
-    expires: Optional[AwareDatetime] = None
-    member_url: Annotated[
-        Optional[AnyUrl],
-        Field(description="The Member this key publishes as, where it holds `member`."),
-    ] = None
-    position: Position
+class KeyKind(StrEnum):
+    session = "session"
+    issued = "issued"
+
+
+class Perm(StrEnum):
+    read = "read"
+    write = "write"
+
+
+class Grant(BaseModel):
+    collection: str
+    perm: Perm
 
 
 class SubmissionCheck(BaseModel):
@@ -636,6 +633,47 @@ class Error(BaseModel):
         Optional[List[Finding]],
         Field(description="The validator's findings, on `validation_failed` only."),
     ] = None
+
+
+class Me(BaseModel):
+    kind: KeyKind
+    handle: Annotated[
+        Optional[str],
+        Field(
+            description="The Member the key acts as, or the admin for the admin's session; null for a\n`non-member` key.\n"
+        ),
+    ]
+    label: Annotated[
+        Optional[str],
+        Field(description="The name the key's owner gave it; null for a session key."),
+    ]
+    role: KeyRole
+    community: CommunityName
+    key_id: UUID
+    kid: Annotated[
+        Optional[str],
+        Field(
+            description="For a session key, the thumbprint of the Ed25519 key it was signed in with; null\nfor an issued key.\n"
+        ),
+    ] = None
+    expires: Optional[AwareDatetime] = None
+    suspect_after: Annotated[
+        Optional[AwareDatetime],
+        Field(
+            description='When the admin flagged the key\'s Member: what it writes after this instant reads\n`"suspect": true`. Null when unflagged, and for a key that acts as no Member.\n'
+        ),
+    ] = None
+    grants: Annotated[
+        List[Grant],
+        Field(
+            description="The grants the key reads and writes with in this community: its Member's, or the\nones given to a `non-member` key. Public collections are open to it as well.\n"
+        ),
+    ]
+    member_url: Annotated[
+        Optional[AnyUrl],
+        Field(description="The Member this key publishes as, where it holds `member`."),
+    ] = None
+    position: Position
 
 
 class SubmissionResource(BaseModel):

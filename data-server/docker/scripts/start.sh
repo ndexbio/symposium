@@ -30,8 +30,7 @@ for flag in "$@"; do
   esac
 done
 export SYMPOSIUM_SERVER_TRUSTED_PROXY="${SYMPOSIUM_SERVER_TRUSTED_PROXY:-127.0.0.1}"
-# uvicorn workers for the api-server program: one process serving the Control API (/v1)
-# and the Data API (/api/v1)
+# uvicorn workers for the api-server program: each one serves the whole API (/v1)
 export SYMPOSIUM_SERVER_WORKERS="${SYMPOSIUM_SERVER_WORKERS:-1}"
 
 # ── Phase 2: directories ──────────────────────────────────────────────────────────────────────
@@ -57,26 +56,16 @@ S3_ACCESS_KEY=${S3_ACCESS}
 S3_SECRET_KEY=${S3_SECRET}
 S3_BUCKET=symposium-data
 SERVER_ID=$(cat /proc/sys/kernel/random/uuid)
-TOKEN_KEY_FILE=/apps/data/config/token_ed25519.pem
 EOT
-  /opt/venv/bin/python - <<'EOP'
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-key = Ed25519PrivateKey.generate()
-with open("/apps/data/config/token_ed25519.pem", "wb") as fh:
-    fh.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
-                               serialization.NoEncryption()))
-EOP
   cat > /apps/seaweed/config/s3.json <<EOT
 {"identities": [{"name": "data-service",
   "credentials": [{"accessKey": "${S3_ACCESS}", "secretKey": "${S3_SECRET}"}],
   "actions": ["Admin", "Read", "Write", "List", "Tagging"]}]}
 EOT
   umask 022
-  chown symposium:symposium "$CFG" /apps/data/config/token_ed25519.pem /apps/seaweed/config/s3.json
+  chown symposium:symposium "$CFG" /apps/seaweed/config/s3.json
   chown postgres:postgres /apps/postgres/config/superuser.pw
-  chmod 600 "$CFG" /apps/data/config/token_ed25519.pem /apps/seaweed/config/s3.json \
+  chmod 600 "$CFG" /apps/seaweed/config/s3.json \
             /apps/postgres/config/superuser.pw
 fi
 

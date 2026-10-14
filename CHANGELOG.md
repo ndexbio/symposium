@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
+## [Unreleased]
+
+### Changed
+
+- **One API, at `/v1`.** The record's routes, formerly the Symposium Data API at `/api/v1`,
+  now sit beside the data server's own routes for communities, members, keys, collections
+  and files, under one contract, [`api/openapi.yaml`](api/openapi.yaml).
+- **One credential, the API key (`sak_…`), for every route.** An Ed25519 sign-in
+  (`POST /v1/{community}/auth/token`, `POST /v1/admin/token`) answers a session key in
+  `key`, in place of a JWT access token. Routes that change access, keys or the server take a
+  session key.
+- **Collections decide access, for every key.** The record's routes read the `record`
+  collection: a key reads them while its holder may read `record`, by a grant or because it
+  is public. Publishing takes the Member's `write` grant on `inbox`. A withdrawn grant is
+  felt on the next request and closes an open stream.
+- **Any Member issues keys for applications.** `gen-api-key <label> --non-member` makes a
+  `non-member` key, which reads the collections its owner grants it with
+  `data collection grant --collection <c> --api-key <id> --perm read`. The admin's keys are
+  `non-member` keys, granted the same way.
+- **`data collection grant`** grants a Member `read` or `write`, or a non-member key `read`,
+  and withdraws with `--revoke`; it replaces `collection grant-write`. `data get
+  --api-key-file` reads with a key file from `gen-api-key`.
+- **Settings are `SYMPOSIUM_SERVER_*`:** `SYMPOSIUM_SERVER_SESSION_TTL`,
+  `SYMPOSIUM_SERVER_INVITE_HOURS`, `SYMPOSIUM_SERVER_PUBLIC_URL`,
+  `SYMPOSIUM_SERVER_MAX_STREAMS`, `SYMPOSIUM_SERVER_STREAM_HEARTBEAT` and
+  `SYMPOSIUM_SERVER_CONTRACT`. The Helm chart's `publicUrl` sets
+  `SYMPOSIUM_SERVER_PUBLIC_URL`.
+- **`GET /v1/{community}/me`** reports the calling key: its kind, role, Member, label, grants
+  and signing key. It replaces `whoami`.
+- **Every refusal answers one body, `{detail, code}`.**
+
+### Removed
+
+- **Read keys (`sdr_…`)** and their routes and commands (`keys mint|list|revoke`,
+  `get --read-key-file`). A file has its collection's access: share it with a grant to a
+  `non-member` key, or by making its collection public.
+- **The JWT access token** and the server's token signing key.
+
 ## [Symposium Skill 0.1.2] - 2026-10-11
 
 ### Added

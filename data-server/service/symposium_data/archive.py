@@ -3,8 +3,11 @@ bytes of every payload it stores. For backups and for moving a community to anot
 
     manifest.json       format, community, admin handle, counts
     owners.jsonl        every handle the community uses, with its public keys
-    roster.jsonl  collections.jsonl  grants.jsonl  files.jsonl  versions.jsonl  read_keys.jsonl
+    roster.jsonl  collections.jsonl  grants.jsonl  files.jsonl  versions.jsonl
     payloads/<sha256>   each stored payload's bytes, once per sha256
+
+API keys stay on the server that issued them, and so do the grants made to non-member keys:
+an imported community's applications are issued new keys there.
 
 The rows come first, so an import can refuse before any bytes move. Bytes are hashed as they
 stream in and stay pending until one transaction writes every row (R-A6); if anything fails,
@@ -27,8 +30,8 @@ from .runtime import Database, MultipartWriter, PayloadStore
 from .wire import valid_community, valid_sha256
 
 FORMAT = "symposium-data-export"
-FORMAT_VERSION = 1
-TABLES = ("owners", "roster", "collections", "grants", "files", "versions", "read_keys")
+FORMAT_VERSION = 2
+TABLES = ("owners", "roster", "collections", "grants", "files", "versions")
 CHUNK = 1024 * 1024
 
 
@@ -113,7 +116,7 @@ class Archive:
             ).fetchall(),
             "grants": q(
                 "SELECT collection, handle, perm FROM grants WHERE community = %s "
-                "ORDER BY collection, handle, perm",
+                "AND handle IS NOT NULL ORDER BY collection, handle, perm",
                 (community,),
             ).fetchall(),
             "files": q(
@@ -131,18 +134,12 @@ class Archive:
                 "WHERE f.community = %s ORDER BY f.collection, v.seq",
                 (community,),
             ).fetchall(),
-            "read_keys": q(
-                "SELECT id, hash, collection, file_id, label, created_by, created, expires, "
-                "revoked, uses, last_used FROM read_keys WHERE community = %s ORDER BY created",
-                (community,),
-            ).fetchall(),
         }
         handles = sorted(
             {r["handle"] for r in tables["roster"]}
             | {r["owner"] for r in tables["collections"]}
             | {r["handle"] for r in tables["grants"]}
             | {r["created_by"] for r in tables["versions"]}
-            | {r["created_by"] for r in tables["read_keys"]}
         )
         owners = q(
             "SELECT handle, reserved, created, suspect_after FROM owners "
@@ -407,26 +404,6 @@ class Archive:
                     v["deleted"],
                     v["reason"],
                     v["purged"],
-                ),
-            )
-        for row in tables["read_keys"]:
-            q(
-                "INSERT INTO read_keys (id, hash, community, collection, file_id, label, "
-                "created_by, created, expires, revoked, uses, last_used) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    row["id"],
-                    row["hash"],
-                    community,
-                    row["collection"],
-                    row["file_id"],
-                    row["label"],
-                    row["created_by"],
-                    row["created"],
-                    row["expires"],
-                    row["revoked"],
-                    row["uses"],
-                    row["last_used"],
                 ),
             )
 

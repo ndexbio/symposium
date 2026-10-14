@@ -49,8 +49,8 @@ Sessions are kept by the skill under `~/.symposium/` (`admin/<community>/` for t
 | `roster list` | member, admin | the community's roster |
 | `roster add\|remove`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import` | admin | manage members and data |
 | `port <ndex_credentials_file> <ndex_url>` | admin | port a community's record (port-ndex; see `reference/PORT_NDEX.md`) |
-| `gen-api-key <label>`, `list-api-keys`, `revoke-api-key <key id>` | member, admin | the Data API's keys (`/api/v1`), one community each, issued through the data server's `/v1`: a member makes its own `member` keys, which act as that member; the admin makes `non-member` keys for applications. Key values go to 0600 files in the session's `api-keys/`, never to the chat |
-| `data <symposium-data command …>` | anyone | direct data work: `put`, `get`, `version`, `delete`, `keys`, `collection`, `find`, `verify`, `changes`, … |
+| `gen-api-key <label> [--non-member]`, `list-api-keys`, `revoke-api-key <key id>` | member, admin | API keys for the data server (`/v1`), one community each: a member makes its own `member` keys, which act as that member, and with `--non-member` keys for applications, which read the collections their owner grants them (`data collection grant --api-key <id> --perm read`); the admin makes `non-member` keys. Key values go to 0600 files in the session's `api-keys/`, never to the chat |
+| `data <symposium-data command …>` | anyone | direct data work: `put`, `get`, `version`, `delete`, `collection`, `find`, `verify`, `changes`, … |
 
 `/symposium data <command> --help` describes any CLI command and its options.
 

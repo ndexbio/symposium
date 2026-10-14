@@ -1,4 +1,4 @@
-"""The Symposium Data API's contract (`api/openapi.yaml`) against the rules its design notes
+"""The Symposium API's contract (`api/openapi.yaml`) against the rules its design notes
 (`api/DESIGN.md`) set: every operation names its roles and its security, every listing that
 grows with the record is paged, every read of the record states its position, every error
 shares one body, and the notes' tables agree with the contract. The linter checks that the
@@ -13,8 +13,9 @@ import pytest
 import yaml
 
 API = Path(__file__).resolve().parents[2] / "api"
-# The two roles an API key may hold; `member` holds everything `non-member` holds.
-ROLES = ("non-member", "member")
+# The roles an API key may hold: `member` holds everything `non-member` holds; `admin` is the
+# server admin's session, which acts as no Member.
+ROLES = ("non-member", "member", "admin")
 METHODS = ("get", "post", "put", "patch", "delete")
 
 # The skill's commands (skills/symposium/SKILL.md) that have an API equivalent; DESIGN.md
@@ -97,11 +98,10 @@ def test_every_operation_names_its_roles(spec):
         )
 
 
-def test_each_role_holds_everything_the_one_before_holds(spec):
+def test_a_member_holds_everything_a_non_member_holds(spec):
     for path, method, op in operations(spec):
-        allowed = [role in op["x-roles"] for role in ROLES]
-        first = allowed.index(True)
-        assert all(allowed[first:]), f"{method.upper()} {path}: x-roles skips a role"
+        if "non-member" in op["x-roles"]:
+            assert "member" in op["x-roles"], f"{method.upper()} {path}: skips member"
 
 
 def test_every_operation_states_its_security(spec):
@@ -118,18 +118,23 @@ def test_every_operation_states_its_security(spec):
             f"{where}: `{{}}` and x-anonymous disagree"
         )
         if anonymous:
+            assert op["x-anonymous"] in ("always", "public"), (
+                f"{where}: x-anonymous is {op['x-anonymous']!r}"
+            )
             assert "non-member" in op["x-roles"], (
                 f"{where}: anonymous where a non-member is refused"
             )
 
 
-def test_the_api_takes_api_keys_alone_and_has_no_admin_operation(spec):
+def test_the_api_takes_api_keys_alone(spec):
     assert list(spec["components"]["securitySchemes"]) == ["apiKey"]
     for path, method, op in operations(spec):
         assert not path.startswith("/admin"), (
             f"{method.upper()} {path} is an admin path"
         )
-        assert "admin" not in op["x-roles"], f"{method.upper()} {path} admits admin"
+        if op["x-roles"] == ["member"]:
+            continue  # acts as a Member, which the admin is not
+        assert "admin" in op["x-roles"], f"{method.upper()} {path} refuses the admin"
 
 
 def test_every_member_operation_says_whose_key_it_needs(spec):
@@ -140,18 +145,19 @@ def test_every_member_operation_says_whose_key_it_needs(spec):
             continue
         text = " ".join(op["description"].split())
         where = f"{method.upper()} {path}"
-        assert "Requires a `member` API key" in text, where
+        assert "Requires a key that acts as a Member" in text, where
         assert "created for itself" in text, where
+        assert "session key" in text, where
         assert "the community in the path" in text, where
 
 
-def test_the_api_refers_to_nothing_outside_itself():
-    """Every URL the API answers is its own: the contract names no `/v1` route and accepts no
-    credential but an API key: no Ed25519 token, no JWT, no read key. (A Member's registered
-    Ed25519 *key* is named, as the thing a `member` key's standing rests on.)"""
+def test_the_api_takes_one_credential_at_one_path(spec):
+    """One API at `/v1`, and one credential, an API key: no Ed25519 token, no JWT, no read key.
+    (A Member's registered Ed25519 *key* is named, as what a sign-in and a Member's key stand
+    on.)"""
     text = (API / "openapi.yaml").read_text(encoding="utf-8")
-    assert not re.search(r"(?<!/api)/v1\b", text), "the contract names a /v1 route"
-    for word in ("Ed25519 token", "JWT", "adminToken", "sdr_"):
+    assert [server["url"] for server in spec["servers"]] == ["https://{host}/v1"]
+    for word in ("/api/v1", "Ed25519 token", "JWT", "adminToken", "sdr_", "read key"):
         assert word not in text, f"the contract mentions {word}"
 
 

@@ -1,5 +1,6 @@
-"""Every admin operation is an admin-only route (R-D7). Without a token each
-answers 401; a member's token or a read key gets 403."""
+"""Every admin operation is an admin-only route (R-D7). Without a key each answers 401; a
+Member's session or issued key, a non-member key, and an admin key that is not the admin's
+session all get 403."""
 
 from conftest import community_with
 from harness import HTTP
@@ -28,16 +29,16 @@ def test_every_admin_route_refuses_everyone_but_the_admin(server):
         json={"name": "project"},
         headers=lyra.headers(),
     )
-    read_key = HTTP.post(
-        f"{server.url}/v1/demo/collections/project/keys",
-        json={"label": "reviewer"},
-        headers=lyra.headers(),
-    ).json()["key"]
+    member_key = lyra.issue("notebook")["key"]
+    app_key = lyra.issue("dashboard", role="non-member")["key"]
+    admins_app_key = admin.issue("admin's app", role="non-member")["key"]
 
     callers = {
-        "no token": ({}, 401),
-        "a member": (lyra.headers(), 403),
-        "a read key": ({"Authorization": f"Bearer {read_key}"}, 403),
+        "no key": ({}, 401),
+        "a member's session": (lyra.headers(), 403),
+        "a member key": ({"Authorization": f"Bearer {member_key}"}, 403),
+        "a non-member key": ({"Authorization": f"Bearer {app_key}"}, 403),
+        "a key the admin issued": ({"Authorization": f"Bearer {admins_app_key}"}, 403),
     }
     for method, path, body in ROUTES:
         url = server.url + path.format(file_id=file_id)

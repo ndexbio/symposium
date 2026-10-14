@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import psycopg
@@ -49,6 +50,22 @@ class PreconditionFailed(Exception):
 
 class QuotaExceeded(Exception):
     pass
+
+
+class Invalid(Exception):
+    """A request the server understands but cannot apply as asked (400)."""
+
+
+@dataclass(frozen=True)
+class Principal:
+    """Who an access check is for: a Member or the admin by `handle`, a non-member API key by
+    `api_key_id`, and nobody at all for an anonymous caller."""
+
+    handle: str | None = None
+    api_key_id: uuid.UUID | None = None
+
+
+ANONYMOUS = Principal()
 
 
 def unpurged(file_id_sql: str) -> str:
@@ -424,15 +441,21 @@ class Records:
             )
         return row["seq"], row["last_created"]
 
-    # ── authorization over files ────────────────────────────────────────────────────────────
+    # ── access to collections ───────────────────────────────────────────────────────────────
     def is_admin(self, conn, handle: str | None) -> bool:
         return handle is not None and handle == self.config(conn, "admin")
 
-    def has_grant(self, conn, community, collection, handle, perm) -> bool:
+    def has_grant(self, conn, community, collection, who: Principal, perm) -> bool:
+        if who.api_key_id is not None:
+            column, value = "api_key_id", who.api_key_id
+        elif who.handle is not None:
+            column, value = "handle", who.handle
+        else:
+            return False
         row = conn.execute(
-            "SELECT 1 FROM grants WHERE community = %s AND collection = %s AND handle = %s "
+            f"SELECT 1 FROM grants WHERE community = %s AND collection = %s AND {column} = %s "
             "AND perm = %s",
-            (community, collection, handle, perm),
+            (community, collection, value, perm),
         ).fetchone()
         return row is not None
 
@@ -445,97 +468,89 @@ class Records:
             raise NotFound(f"no collection {community}/{collection}")
         return row
 
-    def owns(self, conn, handle, community, collection) -> bool:
+    def is_public(self, conn, community: str, collection: str) -> bool:
+        """`inbox` is never public, whatever its row says."""
+        return (
+            collection != "inbox"
+            and self.collection_row(conn, community, collection)["public"]
+        )
+
+    def owns(self, conn, who: Principal, community, collection) -> bool:
         """The collection's owner, while they are still on the community's roster."""
+        if who.handle is None:
+            return False
         row = conn.execute(
             "SELECT owner FROM collections WHERE community = %s AND name = %s",
             (community, collection),
         ).fetchone()
         return (
             row is not None
-            and handle is not None
-            and row["owner"] == handle
-            and self.on_roster(conn, community, handle)
+            and row["owner"] == who.handle
+            and self.on_roster(conn, community, who.handle)
         )
 
-    def can_create(self, conn, handle, community, collection) -> bool:
-        """New files in a collection: the admin, its owner, or a member granted write."""
+    def can_create(self, conn, who: Principal, community, collection) -> bool:
+        """New files in a collection: the admin, its owner, or a Member granted write. A
+        non-member key never writes."""
+        if who.handle is None:
+            return False
         return (
-            self.is_admin(conn, handle)
-            or self.owns(conn, handle, community, collection)
-            or self.has_grant(conn, community, collection, handle, "write")
+            self.is_admin(conn, who.handle)
+            or self.owns(conn, who, community, collection)
+            or self.has_grant(conn, community, collection, who, "write")
         )
 
-    def can_manage(self, conn, handle, community, collection) -> bool:
-        """Grants, public visibility and collection read keys: the owner or the admin."""
-        return self.is_admin(conn, handle) or self.owns(
-            conn, handle, community, collection
+    def can_manage(self, conn, who: Principal, community, collection) -> bool:
+        """Grants and public visibility: the owner or the admin."""
+        return self.is_admin(conn, who.handle) or self.owns(
+            conn, who, community, collection
         )
 
-    def can_modify(self, conn, handle, file_row) -> bool:
+    def can_modify(self, conn, who: Principal, file_row) -> bool:
         """New versions and tombstones: the file's creator (while they can still write to the
         collection) or the admin. Members cannot change each other's files."""
-        if self.is_admin(conn, handle):
+        if self.is_admin(conn, who.handle):
             return True
         creator = self.first_writer(conn, file_row["id"])
-        return creator == handle and self.can_create(
-            conn, handle, file_row["community"], file_row["collection"]
+        return (
+            who.handle is not None
+            and creator == who.handle
+            and self.can_create(
+                conn, who, file_row["community"], file_row["collection"]
+            )
         )
 
-    def can_read(self, conn, handle, row, key=None) -> bool:
-        """`handle` is a signed-in owner, `key` a read-key row, both None for anonymous."""
+    def can_read(self, conn, who: Principal, row) -> bool:
+        """One version: readable in a public collection, by the admin, by the collection's
+        owner, or with a read grant. In `inbox`, a submission is also readable by its submitter
+        and by the recipients named on it."""
         community, collection = row["community"], row["collection"]
-        if (
-            collection != "inbox"
-            and self.collection_row(conn, community, collection)["public"]
+        if self.is_public(conn, community, collection):
+            return True
+        if self.is_admin(conn, who.handle) or self.owns(
+            conn, who, community, collection
         ):
             return True
-        if key is not None:
-            return (
-                collection != "inbox"
-                and key["community"] == community
-                and key["collection"] == collection
-                and (key["file_id"] is None or key["file_id"] == row["file_id"])
+        if self.has_grant(conn, community, collection, who, "read"):
+            return True
+        if collection == "inbox" and who.handle is not None:
+            return who.handle == self.first_writer(conn, row["file_id"]) or (
+                who.handle in (row["metadata"] or {}).get("recipients", [])
             )
-        if handle is None:
-            return False
-        if self.is_admin(conn, handle) or self.owns(
-            conn, handle, community, collection
-        ):
-            return True
-        if self.has_grant(conn, community, collection, handle, "read"):
-            return True
-        if collection == "inbox":
-            # a submission is readable by its submitter and by the recipients named on it
-            return handle == self.first_writer(conn, row["file_id"]) or handle in (
-                row["metadata"] or {}
-            ).get("recipients", [])
         return False
 
-    def can_read_collection(
-        self, conn, handle, community, collection, key=None
-    ) -> bool:
+    def can_read_collection(self, conn, who: Principal, community, collection) -> bool:
         """Listing a collection (changes, find, query). Each listed row is still checked with
-        can_read: a file-scoped key, or a member reading inbox, sees only some of its rows."""
-        if (
-            collection != "inbox"
-            and self.collection_row(conn, community, collection)["public"]
-        ):
+        can_read: a Member listing `inbox` sees only the rows addressed to it."""
+        if self.is_public(conn, community, collection):
             return True
-        if key is not None:
-            return (
-                collection != "inbox"
-                and key["community"] == community
-                and key["collection"] == collection
-            )
-        if handle is None:
-            return False
-        if collection == "inbox" and self.on_roster(conn, community, handle):
-            return True
+        if collection == "inbox" and who.handle is not None:
+            if self.on_roster(conn, community, who.handle):
+                return True
         return (
-            self.is_admin(conn, handle)
-            or self.owns(conn, handle, community, collection)
-            or self.has_grant(conn, community, collection, handle, "read")
+            self.is_admin(conn, who.handle)
+            or self.owns(conn, who, community, collection)
+            or self.has_grant(conn, community, collection, who, "read")
         )
 
     # ── collections and sharing ─────────────────────────────────────────────────────────────
@@ -557,66 +572,64 @@ class Records:
             (public, community, collection),
         )
 
-    def set_grant(self, conn, community, collection, handle, perm: str, granted: bool):
-        if granted:
-            if not self.on_roster(conn, community, handle):
+    def set_grant(
+        self,
+        conn,
+        community,
+        collection,
+        perm: str,
+        granted: bool,
+        *,
+        handle: str | None = None,
+        api_key_id=None,
+    ):
+        """Grant or withdraw `perm` for a roster Member (`handle`) or a non-member API key
+        (`api_key_id`). A key is granted `read` only."""
+        if (handle is None) == (api_key_id is None):
+            raise Invalid("name either a handle or an api_key_id")
+        if api_key_id is not None:
+            column, value = "api_key_id", api_key_id
+            if granted:
+                if perm != "read":
+                    raise Invalid("a non-member key is granted read only")
+                key = conn.execute(
+                    "SELECT role FROM api_keys WHERE id = %s AND community = %s "
+                    "AND kind = 'issued' AND revoked IS NULL "
+                    "AND (expires IS NULL OR expires > now())",
+                    (api_key_id, community),
+                ).fetchone()
+                if key is None:
+                    raise Invalid(f"no live API key {api_key_id} in {community}")
+                if key["role"] != "non-member":
+                    raise Invalid(
+                        "a member key acts with its Member's grants; grant the Member"
+                    )
+        else:
+            column, value = "handle", handle
+            if granted and not self.on_roster(conn, community, handle):
                 raise Forbidden(f"'{handle}' is not on the {community} roster")
+        if granted:
             conn.execute(
-                "INSERT INTO grants (community, collection, handle, perm) VALUES (%s, %s, %s, %s) "
-                "ON CONFLICT DO NOTHING",
-                (community, collection, handle, perm),
+                f"INSERT INTO grants (community, collection, {column}, perm) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (community, collection, value, perm),
             )
         else:
             conn.execute(
-                "DELETE FROM grants WHERE community = %s AND collection = %s AND handle = %s "
-                "AND perm = %s",
-                (community, collection, handle, perm),
+                f"DELETE FROM grants WHERE community = %s AND collection = %s "
+                f"AND {column} = %s AND perm = %s",
+                (community, collection, value, perm),
             )
 
-    def mint_key(self, conn, community, collection, file_id, label, by, hours, digest):
-        if collection == "inbox":
-            raise Forbidden("inbox accepts no read keys")
-        key_id = uuid.uuid4()
-        conn.execute(
-            "INSERT INTO read_keys (id, hash, community, collection, file_id, label, created_by, "
-            "expires) VALUES (%s, %s, %s, %s, %s, %s, %s, "
-            "CASE WHEN %s::int IS NULL THEN NULL ELSE now() + %s * interval '1 hour' END)",
-            (key_id, digest, community, collection, file_id, label, by, hours, hours),
-        )
-        return self.key_row(conn, community, key_id)
-
-    def key_row(self, conn, community: str, key_id):
-        row = conn.execute(
-            "SELECT * FROM read_keys WHERE id = %s AND community = %s",
-            (key_id, community),
-        ).fetchone()
-        if row is None:
-            raise NotFound("no such read key")
-        return row
-
-    def use_key(self, conn, community: str, digest: str):
-        """A usable read key of this community for this secret, its use audited; None if
-        unknown here, revoked or expired."""
-        return conn.execute(
-            "UPDATE read_keys SET uses = uses + 1, last_used = now() WHERE hash = %s "
-            "AND community = %s AND revoked IS NULL AND (expires IS NULL OR expires > now()) "
-            "RETURNING *",
-            (digest, community),
-        ).fetchone()
-
-    def list_keys(self, conn, community, collection, created_by=None) -> list:
-        query = "SELECT * FROM read_keys WHERE community = %s AND collection = %s"
-        params = [community, collection]
-        if created_by is not None:
-            query += " AND created_by = %s"
-            params.append(created_by)
-        return conn.execute(query + " ORDER BY created", params).fetchall()
-
-    def revoke_key(self, conn, key_id):
-        conn.execute(
-            "UPDATE read_keys SET revoked = now() WHERE id = %s AND revoked IS NULL",
-            (key_id,),
-        )
+    def key_grants(self, conn, community: str, api_key_id) -> list:
+        return [
+            (r["collection"], r["perm"])
+            for r in conn.execute(
+                "SELECT collection, perm FROM grants WHERE community = %s AND api_key_id = %s "
+                "ORDER BY collection, perm",
+                (community, api_key_id),
+            ).fetchall()
+        ]
 
     # ── payloads ────────────────────────────────────────────────────────────────────────────
     def begin_payload(self, conn, community: str, owner: str):

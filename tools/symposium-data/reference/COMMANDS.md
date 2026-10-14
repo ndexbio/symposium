@@ -101,15 +101,17 @@ symposium-data suspect-after [-h] --handle HANDLE --at AT
 
 ## `gen-api-key`
 
-create a Data API key and write it to a 0600 file in this session's api-keys/: in a member's session one more of its own member keys, in the admin's session a non-member key for an application
+create an API key and write it to a 0600 file in this session's api-keys/: in a member's session one more of its own member keys, or with --non-member a key for an application, which reads the collections you grant it; the admin makes non-member keys
 
 ```
-symposium-data gen-api-key [-h] [--community COMMUNITY] [--expires-days EXPIRES_DAYS] label
+symposium-data gen-api-key [-h] [--non-member] [--community COMMUNITY]
+                                  [--expires-days EXPIRES_DAYS]
+                                  label
 ```
 
 ## `list-api-keys`
 
-write your Data API keys, with their values, to a 0600 file in this session's api-keys/; print them without values (the admin also sees members' keys, never their values)
+write the API keys you issued, with their values, to a 0600 file in this session's api-keys/; print them without values (the admin also sees members' keys, never their values)
 
 ```
 symposium-data list-api-keys [-h] [--community COMMUNITY]
@@ -117,7 +119,7 @@ symposium-data list-api-keys [-h] [--community COMMUNITY]
 
 ## `revoke-api-key`
 
-revoke a Data API key you own (a member its own, the admin an application's)
+revoke an API key you issued (the admin also revokes any non-member key)
 
 ```
 symposium-data revoke-api-key [-h] [--community COMMUNITY] key_id
@@ -168,7 +170,7 @@ symposium-data stat [-h] [--version VERSION] ref
 download a version to a file, checked against its digest
 
 ```
-symposium-data get [-h] [--version VERSION] --out OUT [--read-key-file READ_KEY_FILE] ref
+symposium-data get [-h] [--version VERSION] --out OUT [--api-key-file API_KEY_FILE] ref
 ```
 
 ## `versions`
@@ -257,12 +259,14 @@ create a collection you own
 symposium-data collection create [-h] --name NAME
 ```
 
-## `collection grant-write`
+## `collection grant`
 
-let a roster member write to your collection
+let a roster member read or write your collection, or a non-member API key read it; --revoke withdraws
 
 ```
-symposium-data collection grant-write [-h] --collection COLLECTION --handle HANDLE
+symposium-data collection grant [-h] --collection COLLECTION
+                                       (--handle HANDLE | --api-key API_KEY) --perm {read,write}
+                                       [--revoke]
 ```
 
 ## `collection set-public`
@@ -304,31 +308,6 @@ check a citation (R-G9)
 
 ```
 symposium-data verify [-h] --cite CITE [--before BEFORE] [--sha256 SHA256]
-```
-
-## `keys mint`
-
-mint a read key into a file (0600); it is never printed
-
-```
-symposium-data keys mint [-h] --collection COLLECTION --label LABEL [--file-id FILE_ID]
-                                [--hours HOURS] --out OUT
-```
-
-## `keys list`
-
-a collection's read keys, never their secret
-
-```
-symposium-data keys list [-h] --collection COLLECTION
-```
-
-## `keys revoke`
-
-revoke a read key at once
-
-```
-symposium-data keys revoke [-h] key_id
 ```
 
 ## `port-ndex`

@@ -1,11 +1,12 @@
-"""The composition root (api/DESIGN.md §9): the data server's app with the Symposium Data API
-mounted at /api/v1. uvicorn starts `symposium_server:app`; neither `symposium_data` nor
-`symposium_api` imports the other's app, so every import points one way.
+"""The composition root (api/DESIGN.md §9): one API at /v1. The data server's hand-written routes
+and the routes generated from the contract are served by one app. uvicorn starts
+`symposium_server:app`; neither `symposium_data` nor `symposium_api` imports the other's app, so
+every import points one way.
 
-It adds three things to the data server's app: the generated routers over the hand-written
-service, the API's error body on every /api/v1 refusal, and, at startup, the notify listener
-and the sweep that erases expired API keys' values. The keys themselves are the data
-server's: it issues them on /v1, and the API only authenticates with them.
+It adds four things to the data server's app: the generated routers over the hand-written
+service, the contract the access checks read, the API's error body on every refusal, and, at
+startup, the notify listener and the sweep of expired API keys. The keys themselves are the
+data server's: it issues them, and every route authenticates with them (`symposium_data.access`).
 """
 
 from __future__ import annotations
@@ -16,40 +17,37 @@ import threading
 from contextlib import asynccontextmanager
 
 from fastapi import Request
-from fastapi.exception_handlers import (
-    http_exception_handler,
-    request_validation_exception_handler,
-)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from symposium_api import contract as contract_module
 from symposium_api import provider
 from symposium_api.errors import ApiError, body_for
 from symposium_api.generated import ROUTERS
 from symposium_api.service import ApiService
+from symposium_data import access
 from symposium_data import app as data
-from symposium_data.records import Conflict, Forbidden, NotFound
+from symposium_data.records import Conflict, Forbidden, Invalid, NotFound
 
-API_PREFIX = "/api/v1"
+API_PREFIX = "/v1"
+STATUS = "/v1/status"
 log = logging.getLogger("symposium_server")
 
 app = data.app
+public_url = (os.environ.get("SYMPOSIUM_SERVER_PUBLIC_URL") or "").rstrip("/") or None
 runtime = provider.Runtime(
     db=data.db,
     records=data.records,
     store=data.store,
     settings=data.settings,
-    tokens=data.tokens,
     admin_mode=lambda: data.admin_mode,
-    public_url=(os.environ.get("SYMPOSIUM_DATA_API_PUBLIC_URL") or "").rstrip("/")
-    or None,
+    public_url=public_url,
 )
-contract = contract_module.load()
+contract = access.load()
 keys = data.api_keys
+access.wire(contract=contract, public_url=public_url)
 service = ApiService(runtime, keys, contract)
-provider.wire(runtime, service, keys, contract, service.caps)
+provider.wire(runtime, service)
 for router in ROUTERS:
     app.include_router(router, prefix=API_PREFIX)
 
@@ -62,9 +60,10 @@ def in_api(request: Request) -> bool:
 
 @app.middleware("http")
 async def api_operational_only(request: Request, call_next):
-    """The API speaks its own error body while the server is non-operational."""
+    """While the server is non-operational every route but /v1/status answers 501, in the
+    API's error body; /v1/status keeps answering, so a readiness probe sees why."""
     mode = data.admin_mode
-    if in_api(request) and not mode.operational:
+    if in_api(request) and request.url.path != STATUS and not mode.operational:
         return JSONResponse(
             body_for(501, f"the server is not operational: {mode.reason}"),
             status_code=501,
@@ -78,37 +77,35 @@ async def _api_error(_request, error: ApiError):
 
 
 def _refusal(status: int):
-    async def handler(request: Request, error):
-        body = (
-            body_for(status, str(error)) if in_api(request) else {"detail": str(error)}
-        )
-        return JSONResponse(body, status_code=status)
+    async def handler(_request: Request, error):
+        return JSONResponse(body_for(status, str(error)), status_code=status)
 
     return handler
 
 
-# /v1 keeps its own bodies; under /api/v1 the same refusals answer the API's Error body
+# every refusal answers the API's Error body: {detail, code}
 app.add_exception_handler(NotFound, _refusal(404))
 app.add_exception_handler(Forbidden, _refusal(403))
 app.add_exception_handler(Conflict, _refusal(409))
+app.add_exception_handler(Invalid, _refusal(400))
 
 
 @app.exception_handler(StarletteHTTPException)
-async def _http_error(request: Request, error: StarletteHTTPException):
-    if in_api(request):
-        return JSONResponse(
-            body_for(error.status_code, error.detail),
-            status_code=error.status_code,
-            headers=getattr(error, "headers", None),
-        )
-    return await http_exception_handler(request, error)
+async def _http_error(_request: Request, error: StarletteHTTPException):
+    return JSONResponse(
+        body_for(error.status_code, error.detail),
+        status_code=error.status_code,
+        headers=getattr(error, "headers", None),
+    )
 
 
 @app.exception_handler(RequestValidationError)
 async def _invalid(request: Request, error: RequestValidationError):
-    if in_api(request):
-        return JSONResponse(body_for(400, error.errors()), status_code=400)
-    return await request_validation_exception_handler(request, error)
+    """A request its route cannot read: 400 on a route generated from the contract, as the
+    contract states; 422 on a hand-written route."""
+    route = request.scope.get("route")
+    status = 400 if getattr(route, "operation_id", None) in contract.rules else 422
+    return JSONResponse(body_for(status, error.errors()), status_code=status)
 
 
 def index_status() -> dict:

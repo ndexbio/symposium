@@ -60,7 +60,7 @@ PATH_OPTIONS = {
     "--from",
     "--out",
     "--out-dir",
-    "--read-key-file",
+    "--api-key-file",
 }
 # commands whose positional arguments may be the caller's files (artifacts, a record
 # directory, a credentials file, a file to store)

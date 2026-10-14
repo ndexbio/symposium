@@ -7,7 +7,6 @@ S3_ENDPOINT=http://127.0.0.1:8333
 S3_ACCESS_KEY=ak
 S3_SECRET_KEY=sk=with=equals
 SERVER_ID=6f1c
-TOKEN_KEY_FILE=/apps/data/config/token_ed25519.pem
 """
 
 
@@ -17,7 +16,8 @@ def test_settings_read_service_env_and_operator_variables(tmp_path):
     s = Settings(
         str(path),
         environ={
-            "SYMPOSIUM_CONTROL_API_INVITE_HOURS": "24",
+            "SYMPOSIUM_SERVER_INVITE_HOURS": "24",
+            "SYMPOSIUM_SERVER_SESSION_TTL": "60",
             "SYMPOSIUM_SERVER_QUOTA_BYTES": "1000",
         },
     )
@@ -26,13 +26,14 @@ def test_settings_read_service_env_and_operator_variables(tmp_path):
     assert s.s3_bucket == "symposium-data"
     assert s.server_id == "6f1c"
     assert s.invite_hours == 24 and s.quota_bytes == 1000
+    assert s.session_ttl == 60
 
 
 def test_operator_variables_have_defaults(tmp_path):
     path = tmp_path / "service.env"
     path.write_text(SERVICE_ENV)
     s = Settings(str(path), environ={})
-    assert s.invite_hours == 72 and s.quota_bytes == 0 and s.token_ttl == 900
+    assert s.invite_hours == 72 and s.quota_bytes == 0 and s.session_ttl == 900
 
 
 def test_durations_accept_fractions_of_a_second(tmp_path):

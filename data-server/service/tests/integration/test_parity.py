@@ -205,17 +205,11 @@ def test_promote_stamps_the_server_clock_into_the_record(demo):
         "accepted": True,
     }
     assert record["content_type"] == "application/json"
-    # credited to its submitter, who may therefore key it (R-G4, R-E2)
+    # credited to its submitter (R-G4)
     assert record["created_by"] == "lyra" and record["key_id"] is None
-    keyed = HTTP.post(
-        f"{server.url}/v1/demo/collections/record/keys",
-        json={"label": "reviewer", "file_id": record["file_id"]},
-        headers=lyra.headers(),
-    )
-    assert keyed.status_code == 201, keyed.text
     assert promote(lyra, source["file_id"], 1, name="mine.json").status_code == 403
 
-    body = vega.get(record["file_id"])  # members read the record with their own token
+    body = vega.get(record["file_id"])  # members read the record with their own key
     assert body.status_code == 200
     assert json.loads(body.content)["artifact"]["created"] == record["created"]
     assert hashlib.sha256(body.content).hexdigest() == record["sha256"]
@@ -293,8 +287,9 @@ def test_verify_checks_existence_hash_and_strict_ordering(demo):
     assert hidden == unknown.json() and not hidden["exists"]
     assert not verify(admin, "other:abc").json()["exists"]
     assert verify(admin, cite, before="yesterday").status_code == 400
+    # a caller with no key verifies only what it may read: here, nothing
     anonymous = HTTP.get(f"{server.url}/v1/demo/verify", params={"cite": cite})
-    assert anonymous.status_code == 401
+    assert anonymous.status_code == 200 and anonymous.json() == unknown.json()
 
     assert purge(admin, data["file_id"], 1).status_code == 200
     purged = verify(admin, cite).json()
@@ -371,11 +366,13 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
         headers=lyra.headers(),
     )
     shared = lyra.put("demo", "project", "shared.csv", b"for vega").json()["file_id"]
-    key = HTTP.post(
-        f"{source.url}/v1/demo/collections/project/keys",
-        json={"label": "reviewer"},
+    app = lyra.issue("dashboard", role="non-member")
+    granted = HTTP.put(
+        f"{source.url}/v1/demo/collections/project/grants",
+        json={"api_key_id": app["id"], "perm": "read"},
         headers=lyra.headers(),
-    ).json()["key"]
+    )
+    assert granted.status_code == 200, granted.text
     goal = lyra.put("demo", "inbox", "goal.json", submission()).json()["file_id"]
     promote(admin, goal, 1, stamp_json_pointer="/artifact/created")
     before = {
@@ -406,12 +403,16 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
     lyra2 = Owner(target, "lyra", key=lyra.key)
     vega2 = Owner(target, "vega", key=vega.key)
     assert lyra2.get(fid, 2).content == b"1,2,3,4"
-    assert vega2.get(shared).content == b"for vega"  # the grant survived
+    assert vega2.get(shared).content == b"for vega"  # the Member's grant survived
+    # API keys stay on the server that issued them, and so do their grants
     read = HTTP.get(
         f"{target.url}/v1/demo/files/{shared}/v/1",
-        headers={"Authorization": f"Bearer {key}"},
+        headers={"Authorization": f"Bearer {app['key']}"},
     )
-    assert read.content == b"for vega"  # the read key survived
+    assert read.status_code == 401
+    assert (
+        psql(target, "SELECT count(*) FROM grants WHERE api_key_id IS NOT NULL") == "0"
+    )
     file_id = purged.split(":")[1].split("@")[0]
     assert lyra2.get(file_id, 1).status_code == 410
 

@@ -217,7 +217,7 @@ The method must remain derivable from the suffix. `csv_2` declares no method, dr
 
 `rest` and `download` are groundable but unverifiable. The gate accepts them and emits a REVIEW, so a reader can see exactly where verification becomes trust.
 
-**A `download` held on the data server.** Store the file first (`/symposium data put <file> --collection files`), then cite it: its `location` is the citation the store returned, `symposium-data:<id>@v<n>`, and its optional `sha256` (64 lowercase hex) is the sha256 the store returned. The gate verifies every such `download`: the file version exists, its content matches `sha256` when given, and it was stored strictly before the artifact was submitted. A `download` that fails any of these is refused. One file per `download` Content; a `location` anywhere else stays unverified.
+**A `download` held on the data server.** Store the file first, then cite it. A file has its collection's access: `files` is readable by every member of the community, and a collection you create (`/symposium data collection create --name <c>`, then `/symposium data put <file> --collection <c>`) is yours to share, by granting members or applications read on it, or by making it public. Then cite it: its `location` is the citation the store returned, `symposium-data:<id>@v<n>`, and its optional `sha256` (64 lowercase hex) is the sha256 the store returned. The gate verifies every such `download`: the file version exists, its content matches `sha256` when given, and it was stored strictly before the artifact was submitted. A `download` that fails any of these is refused. One file per `download` Content; a `location` anywhere else stays unverified.
 
 ### Address forms
 

@@ -131,9 +131,20 @@ class Owner:
         )
 
     def token(self) -> str:
+        """A session key: what signing in with this owner's Ed25519 key answers."""
         r = self.token_response()
         assert r.status_code == 200, r.text
-        return r.json()["token"]
+        return r.json()["key"]
+
+    def issue(self, label: str, role: str = "member", expires_days=None) -> dict:
+        """An issued API key, made with this owner's session. -> the issued key's row,
+        with its value in `key`."""
+        body = {"label": label, "role": role}
+        if expires_days is not None:
+            body["expires_days"] = expires_days
+        r = HTTP.post(self.url("/api-keys"), json=body, headers=self.headers())
+        assert r.status_code == 201, r.text
+        return r.json()
 
     def headers(self, token: str | None = None) -> dict:
         if token is None:

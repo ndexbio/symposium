@@ -33,7 +33,7 @@ def test_first_boot_secrets_are_owner_only_and_sentinels_exist(server):
     out = server.exec(
         "sh",
         "-c",
-        "stat -c '%a %n' /apps/data/config/service.env /apps/data/config/token_ed25519.pem "
+        "stat -c '%a %n' /apps/data/config/service.env /apps/data/config/api_key_enc.key "
         "/apps/seaweed/config/s3.json /apps/postgres/config/superuser.pw; "
         "ls /apps/postgres/config/.initialized /apps/seaweed/config/.initialized",
     ).stdout.splitlines()

@@ -39,14 +39,15 @@ helm install symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm --
 | `expose.mode` | `none` | `none`, `gateway` or `ingress`; see below. |
 | `expose.gateway.parentRefs` | `[]` | The Gateway (or Gateways) the HTTPRoute attaches to. |
 | `expose.gateway.hostnames` | `[]` | For example `[data.example.org]`. |
-| `expose.gateway.timeouts` | `{request: "0s", backendRequest: "0s"}` | `0s` turns the route's timeouts off, so the Data API's streams stay open. |
+| `expose.gateway.timeouts` | `{request: "0s", backendRequest: "0s"}` | `0s` turns the route's timeouts off, so the API's streams stay open. |
 | `expose.ingress.className` | `""` | The IngressClass. |
 | `expose.ingress.host` | `""` | Required in `ingress` mode. |
 | `expose.ingress.tlsSecret` | `""` | The host's TLS certificate. Leave it empty when TLS is terminated elsewhere. |
-| `expose.ingress.annotations` | `{}` | The controller's own settings for the streams. |
+| `expose.ingress.annotations` | `{}` | The controller's own settings for the streams and for upload size. |
 | `trustedProxy` | `127.0.0.1` | `SYMPOSIUM_SERVER_TRUSTED_PROXY`. When the server is exposed, set it to the network your gateway's or controller's pods run in. |
-| `publicUrl` | `""` | `SYMPOSIUM_DATA_API_PUBLIC_URL`, for example `https://data.example.org`. |
-| `env` | `{}` | Any other `SYMPOSIUM_*` setting, as `NAME: value`. |
+| `publicUrl` | `""` | `SYMPOSIUM_SERVER_PUBLIC_URL`, for example `https://data.example.org`. |
+| `corsOrigins` | `[]` | `SYMPOSIUM_SERVER_CORS_ORIGINS`: the browser origins allowed to call the API, for example `["https://app.example.org"]`. Empty, the API answers every request as usual and sends no CORS headers, so a browser lets only pages served from the API's own origin read its answers. |
+| `env` | `{}` | Any other `SYMPOSIUM_SERVER_*` setting, as `NAME: value`. |
 | `resources` | requests of 250m CPU and 1Gi memory | PostgreSQL, SeaweedFS and the API share the one pod. |
 | `podSecurityContext`, `securityContext` | `{}` | The init container runs as root to give the volume's directories to their owners, so the chart can't run in a namespace that enforces the `restricted` Pod Security Standard. |
 
@@ -59,8 +60,10 @@ helm install symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm --
   This mode needs the Gateway API in the cluster, and the chart refuses it when the API is
   missing.
 - **`ingress`:** an Ingress, for clusters that expose services through an Ingress
-  controller. The controller must stream responses unbuffered, with a read timeout well past
-  the streams' 30-second heartbeat, set through `expose.ingress.annotations`.
+  controller. Through `expose.ingress.annotations`, the controller must stream responses
+  unbuffered, with a read timeout well past the streams' heartbeat
+  (`SYMPOSIUM_SERVER_STREAM_HEARTBEAT`, 30 seconds by default), and accept request bodies as
+  large as the files members upload.
 
 ## The admin key
 

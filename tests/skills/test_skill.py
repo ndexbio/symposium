@@ -337,3 +337,96 @@ def test_commands_that_keep_running_stream_their_output_and_end_with_their_agent
         out = output.end()
         assert "the agent session that started this has ended" in out, out
         assert "Traceback" not in out
+
+
+def test_keys_grants_and_public_collections_through_the_skill(
+    server, skill, suite, tmp_path
+):
+    """The skill's key commands and its `data` sharing commands reach the CLI in the
+    session that runs them: a member issues and grants a non-member issued key on its own
+    collection, opens another to everyone, and revokes the key; the admin issues and revokes
+    one of its own."""
+    spec = community_file(tmp_path, server, "demo", ["lyra"])
+    [invite] = skill.ok(tmp_path, "bootstrap", "--community-file", spec)["invite_files"]
+    skill.ok(tmp_path, "setup", "--invite-file", invite)  # lyra's session is current
+    api = f"{server.url}/v1/demo"
+
+    issued = skill.ok(tmp_path, "gen-api-key", "dashboard", "--non-member")
+    assert issued["session"] == "demo/lyra"
+    assert (issued["role"], issued["handle"]) == ("non-member", None)
+    key = json.loads(Path(issued["key_file"]).read_text())["key"]
+    bearer = {"Authorization": f"Bearer {key}"}
+
+    (tmp_path / "scores.csv").write_bytes(b"gene,score\nBST2,0.06\n")
+    skill.ok(tmp_path, "data", "collection", "create", "--name", "test_collection")
+    private = skill.ok(
+        tmp_path,
+        "data",
+        "put",
+        "scores.csv",
+        "--collection",
+        "test_collection",
+        "--name",
+        "scores.csv",
+    )
+    content = f"{api}/files/{private['file_id']}/v/latest"
+    assert HTTP.get(content, headers=bearer).status_code == 403  # granted nothing yet
+    granted = skill.ok(
+        tmp_path,
+        "data",
+        "collection",
+        "grant",
+        "--collection",
+        "test_collection",
+        "--api-key",
+        issued["id"],
+        "--perm",
+        "read",
+    )
+    assert granted["api_key_id"] == issued["id"] and granted["session"] == "demo/lyra"
+    assert HTTP.get(content, headers=bearer).content == b"gene,score\nBST2,0.06\n"
+    assert HTTP.get(content).status_code == 401  # private: no key, no read
+
+    (tmp_path / "summary.csv").write_bytes(b"genes,1\n")
+    skill.ok(
+        tmp_path, "data", "collection", "create", "--name", "test_collection_public"
+    )
+    public = skill.ok(
+        tmp_path,
+        "data",
+        "put",
+        "summary.csv",
+        "--collection",
+        "test_collection_public",
+        "--name",
+        "summary.csv",
+    )
+    opened = skill.ok(
+        tmp_path,
+        "data",
+        "collection",
+        "set-public",
+        "--collection",
+        "test_collection_public",
+        "--public",
+    )
+    assert opened["public"] is True
+    collections = skill.ok(tmp_path, "data", "collection", "list")["collections"]
+    owned = {c["name"]: c["public"] for c in collections if c["owner"] == "lyra"}
+    assert owned == {"test_collection": False, "test_collection_public": True}
+    listed = HTTP.get(f"{api}/collections/test_collection_public/changes").json()
+    assert [i["name"] for i in listed["items"]] == ["summary.csv"]
+    read = HTTP.get(f"{api}/files/{public['file_id']}/v/latest")
+    assert read.status_code == 200 and read.content == b"genes,1\n"
+
+    mine = skill.ok(tmp_path, "list-api-keys")
+    assert [k["id"] for k in mine["keys"]] == [issued["id"]]
+    revoked = skill.ok(tmp_path, "revoke-api-key", issued["id"])
+    assert revoked["revoked"] is not None
+    assert HTTP.get(content, headers=bearer).status_code == 401
+
+    skill.ok(tmp_path, "use", "demo", ADMIN)
+    admins = skill.ok(tmp_path, "gen-api-key", "kiosk")
+    assert admins["session"] == f"demo/{ADMIN}" and admins["role"] == "non-member"
+    gone = skill.ok(tmp_path, "revoke-api-key", admins["id"])
+    assert gone["revoked"] is not None

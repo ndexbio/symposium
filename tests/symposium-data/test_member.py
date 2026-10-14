@@ -1,14 +1,14 @@
 """The CLI's member side against a real data server, with every setup step done through
 the CLI's own admin commands: registration (R-D1, R-D5), files and versions (R-A, R-B),
-collections and read keys (R-E), lookups, verify and promote (R-G), and what rebind-key and
-suspect-after do to a registered member."""
+collections, grants and API keys (R-E), lookups, verify and promote (R-G), and what
+rebind-key and suspect-after do to a registered member."""
 
 import hashlib
 import json
 import stat
 from pathlib import Path
 
-from suite import enroll
+from suite import ADMIN, enroll
 
 
 def write(directory: Path, name: str, content: bytes) -> Path:
@@ -24,7 +24,8 @@ def test_registration_by_invite_file_is_idempotent(admin_dir, cli):
         again["registered"] is False
     )  # already registered with this key: nothing changes
     me = cli.ok(lyra, "owner", "whoami")
-    assert me["handle"] == "lyra" and me["community"] == "demo" and me["admin"] is False
+    assert me["handle"] == "lyra" and me["community"] == "demo"
+    assert (me["role"], me["kind"]) == ("member", "session")
     assert {"collection": "files", "perm": "write"} in me["grants"]
     pubkey = cli.ok(lyra, "owner", "pubkey")
     assert pubkey["fingerprint"] == me["kid"] == again["fingerprint"]
@@ -118,7 +119,15 @@ def test_collections_sharing_and_lookups(admin_dir, cli):
     )
     assert code == 1 and out["status"] == 403  # not granted yet
     cli.ok(
-        lyra, "collection", "grant-write", "--collection", "project", "--handle", "vega"
+        lyra,
+        "collection",
+        "grant",
+        "--collection",
+        "project",
+        "--handle",
+        "vega",
+        "--perm",
+        "write",
     )
     shared = cli.ok(
         vega,
@@ -132,7 +141,15 @@ def test_collections_sharing_and_lookups(admin_dir, cli):
         '{"tag": "x"}',
     )
     code, out = cli(
-        vega, "collection", "grant-write", "--collection", "project", "--handle", "lyra"
+        vega,
+        "collection",
+        "grant",
+        "--collection",
+        "project",
+        "--handle",
+        "lyra",
+        "--perm",
+        "write",
     )
     assert code == 1 and out["status"] == 403  # only the owner grants
     assert (
@@ -165,7 +182,9 @@ def test_collections_sharing_and_lookups(admin_dir, cli):
     assert late["ok"] is False and "not strictly earlier" in late["reason"]
 
 
-def test_read_keys_are_files_and_read_with_no_context(admin_dir, cli, tmp_path):
+def test_an_application_key_reads_what_it_is_granted_with_no_context(
+    admin_dir, cli, tmp_path
+):
     lyra = enroll(cli, admin_dir, "lyra")
     cli.ok(lyra, "collection", "create", "--name", "project")
     put = cli.ok(
@@ -177,53 +196,108 @@ def test_read_keys_are_files_and_read_with_no_context(admin_dir, cli, tmp_path):
         "--name",
         "r.txt",
     )
-    key_file = lyra / "reviewer.key"
-    minted = cli.ok(
-        lyra,
-        "keys",
-        "mint",
-        "--collection",
-        "project",
-        "--label",
-        "reviewer",
-        "--out",
-        key_file,
-        "--hours",
-        24,
+    issued = cli.ok(
+        lyra, "gen-api-key", "reviewer", "--non-member", "--expires-days", 1
     )
-    assert "key" not in minted and minted["expires"] is not None  # never printed
+    assert "key" not in issued and issued["expires"] is not None  # never printed
+    assert (issued["role"], issued["handle"]) == ("non-member", None)
+    key_file = Path(issued["key_file"])
     assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
     content = json.loads(key_file.read_text())
-    assert content["key"].startswith("sdr_") and content["community"] == "demo"
-    listed = cli.ok(lyra, "keys", "list", "--collection", "project")["keys"]
+    assert content["key"].startswith("sak_") and content["community"] == "demo"
+    assert content["api"].endswith("/v1")
+    listed = cli.ok(lyra, "list-api-keys")["keys"]
     assert [k["label"] for k in listed] == ["reviewer"] and "key" not in listed[0]
 
     outsider = tmp_path / "outsider"  # no context at all
     outsider.mkdir()
-    read = cli.ok(
-        outsider,
-        "get",
-        put["citation"],
-        "--out",
-        outsider / "r.txt",
-        "--read-key-file",
-        key_file,
-    )
-    assert (outsider / "r.txt").read_bytes() == b"for a reviewer" and read[
-        "sha256"
-    ] == put["sha256"]
 
-    cli.ok(lyra, "keys", "revoke", minted["id"])
+    def read(name):
+        return cli(
+            outsider,
+            "get",
+            put["citation"],
+            "--out",
+            outsider / name,
+            "--api-key-file",
+            key_file,
+        )
+
+    code, out = read("before.txt")
+    assert code == 1 and out["status"] == 403  # issued, but granted nothing yet
+
     code, out = cli(
-        outsider,
-        "get",
-        put["citation"],
-        "--out",
-        outsider / "again.txt",
-        "--read-key-file",
-        key_file,
+        lyra,
+        "collection",
+        "grant",
+        "--collection",
+        "project",
+        "--api-key",
+        issued["id"],
+        "--perm",
+        "write",
     )
+    assert code == 1 and out["status"] == 400  # a non-member key is granted read only
+    granted = cli.ok(
+        lyra,
+        "collection",
+        "grant",
+        "--collection",
+        "project",
+        "--api-key",
+        issued["id"],
+        "--perm",
+        "read",
+    )
+    assert granted["api_key_id"] == issued["id"] and granted["granted"] is True
+    code, read_out = read("r.txt")
+    assert code == 0, read_out
+    assert (outsider / "r.txt").read_bytes() == b"for a reviewer"
+    assert read_out["sha256"] == put["sha256"]
+
+    cli.ok(lyra, "revoke-api-key", issued["id"])
+    code, out = read("again.txt")
     assert code == 1 and out["status"] == 401  # refused from the very next request
+
+
+def test_a_public_collection_is_read_by_an_ungranted_key(admin_dir, cli, tmp_path):
+    lyra = enroll(cli, admin_dir, "lyra")
+    cli.ok(lyra, "collection", "create", "--name", "open")
+    put = cli.ok(
+        lyra,
+        "put",
+        write(lyra, "o.txt", b"for anyone"),
+        "--collection",
+        "open",
+        "--name",
+        "o.txt",
+    )
+    issued = cli.ok(lyra, "gen-api-key", "anyone", "--non-member")
+    outsider = tmp_path / "outsider"
+    outsider.mkdir()
+
+    def read(name):
+        return cli(
+            outsider,
+            "get",
+            put["citation"],
+            "--out",
+            outsider / name,
+            "--api-key-file",
+            issued["key_file"],
+        )
+
+    assert read("private.txt")[1]["status"] == 403
+    cli.ok(lyra, "collection", "set-public", "--collection", "open", "--public")
+    listed = cli.ok(lyra, "collection", "list")["collections"]
+    opened = next(c for c in listed if c["name"] == "open")
+    assert (opened["owner"], opened["public"]) == ("lyra", True)
+    assert opened["access"] == ["read", "write", "manage"]
+    code, out = read("public.txt")
+    assert code == 0, out
+    assert (outsider / "public.txt").read_bytes() == b"for anyone"
+    cli.ok(lyra, "collection", "set-public", "--collection", "open", "--private")
+    assert read("private-again.txt")[1]["status"] == 403
 
 
 def test_a_member_submission_is_promoted_by_the_admin(admin_dir, cli):
@@ -356,3 +430,81 @@ def test_changes_all_pages_through_the_whole_feed(admin_dir, cli):
         "--all",
     )
     assert later["items"] == []
+
+
+def test_a_member_grants_another_member_read_and_withdraws_it(admin_dir, cli, tmp_path):
+    lyra = enroll(cli, admin_dir, "lyra")
+    vega = enroll(cli, admin_dir, "vega")
+    cli.ok(lyra, "collection", "create", "--name", "shared")
+    put = cli.ok(
+        lyra,
+        "put",
+        write(lyra, "s.txt", b"for vega"),
+        "--collection",
+        "shared",
+        "--name",
+        "s.txt",
+    )
+
+    def read(name):
+        return cli(vega, "get", put["citation"], "--out", tmp_path / name)
+
+    grant = ["collection", "grant", "--collection", "shared", "--handle", "vega"]
+    assert read("before.txt")[1]["status"] == 403
+    granted = cli.ok(lyra, *grant, "--perm", "read")
+    assert (granted["handle"], granted["perm"], granted["granted"]) == (
+        "vega",
+        "read",
+        True,
+    )
+    code, out = read("granted.txt")
+    assert code == 0, out
+    assert (tmp_path / "granted.txt").read_bytes() == b"for vega"
+    withdrawn = cli.ok(lyra, *grant, "--perm", "read", "--revoke")
+    assert withdrawn["granted"] is False
+    assert read("withdrawn.txt")[1]["status"] == 403  # from the very next request
+
+
+def test_the_admin_revokes_a_members_non_member_issued_key(admin_dir, cli, tmp_path):
+    lyra = enroll(cli, admin_dir, "lyra")
+    issued = cli.ok(lyra, "gen-api-key", "dashboard", "--non-member")
+    seen = {k["id"]: k for k in cli.ok(admin_dir, "list-api-keys")["keys"]}
+    assert seen[issued["id"]]["role"] == "non-member"
+    revoked = cli.ok(admin_dir, "revoke-api-key", issued["id"])
+    assert revoked["revoked"] is not None and revoked["revoked_by"] == ADMIN
+    mine = {k["id"]: k for k in cli.ok(lyra, "list-api-keys")["keys"]}
+    assert mine[issued["id"]]["revoked"] is not None
+    code, out = cli(
+        tmp_path,
+        "get",
+        "symposium-data:00000000-0000-0000-0000-000000000000@v1",
+        "--out",
+        tmp_path / "x",
+        "--api-key-file",
+        issued["key_file"],
+    )
+    assert code == 1 and out["status"] == 401  # revoked: refused from the next request
+
+
+def test_a_purged_version_reports_410_with_its_metadata(admin_dir, cli, tmp_path):
+    lyra = enroll(cli, admin_dir, "lyra")
+    put = cli.ok(
+        lyra,
+        "put",
+        write(lyra, "p.txt", b"to purge"),
+        "--collection",
+        "files",
+        "--name",
+        "p.txt",
+    )
+    cli.ok(admin_dir, "purge", "--cite", put["citation"])
+    code, out = cli(lyra, "get", put["citation"], "--out", tmp_path / "gone.txt")
+    assert code == 1 and out["status"] == 410
+    assert out["error"] == "the version's content was purged"
+    assert (out["citation"], out["file_id"], out["purged"]) == (
+        put["citation"],
+        put["file_id"],
+        True,
+    )
+    assert "code" not in out and "detail" not in out
+    assert not (tmp_path / "gone.txt").exists()

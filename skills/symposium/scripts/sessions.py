@@ -60,11 +60,24 @@ PATH_OPTIONS = {
     "--from",
     "--out",
     "--out-dir",
-    "--read-key-file",
+    "--api-key-file",
 }
 # commands whose positional arguments may be the caller's files (artifacts, a record
 # directory, a credentials file, a file to store)
 PATH_POSITIONALS = {"publish", "validate", "serve", "port", "data"}
+# the options of those commands that take no value: the word after any other option is that
+# option's value (a file's `--name`, a `--collection`), kept as given
+FLAGS = {
+    "--all",
+    "--new-key",
+    "--non-member",
+    "--private",
+    "--public",
+    "--quiet",
+    "--reference",
+    "--revoke",
+    "--verbose",
+}
 
 
 class SessionError(Exception):
@@ -285,11 +298,15 @@ class Sessions:
     # ── the command line ─────────────────────────────────────────────────────────────────
     def resolve(self, command: str, rest: list) -> list:
         """The caller's relative paths, made absolute against the caller's directory."""
-        out, expecting = [], False
+        out, expecting, value_of_option = [], False, False
         for arg in rest:
             if expecting:
                 out.append(self.absolute(arg))
                 expecting = False
+                continue
+            if value_of_option:
+                out.append(arg)
+                value_of_option = False
                 continue
             name, equals, value = arg.partition("=")
             if name in PATH_OPTIONS:
@@ -298,11 +315,10 @@ class Sessions:
                 else:
                     out.append(arg)
                     expecting = True
-            elif (
-                command in PATH_POSITIONALS
-                and not arg.startswith("-")
-                and (self.caller / arg).exists()
-            ):
+            elif arg.startswith("-"):
+                out.append(arg)
+                value_of_option = not equals and arg not in FLAGS
+            elif command in PATH_POSITIONALS and (self.caller / arg).exists():
                 out.append(self.absolute(arg))
             else:
                 out.append(arg)

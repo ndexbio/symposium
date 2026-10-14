@@ -29,7 +29,7 @@ MIGRATION_LOCK_ID = 7_301_014
 
 
 class Settings:
-    """Reads the generated service.env plus the operator-facing SYMPOSIUM_SERVER_* and SYMPOSIUM_CONTROL_API_* variables."""
+    """Reads the generated service.env plus the operator-facing SYMPOSIUM_SERVER_* variables."""
 
     def __init__(self, path: str | None = None, environ: dict | None = None):
         env = os.environ if environ is None else environ
@@ -46,9 +46,15 @@ class Settings:
         self.s3_secret_key = values["S3_SECRET_KEY"]
         self.s3_bucket = values.get("S3_BUCKET", "symposium-data")
         self.server_id = values["SERVER_ID"]
-        self.token_key_file = values["TOKEN_KEY_FILE"]
-        self.token_ttl = int(env.get("SYMPOSIUM_CONTROL_API_TOKEN_TTL", "900"))
-        self.invite_hours = int(env.get("SYMPOSIUM_CONTROL_API_INVITE_HOURS", "72"))
+        # seconds a session key lasts
+        self.session_ttl = float(env.get("SYMPOSIUM_SERVER_SESSION_TTL", "900"))
+        self.invite_hours = int(env.get("SYMPOSIUM_SERVER_INVITE_HOURS", "72"))
+        # browser origins allowed to call the API (CORS); none by default
+        self.cors_origins = [
+            origin.strip()
+            for origin in env.get("SYMPOSIUM_SERVER_CORS_ORIGINS", "").split(",")
+            if origin.strip()
+        ]
         # 0 means no quota. Counted per member, in each community, over the payload bytes
         # they uploaded first.
         self.quota_bytes = int(env.get("SYMPOSIUM_SERVER_QUOTA_BYTES", "0"))

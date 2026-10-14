@@ -1,5 +1,6 @@
-"""Sharing: member-owned collections, grants, public collections, read keys for
-non-members, inbox privacy, and per-community isolation."""
+"""Sharing: member-owned collections, grants to Members and to non-member API keys, public
+collections, inbox privacy, the life of an issued key, and per-community isolation. A file has
+its collection's access; `test_access_matrix.py` asserts every caller against every operation."""
 
 import pytest
 from conftest import Owner, community_with, enroll, psql, set_roster
@@ -24,28 +25,37 @@ def create_collection(owner, name, community="demo"):
     )
 
 
-def grant(owner, collection, handle, perm, granted=True):
+def grant(owner, collection, perm, granted=True, *, handle=None, api_key_id=None):
+    body = {"perm": perm, "granted": granted}
+    if handle is not None:
+        body["handle"] = handle
+    if api_key_id is not None:
+        body["api_key_id"] = api_key_id
     return HTTP.put(
         f"{owner.server.url}/v1/demo/collections/{collection}/grants",
-        json={"handle": handle, "perm": perm, "granted": granted},
+        json=body,
         headers=owner.headers(),
     )
 
 
-def mint(owner, collection, label="reviewer", file_id=None, community="demo"):
-    body = {"label": label}
-    if file_id:
-        body["file_id"] = file_id
-    return HTTP.post(
-        f"{owner.server.url}/v1/{community}/collections/{collection}/keys",
-        json=body,
-        headers=owner.headers(),
+def set_public(owner, collection, public, headers=None):
+    return HTTP.put(
+        f"{owner.server.url}/v1/demo/collections/{collection}/public",
+        json={"public": public},
+        headers=owner.headers() if headers is None else headers,
     )
 
 
 def read(server, file_id, headers=None, ref=1, community="demo"):
     return HTTP.get(
         f"{server.url}/v1/{community}/files/{file_id}/v/{ref}", headers=headers or {}
+    )
+
+
+def file_count(server, collection) -> str:
+    return psql(
+        server,
+        f"SELECT count(*) FROM files WHERE community = 'demo' AND collection = '{collection}'",
     )
 
 
@@ -67,12 +77,12 @@ def test_only_the_owner_grants_and_grants_reach_roster_members_only(demo):
     server, _, owners = demo
     lyra, vega, rigel = owners["lyra"], owners["vega"], owners["rigel"]
     create_collection(lyra, "shared")
-    assert grant(vega, "shared", "rigel", "write").status_code == 403  # not the owner
-    assert (
-        grant(lyra, "shared", "mallory", "write").status_code == 403
-    )  # not on the roster
-    assert grant(lyra, "shared", "vega", "write").status_code == 200
-    assert grant(lyra, "shared", "vega", "read").status_code == 200
+    assert grant(vega, "shared", "write", handle="rigel").status_code == 403
+    assert grant(lyra, "shared", "write", handle="mallory").status_code == 403
+    assert grant(lyra, "shared", "write", handle="vega").status_code == 200
+    assert grant(lyra, "shared", "read", handle="vega").status_code == 200
+    # a Member granted write is still not the owner: it cannot grant on
+    assert grant(vega, "shared", "read", handle="rigel").status_code == 403
 
     fid = vega.put("demo", "shared", "vega.csv", b"from vega").json()["file_id"]
     assert vega.get(fid).content == b"from vega"
@@ -82,108 +92,166 @@ def test_only_the_owner_grants_and_grants_reach_roster_members_only(demo):
     assert lyra.get(fid).status_code == 200
     assert lyra.version(fid, data=b"overwrite").status_code == 403
 
-    assert grant(lyra, "shared", "vega", "write", granted=False).status_code == 200
+    assert grant(lyra, "shared", "write", False, handle="vega").status_code == 200
     assert vega.put("demo", "shared", "again.csv", b"no").status_code == 403
+    assert grant(lyra, "shared", "read", False, handle="vega").status_code == 200
+    assert vega.get(fid).status_code == 403  # withdrawn on the very next request
 
 
-def test_a_collection_read_key_reads_only_within_its_scope(demo):
+def test_a_non_member_key_reads_only_the_collections_it_is_granted(demo):
     server, _, owners = demo
     lyra = owners["lyra"]
     create_collection(lyra, "release")
-    inside = lyra.put("demo", "release", "result.csv", b"shared result").json()[
-        "file_id"
-    ]
-    outside = lyra.put("demo", "files", "private.csv", b"not shared").json()["file_id"]
+    inside = lyra.put("demo", "release", "result.csv", b"shared result").json()
+    outside = lyra.put("demo", "files", "private.csv", b"not shared").json()
 
-    minted = mint(lyra, "release")
-    assert minted.status_code == 201, minted.text
-    key = minted.json()["key"]
-    assert key.startswith("sdr_")
+    app = lyra.issue("dashboard", role="non-member")
+    assert app["role"] == "non-member" and app["handle"] is None
+    assert app["key"].startswith("sak_")
+    key = with_key(app["key"])
+    assert (
+        read(server, inside["file_id"], key).status_code == 403
+    )  # nothing granted yet
 
-    assert read(server, inside, with_key(key)).content == b"shared result"
-    assert read(server, outside, with_key(key)).status_code == 403
-    assert read(server, inside).status_code == 401  # no credential at all
+    assert grant(lyra, "release", "read", api_key_id=app["id"]).status_code == 200
+    assert read(server, inside["file_id"], key).content == b"shared result"
+    assert read(server, outside["file_id"], key).status_code == 403
+    assert read(server, inside["file_id"]).status_code == 401  # no key at all
     stat = HTTP.get(
-        f"{server.url}/v1/demo/files/{inside}/v/1/stat", headers=with_key(key)
+        f"{server.url}/v1/demo/files/{inside['file_id']}/v/1/stat", headers=key
     )
     assert stat.status_code == 200
+    listed = HTTP.get(
+        f"{server.url}/v1/demo/collections/release/changes", headers=key
+    ).json()
+    assert [i["file_id"] for i in listed["items"]] == [inside["file_id"]]
 
-    # a read key never writes, and never acts as an identity
+    # a non-member key never writes and acts as no Member
     write = HTTP.put(
         f"{server.url}/v1/demo/collections/release/files/x.csv",
         content=b"x",
-        headers=with_key(key),
+        headers=key,
     )
     assert write.status_code == 403
+    assert file_count(server, "release") == "1"
+    me = HTTP.get(f"{server.url}/v1/demo/me", headers=key).json()
+    assert (me["role"], me["handle"], me["kind"]) == ("non-member", None, "issued")
+    assert me["grants"] == [{"collection": "release", "perm": "read"}]
+
+    # withdrawn, it reads nothing from the very next request
     assert (
-        HTTP.get(f"{server.url}/v1/demo/whoami", headers=with_key(key)).status_code
-        == 403
+        grant(lyra, "release", "read", False, api_key_id=app["id"]).status_code == 200
+    )
+    assert read(server, inside["file_id"], key).status_code == 403
+
+
+def test_a_non_member_key_is_granted_read_only(demo):
+    server, admin, owners = demo
+    lyra, vega = owners["lyra"], owners["vega"]
+    create_collection(lyra, "release")
+    app = lyra.issue("dashboard", role="non-member")
+    refused = grant(lyra, "release", "write", api_key_id=app["id"])
+    assert refused.status_code == 400 and "read only" in refused.json()["detail"]
+    assert (
+        psql(server, "SELECT count(*) FROM grants WHERE api_key_id IS NOT NULL") == "0"
     )
 
-    listed = HTTP.get(
-        f"{server.url}/v1/demo/collections/release/keys", headers=lyra.headers()
+    member_key = lyra.issue("notebook")
+    refused = grant(lyra, "release", "read", api_key_id=member_key["id"])
+    assert refused.status_code == 400  # a member key reads with its Member's grants
+
+    revoked = vega.issue("old app", role="non-member")
+    HTTP.delete(vega.url(f"/api-keys/{revoked['id']}"), headers=vega.headers())
+    assert grant(lyra, "release", "read", api_key_id=revoked["id"]).status_code == 400
+
+    set_roster(server, admin, "other", ["bob"])
+    bob = Owner(server, "bob")
+    enroll(admin, bob, "other")
+    elsewhere = HTTP.post(
+        bob.url("/api-keys"),
+        json={"label": "other app", "role": "non-member"},
+        headers=bob.headers(),
     ).json()
-    assert [k["label"] for k in listed["keys"]] == ["reviewer"]
-    assert "key" not in listed["keys"][0]
-    assert listed["keys"][0]["uses"] == 2 and listed["keys"][0]["last_used"]
+    assert grant(lyra, "release", "read", api_key_id=elsewhere["id"]).status_code == 400
+
+    both = HTTP.put(
+        f"{server.url}/v1/demo/collections/release/grants",
+        json={"handle": "vega", "api_key_id": app["id"], "perm": "read"},
+        headers=lyra.headers(),
+    )
+    assert both.status_code == 400
 
 
-def test_a_revoked_key_is_refused_on_the_next_request(demo):
+def test_changing_access_takes_a_session_key(demo):
     server, _, owners = demo
+    lyra, vega = owners["lyra"], owners["vega"]
+    create_collection(lyra, "release")
+    member_key = with_key(lyra.issue("notebook")["key"])
+    app = lyra.issue("dashboard", role="non-member")
+    for headers in (member_key, with_key(app["key"])):
+        assert set_public(lyra, "release", True, headers).status_code == 403
+        r = HTTP.put(
+            f"{server.url}/v1/demo/collections/release/grants",
+            json={"handle": "vega", "perm": "read"},
+            headers=headers,
+        )
+        assert r.status_code == 403
+        r = HTTP.post(lyra.url("/api-keys"), json={"label": "more"}, headers=headers)
+        assert r.status_code == 403
+    # vega gained nothing, and no key was issued
+    assert psql(server, "SELECT count(*) FROM api_keys WHERE kind = 'issued'") == "2"
+    fid = lyra.put("demo", "release", "a.csv", b"x").json()["file_id"]
+    assert vega.get(fid).status_code == 403
+
+
+def test_a_revoked_or_expired_key_is_refused_on_the_next_request(demo):
+    server, admin, owners = demo
     lyra, rigel = owners["lyra"], owners["rigel"]
     create_collection(lyra, "revocable")
     fid = lyra.put("demo", "revocable", "f.csv", b"x").json()["file_id"]
-    minted = mint(lyra, "revocable").json()
-    assert read(server, fid, with_key(minted["key"])).status_code == 200
+    apps = [lyra.issue(f"app {n}", role="non-member") for n in range(3)]
+    for app in apps:
+        assert grant(lyra, "revocable", "read", api_key_id=app["id"]).status_code == 200
+        assert read(server, fid, with_key(app["key"])).status_code == 200
 
-    url = f"{server.url}/v1/demo/keys/{minted['id']}"
-    assert HTTP.delete(url, headers=rigel.headers()).status_code == 403
+    # another Member cannot revoke it; its issuer can, and so can the admin
+    url = lyra.url(f"/api-keys/{apps[0]['id']}")
+    assert HTTP.delete(url, headers=rigel.headers()).status_code == 404
     revoked = HTTP.delete(url, headers=lyra.headers())
     assert revoked.status_code == 200 and revoked.json()["revoked"]
-    assert read(server, fid, with_key(minted["key"])).status_code == 401
+    assert read(server, fid, with_key(apps[0]["key"])).status_code == 401
+    by_admin = HTTP.delete(
+        lyra.url(f"/api-keys/{apps[1]['id']}"), headers=admin.headers()
+    )
+    assert by_admin.status_code == 200
+    assert read(server, fid, with_key(apps[1]["key"])).status_code == 401
 
-
-def test_an_expired_key_is_refused(demo):
-    server, _, owners = demo
-    lyra = owners["lyra"]
-    create_collection(lyra, "dated")
-    fid = lyra.put("demo", "dated", "f.csv", b"x").json()["file_id"]
-    key = mint(lyra, "dated").json()
     psql(
         server,
-        f"UPDATE read_keys SET expires = now() - interval '1 second' WHERE id = '{key['id']}'",
+        f"UPDATE api_keys SET expires = now() - interval '1 second' WHERE id = '{apps[2]['id']}'",
     )
-    assert read(server, fid, with_key(key["key"])).status_code == 401
-    assert read(server, fid, with_key("sdr_forged")).status_code == 401
+    assert read(server, fid, with_key(apps[2]["key"])).status_code == 401
+    assert read(server, fid, with_key("sak_" + "A" * 43)).status_code == 401
 
 
-def test_a_file_creator_keys_their_own_file_only(demo):
+def test_an_issuer_leaving_the_roster_revokes_every_key_it_made(demo):
     server, admin, owners = demo
-    lyra, vega = owners["lyra"], owners["vega"]
-    mine = lyra.put("demo", "files", "mine.csv", b"lyra data").json()["file_id"]
-    theirs = vega.put("demo", "files", "theirs.csv", b"vega data").json()["file_id"]
+    lyra = owners["lyra"]
+    create_collection(lyra, "orphaned")
+    fid = lyra.put("demo", "orphaned", "f.csv", b"x").json()["file_id"]
+    session = lyra.headers()
+    member_key = with_key(lyra.issue("notebook")["key"])
+    app = lyra.issue("dashboard", role="non-member")
+    grant(lyra, "orphaned", "read", api_key_id=app["id"])
+    assert read(server, fid, with_key(app["key"])).status_code == 200
 
-    assert mint(lyra, "files").status_code == 403  # files is admin-owned
-    assert mint(lyra, "files", file_id=theirs).status_code == 403
-    key = mint(lyra, "files", file_id=mine)
-    assert key.status_code == 201, key.text
-    key = key.json()["key"]
-    assert read(server, mine, with_key(key)).content == b"lyra data"
-    assert read(server, theirs, with_key(key)).status_code == 403
-
-    # the admin owns `files` and may key any file in it, or the whole collection
-    assert mint(admin, "files", file_id=theirs).status_code == 201
-    assert mint(admin, "files").status_code == 201
-
-    # the creator sees only their own keys; the owner sees all of them
-    mine_listed = HTTP.get(
-        f"{server.url}/v1/demo/collections/files/keys", headers=lyra.headers()
-    )
-    assert {k["created_by"] for k in mine_listed.json()["keys"]} == {"lyra"}
-    all_listed = HTTP.get(
-        f"{server.url}/v1/demo/collections/files/keys", headers=admin.headers()
-    )
-    assert len(all_listed.json()["keys"]) == 3
+    removed = set_roster(server, admin, "demo", ["vega", "rigel"])
+    assert removed["removed"] == ["lyra"]
+    for headers in (session, member_key, with_key(app["key"])):
+        assert read(server, fid, headers).status_code == 401
+    # control of the collection passes to the admin, who manages it still
+    assert grant(admin, "orphaned", "read", handle="vega").status_code == 200
+    assert owners["vega"].get(fid).status_code == 200
 
 
 def test_inbox_is_never_exposed(demo):
@@ -191,41 +259,86 @@ def test_inbox_is_never_exposed(demo):
     fid = (
         owners["lyra"].put("demo", "inbox", "submission.json", b"{}").json()["file_id"]
     )
-    public = HTTP.put(
-        f"{server.url}/v1/demo/collections/inbox/public",
-        json={"public": True},
-        headers=admin.headers(),
-    )
-    assert public.status_code == 403
-    assert mint(admin, "inbox").status_code == 403
-    assert mint(admin, "inbox", file_id=fid).status_code == 403
+    assert set_public(admin, "inbox", True).status_code == 403
+    assert read(server, fid).status_code == 401
+    assert owners["vega"].get(fid).status_code == 403  # a submission is its submitter's
+    # inbox's owner, the admin, may still grant a key read on it, as on any collection
+    app = admin.issue("dashboard", role="non-member")
+    assert read(server, fid, with_key(app["key"])).status_code == 403
+    assert grant(admin, "inbox", "read", api_key_id=app["id"]).status_code == 200
+    assert read(server, fid, with_key(app["key"])).status_code == 200
     assert read(server, fid).status_code == 401
 
 
-def test_a_public_collection_reads_anonymously(demo):
+def test_a_public_collection_opens_reads_only(demo):
     server, admin, owners = demo
-    lyra = owners["lyra"]
+    lyra, vega = owners["lyra"], owners["vega"]
     create_collection(lyra, "open-data")
     fid = lyra.put("demo", "open-data", "table.csv", b"public table").json()["file_id"]
+    app = with_key(lyra.issue("dashboard", role="non-member")["key"])
+    changes = f"{server.url}/v1/demo/collections/open-data/changes"
     assert read(server, fid).status_code == 401
+    assert read(server, fid, app).status_code == 403
+    assert HTTP.get(changes).status_code == 401
 
-    url = f"{server.url}/v1/demo/collections/open-data/public"
-    assert (
-        HTTP.put(
-            url, json={"public": True}, headers=owners["vega"].headers()
-        ).status_code
-        == 403
-    )
-    assert (
-        HTTP.put(url, json={"public": True}, headers=lyra.headers()).status_code == 200
-    )
+    assert set_public(lyra, "open-data", True, vega.headers()).status_code == 403
+    assert set_public(lyra, "open-data", True).status_code == 200
     assert read(server, fid).content == b"public table"
+    assert read(server, fid, app).content == b"public table"
     assert owners["rigel"].get(fid).status_code == 200  # members read it too
+    assert [i["file_id"] for i in HTTP.get(changes).json()["items"]] == [fid]
 
-    assert (
-        HTTP.put(url, json={"public": False}, headers=lyra.headers()).status_code == 200
+    # public opens reads only: nobody without write access adds or changes a file
+    anonymous = HTTP.put(
+        f"{server.url}/v1/demo/collections/open-data/files/x.csv", content=b"x"
     )
+    assert anonymous.status_code == 401
+    assert vega.put("demo", "open-data", "x.csv", b"x").status_code == 403
+    assert vega.version(fid, data=b"changed").status_code == 403
+    assert vega.delete(fid).status_code == 403
+    assert HTTP.delete(f"{server.url}/v1/demo/files/{fid}").status_code == 401
+    assert file_count(server, "open-data") == "1"
+    assert lyra.get(fid).content == b"public table"
+
+    assert set_public(lyra, "open-data", False).status_code == 200
     assert read(server, fid).status_code == 401
+    assert read(server, fid, app).status_code == 403
+    assert HTTP.get(changes).status_code == 401
+
+
+def listed(server, headers=None, community="demo") -> dict:
+    """{collection: the caller's access} from the community's collection listing."""
+    answer = HTTP.get(f"{server.url}/v1/{community}/collections", headers=headers or {})
+    assert answer.status_code == 200, answer.text
+    return {c["name"]: c["access"] for c in answer.json()["collections"]}
+
+
+def test_each_caller_lists_the_collections_it_may_read(demo):
+    server, admin, owners = demo
+    lyra, vega = owners["lyra"], owners["vega"]
+    create_collection(lyra, "lab")
+    create_collection(lyra, "notes")
+    set_public(lyra, "notes", True)
+    app = lyra.issue("dashboard", role="non-member")
+    key = with_key(app["key"])
+
+    mine = listed(server, lyra.headers())
+    assert mine["lab"] == mine["notes"] == ["read", "write", "manage"]
+    assert mine["inbox"] == ["read", "write"]  # every Member submits
+    others = listed(server, vega.headers())
+    assert "lab" not in others and others["notes"] == ["read"]
+    assert set(listed(server, admin.headers())) >= {"lab", "notes", "inbox", "record"}
+    assert listed(server, key) == {"notes": ["read"]}
+    assert listed(server) == {"notes": ["read"]}  # no key: the public ones
+
+    assert grant(lyra, "lab", "read", api_key_id=app["id"]).status_code == 200
+    assert grant(lyra, "lab", "write", handle="vega").status_code == 200
+    assert listed(server, key) == {"lab": ["read"], "notes": ["read"]}
+    assert listed(server, vega.headers())["lab"] == ["write"]  # adds files, lists none
+    assert grant(lyra, "lab", "read", handle="vega").status_code == 200
+    assert listed(server, vega.headers())["lab"] == ["read", "write"]
+    unknown = HTTP.get(f"{server.url}/v1/nowhere/collections")
+    assert unknown.status_code == 404
 
 
 def test_communities_are_isolated(demo):
@@ -245,21 +358,25 @@ def test_communities_are_isolated(demo):
     # a file id from another community is not found in yours
     assert owners["lyra"].get(other_file).status_code == 404
     assert bob.get(demo_file).status_code == 404
-    # a member's token is valid only in its own community
-    assert create_collection(bob, "sneaky", community="demo").status_code == 401
-    # so is a read key
-    demo_key = mint(admin, "files").json()["key"]
-    assert read(server, demo_file, with_key(demo_key)).status_code == 200
-    assert read(server, other_file, with_key(demo_key)).status_code == 404
-    other_read = read(server, other_file, with_key(demo_key), community="other")
-    assert other_read.status_code == 401
-
-
-def test_removing_an_owner_from_the_roster_ends_their_control(demo):
-    server, admin, owners = demo
-    lyra = owners["lyra"]
-    create_collection(lyra, "orphaned")
-    set_roster(server, admin, "demo", ["vega", "rigel"])
-    assert grant(lyra, "orphaned", "vega", "read").status_code == 403
-    assert mint(lyra, "orphaned").status_code == 403
-    assert mint(admin, "orphaned").status_code == 201  # the admin still manages it
+    # a key is valid only in its own community
+    assert create_collection(bob, "sneaky", community="demo").status_code == 403
+    app = admin.issue("dashboard", role="non-member")
+    assert grant(admin, "files", "read", api_key_id=app["id"]).status_code == 200
+    assert read(server, demo_file, with_key(app["key"])).status_code == 200
+    assert read(server, other_file, with_key(app["key"])).status_code == 404
+    other_read = read(server, other_file, with_key(app["key"]), community="other")
+    assert other_read.status_code == 403
+    # and so is public: a public collection elsewhere reads only through its own path
+    bob_open = HTTP.post(
+        bob.url("/collections"), json={"name": "open"}, headers=bob.headers()
+    )
+    assert bob_open.status_code == 201
+    opened = HTTP.put(
+        bob.url("/collections/open/public"),
+        json={"public": True},
+        headers=bob.headers(),
+    )
+    assert opened.status_code == 200
+    public_file = bob.put("other", "open", "p.csv", b"public").json()["file_id"]
+    assert read(server, public_file, community="other").content == b"public"
+    assert read(server, public_file, community="demo").status_code == 404

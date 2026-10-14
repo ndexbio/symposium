@@ -6,9 +6,8 @@ from fastapi import APIRouter, Depends, Response
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from symposium_api.authz import authorize
-from symposium_api.caller import Caller
 from symposium_api.provider import service_provider
+from symposium_data.access import Caller, authorize
 
 from ..body import raw_json
 from ..dependencies import *

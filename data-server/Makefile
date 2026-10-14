@@ -13,7 +13,8 @@
 #                                  its image is on Docker Hub (the release workflow, on a
 #                                  symposium-helm-v<version> GitHub release)
 #   make helm-attach CHART_TAG=…   attach that package to the symposium-helm-v<version> release
-#   make helm-e2e                  the chart's live test on its own
+#   make chart-e2e                 the chart's live test on its own: the image, the Kubernetes
+#                                  tools and the chart package first, then the test
 # The chart targets fetch pinned helm, kind and kubectl into .tools/ on first use: Docker is the
 # only tool they need on the machine.
 
@@ -28,7 +29,12 @@ export SYMPOSIUM_TEST_MAX_WAIT := $(MAX_PER_TEST_WAIT)
 include ../make/side-by-side.mk
 
 .PHONY: lint test service-suites chart-e2e build-docker push-docker helm-package helm-push \
-	helm-attach helm-e2e k8s-tools chart-tag
+	helm-attach k8s-tools chart-tag
+
+# set while `test` runs: it has made the image, the tools and the package once, so the suites
+# it runs side by side take them as made
+export PREBUILT
+test: PREBUILT := 1
 
 lint:
 	cd service && $(UV) ruff check . && $(UV) ruff format --check .
@@ -43,8 +49,9 @@ service-suites:
 	cd service && SYMPOSIUM_DATA_TEST_IMAGE=$(IMAGE):$(TAG) SYMPOSIUM_DATA_TEST_VERSION=$(TAG) \
 		$(UV) pytest tests/integration
 
-# the chart's live test on the image and the package already made
-chart-e2e:
+# the chart's live test: on its own it makes the image, the tools and the package first; under
+# `test` (PREBUILT), on the ones already made
+chart-e2e: $(if $(PREBUILT),,build-docker k8s-tools helm-package)
 	$(E2E)
 
 # the API's shared rules and contract, from outside this directory, as named build contexts
@@ -133,6 +140,3 @@ helm-attach: chart-tag helm-package
 E2E = cd service && SYMPOSIUM_DATA_TEST_IMAGE=$(IMAGE):$(TAG) SYMPOSIUM_K8S_CHART=$(CURDIR)/$(PACKAGE) \
 	SYMPOSIUM_K8S_HELM=$(CURDIR)/$(HELM) SYMPOSIUM_K8S_KIND=$(CURDIR)/$(KIND) \
 	SYMPOSIUM_K8S_KUBECTL=$(CURDIR)/$(KUBECTL) $(UV) pytest -p no:cacheprovider tests/k8s
-
-helm-e2e: build-docker k8s-tools helm-package
-	$(E2E)

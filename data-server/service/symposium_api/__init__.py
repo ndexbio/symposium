@@ -1,8 +1,9 @@
-"""The Symposium Data API: `/api/v1`, the record at the level of the specification's model.
+"""The record's routes of `/v1`: the community record at the level of the specification's
+model, generated from the contract.
 
 `generated/` is generated from `api/openapi.yaml` by `codegen/generate.py` and never edited by
 hand. The rest of this package is the hand-written implementation behind the generated service
-interface: authorization from the contract (`authz`, `contract`), API keys (`keys`), the
-derived index (`index`), the streams (`streams`) and the operations (`service`).
-`symposium_server` mounts it on the data server's app.
+interface: the derived index (`index`), the streams (`streams`) and the operations (`service`).
+Access is `symposium_data.access`'s, as for every route. `symposium_server` mounts it on the
+data server's app.
 """

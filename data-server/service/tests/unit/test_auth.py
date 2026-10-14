@@ -46,7 +46,7 @@ def test_validate_refuses_anything_else(jwk):
         PublicKeys().validate(jwk)
 
 
-# ── signatures, secrets, tokens ─────────────────────────────────────────────────────────────
+# ── signatures and secrets ─────────────────────────────────────────────────────────────────
 def _keypair():
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -78,49 +78,3 @@ def test_secrets_are_prefixed_unique_and_hashed():
     assert a.startswith("sdi_") and a != b and len(a) > 40
     assert s.digest(a) == s.digest(a) != s.digest(b)
     assert a not in s.digest(a)
-
-
-def _write_key(path):
-    from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-
-    path.write_bytes(
-        Ed25519PrivateKey.generate().private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption(),
-        )
-    )
-    return str(path)
-
-
-def test_tokens_round_trip(tmp_path):
-    from symposium_data.auth import Tokens
-
-    tokens = Tokens(_write_key(tmp_path / "k.pem"), "server-1", 60)
-    claims = tokens.read(tokens.issue("lyra", "kid-1", "comm1"))
-    assert claims["sub"] == "lyra" and claims["kid"] == "kid-1"
-    assert claims["exp"] - claims["iat"] == 60
-
-
-def test_a_member_token_names_its_community_and_an_admin_token_none(tmp_path):
-    from symposium_data.auth import Tokens
-
-    tokens = Tokens(_write_key(tmp_path / "k.pem"), "server-1", 60)
-    member = tokens.read(tokens.issue("lyra", "kid-1", "comm1"))
-    assert member["com"] == "comm1" and "adm" not in member
-    admin = tokens.read(tokens.issue("opadmin", "kid-a"))
-    assert admin["adm"] is True and "com" not in admin
-
-
-def test_tokens_refuse_expired_foreign_and_other_issuer(tmp_path):
-    from symposium_data.auth import Tokens
-
-    mine = _write_key(tmp_path / "mine.pem")
-    other = _write_key(tmp_path / "other.pem")
-    expired = Tokens(mine, "s", -1)
-    assert expired.read(expired.issue("a", "k")) is None
-    token = Tokens(mine, "s", 60).issue("a", "k")
-    assert Tokens(other, "s", 60).read(token) is None
-    assert Tokens(mine, "another-server", 60).read(token) is None
-    assert Tokens(mine, "s", 60).read("garbage") is None

@@ -31,15 +31,15 @@ from symposium_rules.validate import (
     verify_content,
 )
 
-from .authz import standing
-from .caller import Caller
-from .errors import ApiError
+from symposium_data.access import Caller, standing
+from symposium_data.errors import ApiError
+
 from .generated import models as m
 from .generated.service import Service
 from .index import Index, members_of
 from .streams import HEARTBEAT, Caps, Notifier
 
-API = "/api/v1"
+API = "/v1"
 MARK_SUBMISSION = "symposium_submission"
 MARK_REPLY = "symposium_reply"
 MARK_CITATION = "symposium_submission_citation"
@@ -139,6 +139,21 @@ class ApiService(Service):
         self.index.catch_up(conn, community)
         return community
 
+    def reading(self, conn, caller: Caller, value) -> str:
+        """`fresh`, for a caller who may read the community's record: one with read access to
+        its `record` collection, or anyone while it is public."""
+        community = self.community(conn, value)
+        if not self.records.can_read_collection(
+            conn, caller.principal(), community, "record"
+        ):
+            if caller.anonymous:
+                raise ApiError(
+                    401, f"the record of {community} is private: an API key is required"
+                )
+            raise ApiError(403, f"no read access to the record of {community}")
+        self.index.catch_up(conn, community)
+        return community
+
     def position(self, conn, community: str) -> dict:
         seq = self.index.position(conn, community)
         newest = self.index.newest(conn, community)
@@ -152,6 +167,15 @@ class ApiService(Service):
     @staticmethod
     def base(caller: Caller) -> str:
         return caller.base_url + API
+
+    def location_url(self, caller, community, location) -> str | None:
+        """Where a `symposium-data:` location is read on this API: the cited file version's
+        content. None for any other location."""
+        cited = parse_citation(location)
+        if cited is None:
+            return None
+        file_id, n = cited
+        return f"{self.base(caller)}/{quote(community)}/files/{file_id}/v/{n}"
 
     def artifact_url(self, caller, community, name) -> str:
         return (
@@ -271,7 +295,7 @@ class ApiService(Service):
     # ── the record ─────────────────────────────────────────────────────────────────────────
     def get_record(self, caller, *, community):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             rows = self.index.docs(conn, community)
             versions = sorted(
                 {r["doc"]["artifact"].get("specification_version", "") for r in rows}
@@ -302,7 +326,7 @@ class ApiService(Service):
         created_after,
     ):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             return m.ArtifactSummaryPage.model_validate(
                 self.summary_page(
                     conn,
@@ -319,7 +343,7 @@ class ApiService(Service):
 
     def get_artifact(self, caller, *, community, name):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             row = self.doc_row(conn, community, name)
             header = row["doc"]["artifact"]
             url = self.artifact_url(caller, community, row["name"])
@@ -354,7 +378,7 @@ class ApiService(Service):
     def get_artifact_content(self, caller, *, community, name):
         """The Artifact's canonical JSON exactly as the gate stored it."""
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             row = self.doc_row(conn, community, name)
             try:
                 version = self.records.version(
@@ -369,7 +393,7 @@ class ApiService(Service):
 
     def get_artifact_property(self, caller, *, community, name, property):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             row = self.doc_row(conn, community, name)
             header, prop = row["doc"]["artifact"], plain(property)
             if prop not in header:
@@ -399,7 +423,7 @@ class ApiService(Service):
 
     def list_objects(self, caller, *, community, name, cursor, limit, type):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             row, objects = self.objects_of(conn, community, name)
             if plain(type):
                 objects = [o for o in objects if o.get("type") == plain(type)]
@@ -424,24 +448,26 @@ class ApiService(Service):
 
     def get_object(self, caller, *, community, name, object):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             row, obj = self.object_of(conn, community, name, object)
             address = f"@{row['name']}.{obj['name']}"
             url = self.artifact_url(caller, community, row["name"])
-            return m.ObjectResource.model_validate(
-                {
-                    "url": self.address_url(caller, community, address, "object"),
-                    "address": address,
-                    "artifact_url": url,
-                    "object": obj,
-                    "relationships_url": f"{url}/relationships",
-                    "position": self.position(conn, community),
-                }
-            )
+            out = {
+                "url": self.address_url(caller, community, address, "object"),
+                "address": address,
+                "artifact_url": url,
+                "object": obj,
+                "relationships_url": f"{url}/relationships",
+                "position": self.position(conn, community),
+            }
+            location = self.location_url(caller, community, obj.get("location"))
+            if location:
+                out["location_url"] = location
+            return m.ObjectResource.model_validate(out)
 
     def get_object_property(self, caller, *, community, name, object, property):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             row, obj = self.object_of(conn, community, name, object)
             prop = plain(property)
             if prop not in obj:
@@ -461,7 +487,7 @@ class ApiService(Service):
 
     def list_relationships(self, caller, *, community, name, cursor, limit, rel):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             row = self.doc_row(conn, community, name)
             rels = row["doc"].get("relationships", [])
             if plain(rel):
@@ -479,7 +505,7 @@ class ApiService(Service):
 
     def list_cited_by(self, caller, *, community, name, cursor, limit, via):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             row = self.doc_row(conn, community, name)
             limit = int(plain(limit) or 100)
             state = decode(cursor, o=int)
@@ -517,7 +543,7 @@ class ApiService(Service):
 
     def list_supersession(self, caller, *, community, name, cursor, limit):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             start = self.doc_row(conn, community, name)
             chain, frontier = {}, [(start["name"], 0, None)]
             seen = {start["name"]}
@@ -588,7 +614,7 @@ class ApiService(Service):
 
     def list_findings(self, caller, *, community, name, cursor, limit, basis, level):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             row = self.doc_row(conn, community, name)
             basis = plain(basis) or "current"
             if basis == "accepted":
@@ -611,7 +637,7 @@ class ApiService(Service):
     def resolve_address(self, caller, *, community, address):
         address = plain(address)
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             vindex, _ = self.index.validator_index(conn, community)
             ok, info, reason = resolve(address, vindex, self.members(conn, community))
             if not ok:
@@ -638,11 +664,16 @@ class ApiService(Service):
             if info.get("property") and not info.get("method"):
                 out["value"] = holder[info["property"]]
             if info.get("method"):
-                method = info["method_obj"]
+                content = info["method_obj"]
                 out["verified"] = not verify_content(info)
-                for key in ("location", "access_method"):
-                    if isinstance(method.get(key), str):
-                        out[key] = method[key]
+            else:
+                content = holder if kind == "object" else {}
+            for key in ("location", "access_method"):
+                if isinstance(content.get(key), str):
+                    out[key] = content[key]
+            location = self.location_url(caller, community, out.get("location"))
+            if location:
+                out["location_url"] = location
             return m.Resolution.model_validate(out)
 
     # ── members ────────────────────────────────────────────────────────────────────────────
@@ -667,7 +698,7 @@ class ApiService(Service):
 
     def list_members(self, caller, *, community, cursor, limit):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             handles, roster = self.handles(conn, community)
             chunk, nxt = self.window(handles, cursor, limit)
             return m.MemberPage.model_validate(
@@ -682,7 +713,7 @@ class ApiService(Service):
 
     def get_member(self, caller, *, community, handle):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             handles, roster = self.handles(conn, community)
             if plain(handle) not in handles:
                 raise ApiError(404, f"no member '{plain(handle)}' in {community}")
@@ -692,7 +723,7 @@ class ApiService(Service):
 
     def list_member_artifacts(self, caller, *, community, handle, cursor, limit, order):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             return m.ArtifactSummaryPage.model_validate(
                 self.summary_page(
                     conn,
@@ -707,7 +738,7 @@ class ApiService(Service):
 
     def list_member_messages(self, caller, *, community, handle, cursor, limit, order):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             return m.ArtifactSummaryPage.model_validate(
                 self.summary_page(
                     conn,
@@ -723,17 +754,34 @@ class ApiService(Service):
     def get_me(self, caller, *, community):
         with self.connection() as conn:
             community = self.fresh(conn, community)
-            row = self.keys.row(conn, caller.community, caller.key_id)
+            row = conn.execute(
+                "SELECT expires FROM api_keys WHERE id = %s", (caller.key_id,)
+            ).fetchone()
+            if caller.role == "non-member":
+                grants = self.records.key_grants(conn, community, caller.key_id)
+            elif caller.admin:
+                grants = []
+            else:
+                grants = self.records.grants(conn, community, caller.handle)
+            member = (
+                self.records.owner(conn, community, caller.handle)
+                if caller.role == "member"
+                else None
+            )
             out = {
+                "kind": caller.kind,
                 "handle": caller.handle,
                 "label": caller.label,
                 "role": caller.role,
-                "community": row["community"],
+                "community": community,
                 "key_id": str(caller.key_id),
-                "expires": iso(row["expires"]),
+                "kid": caller.ed25519_kid,
+                "expires": iso(row["expires"]) if row else None,
+                "suspect_after": iso(member["suspect_after"]) if member else None,
+                "grants": [{"collection": c, "perm": p} for c, p in grants],
                 "position": self.position(conn, community),
             }
-            if caller.handle:
+            if caller.handle and not caller.admin:
                 out["member_url"] = self.member_url(caller, community, caller.handle)
             return m.Me.model_validate(out)
 
@@ -930,7 +978,7 @@ class ApiService(Service):
         runtime, records = self.runtime, self.records
         with self.connection() as conn:
             community = self.fresh(conn, community)
-            if not records.can_create(conn, caller.handle, community, "inbox"):
+            if not records.can_create(conn, caller.principal(), community, "inbox"):
                 raise ApiError(403, f"'{caller.handle}' may not submit to {community}")
             # a name already in the record is a conflict, before the validator says so
             if self.index.artifact(conn, community, name) is not None:
@@ -982,25 +1030,24 @@ class ApiService(Service):
         return m.SubmissionResource.model_validate(resource)
 
     # ── streams ────────────────────────────────────────────────────────────────────────────
-    def still_allowed(self, caller: Caller, community: str) -> bool:
-        """The re-check at every event and heartbeat: revoked, expired, off the roster or
-        unbound keys lose their stream, and an anonymous stream ends once the record it
-        follows is made private."""
+    def still_allowed(
+        self, caller: Caller, community: str, collection: str | None = None
+    ) -> bool:
+        """The re-check at every event and heartbeat: a revoked or expired key, or one that
+        lost its standing, loses its stream, and so does a caller who can no longer read the
+        collection the stream follows (a withdrawn grant, a record made private)."""
         with self.connection() as conn:
-            if caller.kind == "anonymous":
-                return bool(
-                    self.records.collection_row(conn, community, "record")["public"]
-                )
-            if caller.kind != "api_key":
-                return True
-            row = self.keys.live(conn, caller.key_id)
-            return (
-                row is not None and standing(conn, self.records, row, community) is None
+            if not caller.anonymous:
+                row = self.keys.live(conn, caller.key_id)
+                if row is None or standing(conn, self.records, row, community):
+                    return False
+            return collection is None or self.records.can_read_collection(
+                conn, caller.principal(), community, collection
             )
 
     def stream_record(self, caller, *, community, last__event__i_d):
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            community = self.reading(conn, caller, community)
             start = decode(last__event__i_d, r=int).get("r")
             if start is None:
                 start = self.index.position(conn, community)
@@ -1027,7 +1074,7 @@ class ApiService(Service):
                 rows = await asyncio.to_thread(read, seq)
                 for row_seq, summary in rows:
                     if not await asyncio.to_thread(
-                        self.still_allowed, caller, community
+                        self.still_allowed, caller, community, "record"
                     ):
                         return
                     seq = row_seq
@@ -1040,7 +1087,7 @@ class ApiService(Service):
                     HEARTBEAT - (time.monotonic() - beat), generation
                 ):
                     if not await asyncio.to_thread(
-                        self.still_allowed, caller, community
+                        self.still_allowed, caller, community, "record"
                     ):
                         return
                     await asyncio.to_thread(self.caps.beat, stream_id)

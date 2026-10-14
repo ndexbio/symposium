@@ -117,7 +117,7 @@ trustedProxy: <the network the Gateway's pods run in, e.g. 10.244.0.0/16>
 storage: {size: 20Gi}           # size it to the communities' data; className if there is no default
 ```
 
-- **Streams.** The Symposium Data API's streams (Server-Sent Events) stay open for hours. The chart turns the route's timeouts off for them, and gateways stream responses unbuffered by default. The stream's 30-second heartbeat keeps it inside any idle timeout longer than that.
+- **Streams.** The API's streams (Server-Sent Events) stay open for hours. The chart turns the route's timeouts off for them, and gateways stream responses unbuffered by default. The stream's heartbeat (`SYMPOSIUM_SERVER_STREAM_HEARTBEAT`, 30 seconds by default) keeps it inside any idle timeout longer than that.
 - **Trusted proxy.** The server trusts `X-Forwarded-*` headers only from `trustedProxy`. Keep it to the gateway's pod network, never a range anything else can send from.
 - **Refusals.** The chart refuses `gateway` mode on a cluster without the Gateway API, and says so.
 
@@ -135,9 +135,9 @@ publicUrl: https://data.example.org
 trustedProxy: <the network the controller's pods run in>
 ```
 
-The streams need the controller to stream responses unbuffered, with a read timeout well past 30 seconds:
-- **NGINX Ingress Controller (F5):** `nginx.org/proxy-buffering: "false"` and `nginx.org/proxy-read-timeout: "3600s"`.
-- **Traefik:** it streams by default.
+The controller must stream responses unbuffered, with a read timeout well past the streams' heartbeat, and accept request bodies as large as the files members upload:
+- **NGINX Ingress Controller (F5):** `nginx.org/proxy-buffering: "false"`, `nginx.org/proxy-read-timeout: "3600s"` and `nginx.org/client-max-body-size: "0"` (its default limit is 1 MB; `"0"` lifts it, and the community's quota bounds uploads).
+- **Traefik:** it streams and accepts any body size by default.
 - **Any other controller:** find its equivalents in its own documentation.
 
 **Install it** with the commands at the start of §5. Without either mode, the server is reachable inside the cluster, or from your machine with `kubectl -n symposium port-forward svc/symposium-data 8790:8080`.
@@ -200,7 +200,7 @@ The server reads `admin_pub_<handle>.key` at every start-up, from `/apps/` or `/
 - **Communities.**
   - **Create:** `POST /v1/communities {name}` (admin) creates one; it is idempotent. `GET /v1/communities` lists them.
   - **Names:** 1–20 letters, digits or underscores, unique ignoring case. `status`, `communities` and `admin` are reserved.
-  - **Isolation:** each community's routes are under `/v1/<community>/…`, and its tokens, read keys and file ids are refused in any other. The same handle in two communities is two identities. Content is deduplicated only within a community, and quota is per member per community.
+  - **Isolation:** each community's routes are under `/v1/<community>/…`, and its API keys and file ids are refused in any other. The same handle in two communities is two identities. Content is deduplicated only within a community, and quota is per member per community.
   - **The admin** is server-wide, and its handle can never be a member's.
 - **Rosters.**
   - **Add or remove:** `POST /v1/<community>/roster/<handle>` adds a member (idempotent), and `DELETE` removes one.
@@ -215,15 +215,18 @@ The server reads `admin_pub_<handle>.key` at every start-up, from `/apps/` or `/
 - **A member's lost or compromised key.** Both of these are admin only:
   - `POST /v1/<community>/owners/<handle>/rebind` retires the handle's keys and returns a fresh invite.
   - `PUT /v1/<community>/owners/<handle>/suspect-after {"at": "2026-10-01T12:00:00+00:00"}` flags every version the handle wrote after that instant (`"suspect": true` in `stat`). Nothing is deleted.
-- **Read keys.** A read key (`sdr_…`) lets a non-member read one collection, or one file.
-  - **Minting:** `POST /v1/<community>/collections/<collection>/keys`, by the collection's owner or the admin, or by a file's creator for that file alone.
-  - **The secret:** it is shown once, and the server keeps only its hash.
-  - **`inbox`:** it never takes read keys.
-  - **A leaked key:** list the collection's keys (`GET …/keys`), then revoke it. The revocation takes effect from the next request:
+- **Sharing with applications.** An application reads with a non-member issued key, which reads the collections their owners grant it.
+  - **Issue:** `/symposium gen-api-key <label> --non-member` in a member's session, or `gen-api-key <label>` in the admin's. The key goes to a 0600 file, and the server keeps its hash and a sealed copy its issuer can read back.
+  - **Grant:** `PUT /v1/<community>/collections/<collection>/grants {"api_key_id": "<key id>", "perm": "read"}`, by the collection's owner or the admin. A non-member issued key is granted `read` only.
+  - **Public:** `PUT /v1/<community>/collections/<collection>/public {"public": true}` opens a collection to reads with no key at all. `inbox` stays private.
+  - **Browser apps:** list the origins they are served from in `SYMPOSIUM_SERVER_CORS_ORIGINS` (with Helm, the `corsOrigins` value), so a browser lets them call the API.
+  - **A leaked key:** its issuer or the admin revokes it, and the revocation takes effect from the next request:
 
     ```bash
-    curl -X DELETE -H "Authorization: Bearer <token>" https://data.example.org/v1/<community>/keys/<key-id>
+    curl -X DELETE -H "Authorization: Bearer <session key>" https://data.example.org/v1/<community>/api-keys/<key-id>
     ```
+
+  A session key is obtained through the session management routes with the member's or the admin's private key file; the skill's `symposium-data` obtains one on every command.
 
 ## 9. Maintenance
 
@@ -232,25 +235,25 @@ The server reads `admin_pub_<handle>.key` at every start-up, from `/apps/` or `/
   - **What goes:** its bytes are deleted only when no other live version shares them. If the file store refuses, the route reports `"bytes_freed": false` and the janitor finishes the job.
 
   ```bash
-  curl -X POST -H "Authorization: Bearer <admin token>" https://data.example.org/v1/<community>/files/<file-id>/v/<n>/purge
+  curl -X POST -H "Authorization: Bearer <admin session key>" https://data.example.org/v1/<community>/files/<file-id>/v/<n>/purge
   ```
 
 - **The janitor** runs in the background. It removes what a crash mid-write leaves behind (uploads that never completed, names reserved but never used) once they are older than `SYMPOSIUM_SERVER_PENDING_TTL`, and retries failed deletes. Work in progress keeps refreshing its timestamps, so the janitor never removes it.
 - **The scrub** re-hashes stored content on a schedule. It records a mismatch and never repairs one: `stat` reports `"integrity": "mismatch"`.
-- **Back up** with export, which works however the server runs. It exports one community, admin only, while the server runs: one consistent snapshot of its rows, its read keys (hashes only), its members' public keys and its payloads, without invites.
+- **Back up** with export, which works however the server runs. It exports one community, admin only, while the server runs: one consistent snapshot of its rows, its members' public keys and its payloads, without invites or API keys.
 
   ```bash
-  curl -fsS -H "Authorization: Bearer <admin token>" -o demo.tar https://data.example.org/v1/demo/export
+  curl -fsS -H "Authorization: Bearer <admin session key>" -o demo.tar https://data.example.org/v1/demo/export
   ```
 
   To back up the whole server, stop it and copy its `/apps` directory. On Kubernetes, that means snapshotting its PVC, where the cluster supports CSI volume snapshots.
-- **Import** an export into an operational server, admin only. Each member is created in the new community and signs in with the key they already hold.
+- **Import** an export into an operational server, admin only. Each member is created in the new community and obtains session keys with the private key file the member already holds.
   - **What it needs:** the community must not exist there yet, and no member may have that server's admin's handle.
   - **What it does:** everything the exported admin owned becomes this server's admin's.
   - **On failure:** the import is one transaction, so nothing is written. It answers `409` when refused, and `400` when the stream is damaged or the name isn't valid.
 
   ```bash
-  curl -fsS -X POST -H "Authorization: Bearer <admin token>" --data-binary @demo.tar \
+  curl -fsS -X POST -H "Authorization: Bearer <admin session key>" --data-binary @demo.tar \
     https://data.example.org/v1/communities/import
   ```
 
@@ -262,10 +265,10 @@ curl -s <url>/v1/status
 
 - **Healthy:** it answers `200` with the version, `server_id`, the `mode`, and `"postgres": "ok"` and `"s3": "ok"`. Once operational, it also reports the admin's handle and `fingerprint`.
 - **Unhealthy:** it answers `503` while PostgreSQL or the file store is down. That is what the chart's readiness probe checks.
-- **The contract:** the Symposium Data API serves its OpenAPI contract with no credential, once operational (`501` before then):
+- **The contract:** the API serves its OpenAPI contract with no key, once operational (`501` before then):
 
   ```bash
-  curl -s <url>/api/v1/openapi.yaml
+  curl -s <url>/v1/openapi.yaml
   ```
 
 ## 11. Tear down

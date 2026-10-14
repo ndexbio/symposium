@@ -15,7 +15,6 @@ def store_at(tmp_path, port: int) -> PayloadStore:
         "DATABASE_URL=postgresql://u:p@127.0.0.1:5432/symposium_data\n"
         f"S3_ENDPOINT=http://127.0.0.1:{port}\n"
         "S3_ACCESS_KEY=ak\nS3_SECRET_KEY=sk\nSERVER_ID=6f1c\n"
-        "TOKEN_KEY_FILE=/apps/data/config/token_ed25519.pem\n"
     )
     return PayloadStore(Settings(str(env), environ={}))
 

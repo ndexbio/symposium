@@ -14,9 +14,15 @@ log = logging.getLogger("symposium_data.jobs")
 
 class Jobs:
     def __init__(
-        self, settings: Settings, db: Database, store: PayloadStore, records: Records
+        self,
+        settings: Settings,
+        db: Database,
+        store: PayloadStore,
+        records: Records,
+        api_keys=None,
     ):
         self.settings, self.db, self.store, self.records = settings, db, store, records
+        self.api_keys = api_keys
         self.cleanup = Cleanup(db, store, records)
         self.stop = threading.Event()
         self.threads = []
@@ -48,9 +54,12 @@ class Jobs:
         """Remove what a crash or a failed S3 delete left behind (R-A6): name reservations that
         never turned live, pending uploads (bytes first, then the row) and purged payloads
         whose bytes are not yet freed. It also erases the secret of every invite that expired
-        unused (R-D6). -> how many items are still waiting for a retry."""
+        unused (R-D6), and sweeps the API keys: expired values erased, ended sessions deleted.
+        -> how many items are still waiting for a retry."""
         with self.db.connection() as conn:
             self.records.forget_expired_invites(conn)
+            if self.api_keys is not None:
+                self.api_keys.sweep(conn)
             self.records.stale_reservations(conn, self.settings.pending_ttl)
             stale = self.records.stale_pending(conn, self.settings.pending_ttl)
             purging = self.records.purging_payloads(conn)

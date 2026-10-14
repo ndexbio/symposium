@@ -1,4 +1,4 @@
-"""The Symposium Data API's contract (`api/openapi.yaml`) against the rules its design notes
+"""The Symposium API's contract (`api/openapi.yaml`) against the rules its design notes
 (`api/DESIGN.md`) set: every operation names its roles and its security, every listing that
 grows with the record is paged, every read of the record states its position, every error
 shares one body, and the notes' tables agree with the contract. The linter checks that the
@@ -6,15 +6,29 @@ document is valid OpenAPI; these check that it says what Symposium needs it to s
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
 import pytest
 import yaml
 
-API = Path(__file__).resolve().parents[2] / "api"
-# The two roles an API key may hold; `member` holds everything `non-member` holds.
-ROLES = ("non-member", "member")
+REPO = Path(__file__).resolve().parents[2]
+API = REPO / "api"
+SERVICE = REPO / "data-server" / "service"
+# the tags of the routes that set a community up; the rest read and write its data
+CONTROL_TAGS = {
+    "server",
+    "sessions",
+    "communities",
+    "roster",
+    "keys",
+    "collections",
+    "admin",
+}
+# The roles an API key may hold: `member` holds everything `non-member` holds; `admin` is the
+# server admin's session, which acts as no Member.
+ROLES = ("non-member", "member", "admin")
 METHODS = ("get", "post", "put", "patch", "delete")
 
 # The skill's commands (skills/symposium/SKILL.md) that have an API equivalent; DESIGN.md
@@ -95,13 +109,16 @@ def test_every_operation_names_its_roles(spec):
         assert named == set(roles), (
             f"{where}: description names {named}, x-roles {roles}"
         )
+        # the credentials, in the words of the data server README's Authentication column
+        assert f"\nAuthentication: {authentication(op)}.\n" in op["description"], (
+            f"{where}: the description states no 'Authentication: {authentication(op)}.'"
+        )
 
 
-def test_each_role_holds_everything_the_one_before_holds(spec):
+def test_a_member_holds_everything_a_non_member_holds(spec):
     for path, method, op in operations(spec):
-        allowed = [role in op["x-roles"] for role in ROLES]
-        first = allowed.index(True)
-        assert all(allowed[first:]), f"{method.upper()} {path}: x-roles skips a role"
+        if "non-member" in op["x-roles"]:
+            assert "member" in op["x-roles"], f"{method.upper()} {path}: skips member"
 
 
 def test_every_operation_states_its_security(spec):
@@ -118,40 +135,50 @@ def test_every_operation_states_its_security(spec):
             f"{where}: `{{}}` and x-anonymous disagree"
         )
         if anonymous:
+            assert op["x-anonymous"] in ("always", "public"), (
+                f"{where}: x-anonymous is {op['x-anonymous']!r}"
+            )
             assert "non-member" in op["x-roles"], (
                 f"{where}: anonymous where a non-member is refused"
             )
 
 
-def test_the_api_takes_api_keys_alone_and_has_no_admin_operation(spec):
+def test_the_api_takes_api_keys_alone(spec):
+    """One credential, an API key. The admin's session management pair is the one route under
+    `/admin`:
+    every other admin operation lives under its community, or under `/communities`."""
     assert list(spec["components"]["securitySchemes"]) == ["apiKey"]
     for path, method, op in operations(spec):
-        assert not path.startswith("/admin"), (
-            f"{method.upper()} {path} is an admin path"
-        )
-        assert "admin" not in op["x-roles"], f"{method.upper()} {path} admits admin"
+        assert not path.startswith("/admin") or path in (
+            "/admin/challenge",
+            "/admin/token",
+        ), f"{method.upper()} {path} is an admin path"
+        if op["x-roles"] == ["member"]:
+            continue  # acts as a Member, which the admin is not
+        assert "admin" in op["x-roles"], f"{method.upper()} {path} refuses the admin"
 
 
 def test_every_member_operation_says_whose_key_it_needs(spec):
-    """An operation that acts as a Member says it needs a key the Member made for itself, and
+    """An operation that acts as a Member says it needs a key bound to the Member, and
     that the key's handle is checked against the community in the path on every request."""
     for path, method, op in operations(spec):
         if op["x-roles"] != ["member"]:
             continue
         text = " ".join(op["description"].split())
         where = f"{method.upper()} {path}"
-        assert "Requires a `member` API key" in text, where
-        assert "created for itself" in text, where
+        assert "Requires a key bound to a Member" in text, where
+        assert "issued for itself" in text, where
+        assert "session key" in text, where
         assert "the community in the path" in text, where
 
 
-def test_the_api_refers_to_nothing_outside_itself():
-    """Every URL the API answers is its own: the contract names no `/v1` route and accepts no
-    credential but an API key: no Ed25519 token, no JWT, no read key. (A Member's registered
-    Ed25519 *key* is named, as the thing a `member` key's standing rests on.)"""
+def test_the_api_takes_one_credential_at_one_path(spec):
+    """One API at `/v1`, and one credential, an API key: no Ed25519 token, no JWT, no read key.
+    (A Member's registered Ed25519 *key* is named, as what a sign-in and a Member's key stand
+    on.)"""
     text = (API / "openapi.yaml").read_text(encoding="utf-8")
-    assert not re.search(r"(?<!/api)/v1\b", text), "the contract names a /v1 route"
-    for word in ("Ed25519 token", "JWT", "adminToken", "sdr_"):
+    assert [server["url"] for server in spec["servers"]] == ["https://{host}/v1"]
+    for word in ("/api/v1", "Ed25519 token", "JWT", "adminToken", "sdr_", "read key"):
         assert word not in text, f"the contract mentions {word}"
 
 
@@ -163,6 +190,8 @@ def test_the_record_is_read_only(spec):
 
 
 def test_every_growing_listing_is_paged(spec):
+    """A page is `items` with the cursor to the next: `next` (paged by `cursor` and `limit`) or
+    `next_since` (paged by `since` and `limit`, as a collection's feed is)."""
     for path, method, op in operations(spec):
         where = f"{method.upper()} {path}"
         schema = success_json(spec, op)
@@ -172,10 +201,18 @@ def test_every_growing_listing_is_paged(spec):
         listing = any(
             deref(spec, p).get("type") == "array" for p in properties.values()
         )
-        paged = "next" in properties
-        if paged:
+        paged = "items" in properties and bool({"next", "next_since"} & set(properties))
+        if paged and "next" in properties:
             assert {"cursor", "limit"} <= params(spec, op), (
                 f"{where}: `next` without cursor/limit"
+            )
+        if paged and "next_since" in properties:
+            body = op.get("requestBody", {}).get("content", {}).get("application/json")
+            taken = params(spec, op) | (
+                set(flatten(spec, body["schema"])[0]) if body else set()
+            )
+            assert {"since", "limit"} <= taken, (
+                f"{where}: `next_since` without since/limit"
             )
         if listing and not paged:
             assert op.get("x-bounded"), (
@@ -186,6 +223,10 @@ def test_every_growing_listing_is_paged(spec):
 def test_every_read_of_the_record_states_its_position(spec):
     for path, method, op in operations(spec):
         if method != "get" or not path.startswith("/{community}"):
+            continue
+        if not op.get(
+            "x-generated"
+        ):  # the record's reads, not the files' or the control's
             continue
         if op.get("x-stored"):  # answers the stored bytes themselves, untouched
             continue
@@ -208,8 +249,12 @@ def test_every_stream_resumes_from_a_cursor(spec):
 
 
 def test_every_error_shares_one_body(spec):
+    """Every refusal answers the Error body. `getStatus` is the one exception: its 503 is the
+    health report itself, the same body as its 200."""
     for path, _method, op in operations(spec):
         for code, response in op["responses"].items():
+            if op["operationId"] == "getStatus" and code == "503":
+                continue
             if code[0] in "45":
                 schema = deref(spec, response)["content"]["application/json"]["schema"]
                 assert schema == {"$ref": "#/components/schemas/Error"}, (
@@ -269,3 +314,159 @@ def test_the_design_maps_every_command_to_a_real_endpoint(spec, design):
         assert set(named) <= set(routes), f"{command} names {named}"
         listed = {e.split("?")[0] for e in re.findall(r"`([A-Z]+ /[^`]+)`", endpoints)}
         assert listed == {routes[n] for n in named}, command
+
+
+# ── one contract for every route ───────────────────────────────────────────────────────────
+def hand_written_routes() -> set:
+    """(METHOD, path) of every route `symposium_data/app.py` declares, read from its source:
+    the app reads the server's settings as it is imported, so it is not imported here."""
+    tree = ast.parse(
+        (SERVICE / "symposium_data" / "app.py").read_text(encoding="utf-8")
+    )
+    routes = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for decorator in node.decorator_list:
+            if (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr in METHODS
+                and getattr(decorator.func.value, "id", None) == "app"
+            ):
+                path = decorator.args[0].value
+                assert path.startswith("/v1/"), path
+                routes.add((decorator.func.attr.upper(), path.removeprefix("/v1")))
+    return routes
+
+
+def generated_routes() -> set:
+    """(METHOD, path) of every route in `symposium_api/generated/routers/`."""
+    routes = set()
+    for module in (SERVICE / "symposium_api" / "generated" / "routers").glob("*.py"):
+        for method, path in re.findall(
+            r"@router\.(get|post|put|delete)\(\s*['\"]([^'\"]+)['\"]",
+            module.read_text(encoding="utf-8"),
+        ):
+            routes.add((method.upper(), path))
+    return routes
+
+
+def test_the_contract_describes_every_route_of_the_server(spec):
+    """Every route the server answers is in the contract, and every operation in the contract
+    is a route: the hand-written ones in `app.py`, and the generated ones it marks."""
+    contract = {(method.upper(), path) for path, method, _ in operations(spec)}
+    generated = {
+        (method.upper(), path)
+        for path, method, op in operations(spec)
+        if op.get("x-generated")
+    }
+    assert generated == generated_routes()
+    assert contract - generated == hand_written_routes()
+
+
+def test_every_hand_written_route_takes_the_contracts_rule(spec):
+    """Each hand-written route depends on `authorize` for its own operation, so the rule the
+    contract states is the rule the route applies."""
+    source = (SERVICE / "symposium_data" / "app.py").read_text(encoding="utf-8")
+    authorized = set(re.findall(r'Depends\(authorize\("(\w+)"\)\)', source))
+    hand_written = {
+        op["operationId"] for _, _, op in operations(spec) if not op.get("x-generated")
+    }
+    assert authorized == hand_written
+
+
+def test_a_session_is_asked_for_by_control_operations_alone(spec):
+    for path, method, op in operations(spec):
+        where = f"{method.upper()} {path}"
+        tags = set(op["tags"])
+        assert tags <= CONTROL_TAGS or not tags & CONTROL_TAGS, where
+        if op.get("x-session"):
+            assert tags <= CONTROL_TAGS, f"{where}: x-session on a data operation"
+
+
+# ── the data server README's Authentication column ─────────────────────────────────────────
+README = REPO / "data-server" / "README.md"
+
+
+def authentication(op) -> str:
+    """The credentials an operation takes, in the README's words, from its `x-roles`,
+    `x-session` and `x-anonymous`: an issued key holds role `member` or `non-member`, a
+    session key a member's or the admin's."""
+    if op.get("x-anonymous") == "always":
+        return "no key required"
+    roles, session = set(op["x-roles"]), op.get("x-session", False)
+    issued = set() if session else roles & {"member", "non-member"}
+    named = []
+    if issued == {"member", "non-member"}:
+        named.append("issued key")
+    elif issued:
+        named.append(f"{issued.pop()} issued key")
+    sessions = roles & {"member", "admin"}
+    if sessions == {"member", "admin"}:
+        named.append("session key")
+    elif sessions:
+        named.append(f"{sessions.pop()} session key")
+    if op.get("x-anonymous") == "public":
+        named.append("no key (public)")
+    return ", ".join(named)
+
+
+def shape(path: str) -> str:
+    """A path with its parameters unnamed: the README writes `{id}` where the contract has
+    `{file_id}`."""
+    return re.sub(r"\{[^}]+\}", "{}", path)
+
+
+def readme_routes(cell: str, known: set) -> list:
+    """The (METHOD, path shape) pairs a README route cell names, each one in `known`. A
+    route written `…/x` continues the one before it, a bare `…` repeats it, a route without
+    a method takes the one before it, and a Data API route, written without `/v1`, is under
+    `/{community}`."""
+    named, method, previous = [], None, None
+    for text in re.findall(r"`([^`]+)`", cell):
+        text = re.split(r" \{|\?", text)[0].strip()
+        if text.split(" ", 1)[0] in ("GET", "POST", "PUT", "DELETE"):
+            method, text = text.split(" ", 1)
+        if text.startswith("…"):
+            segments = previous.split("/")
+            path = next(
+                shaped
+                for n in range(len(segments), 0, -1)
+                if (method, shaped := "/".join(segments[:n]) + shape(text[1:])) in known
+            )
+        elif text.startswith("/v1"):
+            path = shape(text.removeprefix("/v1"))
+        else:
+            path = shape("/{community}" + text)
+        assert (method, path) in known, f"{method} {path}: no such operation ({cell})"
+        named.append((method, path))
+        previous = path
+    return named
+
+
+def test_the_readme_authentication_column_matches_the_contract(spec):
+    """Each row of the data server README's Data API and Control API tables states the
+    credentials its routes take, as the contract sets them."""
+    contract = {
+        (method.upper(), shape(path)): op for path, method, op in operations(spec)
+    }
+    text = README.read_text(encoding="utf-8")
+    section = text.split("### Data API", 1)[1].split("## Server Runtime Configuration")[
+        0
+    ]
+    checked = set()
+    for line in section.splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        for route in readme_routes(cells[0], set(contract)):
+            op = contract[route]
+            assert cells[-1] == authentication(op), (
+                f"{op['operationId']}: the README says {cells[-1]!r}, "
+                f"the contract {authentication(op)!r}"
+            )
+            checked.add(op["operationId"])
+    # every operation but the contract's own two (the README names them in prose) and `getMe`
+    missing = {op["operationId"] for op in contract.values()} - checked
+    assert missing == {"getOpenApiYaml", "getOpenApiJson", "getMe"}, sorted(missing)

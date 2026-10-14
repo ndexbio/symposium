@@ -87,11 +87,11 @@ def test_names_are_unique_and_matched_ignoring_case(server, admin):
     set_roster(server, admin, "Comm1", ["lyra"])
     lyra = Owner(server, "lyra", community="COMM1")  # any case reaches Comm1
     assert enroll(admin, lyra, "COMM1").status_code == 201
-    me = HTTP.get(lyra.url("/whoami"), headers=lyra.headers()).json()
+    me = HTTP.get(lyra.url("/me"), headers=lyra.headers()).json()
     assert me["community"] == "Comm1"
 
     for path in ("my-comm", "x" * 21, "nowhere"):
-        r = HTTP.get(f"{server.url}/v1/{path}/whoami", headers=admin.headers())
+        r = HTTP.get(f"{server.url}/v1/{path}/me", headers=admin.headers())
         assert r.status_code == 404, path
 
 
@@ -103,11 +103,11 @@ def test_one_handle_is_an_independent_identity_in_each_community(server, admin):
     assert enroll(admin, lyra1, "comm1").status_code == 201
     assert enroll(admin, lyra2, "comm2").status_code == 201
 
-    # each key signs in only to its own community, and each token works only there
-    assert Owner(server, "lyra", lyra1.key, "comm2").token_response().status_code == 401
-    assert Owner(server, "lyra", lyra2.key, "comm1").token_response().status_code == 401
-    wrong = HTTP.get(f"{server.url}/v1/comm2/whoami", headers=lyra1.headers())
-    assert wrong.status_code == 401
+    # each key signs in only to its own community, and each session works only there
+    assert Owner(server, "lyra", lyra1.key, "comm2").sign_in().status_code == 401
+    assert Owner(server, "lyra", lyra2.key, "comm1").sign_in().status_code == 401
+    wrong = HTTP.get(f"{server.url}/v1/comm2/me", headers=lyra1.headers())
+    assert wrong.status_code == 403 and "belongs to comm1" in wrong.json()["detail"]
 
     fid = lyra1.put("comm1", "files", "a.csv", b"comm1 data").json()["file_id"]
     assert lyra2.get(fid).status_code == 404  # not a file of comm2
@@ -117,10 +117,8 @@ def test_the_admin_is_server_wide_and_never_a_member(server, admin):
     create_community(server, admin, "comm1")
     create_community(server, admin, "comm2")
     for community in ("comm1", "comm2"):
-        me = HTTP.get(
-            f"{server.url}/v1/{community}/whoami", headers=admin.headers()
-        ).json()
-        assert me["admin"] is True and me["community"] == community
+        me = HTTP.get(f"{server.url}/v1/{community}/me", headers=admin.headers()).json()
+        assert me["role"] == "admin" and me["community"] == community
 
     refused = HTTP.post(
         f"{server.url}/v1/comm1/roster/demo-admin", headers=admin.headers()

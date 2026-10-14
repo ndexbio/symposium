@@ -1,7 +1,7 @@
 """symposium-data: the command-line client of a Symposium Data server, and its only client
 (R-I1). Every command prints one JSON object on stdout, errors included, and exits non-zero on
 an error. Nothing secret is ever printed or taken from the command line (R-I4): keys stay in
-the keystore, and invites and read keys move only as files.
+the keystore, and invites and API keys move only as files.
 
 Every command but `status`, `admin-config` and `context set` works on the context set in this
 directory (R-I3): `./.symposium/context.json`, written by `context set --community-file`
@@ -74,7 +74,7 @@ def image_version() -> str:
 
 
 def write_secret(path: Path, content: dict):
-    """A file only its owner can read (R-E3): an invite or a read key. Never printed."""
+    """A file only its owner can read (R-E3): an invite or an API key. Never printed."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -130,7 +130,7 @@ class DataServer:
     def __init__(self, base_url: str, community: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.community = community
-        self.token = None
+        self.key = None  # the session key a sign-in answers, or an API key
         self.checked = False
 
     # ── transport ──────────────────────────────────────────────────────────────────────────
@@ -151,8 +151,8 @@ class DataServer:
         if body is not None:
             data = json.dumps(body).encode()
             headers["Content-Type"] = "application/json"
-        if auth and self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
+        if auth and self.key:
+            headers["Authorization"] = f"Bearer {self.key}"
         request = urllib.request.Request(
             self.base_url + path, data=data, headers=headers, method=method
         )
@@ -186,7 +186,7 @@ class DataServer:
                 501,
             )
         if error.code == 410 and isinstance(body, dict):
-            metadata = {k: v for k, v in body.items() if k != "detail"}
+            metadata = {k: v for k, v in body.items() if k not in ("detail", "code")}
             return CommandError("the version's content was purged", 410, **metadata)
         return CommandError(detail, error.code)
 
@@ -211,7 +211,7 @@ class DataServer:
         status = self.status()
         if status.get("api") != API_VERSION:
             raise CommandError(
-                f"this CLI speaks the data server's Control API version {API_VERSION}, but the server "
+                f"this CLI speaks the data server's API version {API_VERSION}, but the server "
                 f"at {self.base_url} speaks version {status.get('api')}; this bundle was built "
                 f"for data-server image {image_version()}"
             )
@@ -225,24 +225,24 @@ class DataServer:
     def sign_in_admin(self, keystore: Keystore, handle: str):
         nonce = self.request("POST", "/v1/admin/challenge", auth=False)["nonce"]
         signature = keystore.sign(ADMIN_SCOPE, handle, nonce.encode())
-        self.token = self.request(
+        self.key = self.request(
             "POST",
             "/v1/admin/token",
             body={"nonce": nonce, "signature": signature},
             auth=False,
-        )["token"]
+        )["key"]
 
     def sign_in_member(self, keystore: Keystore, handle: str):
         nonce = self.request(
             "POST", self.c("/auth/challenge"), body={"handle": handle}, auth=False
         )["nonce"]
         signature = keystore.sign(self.community, handle, nonce.encode())
-        self.token = self.request(
+        self.key = self.request(
             "POST",
             self.c("/auth/token"),
             body={"handle": handle, "nonce": nonce, "signature": signature},
             auth=False,
-        )["token"]
+        )["key"]
 
     # ── server-wide ────────────────────────────────────────────────────────────────────────
     def communities(self) -> dict:
@@ -291,7 +291,7 @@ class DataServer:
             "PUT", self.c(f"/owners/{handle}/suspect-after"), body={"at": at}
         )
 
-    # ── the Data API's keys: issued on the Control API, per community, by the admin ─────────
+    # ── API keys: issued per community by a signed-in Member or the admin ────────────────────
     @staticmethod
     def api_keys_path(community: str, path: str = "") -> str:
         return f"/v1/{urllib.parse.quote(community)}/api-keys{path}"
@@ -348,7 +348,7 @@ class DataServer:
         )
 
     def whoami(self) -> dict:
-        return self.request("GET", self.c("/whoami"))
+        return self.request("GET", self.c("/me"))
 
     # ── files ──────────────────────────────────────────────────────────────────────────────
     def upload(
@@ -411,32 +411,26 @@ class DataServer:
         params.update({k: v for k, v in (("before", before), ("sha256", sha256)) if v})
         return self.request("GET", self.c("/verify?" + urllib.parse.urlencode(params)))
 
-    # ── collections and read keys ──────────────────────────────────────────────────────────
+    # ── collections and grants ─────────────────────────────────────────────────────────────
+    def list_collections(self) -> dict:
+        return self.request("GET", self.c("/collections"))
+
     def create_collection(self, name: str) -> dict:
         return self.request("POST", self.c("/collections"), body={"name": name})
 
-    def grant_write(self, collection: str, handle: str) -> dict:
+    def grant(self, collection: str, grantee: dict, perm: str, granted: bool) -> dict:
+        """Grant (or withdraw) `perm` to a Member (`{"handle": …}`) or a non-member issued key
+        (`{"api_key_id": …}`)."""
         return self.request(
             "PUT",
             self.c(f"/collections/{collection}/grants"),
-            body={"handle": handle, "perm": "write"},
+            body={**grantee, "perm": perm, "granted": granted},
         )
 
     def set_public(self, collection: str, public: bool) -> dict:
         return self.request(
             "PUT", self.c(f"/collections/{collection}/public"), body={"public": public}
         )
-
-    def mint_key(self, collection: str, body: dict) -> dict:
-        return self.request(
-            "POST", self.c(f"/collections/{collection}/keys"), body=body
-        )
-
-    def keys(self, collection: str) -> dict:
-        return self.request("GET", self.c(f"/collections/{collection}/keys"))
-
-    def revoke_key(self, key_id: str) -> dict:
-        return self.request("DELETE", self.c(f"/keys/{key_id}"))
 
     def purge(self, file_id: str, n: str) -> dict:
         return self.request("POST", self.c(f"/files/{file_id}/v/{n}/purge"))
@@ -718,13 +712,14 @@ class Commands:
         return {k: v for k, v in item.items() if k != "key"}
 
     def gen_api_key(self, args) -> dict:
-        """A Member's session makes one more of the Member's own keys; the admin's session
-        makes a `non-member` key for an application. The server decides which from the
-        token, and binds a Member's key to that Member."""
+        """A Member's session makes one more of the Member's own keys, which act as it, or,
+        with --non-member, a non-member issued key, which reads what its collections'
+        owners grant it. The admin issues non-member issued keys only."""
         context = self.context.load()
         community = args.community or context["community"]
         server = self.signed_in(context)
-        body = {"label": args.label}
+        non_member = args.non_member or context["role"] == "admin"
+        body = {"label": args.label, "role": "non-member" if non_member else "member"}
         if args.expires_days:
             body["expires_days"] = args.expires_days
         issued = server.create_api_key(community, body)
@@ -734,14 +729,14 @@ class Commands:
             {
                 **issued,
                 "data-server-url": server.base_url,
-                "api": server.base_url + "/api/v1",
+                "api": server.base_url + "/v1",
             },
         )
         return {**self.api_key_view(issued), "key_file": str(path.resolve())}
 
     def list_api_keys(self, args) -> dict:
-        """A Member's own keys, or, for the admin, every key in the community (a Member's
-        without its value)."""
+        """The keys this session's owner issued, or, for the admin, every issued key in the
+        community (a Member's own keys without their values)."""
         context = self.context.load()
         community = args.community or context["community"]
         server = self.signed_in(context)
@@ -759,7 +754,8 @@ class Commands:
         }
 
     def revoke_api_key(self, args) -> dict:
-        """Revoke a key this session owns: a Member its own, the admin an application's."""
+        """Revoke a key this session's owner issued; the admin revokes any non-member issued
+        key."""
         context = self.context.load()
         community = args.community or context["community"]
         server = self.signed_in(context)
@@ -945,46 +941,25 @@ class Commands:
                 body[key] = value
         return self.admin().promote(file_id, n, body)
 
-    # ── collections and read keys ──────────────────────────────────────────────────────────
+    # ── collections and grants ─────────────────────────────────────────────────────────────
+    def collection_list(self, _args) -> dict:
+        return self.signed_in().list_collections()
+
     def collection_create(self, args) -> dict:
         return self.signed_in().create_collection(args.name)
 
-    def collection_grant_write(self, args) -> dict:
-        return self.signed_in().grant_write(args.collection, args.handle)
+    def collection_grant(self, args) -> dict:
+        """Grant (or, with --revoke, withdraw) a Member read or write, or a non-member issued
+        key read, on a collection the caller owns."""
+        grantee = (
+            {"handle": args.handle} if args.handle else {"api_key_id": args.api_key}
+        )
+        return self.signed_in().grant(
+            args.collection, grantee, args.perm, not args.revoke
+        )
 
     def collection_set_public(self, args) -> dict:
         return self.signed_in().set_public(args.collection, args.public)
-
-    def keys_mint(self, args) -> dict:
-        """A read key for a non-member (R-E2), written to a file (0600) with its scope, the
-        community and the server's URL, so it reads with no context. Never printed."""
-        context = self.context.load()
-        body = {"label": args.label}
-        if args.file_id:
-            body["file_id"] = parse_ref(args.file_id, None)[0]
-        if args.hours:
-            body["expires_hours"] = args.hours
-        minted = self.signed_in(context).mint_key(args.collection, body)
-        secret = minted.pop("key")
-        write_secret(
-            Path(args.out),
-            {
-                "key": secret,
-                "scope": {
-                    "collection": minted["collection"],
-                    "file_id": minted["file_id"],
-                },
-                "community": context["community"],
-                "data-server-url": context["data-server-url"],
-            },
-        )
-        return {**minted, "read_key_file": str(Path(args.out).resolve())}
-
-    def keys_list(self, args) -> dict:
-        return self.signed_in().keys(args.collection)
-
-    def keys_revoke(self, args) -> dict:
-        return self.signed_in().revoke_key(args.key_id)
 
     # ── reading ────────────────────────────────────────────────────────────────────────────
     def find_name(self, args) -> dict:
@@ -1022,20 +997,21 @@ class Commands:
 
     def get(self, args) -> dict:
         file_id, ref = parse_ref(args.ref, args.version)
-        if args.read_key_file:
-            server = self.with_read_key(args.read_key_file)
+        if args.api_key_file:
+            server = self.with_api_key(args.api_key_file)
         else:
             server = self.signed_in()
         return self.download(server.content(file_id, ref), Path(args.out))
 
-    def with_read_key(self, path) -> DataServer:
-        """A client that reads with a read key file, with no context (R-E3)."""
-        key = read_json_file(path, "read key file")
+    def with_api_key(self, path) -> DataServer:
+        """A client that reads with an API key file, as `gen-api-key` writes one, with no
+        context: what an application holding a non-member issued key does (R-E3)."""
+        key = read_json_file(path, "API key file")
         missing = [k for k in ("key", "community", "data-server-url") if not key.get(k)]
         if missing:
             raise CommandError(f"{path} lacks {', '.join(missing)}")
         server = self.server_for(key["data-server-url"], key["community"])
-        server.token = key["key"]
+        server.key = key["key"]
         return server
 
     def download(self, response, out: Path) -> dict:
@@ -1173,11 +1149,17 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "gen-api-key",
         commands.gen_api_key,
-        "create a Data API key and write it to a 0600 file in this session's api-keys/: "
-        "in a member's session one more of its own member keys, in the admin's session a "
-        "non-member key for an application",
+        "issue a key and write it to a 0600 file in this session's api-keys/: in a "
+        "member's session one more member issued key, bound to the member, or with "
+        "--non-member a non-member issued key, which reads the collections it is granted; the admin "
+        "issues non-member issued keys",
     )
     p.add_argument("label", help="the key's name, unique among your live keys")
+    p.add_argument(
+        "--non-member",
+        action="store_true",
+        help="a key for an application: it acts as no Member",
+    )
     p.add_argument("--community", help="default: the context's community")
     p.add_argument("--expires-days", type=int)
 
@@ -1185,9 +1167,9 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "list-api-keys",
         commands.list_api_keys,
-        "write your Data API keys, with their values, to a 0600 file in this session's "
-        "api-keys/; print them without values (the admin also sees members' keys, "
-        "never their values)",
+        "write the keys this session's owner issued, with their values, to a 0600 file in "
+        "this session's api-keys/; print them without values (the admin also sees members' "
+        "issued keys, without their values)",
     )
     p.add_argument("--community", help="default: the context's community")
 
@@ -1195,7 +1177,8 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "revoke-api-key",
         commands.revoke_api_key,
-        "revoke a Data API key you own (a member its own, the admin an application's)",
+        "revoke an issued key this session's owner issued (the admin also revokes any "
+        "non-member issued key)",
     )
     p.add_argument("key_id")
     p.add_argument("--community", help="default: the context's community")
@@ -1240,8 +1223,9 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         if name == "get":
             p.add_argument("--out", required=True)
             p.add_argument(
-                "--read-key-file",
-                help="read with a read key file instead of the context (needs no context)",
+                "--api-key-file",
+                help="read with an API key file from gen-api-key instead of the context "
+                "(needs no context)",
             )
     p = command(sub, "versions", commands.versions, "every version of a file")
     p.add_argument("file_id")
@@ -1315,18 +1299,29 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     actions = collection.add_subparsers(
         dest="action", metavar="<action>", required=True
     )
+    command(
+        actions,
+        "list",
+        commands.collection_list,
+        "the collections the caller may use, with its read, write and manage access on each",
+    )
     p = command(
         actions, "create", commands.collection_create, "create a collection you own"
     )
     p.add_argument("--name", required=True)
     p = command(
         actions,
-        "grant-write",
-        commands.collection_grant_write,
-        "let a roster member write to your collection",
+        "grant",
+        commands.collection_grant,
+        "let a roster member read or write a collection the caller owns, or a non-member "
+        "issued key read it; --revoke withdraws",
     )
     p.add_argument("--collection", required=True)
-    p.add_argument("--handle", required=True)
+    grantee = p.add_mutually_exclusive_group(required=True)
+    grantee.add_argument("--handle", help="a roster member")
+    grantee.add_argument("--api-key", help="the id of a non-member issued key")
+    p.add_argument("--perm", required=True, choices=("read", "write"))
+    p.add_argument("--revoke", action="store_true", help="withdraw the grant")
     p = command(
         actions,
         "set-public",
@@ -1365,29 +1360,6 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     p.add_argument("--cite", required=True)
     p.add_argument("--before", help="it must be strictly earlier than this instant")
     p.add_argument("--sha256")
-
-    keys = sub.add_parser("keys", help="read keys for non-members (R-E2)")
-    actions = keys.add_subparsers(dest="action", metavar="<action>", required=True)
-    p = command(
-        actions,
-        "mint",
-        commands.keys_mint,
-        "mint a read key into a file (0600); it is never printed",
-    )
-    p.add_argument("--collection", required=True)
-    p.add_argument("--label", required=True)
-    p.add_argument("--file-id", help="scope it to one file")
-    p.add_argument("--hours", type=int, help="expire after this many hours")
-    p.add_argument("--out", required=True)
-    p = command(
-        actions,
-        "list",
-        commands.keys_list,
-        "a collection's read keys, never their secret",
-    )
-    p.add_argument("--collection", required=True)
-    p = command(actions, "revoke", commands.keys_revoke, "revoke a read key at once")
-    p.add_argument("key_id")
 
     port_ndex.add_command(sub, command, commands, CommandError)  # port-ndex
     return parser

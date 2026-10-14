@@ -157,12 +157,7 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
     )  # only its recipient reads a reply
     assert vega.get(ported[0]["file_id"]).status_code == 200
     vegas = next(i for i in ported if i["created_by"] == "vega")
-    keyed = HTTP.post(
-        f"{server.url}/v1/demo/collections/record/keys",
-        json={"label": "reviewer", "file_id": vegas["file_id"]},
-        headers=vega.headers(),
-    )
-    assert keyed.status_code == 201  # credited to its author, who may key it (R-E2)
+    assert vegas["created_by"] == "vega"  # credited to its author (R-M2)
 
     # R-M4: the ported record, fetched into a directory, re-validates with Symposium's validator
     record_dir = tmp_path / "record"
@@ -361,19 +356,10 @@ def test_a_port_is_refused_before_any_ndex_call(demo, stub):
     assert HTTP.get(status_url, headers=admin.headers()).status_code == 404
     assert HTTP.get(status_url).status_code == 401
     assert HTTP.get(status_url, headers=lyra.headers()).status_code == 403
-    HTTP.post(
-        f"{server.url}/v1/demo/collections",
-        json={"name": "project"},
-        headers=lyra.headers(),
-    )
-    read_key = HTTP.post(
-        f"{server.url}/v1/demo/collections/project/keys",
-        json={"label": "reviewer"},
-        headers=lyra.headers(),
-    ).json()["key"]
-    by_key = {"Authorization": f"Bearer {read_key}"}
-    assert start_port(server, by_key, stub.url).status_code == 403
-    assert HTTP.get(status_url, headers=by_key).status_code == 403
+    for issued in (lyra.issue("notebook"), lyra.issue("dashboard", role="non-member")):
+        by_key = {"Authorization": f"Bearer {issued['key']}"}
+        assert start_port(server, by_key, stub.url).status_code == 403
+        assert HTTP.get(status_url, headers=by_key).status_code == 403
 
     create_community(server, admin, "full")
     admin.put("full", "files", "data.csv", b"already here")

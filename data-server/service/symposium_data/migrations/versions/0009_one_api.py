@@ -1,6 +1,6 @@
 """One API, one key format: every caller presents an API key, and collections decide access.
 
-`api_keys` holds every key the server issues. A session key comes from an Ed25519 sign-in and
+`api_keys` holds every key the server issues. A session key comes from the session management routes and
 lasts minutes; an issued key is made by a signed-in caller for an application and lasts until
 it is revoked or expires. Grants name a Member or a non-member key, so an application reads a
 collection the same way a Member does. Read keys (`read_keys`) are gone: a file has its
@@ -33,7 +33,7 @@ def upgrade():
             -- the Member a member key acts as, or the admin; a non-member key names nobody
             handle      text,
             label       text,
-            -- the Ed25519 key a session was signed in with: retiring it ends the session
+            -- the public key whose private key file obtained a session: retiring it ends the session
             ed25519_kid text,
             -- issued keys only: the value, sealed so its owner can read it back
             ciphertext  bytea,

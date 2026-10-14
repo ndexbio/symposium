@@ -7,40 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
-## [Unreleased]
+## [Symposium Skill 0.1.3] - 2026-10-14
+
+For Data Server 0.1.2.
+
+### Added
+
+- **`data collection list`**: the collections the member may use in the community, each with
+  its owner, whether it is public, and the member's `read`, `write` and `manage` access.
+
+### Changed
+
+- **The CLI speaks Data Server 0.1.2.** Every command obtains a session key with the
+  session's private key file and calls `/v1`; `owner whoami` reads `GET /v1/{community}/me`.
+- **Any Member issues keys for applications.** `gen-api-key <label> --non-member` issues an
+  non-member issued key (`role: non-member`), which reads the collections it is granted
+  with `data collection grant --collection <c> --api-key <id> --perm read`, and any public
+  collection. The admin's issued keys are non-member issued keys, granted the same way.
+- **`data collection grant`** grants a Member `read` or `write`, or a non-member issued key
+  `read`, and withdraws with `--revoke`; it replaces `collection grant-write`.
+  `data get --api-key-file` reads with a key file from `gen-api-key`.
+
+### Removed
+
+- **`data keys mint|list|revoke` and `data get --read-key-file`**, with the server's read keys.
+
+### Fixed
+
+- **An option's value stays as given.** `data put scores.csv --name scores.csv` names the file
+  `scores.csv` on the server, also when a local file shares that name.
+
+## [Data Server 0.1.2] - 2026-10-14
 
 ### Changed
 
 - **One API, at `/v1`.** The record's routes, formerly the Symposium Data API at `/api/v1`,
   now sit beside the data server's own routes for communities, members, keys, collections
-  and files, under one contract, [`api/openapi.yaml`](api/openapi.yaml).
-- **One credential, the API key (`sak_…`), for every route.** An Ed25519 sign-in
-  (`POST /v1/{community}/auth/token`, `POST /v1/admin/token`) answers a session key in
-  `key`, in place of a JWT access token. Routes that change access, keys or the server take a
-  session key.
+  and files, under one contract, [`api/openapi.yaml`](api/openapi.yaml), which describes
+  every route with the roles it allows; every route applies the rule the contract states.
+- **One credential, the API key (`sak_…`), for every route.** It is either a session key or
+  an issued key. The session management routes (`POST /v1/{community}/auth/token`,
+  `POST /v1/admin/token`) answer a session key in `key`, obtained with the member's or the
+  admin's private key file, in place of a JWT access token. Routes that change access, keys
+  or the server take a session key.
 - **Collections decide access, for every key.** The record's routes read the `record`
   collection: a key reads them while its holder may read `record`, by a grant or because it
   is public. Publishing takes the Member's `write` grant on `inbox`. A withdrawn grant is
   felt on the next request and closes an open stream.
-- **Any Member issues keys for applications.** `gen-api-key <label> --non-member` makes a
-  `non-member` key, which reads the collections its owner grants it with
-  `data collection grant --collection <c> --api-key <id> --perm read`. The admin's keys are
-  `non-member` keys, granted the same way.
-- **`data collection grant`** grants a Member `read` or `write`, or a non-member key `read`,
-  and withdraws with `--revoke`; it replaces `collection grant-write`. `data get
-  --api-key-file` reads with a key file from `gen-api-key`.
+- **Any Member issues a non-member issued key** (`role: non-member`), and a collection's
+  owner, or the admin, grants it `read` (`PUT /v1/{community}/collections/{collection}/grants`
+  with `api_key_id`).
 - **Settings are `SYMPOSIUM_SERVER_*`:** `SYMPOSIUM_SERVER_SESSION_TTL`,
   `SYMPOSIUM_SERVER_INVITE_HOURS`, `SYMPOSIUM_SERVER_PUBLIC_URL`,
   `SYMPOSIUM_SERVER_MAX_STREAMS`, `SYMPOSIUM_SERVER_STREAM_HEARTBEAT` and
-  `SYMPOSIUM_SERVER_CONTRACT`. The Helm chart's `publicUrl` sets
-  `SYMPOSIUM_SERVER_PUBLIC_URL`.
+  `SYMPOSIUM_SERVER_CONTRACT`.
 - **`GET /v1/{community}/me`** reports the calling key: its kind, role, Member, label, grants
-  and signing key. It replaces `whoami`.
+  and the public key whose private key file obtained a session key. It replaces `whoami`.
 - **Every refusal answers one body, `{detail, code}`.**
-- **One contract for every route.** [`api/openapi.yaml`](api/openapi.yaml) now describes the
-  data server's own routes too, files, communities, sign-in, the roster, keys and
-  collections, each with the roles it allows; every route applies the rule the contract
-  states.
 - **A cited file is read on the same API.** Resolving a Content Object whose `location` is a
   `symposium-data:` citation, or reading the Object, answers its `location_url`, the file
   version's content, which its collection's access governs.
@@ -49,17 +72,35 @@ versioned and released separately, each under its own heading.
 
 - **The 8 MiB limit on a request body is enforced** (413). A file's content and an import
   stream past it, bounded by the quota.
-- **Browser apps**: `SYMPOSIUM_SERVER_CORS_ORIGINS` (the Helm chart's `corsOrigins`) lists the
-  origins allowed to call the API.
+- **Browser apps**: `SYMPOSIUM_SERVER_CORS_ORIGINS` lists the origins allowed to call the API.
+- **`GET /v1/{community}/collections`** lists the collections the caller may use, with the
+  caller's `read`, `write` and `manage` access on each; with no key, the public ones.
 
 ### Removed
 
 - **FastAPI's generated `/docs`, `/redoc` and `/openapi.json`.** The contract is served at
   `/v1/openapi.yaml` and `/v1/openapi.json`.
-- **Read keys (`sdr_…`)** and their routes and commands (`keys mint|list|revoke`,
-  `get --read-key-file`). A file has its collection's access: share it with a grant to a
-  `non-member` key, or by making its collection public.
+- **Read keys (`sdr_…`)** and their routes. A file has its collection's access: share it with
+  a grant to a non-member issued key, or by making its collection public.
 - **The JWT access token** and the server's token signing key.
+
+## [Symposium Helm 0.1.1] - 2026-10-14
+
+### Changed
+
+- **Deploys Data Server 0.1.2** (`appVersion`).
+- **`publicUrl` sets `SYMPOSIUM_SERVER_PUBLIC_URL`**, the server's renamed setting.
+- **`env` takes `SYMPOSIUM_SERVER_*` names only**, the server's renamed settings. Rename
+  existing entries: `SYMPOSIUM_CONTROL_API_TOKEN_TTL` → `SYMPOSIUM_SERVER_SESSION_TTL`,
+  `SYMPOSIUM_CONTROL_API_INVITE_HOURS` → `SYMPOSIUM_SERVER_INVITE_HOURS`,
+  `SYMPOSIUM_DATA_API_MAX_STREAMS` → `SYMPOSIUM_SERVER_MAX_STREAMS`,
+  `SYMPOSIUM_DATA_API_HEARTBEAT` → `SYMPOSIUM_SERVER_STREAM_HEARTBEAT`.
+- **Ingress guidance** adds the request body size uploads need (runbook §5.2).
+
+### Added
+
+- **`corsOrigins`** sets `SYMPOSIUM_SERVER_CORS_ORIGINS`: the browser origins allowed to call
+  the API.
 
 ## [Symposium Skill 0.1.2] - 2026-10-11
 

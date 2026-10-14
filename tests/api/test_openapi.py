@@ -19,7 +19,7 @@ SERVICE = REPO / "data-server" / "service"
 # the tags of the routes that set a community up; the rest read and write its data
 CONTROL_TAGS = {
     "server",
-    "sign-in",
+    "sessions",
     "communities",
     "roster",
     "keys",
@@ -109,6 +109,10 @@ def test_every_operation_names_its_roles(spec):
         assert named == set(roles), (
             f"{where}: description names {named}, x-roles {roles}"
         )
+        # the credentials, in the words of the data server README's Authentication column
+        assert f"\nAuthentication: {authentication(op)}.\n" in op["description"], (
+            f"{where}: the description states no 'Authentication: {authentication(op)}.'"
+        )
 
 
 def test_a_member_holds_everything_a_non_member_holds(spec):
@@ -140,7 +144,8 @@ def test_every_operation_states_its_security(spec):
 
 
 def test_the_api_takes_api_keys_alone(spec):
-    """One credential, an API key. The admin's sign-in pair is the one route under `/admin`:
+    """One credential, an API key. The admin's session management pair is the one route under
+    `/admin`:
     every other admin operation lives under its community, or under `/communities`."""
     assert list(spec["components"]["securitySchemes"]) == ["apiKey"]
     for path, method, op in operations(spec):
@@ -154,15 +159,15 @@ def test_the_api_takes_api_keys_alone(spec):
 
 
 def test_every_member_operation_says_whose_key_it_needs(spec):
-    """An operation that acts as a Member says it needs a key the Member made for itself, and
+    """An operation that acts as a Member says it needs a key bound to the Member, and
     that the key's handle is checked against the community in the path on every request."""
     for path, method, op in operations(spec):
         if op["x-roles"] != ["member"]:
             continue
         text = " ".join(op["description"].split())
         where = f"{method.upper()} {path}"
-        assert "Requires a key that acts as a Member" in text, where
-        assert "created for itself" in text, where
+        assert "Requires a key bound to a Member" in text, where
+        assert "issued for itself" in text, where
         assert "session key" in text, where
         assert "the community in the path" in text, where
 
@@ -378,3 +383,90 @@ def test_a_session_is_asked_for_by_control_operations_alone(spec):
         assert tags <= CONTROL_TAGS or not tags & CONTROL_TAGS, where
         if op.get("x-session"):
             assert tags <= CONTROL_TAGS, f"{where}: x-session on a data operation"
+
+
+# ── the data server README's Authentication column ─────────────────────────────────────────
+README = REPO / "data-server" / "README.md"
+
+
+def authentication(op) -> str:
+    """The credentials an operation takes, in the README's words, from its `x-roles`,
+    `x-session` and `x-anonymous`: an issued key holds role `member` or `non-member`, a
+    session key a member's or the admin's."""
+    if op.get("x-anonymous") == "always":
+        return "no key required"
+    roles, session = set(op["x-roles"]), op.get("x-session", False)
+    issued = set() if session else roles & {"member", "non-member"}
+    named = []
+    if issued == {"member", "non-member"}:
+        named.append("issued key")
+    elif issued:
+        named.append(f"{issued.pop()} issued key")
+    sessions = roles & {"member", "admin"}
+    if sessions == {"member", "admin"}:
+        named.append("session key")
+    elif sessions:
+        named.append(f"{sessions.pop()} session key")
+    if op.get("x-anonymous") == "public":
+        named.append("no key (public)")
+    return ", ".join(named)
+
+
+def shape(path: str) -> str:
+    """A path with its parameters unnamed: the README writes `{id}` where the contract has
+    `{file_id}`."""
+    return re.sub(r"\{[^}]+\}", "{}", path)
+
+
+def readme_routes(cell: str, known: set) -> list:
+    """The (METHOD, path shape) pairs a README route cell names, each one in `known`. A
+    route written `…/x` continues the one before it, a bare `…` repeats it, a route without
+    a method takes the one before it, and a Data API route, written without `/v1`, is under
+    `/{community}`."""
+    named, method, previous = [], None, None
+    for text in re.findall(r"`([^`]+)`", cell):
+        text = re.split(r" \{|\?", text)[0].strip()
+        if text.split(" ", 1)[0] in ("GET", "POST", "PUT", "DELETE"):
+            method, text = text.split(" ", 1)
+        if text.startswith("…"):
+            segments = previous.split("/")
+            path = next(
+                shaped
+                for n in range(len(segments), 0, -1)
+                if (method, shaped := "/".join(segments[:n]) + shape(text[1:])) in known
+            )
+        elif text.startswith("/v1"):
+            path = shape(text.removeprefix("/v1"))
+        else:
+            path = shape("/{community}" + text)
+        assert (method, path) in known, f"{method} {path}: no such operation ({cell})"
+        named.append((method, path))
+        previous = path
+    return named
+
+
+def test_the_readme_authentication_column_matches_the_contract(spec):
+    """Each row of the data server README's Data API and Control API tables states the
+    credentials its routes take, as the contract sets them."""
+    contract = {
+        (method.upper(), shape(path)): op for path, method, op in operations(spec)
+    }
+    text = README.read_text(encoding="utf-8")
+    section = text.split("### Data API", 1)[1].split("## Server Runtime Configuration")[
+        0
+    ]
+    checked = set()
+    for line in section.splitlines():
+        if not line.startswith("| `"):
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        for route in readme_routes(cells[0], set(contract)):
+            op = contract[route]
+            assert cells[-1] == authentication(op), (
+                f"{op['operationId']}: the README says {cells[-1]!r}, "
+                f"the contract {authentication(op)!r}"
+            )
+            checked.add(op["operationId"])
+    # every operation but the contract's own two (the README names them in prose) and `getMe`
+    missing = {op["operationId"] for op in contract.values()} - checked
+    assert missing == {"getOpenApiYaml", "getOpenApiJson", "getMe"}, sorted(missing)

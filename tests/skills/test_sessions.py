@@ -211,3 +211,30 @@ def test_the_callers_paths_are_resolved_and_nothing_else(root, caller, table):
         "--out",
         str(caller / "copy.bin"),
     ]
+    # an issued key's file, read with no session context, is the caller's path too
+    (caller / "dashboard.key").write_text("{}")
+    assert sessions.place(
+        "data", ["get", "x", "--out", "copy.bin", "--api-key-file", "dashboard.key"]
+    )[2] == [
+        "get",
+        "x",
+        "--out",
+        str(caller / "copy.bin"),
+        "--api-key-file",
+        str(caller / "dashboard.key"),
+    ]
+    # an option's value names something on the server, even when a local file shares its name
+    (caller / "scores.csv").write_text("gene,score\n")
+    assert sessions.place(
+        "data", ["put", "scores.csv", "--collection", "lab", "--name", "scores.csv"]
+    )[2] == [
+        "put",
+        str(caller / "scores.csv"),
+        "--collection",
+        "lab",
+        "--name",
+        "scores.csv",
+    ]
+    assert sessions.place(
+        "data", ["collection", "set-public", "--public", "--collection", "scores.csv"]
+    )[2] == ["collection", "set-public", "--public", "--collection", "scores.csv"]

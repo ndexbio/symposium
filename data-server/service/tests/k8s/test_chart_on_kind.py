@@ -1,7 +1,7 @@
 """The Helm chart on a live Kubernetes cluster: a kind cluster made for this test and deleted
 after it, on this machine's Docker, with its own kubeconfig, so no other cluster is ever
 touched. It installs the chart this commit packaged with the image this commit built, loaded
-into the cluster and never pulled. `make test` runs it, and `make -C data-server helm-e2e`
+into the cluster and never pulled. `make test` runs it, and `make -C data-server chart-e2e`
 runs it alone; both fetch the pinned helm, kind and kubectl.
 
 The runbook's path, end to end: install, non-operational; the admin key set by `helm upgrade`,
@@ -161,7 +161,7 @@ def cluster(tmp_path_factory):
     ]
     if missing:
         pytest.fail(
-            f"{', '.join(missing)} not set: run through `make -C data-server helm-e2e`"
+            f"{', '.join(missing)} not set: run through `make -C data-server chart-e2e`"
         )
     cluster = Cluster(tmp_path_factory.mktemp("kind"))
     try:

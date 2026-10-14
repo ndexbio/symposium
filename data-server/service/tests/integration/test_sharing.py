@@ -306,6 +306,41 @@ def test_a_public_collection_opens_reads_only(demo):
     assert HTTP.get(changes).status_code == 401
 
 
+def listed(server, headers=None, community="demo") -> dict:
+    """{collection: the caller's access} from the community's collection listing."""
+    answer = HTTP.get(f"{server.url}/v1/{community}/collections", headers=headers or {})
+    assert answer.status_code == 200, answer.text
+    return {c["name"]: c["access"] for c in answer.json()["collections"]}
+
+
+def test_each_caller_lists_the_collections_it_may_read(demo):
+    server, admin, owners = demo
+    lyra, vega = owners["lyra"], owners["vega"]
+    create_collection(lyra, "lab")
+    create_collection(lyra, "notes")
+    set_public(lyra, "notes", True)
+    app = lyra.issue("dashboard", role="non-member")
+    key = with_key(app["key"])
+
+    mine = listed(server, lyra.headers())
+    assert mine["lab"] == mine["notes"] == ["read", "write", "manage"]
+    assert mine["inbox"] == ["read", "write"]  # every Member submits
+    others = listed(server, vega.headers())
+    assert "lab" not in others and others["notes"] == ["read"]
+    assert set(listed(server, admin.headers())) >= {"lab", "notes", "inbox", "record"}
+    assert listed(server, key) == {"notes": ["read"]}
+    assert listed(server) == {"notes": ["read"]}  # no key: the public ones
+
+    assert grant(lyra, "lab", "read", api_key_id=app["id"]).status_code == 200
+    assert grant(lyra, "lab", "write", handle="vega").status_code == 200
+    assert listed(server, key) == {"lab": ["read"], "notes": ["read"]}
+    assert listed(server, vega.headers())["lab"] == ["write"]  # adds files, lists none
+    assert grant(lyra, "lab", "read", handle="vega").status_code == 200
+    assert listed(server, vega.headers())["lab"] == ["read", "write"]
+    unknown = HTTP.get(f"{server.url}/v1/nowhere/collections")
+    assert unknown.status_code == 404
+
+
 def test_communities_are_isolated(demo):
     server, admin, owners = demo
     set_roster(server, admin, "other", ["bob"])

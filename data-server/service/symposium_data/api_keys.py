@@ -2,8 +2,8 @@
 
 A key's row is its caller's identity: its kind, role, community, Member and label.
 
-- A **session key** is what an Ed25519 sign-in answers. It lasts the session TTL, acts as the
-  Member or the admin who signed in, and ends when the Ed25519 key it was signed with is
+- A **session key** is what the session management routes answer. It lasts the session TTL,
+  acts as the Member or the admin it is bound to, and ends when the key that obtained it is
   retired.
 - An **issued key** is made by a signed-in caller for an application, with a label, and lasts
   until it is revoked or its optional expiry. A `member` key acts as the Member who made it; a
@@ -126,7 +126,7 @@ class ApiKeys:
         ttl_seconds: float,
     ) -> tuple[dict, str]:
         """A session key for a Member (`community` named) or the admin (`community` None),
-        signed in with `ed25519_kid`. -> (the new row, its key)."""
+        obtained with the key `ed25519_kid`. -> (the new row, its key)."""
         key = new_key()
         row = conn.execute(
             "INSERT INTO api_keys (id, hash, kind, role, community, handle, ed25519_kid, "
@@ -260,7 +260,7 @@ class ApiKeys:
         return sum(1 for row in rows if row["kind"] == ISSUED)
 
     def end_sessions(self, conn, ed25519_kids: list[str], by: str) -> int:
-        """Revoke every live session signed in with one of these Ed25519 keys."""
+        """Revoke every live session key obtained with one of these Ed25519 keys."""
         if not ed25519_kids:
             return 0
         return conn.execute(

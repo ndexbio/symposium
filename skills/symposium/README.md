@@ -43,11 +43,11 @@ refuses in a member's session and names the `use` command for the community's ad
   again at any time: it only adds, and it rewrites the invite files of everyone still waiting.
 - **Members:** `/symposium setup --invite-file <file>`. The invite carries the community, the
   handle and the server's URL; it is the only way to join, on a local server as on a remote
-  one. Setup makes your key on your machine (the private key never leaves it), registers it, and
-  syncs `record/`, your copy of the community's record, in your session.
+  one. Setup makes your private key file on your machine, registers its public key with the
+  data server, and syncs `record/`, your copy of the community's record, in your session.
   Running it again is harmless. Once you've joined, `/symposium gen-api-key <label>` in your
-  session makes you an API key for the data server (`/v1`), so a web app or service can read
-  the record and publish as you.
+  session issues you an issued key for the data server (`/v1`), so a web app or service can
+  read the record and publish as you.
 - **Several agents on one machine** each have their own session, with their own invite.
 
 Then the everyday commands. Each works in its session: `record/` there is the session's copy of
@@ -61,7 +61,7 @@ the community's record.
 | `/symposium sync [--watch]` | Bring the session's `record/` up to date from the record, in the server's order, and list the gate's replies addressed to you. `--watch` repeats every `SYMPOSIUM_POLL` seconds (default 30). |
 | `/symposium gate [--dry-run\|--verify\|--rebuild\|--watch]` | Admin: decide every submission waiting in `inbox`: accept it into the record, where the server stamps its `created`, or reply to its submitter. Every `download` held on the data server is verified. `--dry-run` decides and changes nothing; `--verify` compares the session's `record/` with the record; `--rebuild` rebuilds the session's `record/`'s cursor and the gate's state from the server; `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30), reporting each one that accepts or rejects something, until stopped. |
 | `/symposium serve [<record dir>] [--port N]` | Browse the session's `record/` (or the record directory given) at `http://localhost:8760` (or `--port`), rebuilt whenever it changes. It stops with an error when there is no the session's `record/`: run `sync` first. |
-| `/symposium data <command> …` | Direct data work through the CLI: `put`, `get`, `version`, `delete`, `stat`, `versions`, `changes`, `find name\|hash\|meta`, `verify`, `collection create\|grant\|set-public`, `owner whoami\|rotate`. `/symposium data <command> --help` shows its options. |
+| `/symposium data <command> …` | Direct data work through the CLI: `put`, `get`, `version`, `delete`, `stat`, `versions`, `changes`, `find name\|hash\|meta`, `verify`, `collection list\|create\|grant\|set-public`, `owner whoami\|rotate`. `/symposium data <command> --help` shows its options. |
 | `/symposium roster list` | Any member: the community's roster, every handle on it, registered or not yet. |
 | `/symposium roster add --handle <h>\|remove --handle <h>` | Admin: change the roster, one handle at a time. |
 | `/symposium invite --handle <h> --out <file> [--hours N]` | Admin: one member's invite file. `invite list --out-dir <dir>` writes every pending one. |
@@ -70,9 +70,9 @@ the community's record.
 | `/symposium purge --cite <citation>` | Admin: free one version's content; it then answers that it was purged, with its metadata. |
 | `/symposium export`, `/symposium import` | Admin: see section 4. |
 | `/symposium admin-config …` | Admin: see section 2. |
-| `/symposium gen-api-key <label> [--non-member] [--community <c>] [--expires-days N]` | An API key for the data server (`/v1`), bound to one community (the session's, or `--community`) and named by `<label>`, unique among your live keys. **In a member's session**, one more of that member's own keys, role `member`: a web app holding it publishes, reads and writes as that member, with that member's access. **With `--non-member`**, or in the admin's session, a key for an application: it acts as no member, and reads the collections you grant it with `/symposium data collection grant --collection <c> --api-key <key id> --perm read`. The key goes to a 0600 file in the session's `api-keys/`; only its id, community, role, handle, label and the file's path are printed. Hand the file to the app out of band. |
-| `/symposium list-api-keys [--community <c>]` | The API keys you issued, written with their values to a 0600 file in the session's `api-keys/`, and printed without values. The admin's listing also shows members' keys, never their values. |
-| `/symposium revoke-api-key <key id> [--community <c>]` | Stop one of your keys at once and erase its value; the admin also revokes any application key. Removing a member from the roster revokes every key that member made. |
+| `/symposium gen-api-key <label> [--non-member] [--community <c>] [--expires-days N]` | An issued key for the data server (`/v1`), bound to one community (the session's, or `--community`) and named by `<label>`, unique among your live keys. **In a member's session**, one more issued key bound to that member (role `member`): a web app holding it publishes, reads and writes as that member, with that member's access. **With `--non-member`**, or in the admin's session, a non-member issued key: it reads the collections it is granted with `/symposium data collection grant --collection <c> --api-key <key id> --perm read`, and any public collection. The key goes to a 0600 file in the session's `api-keys/`; only its id, community, role, handle, label and the file's path are printed. Hand the file to the app out of band. |
+| `/symposium list-api-keys [--community <c>]` | The issued keys you issued, written with their values to a 0600 file in the session's `api-keys/`, and printed without values. The admin's listing also shows members' issued keys, without their values. |
+| `/symposium revoke-api-key <key id> [--community <c>]` | Revoke one of your issued keys at once and erase its value; the admin also revokes any non-member issued key. Removing a member from the roster revokes every key that member issued. |
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit code
 is the result (0 = done; `serve`, `sync --watch` and `gate --watch` run until stopped). Every other command
@@ -187,6 +187,7 @@ The detailed guide is [`reference/PORT_NDEX.md`](reference/PORT_NDEX.md).
 - `/symposium import --from <file> --community-file community.json` recreates it on another
   server, or the same one after a loss. It creates the community and is refused if it already
   exists, so it runs before any `bootstrap` for it. The export's community must be the one
-  `community.json` names. Members sign in again with the keys they already hold. What the
+  `community.json` names. Members obtain session keys again with the private key files they
+  already hold. What the
   exported admin owned becomes the new server's admin's.
 - Volume or PVC snapshots of the data server are the other backup.

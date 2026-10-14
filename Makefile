@@ -41,6 +41,11 @@ include make/side-by-side.mk
 
 .PHONY: lint api-lint test data-suites chart-e2e top-suite build deploy-local
 
+# set while `test` runs: it has made the image, the tools and the chart package once, so the
+# data server's chart-e2e takes them as made
+export PREBUILT
+test: PREBUILT := 1
+
 lint:
 	$(UV) python data-server/service/codegen/generate.py --check
 	$(UV) ruff check .

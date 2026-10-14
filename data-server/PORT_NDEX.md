@@ -41,7 +41,7 @@ itself, not the operator's machine, connects to NDEx, so it needs outbound acces
 server.
 
 1. Create the community, empty: `POST /v1/communities {name}`.
-2. Start the port-ndex, signed in as the admin:
+2. Start the port-ndex, with the admin's session key:
 
    `POST /v1/<community>/port-ndex {"ndex_url": ..., "credentials": {"username": ..., "password": ...}, "page_size": 100}`
 

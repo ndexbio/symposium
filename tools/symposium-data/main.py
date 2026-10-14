@@ -186,7 +186,7 @@ class DataServer:
                 501,
             )
         if error.code == 410 and isinstance(body, dict):
-            metadata = {k: v for k, v in body.items() if k != "detail"}
+            metadata = {k: v for k, v in body.items() if k not in ("detail", "code")}
             return CommandError("the version's content was purged", 410, **metadata)
         return CommandError(detail, error.code)
 
@@ -412,11 +412,14 @@ class DataServer:
         return self.request("GET", self.c("/verify?" + urllib.parse.urlencode(params)))
 
     # ── collections and grants ─────────────────────────────────────────────────────────────
+    def list_collections(self) -> dict:
+        return self.request("GET", self.c("/collections"))
+
     def create_collection(self, name: str) -> dict:
         return self.request("POST", self.c("/collections"), body={"name": name})
 
     def grant(self, collection: str, grantee: dict, perm: str, granted: bool) -> dict:
-        """Grant (or withdraw) `perm` to a Member (`{"handle": …}`) or a non-member API key
+        """Grant (or withdraw) `perm` to a Member (`{"handle": …}`) or a non-member issued key
         (`{"api_key_id": …}`)."""
         return self.request(
             "PUT",
@@ -710,8 +713,8 @@ class Commands:
 
     def gen_api_key(self, args) -> dict:
         """A Member's session makes one more of the Member's own keys, which act as it, or,
-        with --non-member, a key for an application, which reads what its collections'
-        owners grant it. The admin makes non-member keys only."""
+        with --non-member, a non-member issued key, which reads what its collections'
+        owners grant it. The admin issues non-member issued keys only."""
         context = self.context.load()
         community = args.community or context["community"]
         server = self.signed_in(context)
@@ -751,7 +754,8 @@ class Commands:
         }
 
     def revoke_api_key(self, args) -> dict:
-        """Revoke a key this session's owner issued; the admin revokes any non-member key."""
+        """Revoke a key this session's owner issued; the admin revokes any non-member issued
+        key."""
         context = self.context.load()
         community = args.community or context["community"]
         server = self.signed_in(context)
@@ -938,12 +942,15 @@ class Commands:
         return self.admin().promote(file_id, n, body)
 
     # ── collections and grants ─────────────────────────────────────────────────────────────
+    def collection_list(self, _args) -> dict:
+        return self.signed_in().list_collections()
+
     def collection_create(self, args) -> dict:
         return self.signed_in().create_collection(args.name)
 
     def collection_grant(self, args) -> dict:
-        """Grant (or, with --revoke, withdraw) a Member read or write, or a non-member API
-        key read, on a collection you own."""
+        """Grant (or, with --revoke, withdraw) a Member read or write, or a non-member issued
+        key read, on a collection the caller owns."""
         grantee = (
             {"handle": args.handle} if args.handle else {"api_key_id": args.api_key}
         )
@@ -998,7 +1005,7 @@ class Commands:
 
     def with_api_key(self, path) -> DataServer:
         """A client that reads with an API key file, as `gen-api-key` writes one, with no
-        context: what an application holding a non-member key does (R-E3)."""
+        context: what an application holding a non-member issued key does (R-E3)."""
         key = read_json_file(path, "API key file")
         missing = [k for k in ("key", "community", "data-server-url") if not key.get(k)]
         if missing:
@@ -1142,10 +1149,10 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "gen-api-key",
         commands.gen_api_key,
-        "create an API key and write it to a 0600 file in this session's api-keys/: in a "
-        "member's session one more of its own member keys, or with --non-member a key for "
-        "an application, which reads the collections you grant it; the admin makes "
-        "non-member keys",
+        "issue a key and write it to a 0600 file in this session's api-keys/: in a "
+        "member's session one more member issued key, bound to the member, or with "
+        "--non-member a non-member issued key, which reads the collections it is granted; the admin "
+        "issues non-member issued keys",
     )
     p.add_argument("label", help="the key's name, unique among your live keys")
     p.add_argument(
@@ -1160,9 +1167,9 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "list-api-keys",
         commands.list_api_keys,
-        "write the API keys you issued, with their values, to a 0600 file in this "
-        "session's api-keys/; print them without values (the admin also sees members' "
-        "keys, never their values)",
+        "write the keys this session's owner issued, with their values, to a 0600 file in "
+        "this session's api-keys/; print them without values (the admin also sees members' "
+        "issued keys, without their values)",
     )
     p.add_argument("--community", help="default: the context's community")
 
@@ -1170,7 +1177,8 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "revoke-api-key",
         commands.revoke_api_key,
-        "revoke an API key you issued (the admin also revokes any non-member key)",
+        "revoke an issued key this session's owner issued (the admin also revokes any "
+        "non-member issued key)",
     )
     p.add_argument("key_id")
     p.add_argument("--community", help="default: the context's community")
@@ -1291,6 +1299,12 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     actions = collection.add_subparsers(
         dest="action", metavar="<action>", required=True
     )
+    command(
+        actions,
+        "list",
+        commands.collection_list,
+        "the collections the caller may use, with its read, write and manage access on each",
+    )
     p = command(
         actions, "create", commands.collection_create, "create a collection you own"
     )
@@ -1299,13 +1313,13 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         actions,
         "grant",
         commands.collection_grant,
-        "let a roster member read or write your collection, or a non-member API key read "
-        "it; --revoke withdraws",
+        "let a roster member read or write a collection the caller owns, or a non-member "
+        "issued key read it; --revoke withdraws",
     )
     p.add_argument("--collection", required=True)
     grantee = p.add_mutually_exclusive_group(required=True)
     grantee.add_argument("--handle", help="a roster member")
-    grantee.add_argument("--api-key", help="the id of a non-member API key")
+    grantee.add_argument("--api-key", help="the id of a non-member issued key")
     p.add_argument("--perm", required=True, choices=("read", "write"))
     p.add_argument("--revoke", action="store_true", help="withdraw the grant")
     p = command(

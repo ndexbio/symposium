@@ -71,7 +71,7 @@ def check(rule: Rule, caller: Caller) -> Caller:
         )
     if rule.session and caller.kind != "session":
         raise HTTPException(
-            403, "this takes a session key: sign in with your Ed25519 key"
+            403, "this takes a session key, from the session management routes"
         )
     return caller
 

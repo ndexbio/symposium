@@ -31,19 +31,21 @@ info:
     **API keys.** Every request carries one API key, `Authorization: Bearer sak_…`, or none.
     The key identifies the caller:
 
-    - a **session key** answers an Ed25519 sign-in and lasts minutes. It acts as the Member or
-      the admin who signed in.
-    - a **`member` key** is one a Member issued for itself, with a label. It acts as that
-      Member, until it is revoked.
-    - a **`non-member` key** is one a collection's owner issued for an application. It names
-      no Member, and reads the collections it is granted.
+    - a **session key** is a short-lived key bound to a Member, or to the admin, obtained
+      through the session management endpoints (the `sessions` tag) with the Member's or the
+      admin's private key file. It lasts minutes.
+    - an **issued key** is one a Member or the admin issues for an application, with a label,
+      and lasts until it is revoked. A member issued key (`role: member`) is bound to that
+      Member. A non-member issued key (`role: non-member`) reads the collections it is
+      granted.
 
-    A key belongs to one community, the admin's session to every community; a request naming
-    another community answers 403. A key that acts as a Member works while the Member is on
-    the community's roster with a registered Ed25519 key (401 otherwise).
+    A key belongs to one community, the admin's session key to every community; a request
+    naming another community answers 403. A key bound to a Member works while the Member is on
+    the community's roster with a registered public key (401 otherwise).
 
     **Access.** All data lives in collections: Artifacts in `record`, submissions in `inbox`.
-    A collection's owner grants Members `read` or `write`, grants non-member keys `read`, and
+    A collection's owner grants Members `read` or `write`, grants a non-member issued key
+    `read`, and
     may make the collection public, so it answers without a key. A request succeeds when its
     caller may use the collection it touches. Members start with `read` on `record` and
     `write` on `inbox`.
@@ -85,8 +87,10 @@ tags:
       metadata, list a collection's versions, and check a citation.
   - name: server
     description: The server's version, health and mode.
-  - name: sign-in
-    description: Registering an Ed25519 key, and signing in with it for a session key.
+  - name: sessions
+    description: |
+      Session management: registering a Member's public key, and obtaining session keys with
+      the Member's or the admin's private key file.
   - name: communities
     description: Communities, their export and import, and porting one from NDEx.
   - name: roster
@@ -111,6 +115,8 @@ paths:
         answers with no credential, so any client can read it.
 
         Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
       x-roles: [non-member, member, admin]
       x-anonymous: always
       security:
@@ -135,6 +141,8 @@ paths:
         The same document as `getOpenApiYaml`, converted to JSON. It answers with no credential.
 
         Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
       x-roles: [non-member, member, admin]
       x-anonymous: always
       security:
@@ -161,6 +169,8 @@ paths:
         specification versions its Artifacts declare.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       x-bounded: the specification versions in use, one per revision of the specification
@@ -194,6 +204,8 @@ paths:
         record's change feed: a client that keeps `next` reads each new Artifact once.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -253,6 +265,8 @@ paths:
         unchanged.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -285,6 +299,8 @@ paths:
         carries in `canonical`, without the resource around it. `links.content` names it.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       x-bounded: one stored Artifact
@@ -318,6 +334,8 @@ paths:
         The value of one header property. Its address is `@<name>.<property>`.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -351,6 +369,8 @@ paths:
         many, so the listing is paged.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -392,6 +412,8 @@ paths:
         `@<name>.<object>`.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -424,6 +446,8 @@ paths:
         The value of one property of an Object. Its address is `@<name>.<object>.<property>`.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -458,6 +482,8 @@ paths:
         carry no address, so they are reached only through their Artifact.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -502,6 +528,8 @@ paths:
         serves a ResearchGoal, or citations in prose.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -548,6 +576,8 @@ paths:
         and carries its `supersedes_rationale`.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -586,6 +616,8 @@ paths:
         can add one. Ordered by check, then by message.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -637,6 +669,8 @@ paths:
         `location` and `access_method`, unverified.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -677,6 +711,8 @@ paths:
         published by type. Ordered by handle ascending. This is `/symposium roster list`.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -711,6 +747,8 @@ paths:
         One Member. Its address is `@<handle>`. A Member exposes its name and nothing within it.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -742,6 +780,8 @@ paths:
         Every Artifact whose `published_by` is this Member, ordered by `created` ascending.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -781,6 +821,8 @@ paths:
         submission's `reply` field (`getSubmission`).
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -818,6 +860,8 @@ paths:
         with, and, for a key that acts as a Member, that Member's handle.
 
         Roles: non-member, member, admin.
+
+        Authentication: issued key, session key.
       x-roles: [non-member, member, admin]
       x-bounded: one key
       security:
@@ -850,14 +894,15 @@ paths:
         Artifact if the record has not moved. This is `/symposium validate` and
         `publish --check`.
 
-        Requires a key that acts as a Member: a `member` API key the Member created for itself,
-        or the session key of the Member's sign-in. The key's Member is the one who publishes
-        and whose submissions are read. On every request the server checks that the key
-        belongs to the community in the path (otherwise 403), and that the key's handle is a
-        Member of that community: still on its roster, with a registered Ed25519 key
-        (otherwise 401).
+        Requires a key bound to a Member: the Member's session key, or an issued key the Member
+        issued for itself. The key's Member is the one who publishes and whose submissions are
+        read. On every request the server checks that the key belongs to the community in the
+        path (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered public key (otherwise 401).
 
         Roles: member.
+
+        Authentication: member issued key, member session key.
       x-roles: [member]
       x-bounded: the findings on the one Artifact submitted
       security:
@@ -893,14 +938,15 @@ paths:
         The key's own submissions in `inbox`, with the gate's decision on each. Ordered by
         submission time ascending, the order the gate reads them in.
 
-        Requires a key that acts as a Member: a `member` API key the Member created for itself,
-        or the session key of the Member's sign-in. The key's Member is the one who publishes
-        and whose submissions are read. On every request the server checks that the key
-        belongs to the community in the path (otherwise 403), and that the key's handle is a
-        Member of that community: still on its roster, with a registered Ed25519 key
-        (otherwise 401).
+        Requires a key bound to a Member: the Member's session key, or an issued key the Member
+        issued for itself. The key's Member is the one who publishes and whose submissions are
+        read. On every request the server checks that the key belongs to the community in the
+        path (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered public key (otherwise 401).
 
         Roles: member.
+
+        Authentication: member issued key, member session key.
       x-roles: [member]
       security:
         - apiKey: []
@@ -943,14 +989,15 @@ paths:
         prefix. A submission the validator fails is refused with 422 and its findings, and
         nothing is stored. This is `/symposium publish`.
 
-        Requires a key that acts as a Member: a `member` API key the Member created for itself,
-        or the session key of the Member's sign-in. The key's Member is the one who publishes
-        and whose submissions are read. On every request the server checks that the key
-        belongs to the community in the path (otherwise 403), and that the key's handle is a
-        Member of that community: still on its roster, with a registered Ed25519 key
-        (otherwise 401).
+        Requires a key bound to a Member: the Member's session key, or an issued key the Member
+        issued for itself. The key's Member is the one who publishes and whose submissions are
+        read. On every request the server checks that the key belongs to the community in the
+        path (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered public key (otherwise 401).
 
         Roles: member.
+
+        Authentication: member issued key, member session key.
       x-roles: [member]
       security:
         - apiKey: []
@@ -996,14 +1043,15 @@ paths:
         accepted, the gate's reply with its failures when rejected. A `member` key reads only
         its own.
 
-        Requires a key that acts as a Member: a `member` API key the Member created for itself,
-        or the session key of the Member's sign-in. The key's Member is the one who publishes
-        and whose submissions are read. On every request the server checks that the key
-        belongs to the community in the path (otherwise 403), and that the key's handle is a
-        Member of that community: still on its roster, with a registered Ed25519 key
-        (otherwise 401).
+        Requires a key bound to a Member: the Member's session key, or an issued key the Member
+        issued for itself. The key's Member is the one who publishes and whose submissions are
+        read. On every request the server checks that the key belongs to the community in the
+        path (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered public key (otherwise 401).
 
         Roles: member.
+
+        Authentication: member issued key, member session key.
       x-roles: [member]
       security:
         - apiKey: []
@@ -1038,6 +1086,8 @@ paths:
         when the key is revoked or expired, or its Member leaves the roster.
 
         Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -1081,14 +1131,15 @@ paths:
         The server re-checks the key at every event and every heartbeat, and closes the stream
         when the key is revoked or expired, or its Member leaves the roster.
 
-        Requires a key that acts as a Member: a `member` API key the Member created for itself,
-        or the session key of the Member's sign-in. The key's Member is the one who publishes
-        and whose submissions are read. On every request the server checks that the key
-        belongs to the community in the path (otherwise 403), and that the key's handle is a
-        Member of that community: still on its roster, with a registered Ed25519 key
-        (otherwise 401).
+        Requires a key bound to a Member: the Member's session key, or an issued key the Member
+        issued for itself. The key's Member is the one who publishes and whose submissions are
+        read. On every request the server checks that the key belongs to the community in the
+        path (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered public key (otherwise 401).
 
         Roles: member.
+
+        Authentication: member issued key, member session key.
       x-roles: [member]
       security:
         - apiKey: []
@@ -1128,6 +1179,8 @@ paths:
         yet to fold in.
 
         Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
       x-roles: [non-member, member, admin]
       x-anonymous: always
       security:
@@ -1151,13 +1204,15 @@ paths:
   /admin/challenge:
     post:
       operationId: adminChallenge
-      tags: [sign-in]
-      summary: A nonce for the admin to sign
+      tags: [sessions]
+      summary: A challenge for the admin's session key
       description: |
-        A single-use nonce, valid for 5 minutes, for the admin to sign with the key from the
-        admin key file.
+        A single-use nonce, valid for 5 minutes, for the admin's client to sign with the
+        admin's private key file.
 
         Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
       x-roles: [non-member, member, admin]
       x-anonymous: always
       security:
@@ -1174,14 +1229,16 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /admin/token:
     post:
-      operationId: adminSignIn
-      tags: [sign-in]
+      operationId: createAdminSession
+      tags: [sessions]
       summary: The admin's session key
       description: |
-        Signs the admin in: the nonce, signed with the admin's key. Answers a session key that
-        works in every community.
+        Takes the nonce, signed with the admin's private key file, checks it against the admin
+        key file, and answers a session key bound to the admin that works in every community.
 
         Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
       x-roles: [non-member, member, admin]
       x-anonymous: always
       security:
@@ -1192,7 +1249,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AdminSignIn'
+              $ref: '#/components/schemas/AdminSessionRequest'
       responses:
         '200':
           description: The session key.
@@ -1211,6 +1268,8 @@ paths:
       summary: Every community on the server
       description: |
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       x-bounded: the communities of one server
@@ -1237,6 +1296,8 @@ paths:
         that is not a slug, is reserved, or differs only in case from an existing one.
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       security:
@@ -1280,6 +1341,8 @@ paths:
         that issued them.
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       x-bounded: the members of one export
@@ -1317,6 +1380,8 @@ paths:
         every stored payload, as `application/x-tar`.
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       security:
@@ -1348,6 +1413,8 @@ paths:
         server.
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       security:
@@ -1388,6 +1455,8 @@ paths:
         `running`, `ok`, or `failed` with a reason; who requested it; and its summary.
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       security:
@@ -1417,13 +1486,15 @@ paths:
   /{community}/auth/challenge:
     post:
       operationId: challenge
-      tags: [sign-in]
-      summary: A nonce for a Member to sign
+      tags: [sessions]
+      summary: A challenge for a Member's session key
       description: |
-        A single-use nonce, valid for 5 minutes, for the Member to sign with one of its
-        active Ed25519 keys.
+        A single-use nonce, valid for 5 minutes, for the Member's client to sign with the
+        Member's private key file.
 
         Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
       x-roles: [non-member, member, admin]
       x-anonymous: always
       security:
@@ -1452,14 +1523,17 @@ paths:
           $ref: '#/components/responses/Unprocessable'
   /{community}/auth/token:
     post:
-      operationId: signIn
-      tags: [sign-in]
+      operationId: createSession
+      tags: [sessions]
       summary: A Member's session key
       description: |
-        Signs a Member in: the nonce, signed with one of its active Ed25519 keys. Answers a
-        session key that works in this community.
+        Takes the nonce, signed with the Member's private key file (an Ed25519 key), checks it
+        against the Member's registered public key, and answers a session key bound to the
+        Member that works in this community.
 
         Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
       x-roles: [non-member, member, admin]
       x-anonymous: always
       security:
@@ -1472,7 +1546,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SignIn'
+              $ref: '#/components/schemas/SessionRequest'
       responses:
         '200':
           description: The session key.
@@ -1489,7 +1563,7 @@ paths:
   /{community}/owners:
     post:
       operationId: register
-      tags: [sign-in]
+      tags: [sessions]
       summary: Register a Member's public key
       description: |
         Binds a handle to the public key a Member made on its own machine, in this community,
@@ -1497,6 +1571,8 @@ paths:
         409 for one already registered, 401 when the signature fails proof of possession.
 
         Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
       x-roles: [non-member, member, admin]
       x-anonymous: always
       security:
@@ -1532,17 +1608,20 @@ paths:
   /{community}/owners/{handle}/keys:
     post:
       operationId: rotateKey
-      tags: [sign-in]
-      summary: Rotate your Ed25519 key
+      tags: [sessions]
+      summary: Replace a Member's private key file
       description: |
-        Replaces the caller's own Ed25519 key, proven by the new key. The old key is retired
-        and keeps its attribution, and the sessions it signed in end.
+        Registers the public key of the Member's new private key file, proven by the new key.
+        The old key is retired and keeps its attribution, and the session keys obtained with
+        it end.
 
-        Requires a key that acts as a Member: the session key of the Member's sign-in, as
-        every route that changes keys does. A `member` API key the Member created for itself
-        is refused here. The key must belong to the community in the path.
+        Requires a key bound to a Member: the Member's session key, as every route that changes
+        keys does; an issued key the Member issued for itself answers 403 here. The key must
+        belong to the community in the path.
 
         Roles: member.
+
+        Authentication: member session key.
       x-roles: [member]
       x-session: true
       security:
@@ -1581,10 +1660,13 @@ paths:
       tags: [roster]
       summary: Replace a Member's lost key
       description: |
-        Retires the Member's Ed25519 keys, ends their sessions, and answers a fresh invite,
-        so they register a new key under the same handle and keep their attribution.
+        Retires the Member's registered public keys, ends the Member's session keys, and
+        answers a fresh invite, so the Member registers a new private key file under the same
+        handle and keeps the Member's attribution.
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       security:
@@ -1622,6 +1704,8 @@ paths:
         `getMe` reports the instant. The instant needs a timezone (400 otherwise).
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       security:
@@ -1662,6 +1746,8 @@ paths:
         expires. Any Member reads it, as the admin does.
 
         Roles: member, admin.
+
+        Authentication: member issued key, session key.
       x-roles: [member, admin]
       x-bounded: one community's roster
       security:
@@ -1692,6 +1778,8 @@ paths:
         handle is refused (400).
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       security:
@@ -1732,6 +1820,8 @@ paths:
         stay. 404 when the handle is not on the roster.
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       security:
@@ -1763,6 +1853,8 @@ paths:
         Every pending invite, secret included, so one can be handed over again.
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       x-bounded: one invite per roster handle at most
@@ -1792,6 +1884,8 @@ paths:
         expiry. It revokes the handle's earlier unused invite.
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       security:
@@ -1830,6 +1924,8 @@ paths:
         without. Ordered by creation, oldest first.
 
         Roles: member, admin.
+
+        Authentication: session key.
       x-roles: [member, admin]
       x-session: true
       security:
@@ -1876,6 +1972,8 @@ paths:
         keys. A label names one live key among its issuer's (409 when taken).
 
         Roles: member, admin.
+
+        Authentication: session key.
       x-roles: [member, admin]
       x-session: true
       security:
@@ -1923,6 +2021,8 @@ paths:
         community, a Member's own without its value. 404 for any other.
 
         Roles: member, admin.
+
+        Authentication: session key.
       x-roles: [member, admin]
       x-session: true
       security:
@@ -1958,6 +2058,8 @@ paths:
         once, its value is erased, and its row stays as the record.
 
         Roles: member, admin.
+
+        Authentication: session key.
       x-roles: [member, admin]
       x-session: true
       security:
@@ -1979,6 +2081,40 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
   /{community}/collections:
+    get:
+      operationId: listCollections
+      tags: [files]
+      summary: The collections the caller may use
+      description: |
+        The community's collections the caller may use: the public ones, those it owns, and
+        those granted to it (a Member's `inbox` too). Each lists what the caller may do there:
+        `read` to list and read its files, `write` to add files, `manage` to grant access or
+        change its visibility. Without a key, the public collections.
+
+        Roles: non-member, member, admin; anonymous for the public collections.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      x-bounded: one community's collections, a few per Member
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+      responses:
+        '200':
+          description: The collections, by name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectionList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     post:
       operationId: createCollection
       tags: [collections]
@@ -1988,6 +2124,8 @@ paths:
         is taken.
 
         Roles: member, admin.
+
+        Authentication: member issued key, session key.
       x-roles: [member, admin]
       security:
         - apiKey: []
@@ -2027,6 +2165,8 @@ paths:
         grant to a key answers 400. It takes effect on the next request.
 
         Roles: member, admin.
+
+        Authentication: session key.
       x-roles: [member, admin]
       x-session: true
       security:
@@ -2067,6 +2207,8 @@ paths:
         key, or private again. `inbox` stays private (403).
 
         Roles: member, admin.
+
+        Authentication: session key.
       x-roles: [member, admin]
       x-session: true
       security:
@@ -2106,6 +2248,8 @@ paths:
         the collection; 409 when the name is taken, 413 over quota.
 
         Roles: member, admin.
+
+        Authentication: member issued key, session key.
       x-roles: [member, admin]
       security:
         - apiKey: []
@@ -2161,6 +2305,8 @@ paths:
         Takes `read` on the file's collection; answers without a key while it is public.
 
         Roles: non-member, member, admin; anonymous when the file's collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       x-bounded: the versions of one file
@@ -2195,6 +2341,8 @@ paths:
         admin, adds versions.
 
         Roles: member, admin.
+
+        Authentication: member issued key, session key.
       x-roles: [member, admin]
       security:
         - apiKey: []
@@ -2250,6 +2398,8 @@ paths:
         version does. Only the file's creator, or the admin, deletes it.
 
         Roles: member, admin.
+
+        Authentication: member issued key, session key.
       x-roles: [member, admin]
       security:
         - apiKey: []
@@ -2294,6 +2444,8 @@ paths:
         answers without a key while it is public.
 
         Roles: non-member, member, admin; anonymous when the file's collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       x-stored: the version's bytes, untouched
@@ -2356,6 +2508,8 @@ paths:
         answers without a key while it is public.
 
         Roles: non-member, member, admin; anonymous when the file's collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -2391,6 +2545,8 @@ paths:
         bytes are freed once no other live version shares them (`bytes_freed`).
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       security:
@@ -2425,6 +2581,8 @@ paths:
         content 410.
 
         Roles: admin.
+
+        Authentication: admin session key.
       x-roles: [admin]
       x-session: true
       security:
@@ -2474,6 +2632,8 @@ paths:
         false. Takes `read` on the collection; answers without a key while it is public.
 
         Roles: non-member, member, admin; anonymous when the collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -2510,6 +2670,8 @@ paths:
         public.
 
         Roles: non-member, member, admin; anonymous when the collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -2550,6 +2712,8 @@ paths:
         public.
 
         Roles: non-member, member, admin; anonymous when the collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -2591,6 +2755,8 @@ paths:
         Every version of this community the caller may read that holds this content.
 
         Roles: non-member, member, admin; anonymous when a collection holding it is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       x-bounded: the versions holding one content
@@ -2631,6 +2797,8 @@ paths:
         A version the caller cannot read answers as one that does not exist.
 
         Roles: non-member, member, admin; anonymous when the cited file's collection is public.
+
+        Authentication: issued key, session key, no key (public).
       x-roles: [non-member, member, admin]
       x-anonymous: public
       security:
@@ -2678,14 +2846,13 @@ components:
       scheme: bearer
       bearerFormat: sak_<43 base64url characters>
       description: |
-        An API key, sent as `Authorization: Bearer sak_…`: a session key from an Ed25519
-        sign-in, a `member` key a Member created for itself, or a `non-member` key a
-        collection's owner created for an application. Handle it as any API key: keep it on a
+        An API key, sent as `Authorization: Bearer sak_…`: a session key, obtained through the
+        session management endpoints, or an issued key, issued by a Member or the admin. Handle it as any API key: keep it on a
         server or in a secret store, send it over HTTPS only, and revoke it if it leaks.
 
         The key must belong to the community named in the `/{community}/…` path, or the
         request answers 403; a key that acts as a Member works while that Member is on the
-        community's roster with a registered Ed25519 key, or the request answers 401.
+        community's roster with a registered public key, or the request answers 401.
   parameters:
     community:
       name: community
@@ -3644,7 +3811,7 @@ components:
       enum: [non-member, member, admin]
     KeyKind:
       type: string
-      description: A session key from a sign-in, or a key issued for an application.
+      description: A session key from the session management endpoints, or an issued key.
       enum: [session, issued]
     Me:
       type: object
@@ -3673,8 +3840,8 @@ components:
           type: string
           nullable: true
           description: |
-            For a session key, the thumbprint of the Ed25519 key it was signed in with; null
-            for an issued key.
+            For a session key, the thumbprint of the public key whose private key file obtained
+            it; null for an issued key.
         expires:
           type: string
           nullable: true
@@ -3895,7 +4062,7 @@ components:
       properties:
         handle:
           $ref: '#/components/schemas/Handle'
-    AdminSignIn:
+    AdminSessionRequest:
       type: object
       required: [nonce, signature]
       properties:
@@ -3904,7 +4071,7 @@ components:
         signature:
           type: string
           description: The nonce's Ed25519 signature, base64url.
-    SignIn:
+    SessionRequest:
       type: object
       required: [handle, nonce, signature]
       properties:
@@ -3930,10 +4097,10 @@ components:
           description: Seconds the session lasts.
         kid:
           type: string
-          description: The thumbprint of the Ed25519 key that signed in.
+          description: The thumbprint of the public key whose private key file obtained it.
     PublicJwk:
       type: object
-      description: An Ed25519 public key as a JWK (`kty` OKP, `crv` Ed25519, `x`); never a private one.
+      description: An Ed25519 public key as a JWK (`kty` OKP, `crv` Ed25519, `x`).
       required: [kty, crv, x]
       properties:
         kty:
@@ -4208,7 +4375,9 @@ components:
         role:
           type: string
           enum: [member, non-member]
-          description: By default a Member's own key, and for the admin a non-member key.
+          description: |
+            By default a member issued key bound to the Member, and for the admin an
+            non-member issued key.
         expires_days:
           type: integer
           minimum: 1
@@ -4289,10 +4458,28 @@ components:
           type: string
         public:
           type: boolean
+    CollectionList:
+      type: object
+      required: [collections]
+      properties:
+        collections:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/Collection'
+              - type: object
+                required: [access]
+                properties:
+                  access:
+                    type: array
+                    description: What the caller may do in the collection.
+                    items:
+                      type: string
+                      enum: [read, write, manage]
     GrantIn:
       type: object
       required: [perm]
-      description: Names a roster Member by `handle`, or a non-member API key by `api_key_id`.
+      description: Names a roster Member by `handle`, or a non-member issued key by `api_key_id`.
       properties:
         handle:
           $ref: '#/components/schemas/Handle'

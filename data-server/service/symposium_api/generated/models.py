@@ -667,7 +667,7 @@ class Me(BaseModel):
     kid: Annotated[
         Optional[str],
         Field(
-            description="For a session key, the thumbprint of the Ed25519 key it was signed in with; null\nfor an issued key.\n"
+            description="For a session key, the thumbprint of the public key whose private key file obtained\nit; null for an issued key.\n"
         ),
     ] = None
     expires: Optional[AwareDatetime] = None

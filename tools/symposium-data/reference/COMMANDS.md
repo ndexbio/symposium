@@ -101,7 +101,7 @@ symposium-data suspect-after [-h] --handle HANDLE --at AT
 
 ## `gen-api-key`
 
-create an API key and write it to a 0600 file in this session's api-keys/: in a member's session one more of its own member keys, or with --non-member a key for an application, which reads the collections you grant it; the admin makes non-member keys
+issue a key and write it to a 0600 file in this session's api-keys/: in a member's session one more member issued key, bound to the member, or with --non-member a non-member issued key, which reads the collections it is granted; the admin issues non-member issued keys
 
 ```
 symposium-data gen-api-key [-h] [--non-member] [--community COMMUNITY]
@@ -111,7 +111,7 @@ symposium-data gen-api-key [-h] [--non-member] [--community COMMUNITY]
 
 ## `list-api-keys`
 
-write the API keys you issued, with their values, to a 0600 file in this session's api-keys/; print them without values (the admin also sees members' keys, never their values)
+write the keys this session's owner issued, with their values, to a 0600 file in this session's api-keys/; print them without values (the admin also sees members' issued keys, without their values)
 
 ```
 symposium-data list-api-keys [-h] [--community COMMUNITY]
@@ -119,7 +119,7 @@ symposium-data list-api-keys [-h] [--community COMMUNITY]
 
 ## `revoke-api-key`
 
-revoke an API key you issued (the admin also revokes any non-member key)
+revoke an issued key this session's owner issued (the admin also revokes any non-member issued key)
 
 ```
 symposium-data revoke-api-key [-h] [--community COMMUNITY] key_id
@@ -251,6 +251,14 @@ symposium-data promote [-h] --collection COLLECTION [--name NAME] [--metadata ME
                               ref
 ```
 
+## `collection list`
+
+the collections the caller may use, with its read, write and manage access on each
+
+```
+symposium-data collection list [-h]
+```
+
 ## `collection create`
 
 create a collection you own
@@ -261,7 +269,7 @@ symposium-data collection create [-h] --name NAME
 
 ## `collection grant`
 
-let a roster member read or write your collection, or a non-member API key read it; --revoke withdraws
+let a roster member read or write a collection the caller owns, or a non-member issued key read it; --revoke withdraws
 
 ```
 symposium-data collection grant [-h] --collection COLLECTION

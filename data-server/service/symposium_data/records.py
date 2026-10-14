@@ -554,6 +554,38 @@ class Records:
         )
 
     # ── collections and sharing ─────────────────────────────────────────────────────────────
+    def readable_collections(self, conn, who: Principal, community: str) -> list:
+        """The community's collections `who` may use, by name, each with what `who` may do
+        there: `read`, `write` and `manage`, as they apply."""
+        rows = conn.execute(
+            "SELECT name, owner, public FROM collections WHERE community = %s ORDER BY name",
+            (community,),
+        ).fetchall()
+        out = []
+        for row in rows:
+            name = row["name"]
+            access = [
+                perm
+                for perm, allowed in (
+                    ("read", self.can_read_collection),
+                    ("write", self.can_create),
+                    ("manage", self.can_manage),
+                )
+                if allowed(conn, who, community, name)
+            ]
+            if not access:
+                continue
+            out.append(
+                {
+                    "community": community,
+                    "name": name,
+                    "owner": row["owner"],
+                    "public": self.is_public(conn, community, name),
+                    "access": access,
+                }
+            )
+        return out
+
     def create_collection(self, conn, community: str, name: str, owner: str):
         try:
             with conn.transaction():

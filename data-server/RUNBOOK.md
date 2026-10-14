@@ -117,7 +117,7 @@ trustedProxy: <the network the Gateway's pods run in, e.g. 10.244.0.0/16>
 storage: {size: 20Gi}           # size it to the communities' data; className if there is no default
 ```
 
-- **Streams.** The API's streams (Server-Sent Events) stay open for hours. The chart turns the route's timeouts off for them, and gateways stream responses unbuffered by default. The stream's 30-second heartbeat keeps it inside any idle timeout longer than that.
+- **Streams.** The API's streams (Server-Sent Events) stay open for hours. The chart turns the route's timeouts off for them, and gateways stream responses unbuffered by default. The stream's heartbeat (`SYMPOSIUM_SERVER_STREAM_HEARTBEAT`, 30 seconds by default) keeps it inside any idle timeout longer than that.
 - **Trusted proxy.** The server trusts `X-Forwarded-*` headers only from `trustedProxy`. Keep it to the gateway's pod network, never a range anything else can send from.
 - **Refusals.** The chart refuses `gateway` mode on a cluster without the Gateway API, and says so.
 
@@ -135,9 +135,9 @@ publicUrl: https://data.example.org
 trustedProxy: <the network the controller's pods run in>
 ```
 
-The streams need the controller to stream responses unbuffered, with a read timeout well past 30 seconds:
-- **NGINX Ingress Controller (F5):** `nginx.org/proxy-buffering: "false"` and `nginx.org/proxy-read-timeout: "3600s"`.
-- **Traefik:** it streams by default.
+The controller must stream responses unbuffered, with a read timeout well past the streams' heartbeat, and accept request bodies as large as the files members upload:
+- **NGINX Ingress Controller (F5):** `nginx.org/proxy-buffering: "false"`, `nginx.org/proxy-read-timeout: "3600s"` and `nginx.org/client-max-body-size: "0"` (its default limit is 1 MB; `"0"` lifts it, and the community's quota bounds uploads).
+- **Traefik:** it streams and accepts any body size by default.
 - **Any other controller:** find its equivalents in its own documentation.
 
 **Install it** with the commands at the start of §5. Without either mode, the server is reachable inside the cluster, or from your machine with `kubectl -n symposium port-forward svc/symposium-data 8790:8080`.
@@ -215,9 +215,9 @@ The server reads `admin_pub_<handle>.key` at every start-up, from `/apps/` or `/
 - **A member's lost or compromised key.** Both of these are admin only:
   - `POST /v1/<community>/owners/<handle>/rebind` retires the handle's keys and returns a fresh invite.
   - `PUT /v1/<community>/owners/<handle>/suspect-after {"at": "2026-10-01T12:00:00+00:00"}` flags every version the handle wrote after that instant (`"suspect": true` in `stat`). Nothing is deleted.
-- **Sharing with applications.** An application reads with a `non-member` API key, which reads the collections their owners grant it.
+- **Sharing with applications.** An application reads with a non-member issued key, which reads the collections their owners grant it.
   - **Issue:** `/symposium gen-api-key <label> --non-member` in a member's session, or `gen-api-key <label>` in the admin's. The key goes to a 0600 file, and the server keeps its hash and a sealed copy its issuer can read back.
-  - **Grant:** `PUT /v1/<community>/collections/<collection>/grants {"api_key_id": "<key id>", "perm": "read"}`, by the collection's owner or the admin. A key is granted `read` only.
+  - **Grant:** `PUT /v1/<community>/collections/<collection>/grants {"api_key_id": "<key id>", "perm": "read"}`, by the collection's owner or the admin. A non-member issued key is granted `read` only.
   - **Public:** `PUT /v1/<community>/collections/<collection>/public {"public": true}` opens a collection to reads with no key at all. `inbox` stays private.
   - **Browser apps:** list the origins they are served from in `SYMPOSIUM_SERVER_CORS_ORIGINS` (with Helm, the `corsOrigins` value), so a browser lets them call the API.
   - **A leaked key:** its issuer or the admin revokes it, and the revocation takes effect from the next request:
@@ -226,7 +226,7 @@ The server reads `admin_pub_<handle>.key` at every start-up, from `/apps/` or `/
     curl -X DELETE -H "Authorization: Bearer <session key>" https://data.example.org/v1/<community>/api-keys/<key-id>
     ```
 
-  A session key is what an Ed25519 sign-in answers; the skill's `symposium-data` signs in for one on every command.
+  A session key is obtained through the session management routes with the member's or the admin's private key file; the skill's `symposium-data` obtains one on every command.
 
 ## 9. Maintenance
 
@@ -247,7 +247,7 @@ The server reads `admin_pub_<handle>.key` at every start-up, from `/apps/` or `/
   ```
 
   To back up the whole server, stop it and copy its `/apps` directory. On Kubernetes, that means snapshotting its PVC, where the cluster supports CSI volume snapshots.
-- **Import** an export into an operational server, admin only. Each member is created in the new community and signs in with the key they already hold.
+- **Import** an export into an operational server, admin only. Each member is created in the new community and obtains session keys with the private key file the member already holds.
   - **What it needs:** the community must not exist there yet, and no member may have that server's admin's handle.
   - **What it does:** everything the exported admin owned becomes this server's admin's.
   - **On failure:** the import is one transaction, so nothing is written. It answers `409` when refused, and `400` when the stream is damaged or the name isn't valid.

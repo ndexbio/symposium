@@ -1,12 +1,13 @@
-"""The hand-written routes of `/v1`: communities, sign-in, the roster, API keys, collections
+"""The hand-written routes of `/v1`: communities, session management, the roster, API keys, collections
 and files. Every byte is streamed by this service; S3 is never exposed. The record's routes are
 generated from the contract and mounted beside these by `symposium_server`.
 
 Communities are tenants (R-G8): every community-dependent route is under /v1/{community}/...,
 with collection-scoped routes under collections/{collection}/ and file routes under files/{id}/.
-Only /v1/status, /v1/communities and the server admin's sign-in (/v1/admin/...) are server-wide.
+Only /v1/status, /v1/communities and the admin's session management (/v1/admin/...) are
+server-wide.
 
-Every request presents one API key or none (`access`). A sign-in with an Ed25519 key answers a
+Every request presents one API key or none (`access`). The session management routes answer a
 session key; collections decide what a key may read and write.
 
 Nobody has a shell on the server (R-D7): every admin operation is an admin-only route, and the
@@ -300,13 +301,13 @@ class ChallengeIn(BaseModel):
     handle: str = Field(pattern=NAME)
 
 
-class SignInIn(BaseModel):
+class SessionIn(BaseModel):
     handle: str = Field(pattern=NAME)
     nonce: str
     signature: str
 
 
-class AdminSignInIn(BaseModel):
+class AdminSessionIn(BaseModel):
     nonce: str
     signature: str
 
@@ -390,12 +391,13 @@ def session_out(row, key: str) -> dict:
 
 
 @app.post("/v1/admin/token")
-def admin_sign_in(
-    caller: Annotated[Caller, Depends(authorize("adminSignIn"))],
-    body: AdminSignInIn,
+def create_admin_session(
+    caller: Annotated[Caller, Depends(authorize("createAdminSession"))],
+    body: AdminSessionIn,
     response: Response,
 ):
-    """The server admin's session key: signed in with the admin's key, valid in every
+    """The admin's session key: the challenge signed with the admin's private key file, valid
+    in every
     community."""
     with db.connection() as conn:
         admin = records.config(conn, "admin")
@@ -467,13 +469,13 @@ def challenge(
 
 
 @app.post("/v1/{community}/auth/token")
-def sign_in(
-    caller: Annotated[Caller, Depends(authorize("signIn"))],
+def create_session(
+    caller: Annotated[Caller, Depends(authorize("createSession"))],
     community: str,
-    body: SignInIn,
+    body: SessionIn,
     response: Response,
 ):
-    """A Member's session key: signed in with one of its active Ed25519 keys, valid only in
+    """A Member's session key: the challenge signed with the Member's private key file, valid in
     this community."""
     with db.connection() as conn:
         community = community_of(conn, community)
@@ -528,9 +530,9 @@ def rotate(
     handle: str,
     body: RotateIn,
 ):
-    """Replace the caller's key in this community. Signed in with a session of the current key
+    """Replace the caller's key in this community, with a session key of the current key
     and proven by the new key; the old key is retired, not deleted, so attribution survives, and
-    the sessions it signed in end."""
+    the session keys obtained with it end."""
     with db.connection() as conn:
         community = community_of(conn, community)
         if caller.handle != handle:
@@ -1398,6 +1400,22 @@ def require_manager(conn, caller: Caller, community, collection) -> Caller:
     if not records.can_manage(conn, caller.principal(), community, collection):
         refuse(403, "only the collection's owner or the admin may do this")
     return caller
+
+
+@app.get("/v1/{community}/collections")
+def list_collections(
+    caller: Annotated[Caller, Depends(authorize("listCollections"))],
+    community: str,
+):
+    """The collections the caller may use: public ones, and those it owns or is granted.
+    Without a key, the public ones."""
+    with db.connection() as conn:
+        community = community_of(conn, community)
+        return {
+            "collections": records.readable_collections(
+                conn, caller.principal(), community
+            )
+        }
 
 
 @app.post("/v1/{community}/collections", status_code=201)

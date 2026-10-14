@@ -41,7 +41,7 @@ def standing(
     community answers 403."""
     if row.role == "admin":
         if not records.admin_key_is_active(conn, row.ed25519_kid):
-            return 401, "the admin key this session was signed in with is retired"
+            return 401, "the admin key this session key was obtained with is retired"
         return None
     if row.role == "member":
         if not records.on_roster(conn, row.community, row.handle):
@@ -53,7 +53,7 @@ def standing(
             if not records.key_is_active(
                 conn, row.community, row.handle, row.ed25519_kid
             ):
-                return 401, "the key this session was signed in with is retired"
+                return 401, "the key this session key was obtained with is retired"
         elif not records.active_keys(conn, row.community, row.handle):
             return 401, f"'{row.handle}' has no registered key in {row.community}"
     if community is not None and row.community != community:

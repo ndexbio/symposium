@@ -169,7 +169,7 @@ given:
 | a `member` key carries its Member's handle, set from the Member's own session when it creates the key; `Me` answers `handle` and `label` | a submission is attributed to the Member who made the key, never to one the admin named |
 | `getArtifactContent` added; `links.content` names it | an Artifact's stored bytes are reachable with the same API key. It answers those bytes untouched, so it carries no `position`; `x-stored` marks it |
 | one API: the record routes moved from `/api/v1` to `/v1`, beside the data server's own | two prefixes took two credentials and checked access two ways; one prefix takes one API key, and the collections decide access (§3, §7) |
-| the `admin` role returns, for the admin's session key; `x-session` added; `x-anonymous` is `always` or `public`; `Me` adds `kind`, `kid`, `suspect_after` and `grants` | an Ed25519 sign-in answers a session key, the admin's included, so the admin reads the record like any key; `getMe` replaces the data server's `whoami` |
+| the `admin` role returns, for the admin's session key; `x-session` added; `x-anonymous` is `always` or `public`; `Me` adds `kind`, `kid`, `suspect_after` and `grants` | the session management routes answer a session key, the admin's included, so the admin reads the record like any key; `getMe` replaces the data server's `whoami` |
 
 ## 2. The skill's commands → endpoints
 
@@ -197,8 +197,8 @@ another community answers 403.
 
 | Role | Who holds it | Allows |
 |---|---|---|
-| `non-member` | an application, with a key a collection's owner issued for it | every read of the record, while it may read `record` |
-| `member` | a Member: its session key, or a key it issued for itself | everything `non-member` has, plus publishing as its Member and reading its own submissions, with the gate's decision and reply on each, and their stream |
+| `non-member` | an application, with a non-member issued key, issued by a Member or the admin | every read of the record, while it may read `record` |
+| `member` | a Member: its session key, or an issued key it issued for itself | everything `non-member` has, plus publishing as its Member and reading its own submissions, with the gate's decision and reply on each, and their stream |
 | `admin` | the server admin's session | every read of the record |
 
 The role is the first gate: `x-roles` names the roles that may call an operation at all. The
@@ -206,28 +206,32 @@ collection is the second: a request succeeds when its caller may use the collect
 touches.
 
 - **Record reads** take read access to `record`: its owner (the admin), a Member with a
-  `read` grant (every Member starts with one), a `non-member` key granted `read`, or anyone
+  `read` grant (every Member starts with one), a non-member issued key granted `read`, or
+  anyone
   while `record` is public. A grant withdrawn on `/v1` is felt on the next request and by an
   open stream (§5.3).
 - **Publishing** writes into `inbox`, so it takes the Member's `write` grant there, which every
-  Member starts with. A `non-member` key never writes.
+  Member starts with. A non-member issued key only reads.
 - **Submissions** are read by the Member who made them, with the gate's decision on each.
 
 The keys:
 
-- **A session key** answers an Ed25519 sign-in (`POST /v1/{community}/auth/token`, or
-  `/v1/admin/token` for the admin) and lasts `SYMPOSIUM_SERVER_SESSION_TTL` seconds (default
-  900). The skill's CLI signs in for one per command. Routes that change access, keys or the
-  server take a session key (`x-session`), so a leaked issued key cannot widen what any key
-  may do.
-- **A `member` key** is one a Member issues **for itself**, with its session; a Member may
-  hold several, each named by a label. It carries the Member's handle, and every operation
-  that needs a Member takes it from the key: it publishes as that Member and sees that
-  Member's own traffic with the gate. Nobody else, the admin included, can make a key that
-  acts as a Member.
-- **A `non-member` key** is one a Member or the admin issues for an application. It names no
-  Member, so a leaked one can publish nothing, and it reads only the collections its
-  owners grant it, `read` only.
+- **A session key** is a short-lived key bound to a Member, or to the admin, obtained through
+  the session management routes (`POST /v1/{community}/auth/challenge` then
+  `POST /v1/{community}/auth/token`, or `/v1/admin/challenge` and `/v1/admin/token` for the
+  admin) with the Member's or the admin's private key file. It lasts
+  `SYMPOSIUM_SERVER_SESSION_TTL` seconds (default 900). The skill's CLI obtains one per
+  command. Routes that change access, keys or the server take a session key (`x-session`), so
+  only a session key widens what any key may do.
+- **An issued key** is one a Member or the admin issues, with a session key, for an
+  application, named by a label. It is one of two kinds:
+  - **a member issued key** (`role: member`) is one a Member issues **for itself**; a
+    Member may hold several. It carries the Member's handle, and every operation that needs
+    a Member takes it from the key: it publishes as that Member and sees that Member's own
+    traffic with the gate. Only the Member itself issues one.
+  - **a non-member issued key** (`role: non-member`) is bound to no Member, so a leaked
+    one publishes nothing. It reads the collections it is granted `read` on, by each
+    collection's owner or the admin, and any public collection.
 
 Anonymous access needs no key: an operation that answers without one says so in
 `x-anonymous`, and its `security` includes `{}`. `always` marks the contract itself,
@@ -240,6 +244,12 @@ answers anonymously while the community's `record` collection is public.
 `getStatus` on are the hand-written routes, the ones that set a community up and its files.
 Routes marked `x-session` in the contract also take a session key, and the collection a route
 touches decides the rest (§3.1).
+
+Each operation's description ends with a `Roles:` line and an `Authentication:` line, the
+credentials it takes in the words of the data server README's Authentication column (`issued
+key`, `member issued key`, `session key`, `member session key`, `admin session key`, `no key
+(public)`, `no key required`). Both follow from `x-roles`, `x-session` and `x-anonymous`, and
+`tests/api/test_openapi.py` checks the lines and the README against them.
 
 | Operation | Method and path | non-member | member | admin |
 |---|---|---|---|---|
@@ -271,7 +281,7 @@ touches decides the rest (§3.1).
 | streamSubmissions | GET /{community}/streams/submissions |  | ✓ own |  |
 | getStatus | GET /status | ✓ | ✓ | ✓ |
 | adminChallenge | POST /admin/challenge | ✓ | ✓ | ✓ |
-| adminSignIn | POST /admin/token | ✓ | ✓ | ✓ |
+| createAdminSession | POST /admin/token | ✓ | ✓ | ✓ |
 | listCommunities | GET /communities |  |  | ✓ |
 | createCommunity | POST /communities |  |  | ✓ |
 | importCommunity | POST /communities/import |  |  | ✓ |
@@ -279,7 +289,7 @@ touches decides the rest (§3.1).
 | startPortNdex | POST /{community}/port-ndex |  |  | ✓ |
 | getPortNdex | GET /{community}/port-ndex/{port_id} |  |  | ✓ |
 | challenge | POST /{community}/auth/challenge | ✓ | ✓ | ✓ |
-| signIn | POST /{community}/auth/token | ✓ | ✓ | ✓ |
+| createSession | POST /{community}/auth/token | ✓ | ✓ | ✓ |
 | register | POST /{community}/owners | ✓ | ✓ | ✓ |
 | rotateKey | POST /{community}/owners/{handle}/keys |  | ✓ |  |
 | rebindMember | POST /{community}/owners/{handle}/rebind |  |  | ✓ |
@@ -293,6 +303,7 @@ touches decides the rest (§3.1).
 | createApiKey | POST /{community}/api-keys |  | ✓ | ✓ |
 | getApiKey | GET /{community}/api-keys/{key_id} |  | ✓ | ✓ |
 | revokeApiKey | DELETE /{community}/api-keys/{key_id} |  | ✓ | ✓ |
+| listCollections | GET /{community}/collections | ✓ | ✓ | ✓ |
 | createCollection | POST /{community}/collections |  | ✓ | ✓ |
 | setGrant | PUT /{community}/collections/{collection}/grants |  | ✓ | ✓ |
 | setPublic | PUT /{community}/collections/{collection}/public |  | ✓ | ✓ |
@@ -335,11 +346,11 @@ CREATE TABLE api_keys (
     community   text,                      -- NULL for the admin's session alone
     handle      text,                      -- the Member, or the admin; NULL for non-member
     label       text,                      -- issued keys: its issuer's name for it
-    ed25519_kid text,                      -- sessions: the Ed25519 key it was signed in with
+    ed25519_kid text,                      -- sessions: the key whose private key file obtained it
     ciphertext  bytea,                     -- issued keys: AES-256-GCM of the key
     nonce       bytea,                     -- the 12-byte GCM nonce
     enc_kid     text,                      -- which encryption key sealed it
-    created_by  text NOT NULL,             -- the issuer, or the one who signed in
+    created_by  text NOT NULL,             -- the issuer, or the Member or admin it is bound to
     created     timestamptz NOT NULL DEFAULT now(),
     expires     timestamptz,               -- NULL: an issued key lasts until revoked
     revoked     timestamptz,
@@ -355,7 +366,7 @@ CREATE TABLE api_keys (
 CREATE UNIQUE INDEX api_keys_label ON api_keys (community, created_by, label)
     WHERE kind = 'issued' AND revoked IS NULL;
 
--- a grant names a roster Member, or a non-member key, which is granted `read` alone
+-- a grant names a roster Member, or a non-member issued key, granted `read` alone
 ALTER TABLE grants ADD COLUMN api_key_id uuid REFERENCES api_keys (id) ON DELETE CASCADE;
 ALTER TABLE grants ADD CHECK ((handle IS NULL) <> (api_key_id IS NULL));
 ALTER TABLE grants ADD CHECK (api_key_id IS NULL OR perm = 'read');
@@ -394,10 +405,10 @@ the thing it stands on changes:
 
 | Key | At creation | On every request |
 |---|---|---|
-| a Member's session | a fresh challenge signed by one of the Member's active Ed25519 keys | that Ed25519 key is still active, and the Member is on the roster |
-| `member` | the Member's own session, in this community, while it is on the roster and **registered** | `handle` is still on the roster and registered |
-| `non-member` | a session of a registered Member, or the admin's | the key is live |
-| the admin's session | a fresh challenge signed by the admin's key | the admin's key is still active |
+| a Member's session key | a fresh challenge signed with the Member's private key file | that key is still active, and the Member is on the roster |
+| a member issued key | the Member's own session key, in this community, while it is on the roster and **registered** | `handle` is still on the roster and registered |
+| a non-member issued key | a session key of a registered Member, or the admin's | the key is live |
+| the admin's session key | a fresh challenge signed with the admin's private key file | the admin's key is still active |
 
 A key that publishes must publish as a Member, because `published_by` is permanent
 attribution. `submitArtifact` refuses a body whose `published_by` is anything other than
@@ -407,30 +418,30 @@ attribution. `submitArtifact` refuses a body whose `published_by` is anything ot
   acts as it, and every key it issued, is revoked in the same transaction
   (`revoked_by = 'roster-removal'`, values erased), so each stops at once and an open stream
   on one closes. The rows stay as the record of who held which key.
-- **A Member rotates its key, or the admin rebinds it**: the sessions the old key signed in
-  end. The Member's issued keys stop authenticating while it has no registered Ed25519 key,
-  and work again once it registers the new one.
-- A `non-member` key names no Member, so its label is only a name: a handle that later
-  joins the roster under the same name changes nothing for it.
+- **A Member replaces its private key file, or the admin rebinds it**: the session keys
+  obtained with the old key end. The Member's issued keys stop authenticating while it has
+  no registered public key, and work again once it registers the new one.
+- A non-member issued key is bound to no Member, so its label is only a name: a handle
+  that later joins the roster under the same name changes nothing for it.
 
 ### 4.5 Life cycle
 
 Keys are issued, listed and revoked on `/v1/{community}/api-keys`, community by community,
-with a session key. Whoever issued a key owns it; the admin also owns every `non-member`
-key.
+with a session key. Whoever issued a key owns it; the admin also owns every non-member
+issued key.
 
 | Route | With a Member's session | With the admin's session |
 |---|---|---|
-| `POST /v1/{community}/api-keys` `{label, role?, expires_days?}` | creates a `member` key bound to that Member, or with `role: non-member` a key for an application; 403 once it is off the roster | creates a `non-member` key |
-| `GET /v1/{community}/api-keys` | the keys it issued, with their values | every issued key of the community: the `non-member` keys with their values, the Members' keys without |
+| `POST /v1/{community}/api-keys` `{label, role?, expires_days?}` | creates an issued key bound to that Member, or with `role: non-member` a non-member issued key; 403 once it is off the roster | creates a non-member issued key |
+| `GET /v1/{community}/api-keys` | the keys it issued, with their values | every issued key of the community: the non-member issued keys with their values, the Members' own without |
 | `GET /v1/{community}/api-keys/{key_id}` | one of the keys it issued | any key of the community, a Member's without its value |
-| `DELETE /v1/{community}/api-keys/{key_id}` | revokes one of the keys it issued | revokes any `non-member` key; a Member's own key answers 404 |
+| `DELETE /v1/{community}/api-keys/{key_id}` | revokes one of the keys it issued | revokes any non-member issued key; a Member's own issued key answers 404 |
 
 Every route answers `Cache-Control: no-store` wherever it carries a key's value. A key of
 another community, or one the caller may not see, answers 404; a label already on one of
 the issuer's live keys answers 409.
 
-A `non-member` key reads what its collections' owners grant it:
+A non-member issued key reads what its collections' owners grant it:
 `PUT /v1/{community}/collections/{collection}/grants {api_key_id, perm: "read", granted}`,
 with the owner's session. A `write` grant to a key answers 400.
 
@@ -439,12 +450,13 @@ that a credential pasted into a transcript has been disclosed (`AGENTS.md`). So 
 commands that see key values write them to a file and print only where it is.
 
 1. **`/symposium gen-api-key <label> [--non-member] [--community <c>] [--expires-days N]`**,
-   in a Member's session, creates one more of that Member's keys, or with `--non-member` a
-   key for an application; in the admin's session, a key for an application. It writes the
+   in a Member's session, issues one more of that Member's issued keys, or with
+   `--non-member` a non-member issued key; in the admin's session, a non-member issued
+   key. It writes the
    key to the session's `api-keys/<id>.key`, mode 0600, and prints the id, community, role,
    handle, label and that path.
 2. **`/symposium data collection grant --collection <c> --api-key <id> --perm read`** gives an
-   application key read on a collection the caller owns.
+   non-member issued key read on a collection the caller owns.
 3. **`/symposium list-api-keys [--community <c>]`** writes the keys the caller issued (and,
    for the admin, the Members' keys without their values) to the session's
    `api-keys/list-<timestamp>.json`, mode 0600, and prints them without values. A revoked
@@ -539,13 +551,13 @@ collections and files share `/v1`, one process and one access model.
 
 | Credential | How a caller gets it | Where it works |
 |---|---|---|
-| Ed25519 key | made on the Member's or the admin's own machine; the server holds its public half | signs a sign-in challenge, nothing more |
-| session key `sak_…` | an Ed25519 sign-in | every route of `/v1`, in its community (the admin's: every community) |
-| issued key `sak_…` | issued with a session, for an application | every route of `/v1` but those that change access, keys or the server, in its community |
-| no key | — | the contract, `/v1/status`, sign-in and registration, and reads of a public collection |
+| private key file | made on the Member's or the admin's own machine (an Ed25519 key); the server holds its public key | signs the session management challenge |
+| session key `sak_…` | the session management routes, with a private key file | every route of `/v1`, in its community (the admin's: every community) |
+| issued key `sak_…` | issued with a session key, for an application | every route of `/v1` but those that change access, keys or the server, in its community |
+| no key | — | the contract, `/v1/status`, session management and registration, and reads of a public collection |
 
 What a key may read and write is its collection's to decide: the owner's grants, and whether
-the collection is public. A Member's key reads what the Member may, a `non-member` key what it
+the collection is public. A member issued key reads what the Member may, a non-member issued key what it
 is granted, and nobody reads another Member's `inbox` files, because the `inbox` visibility
 rule (the first writer, the admin, and `metadata.recipients`) applies to every key.
 
@@ -685,10 +697,12 @@ same test for the same reason.
   takes the controller's own settings in `expose.ingress.annotations`.
 - **TLS** stays where it is today: the deployment's gateway, ingress or proxy terminates it.
 - **Browsers.** `SYMPOSIUM_SERVER_CORS_ORIGINS` (the Helm chart's `corsOrigins`) lists the
-  origins a browser app may call the API from. None by default. The server then allows the
+  origins a browser app may call the API from. For those origins the server allows the
   `Authorization`, `Content-Type`, `Repr-Digest`, `If-Match`, `Range`, `Last-Event-ID` and
   `X-Data-*` request headers, and exposes `ETag`, `Link`, `Location`, `Repr-Digest`,
-  `Content-Range` and `X-Data-*`.
+  `Content-Range` and `X-Data-*`. Unset, the default, the API answers every request as
+  usual and sends no CORS headers, so a browser lets only pages served from the API's own
+  origin read its answers.
 - **Health.** `GET /v1/status` stays the health check. Once the server is operational it
   also reports `api_index.behind`, the server-wide count of record versions the index has
   yet to fold in.

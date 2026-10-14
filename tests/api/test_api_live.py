@@ -1417,10 +1417,14 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
     check("getStatus", "GET", "/status", status=200)
     check("adminChallenge", "POST", "/admin/challenge", status=200)
     signed = admin_signature(suite, world["admin_dir"])
-    session = check("adminSignIn", "POST", "/admin/token", body=signed, status=200)
+    session = check(
+        "createAdminSession", "POST", "/admin/token", body=signed, status=200
+    )
     assert session.headers["cache-control"] == "no-store"
     assert session.json()["key"].startswith("sak_")
-    check("adminSignIn", "POST", "/admin/token", body=signed, status=401)  # spent
+    check(
+        "createAdminSession", "POST", "/admin/token", body=signed, status=401
+    )  # spent
 
     # communities
     check("listCommunities", "GET", "/communities", admin, status=200)
@@ -1496,7 +1500,7 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
     )
     nonce = challenge("nova")
     nova_session = check(
-        "signIn",
+        "createSession",
         "POST",
         "/demo/auth/token",
         body={"handle": "nova", "nonce": nonce, "signature": nova.sign(nonce)},
@@ -1538,6 +1542,10 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
     # collections and grants
     check("createCollection", "POST", "/demo/collections", lyra, {"name": "lab"}, 201)
     check("createCollection", "POST", "/demo/collections", lyra, {"name": "lab"}, 409)
+    mine = check("listCollections", "GET", "/demo/collections", lyra, status=200)
+    lab = next(c for c in mine.json()["collections"] if c["name"] == "lab")
+    assert (lab["owner"], lab["access"]) == ("lyra", ["read", "write", "manage"])
+    check("listCollections", "GET", "/nowhere/collections", lyra, status=404)
     viewer_id = next(
         k["id"]
         for k in cli.ok(world["admin_dir"], "list-api-keys")["keys"]
@@ -1613,6 +1621,12 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
     )
     check("listFileVersions", "GET", f"/demo/files/{fid}/versions", viewer, status=200)
     check("listChanges", "GET", "/demo/collections/lab/changes", viewer, status=200)
+    # a non-member issued key lists what it is granted; a client with no key, the public ones
+    listed = check("listCollections", "GET", "/demo/collections", viewer, status=200)
+    granted = {c["name"]: c["access"] for c in listed.json()["collections"]}
+    assert granted.get("lab") == ["read"] and "inbox" not in granted
+    public = check("listCollections", "GET", "/demo/collections", status=200).json()
+    assert all(c["public"] for c in public["collections"])
     check(
         "queryCollection",
         "POST",

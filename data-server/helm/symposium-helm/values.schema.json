@@ -79,7 +79,7 @@
     "corsOrigins": {"type": "array", "items": {"type": "string", "pattern": "^https?://"}},
     "env": {
       "type": "object",
-      "propertyNames": {"pattern": "^SYMPOSIUM_[A-Z0-9_]+$"},
+      "propertyNames": {"pattern": "^SYMPOSIUM_SERVER_[A-Z0-9_]+$"},
       "additionalProperties": {"type": ["string", "number", "boolean"]}
     },
     "resources": {"type": "object"},

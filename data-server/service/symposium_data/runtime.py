@@ -46,7 +46,7 @@ class Settings:
         self.s3_secret_key = values["S3_SECRET_KEY"]
         self.s3_bucket = values.get("S3_BUCKET", "symposium-data")
         self.server_id = values["SERVER_ID"]
-        # seconds a session key lasts after an Ed25519 sign-in
+        # seconds a session key lasts
         self.session_ttl = float(env.get("SYMPOSIUM_SERVER_SESSION_TTL", "900"))
         self.invite_hours = int(env.get("SYMPOSIUM_SERVER_INVITE_HOURS", "72"))
         # browser origins allowed to call the API (CORS); none by default

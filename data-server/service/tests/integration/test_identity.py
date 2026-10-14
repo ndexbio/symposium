@@ -70,7 +70,7 @@ def test_sign_in_needs_the_registered_key_and_a_fresh_challenge(community):
     lyra = Owner(server, "lyra")
     enroll(admin, lyra, "demo")
 
-    assert lyra.token_response(key=OwnerKey()).status_code == 401
+    assert lyra.sign_in(key=OwnerKey()).status_code == 401
     nonce = lyra.challenge()
     body = {"handle": "lyra", "nonce": nonce, "signature": lyra.key.sign(nonce)}
     signed_in = HTTP.post(server.url + "/v1/demo/auth/token", json=body)
@@ -109,7 +109,7 @@ def test_a_session_ends_when_it_expires(community):
     server, admin = community
     lyra = Owner(server, "lyra")
     enroll(admin, lyra, "demo")
-    session = lyra.token()
+    session = lyra.session_key()
     assert me(lyra, lyra.headers(session)).status_code == 200
     lyras = "kind = 'session' AND handle = 'lyra'"
     psql(
@@ -174,7 +174,7 @@ def test_key_rotation_retires_the_old_key(community):
     server, admin = community
     lyra = Owner(server, "lyra")
     enroll(admin, lyra, "demo")
-    old_token = lyra.token()
+    old_session = lyra.session_key()
 
     new_key = OwnerKey()
     nonce = lyra.challenge()
@@ -185,13 +185,13 @@ def test_key_rotation_retires_the_old_key(community):
             "nonce": nonce,
             "signature": new_key.sign(nonce),
         },
-        headers=lyra.headers(old_token),
+        headers=lyra.headers(old_session),
     )
     assert r.status_code == 201, r.text
 
     # the old key's sessions end with it, and it cannot sign in again
-    assert me(lyra, lyra.headers(old_token)).status_code == 401
-    assert lyra.token_response().status_code == 401
+    assert me(lyra, lyra.headers(old_session)).status_code == 401
+    assert lyra.sign_in().status_code == 401
     rotated = Owner(server, "lyra", key=new_key)
     assert me(rotated).status_code == 200
 

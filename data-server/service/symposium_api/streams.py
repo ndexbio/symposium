@@ -16,7 +16,7 @@ import uuid
 
 import psycopg
 
-from .errors import ApiError
+from symposium_data.errors import ApiError
 
 # seconds between heartbeats, and so between a quiet stream's key re-checks; a test shortens it
 HEARTBEAT = float(os.environ.get("SYMPOSIUM_SERVER_STREAM_HEARTBEAT", "30"))

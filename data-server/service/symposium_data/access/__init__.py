@@ -7,6 +7,7 @@ from .authz import (
     authorize,
     caller_for,
     check,
+    contract_rules,
     require_admin,
     require_key,
     require_session,
@@ -14,11 +15,9 @@ from .authz import (
     wire,
 )
 from .caller import Caller
-from .contract import ANONYMOUS_ALWAYS, ANONYMOUS_PUBLIC, Contract, Rule, load
+from .contract import Contract, Rule, load
 
 __all__ = [
-    "ANONYMOUS_ALWAYS",
-    "ANONYMOUS_PUBLIC",
     "Caller",
     "Contract",
     "Rule",
@@ -27,6 +26,7 @@ __all__ = [
     "bearer",
     "caller_for",
     "check",
+    "contract_rules",
     "load",
     "require_admin",
     "require_key",

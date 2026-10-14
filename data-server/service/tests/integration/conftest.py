@@ -77,11 +77,6 @@ class OwnerKey:
         )
 
 
-@pytest.fixture
-def owner_key():
-    return OwnerKey
-
-
 class Owner:
     """A member as the skill would act: a handle in one community, a locally generated key,
     a server URL. Identity is per community, so the same handle elsewhere is someone else."""
@@ -122,7 +117,7 @@ class Owner:
             body["invite"] = invite
         return HTTP.post(self.url("/owners"), json=body)
 
-    def token_response(self, key: OwnerKey | None = None):
+    def sign_in(self, key: OwnerKey | None = None):
         key = key or self.key
         nonce = self.challenge()
         return HTTP.post(
@@ -130,27 +125,28 @@ class Owner:
             json={"handle": self.handle, "nonce": nonce, "signature": key.sign(nonce)},
         )
 
-    def token(self) -> str:
+    def session_key(self) -> str:
         """A session key: what signing in with this owner's Ed25519 key answers."""
-        r = self.token_response()
+        r = self.sign_in()
         assert r.status_code == 200, r.text
         return r.json()["key"]
 
-    def issue(self, label: str, role: str = "member", expires_days=None) -> dict:
-        """An issued API key, made with this owner's session. -> the issued key's row,
-        with its value in `key`."""
-        body = {"label": label, "role": role}
+    def issue(self, label: str, role: str | None = None, expires_days=None) -> dict:
+        """An issued API key, made with this owner's session: by default a Member's own key,
+        and the admin's a non-member key. -> the issued key's row, with its value in `key`."""
+        body = {"label": label} if role is None else {"label": label, "role": role}
         if expires_days is not None:
             body["expires_days"] = expires_days
         r = HTTP.post(self.url("/api-keys"), json=body, headers=self.headers())
         assert r.status_code == 201, r.text
         return r.json()
 
-    def headers(self, token: str | None = None) -> dict:
-        if token is None:
-            token = getattr(self, "_token", None) or self.token()
-            self._token = token
-        return {"Authorization": f"Bearer {token}"}
+    def headers(self, key: str | None = None) -> dict:
+        """This owner's key as a request header: by default a session key, signed in once."""
+        if key is None:
+            key = getattr(self, "_session", None) or self.session_key()
+            self._session = key
+        return {"Authorization": f"Bearer {key}"}
 
     # ── files ────────────────────────────────────────────────────────────────────────────────
     def put(
@@ -208,7 +204,7 @@ class Admin(Owner):
         r.raise_for_status()
         return r.json()["nonce"]
 
-    def token_response(self, key: OwnerKey | None = None):
+    def sign_in(self, key: OwnerKey | None = None):
         key = key or self.key
         nonce = self.challenge()
         return HTTP.post(
@@ -219,7 +215,7 @@ class Admin(Owner):
     def at(self, community: str) -> Admin:
         """The same admin, calling another community's routes."""
         other = Admin(self.server, self.handle, self.key, community)
-        other._token = getattr(self, "_token", None)
+        other._session = getattr(self, "_session", None)
         return other
 
 

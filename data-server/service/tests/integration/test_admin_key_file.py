@@ -71,7 +71,7 @@ def test_without_its_key_the_server_is_not_operational(server):
 
 def test_a_new_key_file_rebinds_the_admin(server, tmp_path):
     original = init_admin(server)
-    old_token = original.headers()
+    old_session = original.headers()
     new_key = OwnerKey()
     try:
         docker(
@@ -84,12 +84,10 @@ def test_a_new_key_file_rebinds_the_admin(server, tmp_path):
         )
         assert status["mode"] == "operational" and status["admin"] == ADMIN
 
-        # the old key is retired: its token and its signature are both refused
+        # the old key is retired: its session and its signature are both refused
         url = f"{server.url}/v1/communities"
-        assert HTTP.get(url, headers=old_token).status_code == 401
-        assert (
-            Admin(server, ADMIN, server.admin_key).token_response().status_code == 401
-        )
+        assert HTTP.get(url, headers=old_session).status_code == 401
+        assert Admin(server, ADMIN, server.admin_key).sign_in().status_code == 401
         assert (
             HTTP.get(url, headers=Admin(server, ADMIN, new_key).headers()).status_code
             == 200

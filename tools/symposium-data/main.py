@@ -130,7 +130,7 @@ class DataServer:
     def __init__(self, base_url: str, community: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.community = community
-        self.token = None
+        self.key = None  # the session key a sign-in answers, or an API key
         self.checked = False
 
     # ── transport ──────────────────────────────────────────────────────────────────────────
@@ -151,8 +151,8 @@ class DataServer:
         if body is not None:
             data = json.dumps(body).encode()
             headers["Content-Type"] = "application/json"
-        if auth and self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
+        if auth and self.key:
+            headers["Authorization"] = f"Bearer {self.key}"
         request = urllib.request.Request(
             self.base_url + path, data=data, headers=headers, method=method
         )
@@ -211,7 +211,7 @@ class DataServer:
         status = self.status()
         if status.get("api") != API_VERSION:
             raise CommandError(
-                f"this CLI speaks the data server's Control API version {API_VERSION}, but the server "
+                f"this CLI speaks the data server's API version {API_VERSION}, but the server "
                 f"at {self.base_url} speaks version {status.get('api')}; this bundle was built "
                 f"for data-server image {image_version()}"
             )
@@ -225,7 +225,7 @@ class DataServer:
     def sign_in_admin(self, keystore: Keystore, handle: str):
         nonce = self.request("POST", "/v1/admin/challenge", auth=False)["nonce"]
         signature = keystore.sign(ADMIN_SCOPE, handle, nonce.encode())
-        self.token = self.request(
+        self.key = self.request(
             "POST",
             "/v1/admin/token",
             body={"nonce": nonce, "signature": signature},
@@ -237,7 +237,7 @@ class DataServer:
             "POST", self.c("/auth/challenge"), body={"handle": handle}, auth=False
         )["nonce"]
         signature = keystore.sign(self.community, handle, nonce.encode())
-        self.token = self.request(
+        self.key = self.request(
             "POST",
             self.c("/auth/token"),
             body={"handle": handle, "nonce": nonce, "signature": signature},
@@ -1004,7 +1004,7 @@ class Commands:
         if missing:
             raise CommandError(f"{path} lacks {', '.join(missing)}")
         server = self.server_for(key["data-server-url"], key["community"])
-        server.token = key["key"]
+        server.key = key["key"]
         return server
 
     def download(self, response, out: Path) -> dict:

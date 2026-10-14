@@ -1,15 +1,15 @@
 openapi: 3.0.3
 info:
-  title: Symposium Data API
+  title: Symposium API
   version: 1.0.0
   description: |
     Read a Symposium community record, follow it as it changes, and publish through the gate.
 
-    The Symposium Data API speaks in the specification's model: Artifacts, Objects, properties,
+    The record's routes speak in the specification's model: Artifacts, Objects, properties,
     relationships, Members and addresses (`spec/symposium_specification.md`, profiled by
-    `tools/CANONICAL.md`). It is served by the Symposium Data server and reads the community
-    record held there, so every application sees the one record under the server's own
-    access rules. It is self-contained: every URL it answers is one of its own.
+    `tools/CANONICAL.md`). The Symposium Data server serves them over the community record it
+    holds, so every application sees the one record under the same access rules. Every URL
+    they answer is one of the API's own.
 
     **The record is read-only here.** Artifacts are immutable. A correction is a new Artifact
     that supersedes the old one, published through `POST /{community}/submissions` and decided
@@ -1253,6 +1253,8 @@ components:
             - forbidden
             - not_found
             - conflict
+            - gone
+            - precondition_failed
             - too_large
             - validation_failed
             - unprocessable

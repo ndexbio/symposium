@@ -66,7 +66,7 @@ server.
 
 The start is refused at once, before NDEx is contacted, when:
 - the community does not exist (`404`);
-- the caller is not the admin (`403`, or `401` without a token);
+- the caller is not the admin (`403`, or `401` without a key);
 - the community holds files (`400`);
 - another port-ndex is running anywhere on the server (`409`).
 

@@ -221,7 +221,7 @@ def test_inbox_submissions_are_private_to_submitter_admin_and_recipients(demo):
 def test_twenty_concurrent_writers_get_a_gap_free_increasing_clock(demo):
     server, _, owners = demo
     lyra = owners["lyra"]
-    lyra.headers()  # fetch the token once, before the threads start
+    lyra.headers()  # sign in once, before the threads start
     start = int(
         psql(
             server,

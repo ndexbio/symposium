@@ -15,10 +15,6 @@ import yaml
 # In the image the contract is copied beside the service; in a checkout it is the repository's.
 IMAGE_CONTRACT = Path("/opt/symposium-api/openapi.yaml")
 CHECKOUT_CONTRACT = Path(__file__).resolve().parents[4] / "api" / "openapi.yaml"
-# x-anonymous: the operation always answers without a key
-ANONYMOUS_ALWAYS = "always"
-# x-anonymous: it answers without a key when the collection it reads is public
-ANONYMOUS_PUBLIC = "public"
 
 
 @dataclass(frozen=True)
@@ -26,7 +22,9 @@ class Rule:
     """Who may call one operation."""
 
     roles: tuple  # in the order the contract lists them
-    anonymous: str | None  # None, ANONYMOUS_ALWAYS or ANONYMOUS_PUBLIC
+    # x-anonymous: None; "always", it answers without a key; or "public", it answers without a
+    # key while the collection it reads is public
+    anonymous: str | None
     session: bool = False  # True when only a session key may call it
 
 

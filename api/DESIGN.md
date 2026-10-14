@@ -161,7 +161,7 @@ given:
 | `getOpenApiYaml` and `getOpenApiJson` added | the API serves its own contract to any caller |
 | `streamRecord` and `streamSubmissions` answer 400 | `Last-Event-ID` is a cursor, and a cursor this server never issued answers 400 everywhere |
 | the `admin` role, the `adminToken` scheme and the four `/admin/api-keys` operations are gone; every key belongs to one community | the API authenticates API keys alone and exposes no admin operation; keys are issued on the data server's `/v1` (§4.5), and a key acts only in its own community |
-| a `member` key carries its Member's handle, set from the Member's own token when it creates the key; `Me` answers `handle` and `label` | a submission is attributed to the Member who made the key, never to one the admin named |
+| a `member` key carries its Member's handle, set from the Member's own session when it creates the key; `Me` answers `handle` and `label` | a submission is attributed to the Member who made the key, never to one the admin named |
 | `getArtifactContent` added; `links.content` names it | an Artifact's stored bytes are reachable with the same API key. It answers those bytes untouched, so it carries no `position`; `x-stored` marks it |
 | one API: the record routes moved from `/api/v1` to `/v1`, beside the data server's own | two prefixes took two credentials and checked access two ways; one prefix takes one API key, and the collections decide access (§3, §7) |
 | the `admin` role returns, for the admin's session key; `x-session` added; `x-anonymous` is `always` or `public`; `Me` adds `kind`, `kid`, `suspect_after` and `grants` | an Ed25519 sign-in answers a session key, the admin's included, so the admin reads the record like any key; `getMe` replaces the data server's `whoami` |

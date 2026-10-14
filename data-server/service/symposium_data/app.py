@@ -32,9 +32,11 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import API_VERSION, access, version
 from .access import Caller, caller_for, require_admin, require_key, require_session
@@ -42,6 +44,7 @@ from .admin_key import AdminKeyFile, AdminMode
 from .api_keys import ApiKeys, LabelInUse, Sealer, key_file_from
 from .archive import Archive, Malformed, Refused
 from .auth import PublicKeys, Secrets
+from .errors import ApiError, body_for
 from .jobs import Jobs
 from .records import (
     Conflict,
@@ -101,42 +104,71 @@ async def lifespan(_app: FastAPI):
     db.pool.close()
 
 
-app = FastAPI(title="Symposium Data", version=version(), lifespan=lifespan)
+# FastAPI's generated /docs, /redoc and /openapi.json are off: api/openapi.yaml is the
+# contract, served at /v1/openapi.yaml and /v1/openapi.json
+app = FastAPI(
+    title="Symposium Data",
+    version=version(),
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
+STATUS = "/v1/status"
 
 
 @app.middleware("http")
 async def operational_only(request: Request, call_next):
-    """Non-operational mode (R-D4): only /v1/status answers; the jobs keep running."""
-    if not admin_mode.operational and request.url.path != "/v1/status":
+    """Non-operational mode (R-D4): only /v1/status answers, so a readiness probe sees why;
+    the jobs keep running."""
+    if not admin_mode.operational and request.url.path != STATUS:
         return JSONResponse(
-            {"detail": f"the server is not operational: {admin_mode.reason}"},
+            body_for(501, f"the server is not operational: {admin_mode.reason}"),
             status_code=501,
         )
     return await call_next(request)
 
 
-@app.exception_handler(NotFound)
-async def _not_found(_request, error):
-    return JSONResponse({"detail": str(error)}, status_code=404)
+# Every refusal answers the one Error body, {detail, code}, whoever raises it.
+@app.exception_handler(ApiError)
+async def _api_error(_request, error: ApiError):
+    return JSONResponse(error.body(), status_code=error.status, headers=error.headers)
 
 
-@app.exception_handler(Forbidden)
-async def _forbidden(_request, error):
-    return JSONResponse({"detail": str(error)}, status_code=403)
+def _refusal(status: int):
+    async def handler(_request: Request, error):
+        return JSONResponse(body_for(status, str(error)), status_code=status)
+
+    return handler
 
 
-@app.exception_handler(Conflict)
-async def _conflict(_request, error):
-    return JSONResponse({"detail": str(error)}, status_code=409)
+app.add_exception_handler(NotFound, _refusal(404))
+app.add_exception_handler(Forbidden, _refusal(403))
+app.add_exception_handler(Conflict, _refusal(409))
+app.add_exception_handler(Invalid, _refusal(400))
 
 
-@app.exception_handler(Invalid)
-async def _invalid(_request, error):
-    return JSONResponse({"detail": str(error)}, status_code=400)
+@app.exception_handler(StarletteHTTPException)
+async def _http_error(_request: Request, error: StarletteHTTPException):
+    return JSONResponse(
+        body_for(error.status_code, error.detail),
+        status_code=error.status_code,
+        headers=getattr(error, "headers", None),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _unreadable(request: Request, error: RequestValidationError):
+    """A request its route cannot read: 400 on a route generated from the contract, as the
+    contract states; 422 on a hand-written route."""
+    route = request.scope.get("route")
+    generated = getattr(route, "operation_id", None) in access.contract_rules()
+    status = 400 if generated else 422
+    return JSONResponse(body_for(status, error.errors()), status_code=status)
 
 
 # Callables that add to /v1/status once the server is operational and healthy: the
-# composition root registers the Symposium Data API's index position here, so this module never
+# composition root registers the record index's position here, so this module never
 # imports the API.
 status_extensions: list = []
 
@@ -178,13 +210,13 @@ class ChallengeIn(BaseModel):
     handle: str = Field(pattern=NAME)
 
 
-class TokenIn(BaseModel):
+class SignInIn(BaseModel):
     handle: str = Field(pattern=NAME)
     nonce: str
     signature: str
 
 
-class AdminTokenIn(BaseModel):
+class AdminSignInIn(BaseModel):
     nonce: str
     signature: str
 
@@ -286,7 +318,7 @@ def session_out(row, key: str) -> dict:
 
 
 @app.post("/v1/admin/token")
-def admin_token(body: AdminTokenIn, response: Response):
+def admin_sign_in(body: AdminSignInIn, response: Response):
     """The server admin's session key: signed in with the admin's key, valid in every
     community."""
     with db.connection() as conn:
@@ -352,7 +384,7 @@ def challenge(community: str, body: ChallengeIn):
 
 
 @app.post("/v1/{community}/auth/token")
-def token(community: str, body: TokenIn, response: Response):
+def sign_in(community: str, body: SignInIn, response: Response):
     """A Member's session key: signed in with one of its active Ed25519 keys, valid only in
     this community."""
     with db.connection() as conn:
@@ -462,8 +494,8 @@ def add_member(community: str, handle: str, request: Request, response: Response
 
 @app.delete("/v1/{community}/roster/{handle}")
 def remove_member(community: str, handle: str, request: Request):
-    """Remove one handle: its grants and pending invite go, and its Data API keys are revoked;
-    its identity and attribution stay (admin only)."""
+    """Remove one handle: its grants and pending invite go, and every API key it holds or issued
+    is revoked; its identity and attribution stay (admin only)."""
     handle = roster_handle(handle)
     with db.connection() as conn:
         community = community_of(conn, community)
@@ -1150,7 +1182,8 @@ async def content(community: str, file_id: uuid.UUID, ref: str, request: Request
     )
     if info["purged"]:
         return JSONResponse(
-            {"detail": "this version's content was purged", **info}, status_code=410
+            {**body_for(410, "this version's content was purged"), **info},
+            status_code=410,
         )
     byte_range = request.headers.get("range")
     obj = await run_in_threadpool(store.open_read, key, byte_range)
@@ -1439,7 +1472,7 @@ def promote(
                 metadata,
                 source["content_type"],
                 # credited to the submitter, like a ported record (R-G4, R-M2); the
-                # admin's token only authorizes the promote
+                # admin's session only authorizes the promote
                 source["created_by"],
                 None,
                 clock=clock,

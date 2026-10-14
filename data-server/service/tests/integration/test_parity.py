@@ -450,14 +450,12 @@ def test_imported_identities_are_per_community(server, tmp_path):
     # two independent identities: each signs in with its own key, in its own community
     lyra_demo = Owner(target, "lyra", key=lyra.key)
     assert lyra_demo.get(fid).content == b"lyra's data"
-    assert lyra_other.token_response().status_code == 200
+    assert lyra_other.sign_in().status_code == 200
     assert (
-        Owner(target, "lyra", key=lyra.key, community="other")
-        .token_response()
-        .status_code
+        Owner(target, "lyra", key=lyra.key, community="other").sign_in().status_code
         == 401
     )
-    assert Owner(target, "lyra", key=lyra_other.key).token_response().status_code == 401
+    assert Owner(target, "lyra", key=lyra_other.key).sign_in().status_code == 401
 
 
 def test_an_export_from_another_admin_is_imported_under_this_one(server, tmp_path):

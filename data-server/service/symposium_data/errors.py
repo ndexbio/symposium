@@ -1,4 +1,5 @@
-"""The API's one error body, `Error` in the contract: `{detail, code, findings?}`."""
+"""The API's one error body, `Error` in the contract: `{detail, code, findings?}`, which every
+refusal of every route answers."""
 
 from __future__ import annotations
 
@@ -8,6 +9,8 @@ CODES = {
     403: "forbidden",
     404: "not_found",
     409: "conflict",
+    410: "gone",
+    412: "precondition_failed",
     413: "too_large",
     422: "unprocessable",
     429: "too_many_streams",
@@ -39,7 +42,8 @@ class ApiError(Exception):
 
 
 def body_for(status: int, detail) -> dict:
-    """The Error body for a refusal raised outside the API's own code (FastAPI, `/v1` helpers)."""
+    """The Error body for a refusal raised as anything but an ApiError (FastAPI, the records
+    layer, `refuse`)."""
     if not isinstance(detail, str):
         detail = "; ".join(
             f"{'.'.join(str(p) for p in e.get('loc', ()))}: {e.get('msg')}"

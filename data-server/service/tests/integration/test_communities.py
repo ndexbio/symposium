@@ -104,8 +104,8 @@ def test_one_handle_is_an_independent_identity_in_each_community(server, admin):
     assert enroll(admin, lyra2, "comm2").status_code == 201
 
     # each key signs in only to its own community, and each session works only there
-    assert Owner(server, "lyra", lyra1.key, "comm2").token_response().status_code == 401
-    assert Owner(server, "lyra", lyra2.key, "comm1").token_response().status_code == 401
+    assert Owner(server, "lyra", lyra1.key, "comm2").sign_in().status_code == 401
+    assert Owner(server, "lyra", lyra2.key, "comm1").sign_in().status_code == 401
     wrong = HTTP.get(f"{server.url}/v1/comm2/me", headers=lyra1.headers())
     assert wrong.status_code == 403 and "belongs to comm1" in wrong.json()["detail"]
 

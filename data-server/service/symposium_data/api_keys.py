@@ -231,28 +231,33 @@ class ApiKeys:
 
     # ── revoking ───────────────────────────────────────────────────────────────────────────
     def revoke(self, conn, community: str, key_id, by: str):
-        """Stop the community's issued key and erase its value; the row stays as the record of
-        who held it. Revoking a revoked key answers it unchanged; None for an unknown key."""
-        return conn.execute(
+        """Stop the community's issued key, erase its value and drop the grants made to it; the
+        row stays as the record of who held it. Revoking a revoked key answers it unchanged;
+        None for an unknown key."""
+        row = conn.execute(
             "UPDATE api_keys SET revoked = COALESCE(revoked, now()), "
             "revoked_by = COALESCE(revoked_by, %s), ciphertext = NULL, nonce = NULL "
             "WHERE id = %s AND community = %s AND kind = %s RETURNING *",
             (by, key_id, community, ISSUED),
         ).fetchone()
+        if row is not None:
+            conn.execute("DELETE FROM grants WHERE api_key_id = %s", (row["id"],))
+        return row
 
     def revoke_for(self, conn, community: str, handle: str, by: str) -> int:
         """Revoke every live key of one Member in the community: the keys that act as it,
-        sessions included, and the non-member keys it issued. -> how many issued keys."""
-        return sum(
-            1
-            for row in conn.execute(
-                "UPDATE api_keys SET revoked = now(), revoked_by = %s, ciphertext = NULL, "
-                "nonce = NULL WHERE community = %s AND (handle = %s OR created_by = %s) "
-                "AND revoked IS NULL RETURNING kind",
-                (by, community, handle, handle),
-            ).fetchall()
-            if row["kind"] == ISSUED
+        sessions included, and the non-member keys it issued, whose grants go with them.
+        -> how many issued keys."""
+        rows = conn.execute(
+            "UPDATE api_keys SET revoked = now(), revoked_by = %s, ciphertext = NULL, "
+            "nonce = NULL WHERE community = %s AND (handle = %s OR created_by = %s) "
+            "AND revoked IS NULL RETURNING id, kind",
+            (by, community, handle, handle),
+        ).fetchall()
+        conn.execute(
+            "DELETE FROM grants WHERE api_key_id = ANY(%s)", ([r["id"] for r in rows],)
         )
+        return sum(1 for row in rows if row["kind"] == ISSUED)
 
     def end_sessions(self, conn, ed25519_kids: list[str], by: str) -> int:
         """Revoke every live session signed in with one of these Ed25519 keys."""

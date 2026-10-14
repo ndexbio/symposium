@@ -24,8 +24,10 @@ def wire(**parts) -> None:
     _wired.update(parts)
 
 
-def wired(name: str):
-    return _wired[name]
+def contract_rules() -> dict:
+    """The contract's rule for each operation, once the server has wired the contract."""
+    contract = _wired.get("contract")
+    return contract.rules if contract is not None else {}
 
 
 def base_url(request: Request) -> str:

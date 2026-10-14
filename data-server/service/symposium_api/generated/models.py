@@ -16,6 +16,8 @@ class Code(StrEnum):
     forbidden = "forbidden"
     not_found = "not_found"
     conflict = "conflict"
+    gone = "gone"
+    precondition_failed = "precondition_failed"
     too_large = "too_large"
     validation_failed = "validation_failed"
     unprocessable = "unprocessable"

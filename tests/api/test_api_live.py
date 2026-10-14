@@ -253,18 +253,18 @@ def gate(suite, admin_dir: Path) -> str:
     return out
 
 
-def admin_token(suite, admin_dir: Path) -> str:
+def admin_session(suite, admin_dir: Path) -> str:
     """The server admin's session key, signed in the way the CLI signs in."""
-    return session_token(suite, admin_dir)
+    return session_key(suite, admin_dir)
 
 
-def session_token(suite, directory: Path) -> str:
+def session_key(suite, directory: Path) -> str:
     """The session key of the session in `directory`, signed in with its Ed25519 key the way
     the CLI signs in: the admin's in the admin's session, a Member's own in its member
     session."""
     code = (
         f"import sys; sys.path.insert(0, {str(CLI_DIR)!r}); "
-        "from main import Commands; print(Commands().signed_in().token)"
+        "from main import Commands; print(Commands().signed_in().key)"
     )
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -336,7 +336,7 @@ def world(suite, server, cli, admin_dir):
     return {
         "api": api,
         "keys": keys,
-        "token": admin_token(suite, admin_dir),
+        "admin_session": admin_session(suite, admin_dir),
         "admin_dir": admin_dir,
         "sessions": sessions,
     }
@@ -356,7 +356,7 @@ def test_the_contract_is_served_anonymously(server):
 
 # ── every operation, live, against the contract ────────────────────────────────────────────
 def test_every_operation_answers_as_the_contract_says(world, suite, server):
-    api, keys, token = world["api"], world["keys"], world["token"]
+    api, keys, admin = world["api"], world["keys"], world["admin_session"]
     lyra = keys["lyra"]
     called = set()
 
@@ -486,7 +486,7 @@ def test_every_operation_answers_as_the_contract_says(world, suite, server):
 
     # `admin` names no community: the admin's routes are its own
     for method, body in (("GET", None), ("POST", {"label": "x"})):
-        assert api.call(method, "/admin/api-keys", token, body).status_code == 404
+        assert api.call(method, "/admin/api-keys", admin, body).status_code == 404
 
     for operation_id, path in (
         ("streamRecord", "/demo/streams/record"),
@@ -541,7 +541,7 @@ def test_every_role_gets_exactly_the_access_the_table_states(world, cli):
     answers a caller who may read `record` (by a grant, or because it is public)."""
     table = role_table()
     assert set(table) == set(OPERATIONS)
-    keys, token = world["keys"], world["token"]
+    keys, admin = world["keys"], world["admin_session"]
     for public in (False, True):
         cli.ok(
             world["admin_dir"],
@@ -560,7 +560,7 @@ def test_every_role_gets_exactly_the_access_the_table_states(world, cli):
                     None,
                     anonymous == "always" or (public and reads_record),
                 ),
-                "admin session": (token, "admin" in allowed),
+                "admin session": (admin, "admin" in allowed),
                 "member key": (keys["lyra"], "member" in allowed),
                 "non-member key granted the record": (
                     keys["non-member"],
@@ -646,12 +646,12 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     second = key_value(cli.ok(lyra_dir, "gen-api-key", "tablet"))
     assert api.call("GET", "/demo/me", second).json()["handle"] == "lyra"
     # a label names one live key among its owner's
-    lyra_token = session_token(suite, lyra_dir)
-    taken = api.control("POST", "/demo/api-keys", lyra_token, {"label": "tablet"})
+    lyra_session = session_key(suite, lyra_dir)
+    taken = api.control("POST", "/demo/api-keys", lyra_session, {"label": "tablet"})
     assert taken.status_code == 409, taken.text
-    # and the body names no Member: the token decides
+    # and the body names no Member: the session decides
     made = api.control(
-        "POST", "/demo/api-keys", lyra_token, {"label": "x", "handle": "vega"}
+        "POST", "/demo/api-keys", lyra_session, {"label": "x", "handle": "vega"}
     )
     assert made.status_code == 201 and made.json()["handle"] == "lyra"
 
@@ -673,20 +673,20 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     assert sealed and all(key not in row[0] for row in sealed)
 
     # the admin sees a Member's keys, never their values, and cannot revoke one
-    token = world["token"]
-    seen = api.control("GET", "/demo/api-keys", token).json()["items"]
+    admin = world["admin_session"]
+    seen = api.control("GET", "/demo/api-keys", admin).json()["items"]
     assert any(k["handle"] == "lyra" for k in seen)
     assert all(k["key"] is None for k in seen if k["handle"] is not None)
-    one = api.control("GET", f"/demo/api-keys/{issued['id']}", token).json()
+    one = api.control("GET", f"/demo/api-keys/{issued['id']}", admin).json()
     assert one["handle"] == "lyra" and one["key"] is None
     assert (
-        api.control("DELETE", f"/demo/api-keys/{issued['id']}", token).status_code
+        api.control("DELETE", f"/demo/api-keys/{issued['id']}", admin).status_code
         == 404
     )
-    # another Member's token sees none of them
-    vega_token = session_token(suite, sessions["vega"])
+    # another Member's session sees none of them
+    vega_session = session_key(suite, sessions["vega"])
     assert (
-        api.control("GET", f"/demo/api-keys/{issued['id']}", vega_token).status_code
+        api.control("GET", f"/demo/api-keys/{issued['id']}", vega_session).status_code
         == 404
     )
 
@@ -699,7 +699,7 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     # and its label is free again
     assert (
         api.control(
-            "POST", "/demo/api-keys", lyra_token, {"label": "notebook"}
+            "POST", "/demo/api-keys", lyra_session, {"label": "notebook"}
         ).status_code
         == 201
     )
@@ -733,14 +733,14 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
         short["id"],
     )
     assert revoked_by == [["roster-removal"]]
-    refused = api.control("POST", "/demo/api-keys", vega_token, {"label": "again"})
+    refused = api.control("POST", "/demo/api-keys", vega_session, {"label": "again"})
     assert refused.status_code in (401, 403), refused.text
 
     # the admin makes, reads and revokes application keys
-    made = api.control("POST", "/demo/api-keys", token, {"label": "kiosk"})
+    made = api.control("POST", "/demo/api-keys", admin, {"label": "kiosk"})
     assert made.status_code == 201 and made.headers["cache-control"] == "no-store"
     assert (made.json()["role"], made.json()["handle"]) == ("non-member", None)
-    one = api.control("GET", f"/demo/api-keys/{made.json()['id']}", token)
+    one = api.control("GET", f"/demo/api-keys/{made.json()['id']}", admin)
     assert one.status_code == 200 and one.json()["key"] == made.json()["key"]
     kiosk = made.json()["key"]
     assert (
@@ -751,7 +751,7 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     cli.ok(admin_dir, "communities", "create", "--name", "elsewhere")
     assert (
         api.control(
-            "GET", f"/elsewhere/api-keys/{made.json()['id']}", token
+            "GET", f"/elsewhere/api-keys/{made.json()['id']}", admin
         ).status_code
         == 404
     )
@@ -766,7 +766,7 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
         api.control("GET", "/demo/api-keys", world["keys"]["lyra"]).status_code == 403
     )
     assert api.control("GET", "/demo/api-keys").status_code == 401
-    assert api.control("POST", "/demo/api-keys", token, {}).status_code == 422
+    assert api.control("POST", "/demo/api-keys", admin, {}).status_code == 422
 
 
 # ── publishing through the gate ────────────────────────────────────────────────────────────
@@ -972,7 +972,7 @@ def test_every_route_of_v1_answers_one_error_body(server, admin_dir, cli):
 # ── what the review asked to see covered ───────────────────────────────────────────────────
 CAPS = """
 import json, uuid
-from symposium_api.errors import ApiError
+from symposium_data.errors import ApiError
 from symposium_api.streams import Caps
 from symposium_data.runtime import Database, Settings
 db = Database(Settings())
@@ -1021,7 +1021,7 @@ def test_every_stream_cap_reaches_its_429(server):
 
 
 def test_a_key_acts_only_within_its_community_and_standing(world, cli):
-    api, keys, token = world["api"], world["keys"], world["token"]
+    api, keys, admin = world["api"], world["keys"], world["admin_session"]
     admin_dir = world["admin_dir"]
     cli.ok(admin_dir, "communities", "create", "--name", "other")
 
@@ -1036,7 +1036,7 @@ def test_a_key_acts_only_within_its_community_and_standing(world, cli):
 
     # a non-member key names no Member: a handle like its label joining the roster
     # changes nothing for it
-    made = api.control("POST", "/demo/api-keys", token, {"label": "newcomer"})
+    made = api.control("POST", "/demo/api-keys", admin, {"label": "newcomer"})
     assert made.status_code == 201
     app_key = made.json()["key"]
     grant_record(cli, admin_dir, made.json()["id"])
@@ -1058,7 +1058,7 @@ def forged(**fields) -> str:
 
 
 def test_a_forged_cursor_answers_400(world):
-    api, lyra, token = world["api"], world["keys"]["lyra"], world["token"]
+    api, lyra, admin = world["api"], world["keys"]["lyra"], world["admin_session"]
     shapes = (
         "not-a-cursor",
         forged(o="7"),
@@ -1086,7 +1086,7 @@ def test_a_forged_cursor_answers_400(world):
         forged(c="2026-01-01T00:00:00+00:00", k="not-a-uuid"),
         forged(c=5, k=str(uuid.uuid4())),
     ):
-        refused = api.control("GET", f"/demo/api-keys?cursor={cursor}", token)
+        refused = api.control("GET", f"/demo/api-keys?cursor={cursor}", admin)
         assert refused.status_code == 400, (cursor, refused.text)
 
     for operation_id, path in (

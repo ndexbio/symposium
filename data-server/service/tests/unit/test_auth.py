@@ -46,7 +46,7 @@ def test_validate_refuses_anything_else(jwk):
         PublicKeys().validate(jwk)
 
 
-# ── signatures, secrets, tokens ─────────────────────────────────────────────────────────────
+# ── signatures and secrets ─────────────────────────────────────────────────────────────────
 def _keypair():
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey

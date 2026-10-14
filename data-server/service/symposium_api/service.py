@@ -32,8 +32,8 @@ from symposium_rules.validate import (
 )
 
 from symposium_data.access import Caller, standing
+from symposium_data.errors import ApiError
 
-from .errors import ApiError
 from .generated import models as m
 from .generated.service import Service
 from .index import Index, members_of

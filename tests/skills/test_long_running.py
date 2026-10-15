@@ -27,7 +27,12 @@ state = pathlib.Path(__file__).with_suffix(".state")
 def record(ticks):
     staged = state.with_suffix(".staged")
     staged.write_text(f"{os.getpid()} {ticks}")
-    os.replace(staged, state)
+    while True:
+        try:
+            os.replace(staged, state)
+            return
+        except PermissionError:  # Windows: the test is reading the state file this instant
+            time.sleep(0.01)
 print(f"tool started {os.getpid()}")
 record(0)
 if len(sys.argv) > 1:
@@ -96,41 +101,63 @@ def wrapped(tmp_path, agent_pid, *tool_args) -> tuple:
 
 
 def tool_state(tool: Path) -> tuple[int, int] | None:
-    """(pid, ticks) the running tool last recorded, or None before it starts."""
+    """(pid, ticks) the running tool last recorded, or None before it starts, or while
+    Windows holds the file for the tool's replace of it."""
     state = tool.with_suffix(".state")
-    if not state.exists():
+    try:
+        pid, ticks = state.read_text().split()
+    except (FileNotFoundError, PermissionError):
         return None
-    pid, ticks = state.read_text().split()
     return int(pid), int(ticks)
 
 
-def tool_running(tool: Path, ticks: int = 0) -> int:
+def tool_running(tool: Path, log: Path, ticks: int = 0) -> int:
     """Poll every 0.1 s until the tool has started and ticked `ticks` times. -> its pid."""
     deadline = time.monotonic() + MAX_WAIT
     while True:
         state = tool_state(tool)
         if state is not None and state[1] >= ticks:
             return state[0]
-        assert time.monotonic() < deadline, f"the tool never ran {ticks} ticks: {state}"
+        assert time.monotonic() < deadline, (
+            f"the tool never ran {ticks} ticks: {state}; its output:\n{log.read_text()}"
+        )
         time.sleep(0.1)
+
+
+def stop(tool: Path, wrapper: subprocess.Popen):
+    """Stop the tool, if it started, and wait for the wrapper to finish; a wrapper still
+    running after that is killed, so no process outlives the test."""
+    for _ in range(20):  # past any moment Windows holds the state file
+        state = tool_state(tool)
+        if state is not None:
+            try:
+                os.kill(state[0], signal.SIGTERM)
+            except OSError:  # it has already ended
+                pass
+            break
+        time.sleep(0.05)
+    try:
+        wrapper.wait(MAX_WAIT)
+    except subprocess.TimeoutExpired:
+        wrapper.kill()
+        raise
 
 
 def test_the_tools_output_arrives_as_it_is_printed(tmp_path, tool, agent):
     wrapper, log = wrapped(tmp_path, agent.pid, tool)
     try:
-        pid = tool_running(tool)
+        tool_running(tool, log)
         # the tool prints its first line before it records its state, unbuffered: it is in
         # the output now, while the tool still runs
         assert "tool started" in log.read_text()
         assert wrapper.poll() is None
     finally:
-        os.kill(pid, signal.SIGTERM)
-        wrapper.wait(MAX_WAIT)
+        stop(tool, wrapper)
 
 
 def test_the_tool_stops_when_its_agent_session_ends(tmp_path, tool, agent):
     wrapper, log = wrapped(tmp_path, agent.pid, tool)
-    tool_running(tool)
+    tool_running(tool, log)
     agent.kill()  # abruptly: no chance to stop anything itself
     agent.wait()
     assert wrapper.wait(MAX_WAIT) == 0
@@ -143,7 +170,7 @@ def test_the_tool_stops_when_its_agent_session_ends(tmp_path, tool, agent):
 @pytest.mark.skipif(os.name == "nt", reason="SIGTERM is delivered on macOS and Linux")
 def test_a_stop_from_outside_stops_the_tool_cleanly(tmp_path, tool, agent):
     wrapper, log = wrapped(tmp_path, agent.pid, tool)
-    tool_running(tool)
+    tool_running(tool, log)
     wrapper.send_signal(signal.SIGTERM)
     assert wrapper.wait(MAX_WAIT) == 0
     out = log.read_text()
@@ -154,11 +181,10 @@ def test_without_an_agent_process_the_tool_runs_until_stopped(tmp_path, tool):
     wrapper, log = wrapped(tmp_path, "none", tool)
     try:
         # running through ten of the wrapper's 0.1 s check intervals, and still running
-        pid = tool_running(tool, ticks=10)
+        tool_running(tool, log, ticks=10)
         assert wrapper.poll() is None and AGENT_ENDED not in log.read_text()
     finally:
-        os.kill(pid, signal.SIGTERM)
-        wrapper.wait(MAX_WAIT)
+        stop(tool, wrapper)
 
 
 def test_a_tool_that_ends_on_its_own_gives_its_exit_code(tmp_path, tool, agent):

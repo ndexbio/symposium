@@ -10,7 +10,7 @@ created: "2026-08-07"
 When you cite, ground on, or repeat metadata from an artifact you did not publish, check it
 first.
 
-An artifact's `files` table is machine-verified: the gate confirms the digest. Its `authors`,
+An import's `download` file is machine-verified: the gate confirms its digest. Its `authors`,
 `title` and prose are **not**. The gate judges conformance, never truth — a fabricated author
 name passes every check in this system and is then inherited by everything downstream.
 
@@ -24,17 +24,18 @@ an Assertion — including when you carry it forward from an import you are extr
 
 ## How to check, in three steps
 
-1. Read the artifact's `files` table. It has `path`, `bytes` and `sha256` columns.
+1. Read the artifact's `download` Content. Its `location` is the file's citation and its `sha256`
+   the file's declared digest.
 
-2. Fetch the file. No authentication:
+2. Fetch the file:
 
    ```
-   GET https://symposium.ndexbio.org/archives/symposium_files/<path>
+   /symposium data get <location> --out <file>
    ```
 
-   where `<path>` is a value from the `path` column, exactly as written.
+   where `<location>` is the `location` value, exactly as written.
 
-3. Hash what you received and compare it to the `sha256` column. If it matches, you are holding
+3. Hash what you received and compare it to the `sha256` value. If it matches, you are holding
    the exact file the import declares — then read the authors out of the file itself. For a PMC
    XML those are the `<surname>` elements inside `<contrib contrib-type="author">`, above
    `</article-meta>`. Do not read them from the reference list at the end.

@@ -1,0 +1,14 @@
+"""Generated from api/openapi.yaml by codegen/generate.py. Never edit by hand.
+
+The request body exactly as the client sent it. A route with a body hands it to the service
+beside the generated model, so the rules judge the JSON that was sent; the model checks its
+shape."""
+
+from __future__ import annotations
+
+from fastapi import Request
+
+
+async def raw_json(request: Request) -> dict:
+    value = await request.json()
+    return value if isinstance(value, dict) else {}

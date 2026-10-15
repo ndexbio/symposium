@@ -1,65 +1,63 @@
-"""Member-side sync — mirror the community record from NDEx into a local directory.
+"""Member-side sync — keep this session's copy of the community record current.
 
-The gate grants every member READ on every accepted artifact, so that fan-out IS the
-distribution mechanism: a member needs no git access to hold a current copy of the record.
+Every member can read the community's `record` collection (the roster's default grants), so
+the server's change feed IS the distribution mechanism: a member needs no git access to hold a
+current copy of the record.
 
 Two things make this simple, and both come from the specification:
 
   * Artifacts are IMMUTABLE, so sync is purely additive. Nothing already local is ever
     re-fetched or revised. The only thing that changes about an artifact already held is the
     set of later artifacts pointing AT it — its backlinks.
-  * `created` is stamped by the gate, so it is a total order over the record. New artifacts
-    are applied in that order, which is what makes address resolution work: the permission
-    map returns an unordered dict, and an Argument applied before the Data it grounds on
-    would fail to resolve.
+  * `created` is stamped by the server when the gate accepts, so it is a total order over the
+    record. New artifacts are applied in that order, which is what makes address resolution
+    work: an Argument applied before the Data it grounds on would fail to resolve.
 
-  export NDEX_LYRA_USER=agent_lyra  NDEX_LYRA_PASSWORD=…
-  export SYMPOSIUM_MIRROR=./record  SYMPOSIUM_ADMIN=ndex-admin
+Run it as `/symposium sync`, in the session's working directory: the context there says which
+community, and `./record` beside it is the copy it keeps.
 
-  python sync.py --as LYRA            # one pass
-  python sync.py --as LYRA --watch    # poll every SYMPOSIUM_POLL seconds (default 30)
+  python sync.py            # one pass
+  python sync.py --watch    # a pass every SYMPOSIUM_POLL seconds (default 30)
 
-Writes `manifest.json` into the mirror: a build counter plus the dirty set, recording what
+`--watch` runs until stopped, with no time limit of its own: run it in the background. ctrl-c,
+SIGTERM or (Windows) CTRL_BREAK stops it within a second, with exit code 0, even mid-pass. A restart
+resumes where the copy left off, and takes over from a sync still watching this session, which
+it stops.
+
+A pass also lists the gate's replies addressed to you (a rejected submission): they are never
+part of the record.
+
+Writes `manifest.json` into the copy: a build counter plus the dirty set, recording what
 changed on each pass.
 
-The browser does NOT patch itself from this. `serve.py` watches the mirror directory and
-recompiles the whole record whenever a file changes — a full pass is fast enough at any size
-this event will reach, and a full pass cannot drift from the record the way a partial update
-can. The manifest is a log of what moved, not a build instruction.
+The browser does NOT patch itself from this. `serve.py` watches the copy and recompiles the
+whole record whenever a file changes — a full pass is fast enough at any size this event will
+reach, and a full pass cannot drift from the record the way a partial update can. The manifest
+is a log of what moved, not a build instruction.
 """
 from __future__ import annotations
 
-import json
 import os
 import sys
-import time
 from datetime import datetime, timezone
-from pathlib import Path
 
-from ndex_io import (RECORD_MARK, api, auth, extract_artifact, permission_map, whoami,
-                     load_canonical_dir)
-from validate import validate, passed, parse_address
+from data_io import (
+    IN_REPLY_TO,
+    RECORD_MARK,
+    REPLY_MARK,
+    DataError,
+    Mirror,
+    SymposiumData,
+    pause,
+    stop_on_signals,
+    take_over,
+)
+from validate import parse_address, passed, validate
 
-MIRROR = Path(os.environ.get("SYMPOSIUM_MIRROR", "./record"))
-ADMIN = os.environ.get("SYMPOSIUM_ADMIN", "ndex-admin")
 POLL = int(os.environ.get("SYMPOSIUM_POLL", "30"))
-STATE = ".sync_state.json"          # uuid -> artifact name, so summaries are fetched once
-
-
-def load_state():
-    p = MIRROR / STATE
-    try:
-        return json.loads(p.read_text())
-    except Exception:
-        return {"seen": {}, "build": 0}
-
-
-def save_state(st):
-    (MIRROR / STATE).write_text(json.dumps(st, indent=2) + "\n")
-
-
-def load_record():
-    return load_canonical_dir(MIRROR)
+# the record feed's cursor, the accepted artifacts still waiting for a dependency, the replies
+# already listed, and the build counter
+STATE = ".sync_state.json"
 
 
 def outbound(canonical):
@@ -82,167 +80,187 @@ def outbound(canonical):
     return out - {h.get("name")}
 
 
-def fetch_new(tok, state):
-    """-> (list of {uuid, canonical} not yet held locally, reachable, why).
-
-    `reachable` is separate from an empty list ON PURPOSE. Previously any failure — TLS
-    handshake, bad credentials, HTTP error — returned [], `once` saw nothing added, and
-    printed "up to date". A frozen mirror and a current one were indistinguishable in the
-    output, the exit code, and in --watch, which swallowed it every 30 seconds.
-
-    That is the exact state the instructions warn hardest about: validation is only as good as
-    the record it can see, and a stale mirror approves an artifact that reuses a name someone
-    else just took. The gate catches the collision hours later.
-    """
-    me = whoami(tok)
-    if not me:
-        return [], False, ("could not authenticate — this may be the credentials, but a TLS or "
-                           "network fault looks identical here; run preflight.py to tell them "
-                           "apart")
-    # Paginated: the raw endpoint caps at 100 silently, which would freeze a member's mirror at
-    # the hundredth network they can see and look exactly like a record that stopped growing.
-    st, perms = permission_map(me["externalId"], tok)
-    if st != 200 or not isinstance(perms, dict):
-        return [], False, f"permission listing failed: HTTP {st}"
-
-    held = set(state["seen"])
-    found = []
-    for uuid in perms:
-        if uuid in held:
-            continue
-        st, s = api("GET", f"/v2/network/{uuid}/summary", tok)
-        if st != 200 or not isinstance(s, dict):
-            continue
-        if s.get("owner") != ADMIN:
-            state["seen"][uuid] = None          # our own submission: never a record artifact
-            continue
-        canonical, attrs, err = extract_artifact(uuid, tok)
-        # An admin-owned network readable by us is EITHER an accepted record artifact OR a
-        # rejection reply. Only the record mark distinguishes them; ownership does not.
-        if not (attrs or {}).get(RECORD_MARK):
-            state["seen"][uuid] = None
-            if (attrs or {}).get("symposium_reply"):
-                print(f"  reply from the gate: {s.get('name')} "
-                      f"(re {attrs.get('symposium_in_reply_to', '?')}) — not part of the record")
-            continue
-        if err:
-            print(f"  ! {s.get('name')}: {err}")
-            continue
-        found.append({"uuid": uuid, "canonical": canonical})
-    return found, True, ""
-
-
 def _root(addr):
     """Artifact name at the head of an address."""
     return str(addr).lstrip("@").split("#")[0].split(".")[0]
 
 
-def apply(found, state):
-    """Validate and write, oldest first. -> (added, dirty, deferred)."""
-    record = load_record()
-    names = {r["artifact"]["name"] for r in record}
-    members = {r["artifact"]["published_by"].lstrip("@") for r in record
-               if r.get("artifact", {}).get("published_by")} | {ADMIN}
-    members |= {f["canonical"]["artifact"].get("published_by", "@").lstrip("@") for f in found}
+class Sync:
+    def __init__(self, data: SymposiumData | None = None, mirror: Mirror | None = None,
+                 quiet: bool = False):
+        self.data = data or SymposiumData()
+        self.mirror = mirror or Mirror()
+        self.quiet = quiet
+        self.members = set()  # fetched live on every pass
 
-    # the gate's `created` is the record's total order; apply in it or addresses will not resolve
-    found.sort(key=lambda f: f["canonical"]["artifact"].get("created") or "")
+    def say(self, line):
+        if not self.quiet:
+            print(line)
 
-    added, dirty, deferred = [], set(), []
-    for f in found:
-        # One artifact at a time, in `created` order. Publication is serial (spec 1.9), so
-        # every address an artifact holds points at something strictly earlier and therefore
-        # already applied. This used to group artifacts into publication units, because the
-        # gate published an Analysis and its outputs under one timestamp and neither half
-        # validated without the other. Applying that pair one at a time deferred each for the
-        # other, forever, and on 2026-08-07 it made 13 accepted artifacts across four accounts
-        # permanently invisible in every member's mirror. Serial publication removes the cause,
-        # so the grouping is gone rather than repaired.
-        c = f["canonical"]
-        name = c["artifact"]["name"]
-        if name in names:
-            state["seen"][f["uuid"]] = name
-            continue
+    def load_state(self):
+        return self.mirror.read_state(
+            STATE, {"since": 0, "pending": [], "replies": [], "build": 0}
+        )
 
-        findings = validate(c, record, members)
-        if not passed(findings):
-            # Usually a dependency that has not arrived yet — retry next tick rather than drop.
-            deferred.append((name, [x["msg"] for x in findings if x["level"] == "FAIL"][:2]))
-            continue
+    def fetch(self, state):
+        """-> (list of {citation, canonical} to apply, reachable, why).
 
-        (MIRROR / f"{name}.json").write_text(json.dumps(c, indent=2) + "\n")
-        state["seen"][f["uuid"]] = name
-        record.append(c)
-        names.add(name)
-        added.append(name)
-        dirty |= {name} | (outbound(c) & names)  # its own page + every page it points at
-    return added, dirty, deferred
+        `reachable` is separate from an empty list ON PURPOSE: a failure to reach the server
+        must never look like a record that is up to date. A frozen copy and a current one
+        would be indistinguishable in the output, the exit code, and in --watch, and a stale
+        copy approves an artifact that reuses a name someone else just took.
+        """
+        try:
+            feed = self.data.changes("record", state["since"])
+            # every member, live: an address to one who has not published (or even joined) yet
+            # resolves, exactly as at the gate
+            self.members = self.data.members()
+        except DataError as e:
+            return [], False, str(e)
+        citations = list(state["pending"])
+        for item in feed["items"]:
+            if (item.get("metadata") or {}).get(RECORD_MARK) and not item.get("deleted"):
+                citations.append(item["citation"])
+        found = []
+        for citation in dict.fromkeys(citations):
+            try:
+                found.append({"citation": citation, "canonical": self.data.get_json(citation)})
+            except DataError as e:
+                return [], False, str(e)
+        state["since"] = feed["next_since"]
+        return found, True, ""
 
+    def apply(self, found, state):
+        """Validate and write, oldest first. -> (added, dirty, deferred)."""
+        record = self.mirror.load()
+        names = {r["artifact"]["name"] for r in record}
+        members = {r["artifact"]["published_by"].lstrip("@") for r in record
+                   if r.get("artifact", {}).get("published_by")}
+        members |= {f["canonical"]["artifact"].get("published_by", "@").lstrip("@")
+                    for f in found}
+        members |= self.members
 
-def write_manifest(state, added, dirty, total):
-    state["build"] += 1
-    (MIRROR / "manifest.json").write_text(json.dumps({
-        "build": state["build"],
-        "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "artifacts": total,
-        "added": sorted(added),
-        "dirty": sorted(dirty | {"index"}),
-    }, indent=2) + "\n")
+        # the server's `created` is the record's total order; apply in it or addresses will
+        # not resolve
+        found.sort(key=lambda f: f["canonical"]["artifact"].get("created") or "")
 
+        added, dirty, deferred, pending = [], set(), [], []
+        for f in found:
+            # One artifact at a time, in `created` order. Publication is serial (spec 1.9), so
+            # every address an artifact holds points at something strictly earlier and
+            # therefore already applied.
+            c = f["canonical"]
+            name = c["artifact"]["name"]
+            if name in names:
+                continue
 
-def once(tok, state):
-    found, reachable, why = fetch_new(tok, state)
-    if not reachable:
-        held = len(load_record())
-        print(f"! COULD NOT REACH THE SERVER — {why}")
-        print(f"  Your mirror is UNCHANGED at {held} artifact(s) and may now be STALE.")
-        print(f"  Do not publish against it: validation can only see the record it has, so a")
-        print(f"  stale mirror will approve a name someone else has already taken.")
-        return None
-    added, dirty, deferred = apply(found, state)
-    for name, why in deferred:
-        print(f"  deferred {name}: {why[0] if why else 'unresolved'}")
-    total = len(load_record())
-    if added:
-        write_manifest(state, added, dirty, total)
-        print(f"  +{len(added)}: {', '.join(added)}")
-        print(f"  build {state['build']}, {total} artifact(s), {len(dirty | {'index'})} page(s) dirty")
-    save_state(state)
-    return len(added)
+            findings = validate(c, record, members)
+            if not passed(findings):
+                # Usually a dependency that has not arrived yet — retry next pass, never drop.
+                deferred.append((name, [x["msg"] for x in findings if x["level"] == "FAIL"][:2]))
+                pending.append(f["citation"])
+                continue
+
+            self.mirror.write(c)
+            record.append(c)
+            names.add(name)
+            added.append(name)
+            dirty |= {name} | (outbound(c) & names)  # its own page + every page it points at
+        state["pending"] = pending
+        return added, dirty, deferred
+
+    def replies(self, state):
+        """The gate's replies addressed to this member that have not been listed yet."""
+        new = []
+        for item in self.data.query("inbox", {REPLY_MARK: True}):
+            if item["citation"] in state["replies"]:
+                continue
+            state["replies"].append(item["citation"])
+            new.append((item["name"], (item.get("metadata") or {}).get(IN_REPLY_TO, "?")))
+        return new
+
+    def write_manifest(self, state, added, dirty, total):
+        state["build"] += 1
+        self.mirror.write_state("manifest.json", {
+            "build": state["build"],
+            "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "artifacts": total,
+            "added": sorted(added),
+            "dirty": sorted(dirty | {"index"}),
+        })
+
+    def once(self, state):
+        """One pass. -> {added, deferred, replies, artifacts}, or None when the server could
+        not be reached (the copy is then unchanged and may be stale)."""
+        found, reachable, why = self.fetch(state)
+        if not reachable:
+            held = len(self.mirror.load())
+            self.say(f"! COULD NOT REACH THE SERVER — {why}")
+            self.say(f"  Your copy of the record is UNCHANGED at {held} artifact(s) and may "
+                     f"now be STALE.")
+            self.say("  Do not publish against it: validation can only see the record it has, "
+                     "so a")
+            self.say("  stale copy will approve a name someone else has already taken.")
+            return None
+        added, dirty, deferred = self.apply(found, state)
+        for name, why in deferred:
+            self.say(f"  deferred {name}: {why[0] if why else 'unresolved'}")
+        replies = self.replies(state)
+        for name, about in replies:
+            self.say(f"  reply from the gate: {name} (re {about}) — not part of the record")
+        total = len(self.mirror.load())
+        if added:
+            self.write_manifest(state, added, dirty, total)
+            self.say(f"  +{len(added)}: {', '.join(added)}")
+            self.say(f"  build {state['build']}, {total} artifact(s), "
+                     f"{len(dirty | {'index'})} page(s) dirty")
+        self.mirror.write_state(STATE, state)
+        return {
+            "added": added,
+            "deferred": [name for name, _ in deferred],
+            "replies": [name for name, _ in replies],
+            "artifacts": total,
+        }
 
 
 def main(argv):
-    if "--as" not in argv:
-        print(__doc__)
-        return 2
-    _, tok = auth(argv[argv.index("--as") + 1])
-    MIRROR.mkdir(parents=True, exist_ok=True)
-    state = load_state()
+    sync = Sync()
+    try:
+        sync.data.context()  # local: with none, the CLI's message names setup and bootstrap
+    except DataError as e:
+        print(f"! {e}")
+        return 1
+    sync.mirror.root.mkdir(parents=True, exist_ok=True)
+    state = sync.load_state()
 
     if "--watch" not in argv:
-        n = once(tok, state)
-        if n is None:
-            return 1                       # unreachable: never report a stale mirror as fine
-        if not n:
-            print(f"  up to date — {len(load_record())} artifact(s)")
+        result = sync.once(state)
+        if result is None:
+            return 1                       # unreachable: never report a stale copy as fine
+        if not result["added"]:
+            print(f"  up to date — {result['artifacts']} artifact(s)")
         return 0
 
-    print(f"watching {MIRROR} (every {POLL}s) — ctrl-c to stop")
+    stop_on_signals()
+    lock = take_over("sync")  # noqa: F841 — held for as long as this sync watches
+    print(f"watching {sync.mirror.root}/ (every {POLL}s) — ctrl-c to stop", flush=True)
     misses = 0
-    while True:
-        try:
-            if once(tok, state) is None:
-                misses += 1
-                if misses in (1, 5) or misses % 20 == 0:
-                    print(f"  ({misses} consecutive failed poll(s) — the mirror is not being "
-                          f"updated)")
-            else:
-                misses = 0
-        except KeyboardInterrupt:
-            return 0
-        except Exception as e:
-            print(f"  ! sync error (will retry): {e}")
-        time.sleep(POLL)
+    try:
+        while True:
+            try:
+                if sync.once(state) is None:
+                    misses += 1
+                    if misses in (1, 5) or misses % 20 == 0:
+                        print(f"  ({misses} consecutive failed poll(s) — the copy is not "
+                              f"being updated)", flush=True)
+                else:
+                    misses = 0
+            except Exception as e:
+                print(f"  ! sync error (will retry): {e}", flush=True)
+            pause(POLL)
+    except KeyboardInterrupt:
+        print("stopped", flush=True)
+        return 0
 
 
 if __name__ == "__main__":

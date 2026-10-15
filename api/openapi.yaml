@@ -1,0 +1,4706 @@
+openapi: 3.0.3
+info:
+  title: Symposium API
+  version: 1.0.0
+  description: |
+    Read a Symposium community record, follow it as it changes, and publish through the gate.
+
+    The record's routes speak in the specification's model: Artifacts, Objects, properties,
+    relationships, Members and addresses (`spec/symposium_specification.md`, profiled by
+    `tools/CANONICAL.md`). The Symposium Data server serves them over the community record it
+    holds, so every application sees the one record under the same access rules. Every URL
+    they answer is one of the API's own.
+
+    **The record is read-only here.** Artifacts are immutable. A correction is a new Artifact
+    that supersedes the old one, published through `POST /{community}/submissions` and decided
+    by the gate. The API offers no update and no delete of a recorded Artifact.
+
+    **Canonical URLs.** Every resource carries a `url`: an absolute URL on the data server that
+    names it whichever host asks. An address maps to a URL by a fixed rule (see
+    `GET /{community}/resolve` and `api/DESIGN.md`).
+
+    **Freshness.** Every read response carries `position`: the record's cursor and the
+    `created` of the newest Artifact the response reflects.
+
+    **Paging.** Every listing whose size grows with the record takes `cursor` and `limit`
+    (1 to 1000, default 100) and answers `next`, the cursor of the following page, or `null`
+    on the last page. Each listing states its order.
+
+    **Streams.** Server-Sent Events resume from `Last-Event-ID`, which is a paging cursor.
+
+    **API keys.** Every request carries one API key, `Authorization: Bearer sak_…`, or none.
+    The key identifies the caller:
+
+    - a **session key** is a short-lived key bound to a Member, or to the admin, obtained
+      through the session management endpoints (the `sessions` tag) with the Member's or the
+      admin's private key file. It lasts minutes.
+    - an **issued key** is one a Member or the admin issues for an application, with a label,
+      and lasts until it is revoked. A member issued key (`role: member`) is bound to that
+      Member. A non-member issued key (`role: non-member`) reads the collections it is
+      granted.
+
+    A key belongs to one community, the admin's session key to every community; a request
+    naming another community answers 403. A key bound to a Member works while the Member is on
+    the community's roster with a registered public key (401 otherwise).
+
+    **Access.** All data lives in collections: Artifacts in `record`, submissions in `inbox`.
+    A collection's owner grants Members `read` or `write`, grants a non-member issued key
+    `read`, and
+    may make the collection public, so it answers without a key. A request succeeds when its
+    caller may use the collection it touches. Members start with `read` on `record` and
+    `write` on `inbox`.
+
+    Each operation lists the roles it allows in `x-roles`, and when it also answers without a
+    key in `x-anonymous`: `always`, or `public` while the collection it reads is public.
+
+    **The gate** runs from the admin's skill (`/symposium gate`), as it does today. The API
+    takes submissions into `inbox` and reports the gate's decisions on them.
+
+    **Errors.** Every error answers the `Error` body.
+
+    **Limits.** A request body is at most 8 MiB (413 past that). A page holds at most 1000
+    items. Responses are otherwise unbounded, matching the data server.
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+servers:
+  - url: https://{host}/v1
+    description: A Symposium Data server. The API's major version is part of the path.
+    variables:
+      host:
+        default: localhost:8790
+        description: The data server's host and port, as its members reach it.
+tags:
+  - name: record
+    description: The record's state, its Artifacts, and what they contain.
+  - name: members
+    description: The community's Members and what they published.
+  - name: publishing
+    description: Submissions into `inbox`, with the gate's decision and reply on each.
+  - name: streams
+    description: Server-Sent Events for following the record and the submissions.
+  - name: contract
+    description: This OpenAPI document, served by the API itself.
+  - name: files
+    description: |
+      The files stored in collections: create, version and delete them, read their content and
+      metadata, list a collection's versions, and check a citation.
+  - name: server
+    description: The server's version, health and mode.
+  - name: sessions
+    description: |
+      Session management: registering a Member's public key, and obtaining session keys with
+      the Member's or the admin's private key file.
+  - name: communities
+    description: Communities, their export and import, and porting one from NDEx.
+  - name: roster
+    description: A community's roster, invites, and what the admin does about a lost key.
+  - name: keys
+    description: Issuing, listing and revoking API keys.
+  - name: collections
+    description: Collections, and who may read and write them.
+  - name: admin
+    description: The admin's operations on stored versions.
+security:
+  - apiKey: []
+paths:
+  /openapi.yaml:
+    get:
+      operationId: getOpenApiYaml
+      x-generated: true
+      tags: [contract]
+      summary: This OpenAPI document, as YAML
+      description: |
+        The contract this server implements, exactly as committed in `api/openapi.yaml`. It
+        answers with no credential, so any client can read it.
+
+        Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
+      x-roles: [non-member, member, admin]
+      x-anonymous: always
+      security:
+        - apiKey: []
+        - {}
+      responses:
+        '200':
+          description: The OpenAPI document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /openapi.json:
+    get:
+      operationId: getOpenApiJson
+      x-generated: true
+      tags: [contract]
+      summary: This OpenAPI document, as JSON
+      description: |
+        The same document as `getOpenApiYaml`, converted to JSON. It answers with no credential.
+
+        Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
+      x-roles: [non-member, member, admin]
+      x-anonymous: always
+      security:
+        - apiKey: []
+        - {}
+      responses:
+        '200':
+          description: The OpenAPI document.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /{community}/record:
+    get:
+      operationId: getRecord
+      x-generated: true
+      tags: [record]
+      summary: The record's state
+      description: |
+        The record's position, its size by type and by Member, its time span, and the
+        specification versions its Artifacts declare.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      x-bounded: the specification versions in use, one per revision of the specification
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+      responses:
+        '200':
+          description: The record's state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordState'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/artifacts:
+    get:
+      operationId: listArtifacts
+      x-generated: true
+      tags: [record]
+      summary: List the record's Artifacts
+      description: |
+        Every Artifact in the record, as summaries. Ordered by `created` ascending, the order
+        the gate accepted them in; `order=-created` reverses it. This listing is also the
+        record's change feed: a client that keeps `next` reads each new Artifact once.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/order'
+        - name: type
+          in: query
+          description: Only Artifacts of this `type`. Repeat it to name several.
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: true
+        - name: published_by
+          in: query
+          description: Only Artifacts published by this Member's handle.
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'
+        - name: created_after
+          in: query
+          description: Only Artifacts whose `created` is strictly later than this.
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: One page of Artifact summaries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactSummaryPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/artifacts/{name}:
+    get:
+      operationId: getArtifact
+      x-generated: true
+      tags: [record]
+      summary: One Artifact, whole
+      description: |
+        The Artifact's canonical JSON, rendered through `CanonicalArtifact`, with its canonical
+        URL and the links derived from the record: what it supersedes, what supersedes it, and
+        its Member. Its address is `@<name>`. `links.content` answers the bytes the gate stored,
+        unchanged.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/artifactName'
+      responses:
+        '200':
+          description: The Artifact.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactResource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/artifacts/{name}/content:
+    get:
+      operationId: getArtifactContent
+      x-generated: true
+      tags: [record]
+      summary: One Artifact's stored canonical JSON
+      description: |
+        The Artifact exactly as the gate stored it, byte for byte: the document `getArtifact`
+        carries in `canonical`, without the resource around it. `links.content` names it.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      x-bounded: one stored Artifact
+      x-stored: the bytes the gate stored, so the body carries no `position`
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/artifactName'
+      responses:
+        '200':
+          description: The stored canonical JSON.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CanonicalArtifact'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/artifacts/{name}/properties/{property}:
+    get:
+      operationId: getArtifactProperty
+      x-generated: true
+      tags: [record]
+      summary: One property of an Artifact
+      description: |
+        The value of one header property. Its address is `@<name>.<property>`.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/artifactName'
+        - $ref: '#/components/parameters/property'
+      responses:
+        '200':
+          description: The property and its value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PropertyResource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/artifacts/{name}/objects:
+    get:
+      operationId: listObjects
+      x-generated: true
+      tags: [record]
+      summary: The Objects an Artifact contains
+      description: |
+        The Artifact's Objects, in the order its canonical JSON lists them. A Model may hold
+        many, so the listing is paged.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/artifactName'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+        - name: type
+          in: query
+          description: Only Objects of this `type`, such as `Assertion` or `Content`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: One page of Objects.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/artifacts/{name}/objects/{object}:
+    get:
+      operationId: getObject
+      x-generated: true
+      tags: [record]
+      summary: One Object within an Artifact
+      description: |
+        One Object and the relationships that start or end at it. Its address is
+        `@<name>.<object>`.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/artifactName'
+        - $ref: '#/components/parameters/objectName'
+      responses:
+        '200':
+          description: The Object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectResource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/artifacts/{name}/objects/{object}/properties/{property}:
+    get:
+      operationId: getObjectProperty
+      x-generated: true
+      tags: [record]
+      summary: One property of an Object
+      description: |
+        The value of one property of an Object. Its address is `@<name>.<object>.<property>`.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/artifactName'
+        - $ref: '#/components/parameters/objectName'
+        - $ref: '#/components/parameters/property'
+      responses:
+        '200':
+          description: The property and its value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PropertyResource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/artifacts/{name}/relationships:
+    get:
+      operationId: listRelationships
+      x-generated: true
+      tags: [record]
+      summary: The relationships among an Artifact's Objects
+      description: |
+        The Artifact's relationships, in the order its canonical JSON lists them. Relationships
+        carry no address, so they are reached only through their Artifact.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/artifactName'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+        - name: rel
+          in: query
+          description: Only relationships of this kind, such as `grounded_by`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: One page of relationships.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelationshipPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/artifacts/{name}/cited-by:
+    get:
+      operationId: listCitedBy
+      x-generated: true
+      tags: [record]
+      summary: The later Artifacts that cite this one
+      description: |
+        Every citation of this Artifact or its content by a later Artifact, ordered by the
+        citing Artifact's `created` ascending. `via` narrows it to one kind: the Grounds that
+        rest on it, the outputs of an Analysis (`produced_by`), the Analyses that took it as
+        input, the Artifacts that supersede it, the Arguments extracted from it, the work that
+        serves a ResearchGoal, or citations in prose.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/artifactName'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+        - name: via
+          in: query
+          description: Only citations made this way. Repeat it to name several.
+          schema:
+            type: array
+            items:
+              $ref: '#/components/schemas/CitationVia'
+          style: form
+          explode: true
+      responses:
+        '200':
+          description: One page of citations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CitationPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/artifacts/{name}/supersession:
+    get:
+      operationId: listSupersession
+      x-generated: true
+      tags: [record]
+      summary: The Artifact's supersession chain
+      description: |
+        Every Artifact connected to this one by `supersedes`, in either direction and at any
+        distance, ordered by `created` ascending. Each entry says whether it is earlier or later
+        and carries its `supersedes_rationale`.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/artifactName'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: One page of the chain.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SupersessionPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/artifacts/{name}/findings:
+    get:
+      operationId: listFindings
+      x-generated: true
+      tags: [record]
+      summary: The validator's findings on an Artifact
+      description: |
+        The validator's findings, computed by the server. `basis=accepted` gives the findings
+        against the record as it stood when the gate accepted the Artifact; they never change.
+        `basis=current` gives the findings against the whole record now; a later supersession
+        can add one. Ordered by check, then by message.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/artifactName'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+        - name: basis
+          in: query
+          description: Which record the findings are computed against.
+          schema:
+            type: string
+            enum: [accepted, current]
+            default: current
+        - name: level
+          in: query
+          description: Only findings at this level.
+          schema:
+            $ref: '#/components/schemas/FindingLevel'
+      responses:
+        '200':
+          description: One page of findings.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FindingPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/resolve:
+    get:
+      operationId: resolveAddress
+      x-generated: true
+      tags: [record]
+      summary: Resolve an address
+      description: |
+        Resolve any address the specification defines, schema references included, and answer
+        what it names, the canonical URL of that thing, and the value where the address reaches
+        one. A `text_span`, `csv` or `graph` reference is resolved against the embedded content,
+        as the gate verifies it. A `rest` or `download` reference answers its Content Object's
+        `location` and `access_method`, unverified.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - name: address
+          in: query
+          required: true
+          description: The address, starting with `@`, URL-encoded.
+          schema:
+            type: string
+            pattern: '^@[^.#]+'
+      responses:
+        '200':
+          description: What the address names.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Resolution'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/members:
+    get:
+      operationId: listMembers
+      x-generated: true
+      tags: [members]
+      summary: The community's Members
+      description: |
+        Every handle on the roster, with whether it is registered and how many Artifacts it
+        published by type. Ordered by handle ascending. This is `/symposium roster list`.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: One page of Members.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/members/{handle}:
+    get:
+      operationId: getMember
+      x-generated: true
+      tags: [members]
+      summary: One Member
+      description: |
+        One Member. Its address is `@<handle>`. A Member exposes its name and nothing within it.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/handle'
+      responses:
+        '200':
+          description: The Member.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MemberResource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/members/{handle}/artifacts:
+    get:
+      operationId: listMemberArtifacts
+      x-generated: true
+      tags: [members]
+      summary: The Artifacts a Member published
+      description: |
+        Every Artifact whose `published_by` is this Member, ordered by `created` ascending.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/handle'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/order'
+      responses:
+        '200':
+          description: One page of Artifact summaries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactSummaryPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/members/{handle}/messages:
+    get:
+      operationId: listMemberMessages
+      x-generated: true
+      tags: [members]
+      summary: The Messages addressed to a Member
+      description: |
+        Every Message in the record whose `recipients` names this Member, ordered by `created`
+        ascending. Messages are Artifacts of the record, so anyone who reads the record reads
+        them. The gate's reply to a rejected submission is a different thing: it sits in the
+        submission's `reply` field (`getSubmission`).
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/handle'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+        - $ref: '#/components/parameters/order'
+      responses:
+        '200':
+          description: One page of Message summaries.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactSummaryPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/me:
+    get:
+      operationId: getMe
+      x-generated: true
+      tags: [members]
+      summary: Who this API key acts as
+      description: |
+        The key's kind, label, role, community and expiry, the grants it reads and writes
+        with, and, for a key that acts as a Member, that Member's handle.
+
+        Roles: non-member, member, admin.
+
+        Authentication: issued key, session key.
+      x-roles: [non-member, member, admin]
+      x-bounded: one key
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+      responses:
+        '200':
+          description: The key's identity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/submissions/check:
+    post:
+      operationId: checkSubmission
+      x-generated: true
+      tags: [publishing]
+      summary: Validate an Artifact and submit nothing
+      description: |
+        The checks the gate makes, against the record as it stands, with a provisional
+        `created` from the server's clock: the naming rule, the 250 KB limit on embedded
+        payload, and the validator. Nothing is stored. A pass means the gate accepts the
+        Artifact if the record has not moved. This is `/symposium validate` and
+        `publish --check`.
+
+        Requires a key bound to a Member: the Member's session key, or an issued key the Member
+        issued for itself. The key's Member is the one who publishes and whose submissions are
+        read. On every request the server checks that the key belongs to the community in the
+        path (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered public key (otherwise 401).
+
+        Roles: member.
+
+        Authentication: member issued key, member session key.
+      x-roles: [member]
+      x-bounded: the findings on the one Artifact submitted
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+      requestBody:
+        $ref: '#/components/requestBodies/Submission'
+      responses:
+        '200':
+          description: The validator's verdict. `ok` is false when any finding is a FAIL.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmissionCheck'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+  /{community}/submissions:
+    get:
+      operationId: listSubmissions
+      x-generated: true
+      tags: [publishing]
+      summary: Submissions and their decisions
+      description: |
+        The key's own submissions in `inbox`, with the gate's decision on each. Ordered by
+        submission time ascending, the order the gate reads them in.
+
+        Requires a key bound to a Member: the Member's session key, or an issued key the Member
+        issued for itself. The key's Member is the one who publishes and whose submissions are
+        read. On every request the server checks that the key belongs to the community in the
+        path (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered public key (otherwise 401).
+
+        Roles: member.
+
+        Authentication: member issued key, member session key.
+      x-roles: [member]
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+        - name: status
+          in: query
+          description: Only submissions in this state.
+          schema:
+            $ref: '#/components/schemas/SubmissionStatus'
+      responses:
+        '200':
+          description: One page of submissions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmissionPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: submitArtifact
+      x-generated: true
+      tags: [publishing]
+      summary: Publish one Artifact through the gate
+      description: |
+        Validate one Artifact as `checkSubmission` does, then store it in `inbox` as a
+        submission attributed to the key's Member, for the gate to decide. The Artifact is not
+        in the record until the gate accepts it; the gate stamps `created` then. One Artifact
+        per call, as `/symposium publish` takes one: publication is serial.
+
+        `published_by` must be the key's Member, `@<username>`, and `name` must carry its
+        prefix. A submission the validator fails is refused with 422 and its findings, and
+        nothing is stored. This is `/symposium publish`.
+
+        Requires a key bound to a Member: the Member's session key, or an issued key the Member
+        issued for itself. The key's Member is the one who publishes and whose submissions are
+        read. On every request the server checks that the key belongs to the community in the
+        path (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered public key (otherwise 401).
+
+        Roles: member.
+
+        Authentication: member issued key, member session key.
+      x-roles: [member]
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+      requestBody:
+        $ref: '#/components/requestBodies/Submission'
+      responses:
+        '201':
+          description: The submission, pending the gate's decision.
+          headers:
+            Location:
+              description: The submission's canonical URL.
+              schema:
+                type: string
+                format: uri
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmissionResource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+  /{community}/submissions/{submission}:
+    get:
+      operationId: getSubmission
+      x-generated: true
+      tags: [publishing]
+      summary: One submission and its decision
+      description: |
+        One submission, its state, and the gate's decision on it: the record Artifact when
+        accepted, the gate's reply with its failures when rejected. A `member` key reads only
+        its own.
+
+        Requires a key bound to a Member: the Member's session key, or an issued key the Member
+        issued for itself. The key's Member is the one who publishes and whose submissions are
+        read. On every request the server checks that the key belongs to the community in the
+        path (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered public key (otherwise 401).
+
+        Roles: member.
+
+        Authentication: member issued key, member session key.
+      x-roles: [member]
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/submission'
+      responses:
+        '200':
+          description: The submission.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmissionResource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/streams/record:
+    get:
+      operationId: streamRecord
+      x-generated: true
+      tags: [streams]
+      summary: Follow the record as the gate accepts
+      description: |
+        One `artifact` event per Artifact the gate accepts, in `created` order, carrying its
+        summary. Each event's `id` is a cursor; reconnecting with `Last-Event-ID` resumes after
+        it, so a client misses nothing. A `heartbeat` event every 30 seconds carries the
+        position. This is `/symposium sync --watch`.
+        The server re-checks the key at every event and every heartbeat, and closes the stream
+        when the key is revoked or expired, or its Member leaves the roster.
+
+        Roles: non-member, member, admin; anonymous when the community's `record` collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/lastEventId'
+      responses:
+        '200':
+          description: An open event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: array
+                description: The stream's events, in order. Each is one SSE frame.
+                items:
+                  $ref: '#/components/schemas/RecordStreamEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyStreams'
+  /{community}/streams/submissions:
+    get:
+      operationId: streamSubmissions
+      x-generated: true
+      tags: [streams]
+      summary: Follow submissions and the gate's decisions
+      description: |
+        A `submission.received` event when a submission lands in `inbox`, a
+        `submission.skipped` event when the gate's rule sets it aside, and a
+        `submission.accepted` or `submission.rejected` event when the gate decides it. A
+        rejection carries the gate's reply. A `member` key receives events on its own
+        submissions. Resumes from `Last-Event-ID`.
+        The server re-checks the key at every event and every heartbeat, and closes the stream
+        when the key is revoked or expired, or its Member leaves the roster.
+
+        Requires a key bound to a Member: the Member's session key, or an issued key the Member
+        issued for itself. The key's Member is the one who publishes and whose submissions are
+        read. On every request the server checks that the key belongs to the community in the
+        path (otherwise 403), and that the key's handle is a Member of that community: still on
+        its roster, with a registered public key (otherwise 401).
+
+        Roles: member.
+
+        Authentication: member issued key, member session key.
+      x-roles: [member]
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/lastEventId'
+      responses:
+        '200':
+          description: An open event stream.
+          content:
+            text/event-stream:
+              schema:
+                type: array
+                description: The stream's events, in order. Each is one SSE frame.
+                items:
+                  $ref: '#/components/schemas/SubmissionStreamEvent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyStreams'
+  /status:
+    get:
+      operationId: getStatus
+      tags: [server]
+      summary: The server's version, health and mode
+      description: |
+        Answers 503, with `postgres` or `s3` set to `unavailable`, while either is down, so a
+        readiness probe never routes traffic to a server that cannot serve it. It answers in
+        both modes: non-operational, it gives the `reason`; operational, the admin's handle
+        and key `fingerprint`, and `api_index.behind`, how many record versions the index has
+        yet to fold in.
+
+        Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
+      x-roles: [non-member, member, admin]
+      x-anonymous: always
+      security:
+        - apiKey: []
+        - {}
+      responses:
+        '200':
+          description: The server is up.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: PostgreSQL or the file store is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerStatus'
+  /admin/challenge:
+    post:
+      operationId: adminChallenge
+      tags: [sessions]
+      summary: A challenge for the admin's session key
+      description: |
+        A single-use nonce, valid for 5 minutes, for the admin's client to sign with the
+        admin's private key file.
+
+        Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
+      x-roles: [non-member, member, admin]
+      x-anonymous: always
+      security:
+        - apiKey: []
+        - {}
+      responses:
+        '200':
+          description: The nonce.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Challenge'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /admin/token:
+    post:
+      operationId: createAdminSession
+      tags: [sessions]
+      summary: The admin's session key
+      description: |
+        Takes the nonce, signed with the admin's private key file, checks it against the admin
+        key file, and answers a session key bound to the admin that works in every community.
+
+        Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
+      x-roles: [non-member, member, admin]
+      x-anonymous: always
+      security:
+        - apiKey: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminSessionRequest'
+      responses:
+        '200':
+          description: The session key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /communities:
+    get:
+      operationId: listCommunities
+      tags: [communities]
+      summary: Every community on the server
+      description: |
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      x-bounded: the communities of one server
+      security:
+        - apiKey: []
+      responses:
+        '200':
+          description: The communities, with when each was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      operationId: createCommunity
+      tags: [communities]
+      summary: Create a community
+      description: |
+        Creates a community and its collections `inbox`, `files` and `record`, owned by the
+        admin. Idempotent: 201 when created, 200 when exactly that name exists; 400 for a name
+        that is not a slug, is reserved, or differs only in case from an existing one.
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CommunityIn'
+      responses:
+        '200':
+          description: The community already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityCreated'
+        '201':
+          description: The community was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityCreated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /communities/import:
+    post:
+      operationId: importCommunity
+      tags: [communities]
+      summary: Create a community from an export
+      description: |
+        Creates the exported community in one transaction: 409 when it already exists here
+        or a member's handle is this server's admin, 400 for a damaged stream. Collections
+        the exported admin owned become this server's admin's. API keys stay on the server
+        that issued them.
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      x-bounded: the members of one export
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/x-tar:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: The community, created, with one entry per member.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /{community}/export:
+    get:
+      operationId: exportCommunity
+      tags: [communities]
+      summary: The community as a tar stream
+      description: |
+        One consistent snapshot of the community's rows and its members' public keys, then
+        every stored payload, as `application/x-tar`.
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+      responses:
+        '200':
+          description: The export.
+          content:
+            application/x-tar:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/port-ndex:
+    post:
+      operationId: startPortNdex
+      tags: [communities]
+      summary: Copy a community's record from NDEx
+      description: |
+        Starts a port-ndex into this empty community, in the background, and answers its id:
+        400 if the community holds files, 409 while another port-ndex runs anywhere on the
+        server.
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PortIn'
+      responses:
+        '202':
+          description: The port-ndex, started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Port'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/port-ndex/{port_id}:
+    get:
+      operationId: getPortNdex
+      tags: [communities]
+      summary: One port-ndex's state
+      description: |
+        `running`, `ok`, or `failed` with a reason; who requested it; and its summary.
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - name: port_id
+          in: path
+          required: true
+          description: The port-ndex's id.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: The port-ndex.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Port'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/auth/challenge:
+    post:
+      operationId: challenge
+      tags: [sessions]
+      summary: A challenge for a Member's session key
+      description: |
+        A single-use nonce, valid for 5 minutes, for the Member's client to sign with the
+        Member's private key file.
+
+        Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
+      x-roles: [non-member, member, admin]
+      x-anonymous: always
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChallengeIn'
+      responses:
+        '200':
+          description: The nonce.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Challenge'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/auth/token:
+    post:
+      operationId: createSession
+      tags: [sessions]
+      summary: A Member's session key
+      description: |
+        Takes the nonce, signed with the Member's private key file (an Ed25519 key), checks it
+        against the Member's registered public key, and answers a session key bound to the
+        Member that works in this community.
+
+        Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
+      x-roles: [non-member, member, admin]
+      x-anonymous: always
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionRequest'
+      responses:
+        '200':
+          description: The session key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/owners:
+    post:
+      operationId: register
+      tags: [sessions]
+      summary: Register a Member's public key
+      description: |
+        Binds a handle to the public key a Member made on its own machine, in this community,
+        with the Member's invite: 403 for a handle off the roster or without a valid invite,
+        409 for one already registered, 401 when the signature fails proof of possession.
+
+        Roles: non-member, member, admin; anonymous always.
+
+        Authentication: no key required.
+      x-roles: [non-member, member, admin]
+      x-anonymous: always
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterIn'
+      responses:
+        '201':
+          description: The Member, registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Registered'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/owners/{handle}/keys:
+    post:
+      operationId: rotateKey
+      tags: [sessions]
+      summary: Replace a Member's private key file
+      description: |
+        Registers the public key of the Member's new private key file, proven by the new key.
+        The old key is retired and keeps its attribution, and the session keys obtained with
+        it end.
+
+        Requires a key bound to a Member: the Member's session key, as every route that changes
+        keys does; an issued key the Member issued for itself answers 403 here. The key must
+        belong to the community in the path.
+
+        Roles: member.
+
+        Authentication: member session key.
+      x-roles: [member]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/handle'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateIn'
+      responses:
+        '201':
+          description: The new key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rotated'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/owners/{handle}/rebind:
+    post:
+      operationId: rebindMember
+      tags: [roster]
+      summary: Replace a Member's lost key
+      description: |
+        Retires the Member's registered public keys, ends the Member's session keys, and
+        answers a fresh invite, so the Member registers a new private key file under the same
+        handle and keeps the Member's attribution.
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/handle'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RebindIn'
+      responses:
+        '200':
+          description: The retired keys and the fresh invite.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rebound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/owners/{handle}/suspect-after:
+    put:
+      operationId: setSuspectAfter
+      tags: [roster]
+      summary: Flag a Member's writes after an instant
+      description: |
+        Every version the Member writes after the instant reads `"suspect": true`, and
+        `getMe` reports the instant. The instant needs a timezone (400 otherwise).
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/handle'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SuspectIn'
+      responses:
+        '200':
+          description: The flag.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuspectAfter'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/roster:
+    get:
+      operationId: listRoster
+      tags: [roster]
+      summary: The community's roster
+      description: |
+        Every handle on the roster, registered or not yet, with when its pending invite
+        expires. Any Member reads it, as the admin does.
+
+        Roles: member, admin.
+
+        Authentication: member issued key, session key.
+      x-roles: [member, admin]
+      x-bounded: one community's roster
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+      responses:
+        '200':
+          description: The roster.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Roster'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/roster/{handle}:
+    post:
+      operationId: addMember
+      tags: [roster]
+      summary: Add a Member to the roster
+      description: |
+        Adds one handle with the default grants (`write` on `inbox` and `files`, `read` on
+        `record` and `files`). Idempotent: 201 when added, 200 when already there. The admin's
+        handle is refused (400).
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/handle'
+      responses:
+        '200':
+          description: The handle was already on the roster.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RosterChange'
+        '201':
+          description: The handle was added.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RosterChange'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    delete:
+      operationId: removeMember
+      tags: [roster]
+      summary: Remove a Member from the roster
+      description: |
+        Its grants and pending invite go, every key that acts as it or that it issued is
+        revoked (`api_keys_revoked` counts its issued keys), and its identity and attribution
+        stay. 404 when the handle is not on the roster.
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/handle'
+      responses:
+        '200':
+          description: The handle was removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RosterChange'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/invites:
+    get:
+      operationId: listInvites
+      tags: [roster]
+      summary: The pending invites
+      description: |
+        Every pending invite, secret included, so one can be handed over again.
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      x-bounded: one invite per roster handle at most
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+      responses:
+        '200':
+          description: The pending invites.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: createInvite
+      tags: [roster]
+      summary: Invite a roster handle
+      description: |
+        A single-use invite for a handle on the roster (403 otherwise), answered with its
+        expiry. It revokes the handle's earlier unused invite.
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteIn'
+      responses:
+        '201':
+          description: The invite.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invite'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/api-keys:
+    get:
+      operationId: listApiKeys
+      tags: [keys]
+      summary: The API keys you issued
+      description: |
+        The issued keys the caller owns, with their values; for the admin, every issued key
+        of the community, the `non-member` keys with their values and the Members' own keys
+        without. Ordered by creation, oldest first.
+
+        Roles: member, admin.
+
+        Authentication: session key.
+      x-roles: [member, admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+        - name: include_revoked
+          in: query
+          description: Whether revoked keys are listed.
+          schema:
+            type: boolean
+            default: true
+      responses:
+        '200':
+          description: One page of keys.
+          headers:
+            Cache-Control:
+              description: The page carries key values.
+              schema:
+                type: string
+                enum: [no-store]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedKeyPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: createApiKey
+      tags: [keys]
+      summary: Issue an API key
+      description: |
+        Issues a key and answers it once, with its value. A Member issues its own `member`
+        keys, which act as it, and `non-member` keys for applications (`role: non-member`),
+        which read the collections their owners grant them; the admin issues `non-member`
+        keys. A label names one live key among its issuer's (409 when taken).
+
+        Roles: member, admin.
+
+        Authentication: session key.
+      x-roles: [member, admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssuedKeyIn'
+      responses:
+        '201':
+          description: The key, with its value.
+          headers:
+            Cache-Control:
+              description: The answer carries a key's value.
+              schema:
+                type: string
+                enum: [no-store]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedKey'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/api-keys/{key_id}:
+    get:
+      operationId: getApiKey
+      tags: [keys]
+      summary: One API key
+      description: |
+        One of the keys the caller issued, with its value; the admin reads any key of the
+        community, a Member's own without its value. 404 for any other.
+
+        Roles: member, admin.
+
+        Authentication: session key.
+      x-roles: [member, admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/keyId'
+      responses:
+        '200':
+          description: The key.
+          headers:
+            Cache-Control:
+              description: The answer may carry a key's value.
+              schema:
+                type: string
+                enum: [no-store]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: revokeApiKey
+      tags: [keys]
+      summary: Revoke an API key
+      description: |
+        Revokes a key the caller issued; the admin revokes any `non-member` key. It stops at
+        once, its value is erased, and its row stays as the record.
+
+        Roles: member, admin.
+
+        Authentication: session key.
+      x-roles: [member, admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/keyId'
+      responses:
+        '200':
+          description: The key, revoked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/collections:
+    get:
+      operationId: listCollections
+      tags: [files]
+      summary: The collections the caller may use
+      description: |
+        The community's collections the caller may use: the public ones, those it owns, and
+        those granted to it (a Member's `inbox` too). Each lists what the caller may do there:
+        `read` to list and read its files, `write` to add files, `manage` to grant access or
+        change its visibility. Without a key, the public collections.
+
+        Roles: non-member, member, admin; anonymous for the public collections.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      x-bounded: one community's collections, a few per Member
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+      responses:
+        '200':
+          description: The collections, by name.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectionList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: createCollection
+      tags: [collections]
+      summary: Create a collection
+      description: |
+        A Member, or the admin, creates a collection and becomes its owner. 409 when the name
+        is taken.
+
+        Roles: member, admin.
+
+        Authentication: member issued key, session key.
+      x-roles: [member, admin]
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CollectionIn'
+      responses:
+        '201':
+          description: The collection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Collection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/collections/{collection}/grants:
+    put:
+      operationId: setGrant
+      tags: [collections]
+      summary: Grant or withdraw access to a collection
+      description: |
+        The collection's owner, or the admin, grants or withdraws `read` or `write` for a
+        roster Member (`handle`), or `read` for a `non-member` key (`api_key_id`); a `write`
+        grant to a key answers 400. It takes effect on the next request.
+
+        Roles: member, admin.
+
+        Authentication: session key.
+      x-roles: [member, admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/collection'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantIn'
+      responses:
+        '200':
+          description: The grant, as it now stands.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantChange'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/collections/{collection}/public:
+    put:
+      operationId: setPublic
+      tags: [collections]
+      summary: Open a collection to reads without a key, or close it
+      description: |
+        The collection's owner, or the admin, makes it public, so anyone reads it without a
+        key, or private again. `inbox` stays private (403).
+
+        Roles: member, admin.
+
+        Authentication: session key.
+      x-roles: [member, admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/collection'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublicIn'
+      responses:
+        '200':
+          description: The collection's visibility, as it now stands.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicChange'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/collections/{collection}/files/{name}:
+    put:
+      operationId: putFile
+      tags: [files]
+      summary: Create a file
+      description: |
+        The body becomes version 1, streamed. `Repr-Digest` is required: the server hashes the
+        body as it streams and answers 400 on a mismatch, storing nothing. It takes `write` on
+        the collection; 409 when the name is taken, 413 over quota.
+
+        Roles: member, admin.
+
+        Authentication: member issued key, session key.
+      x-roles: [member, admin]
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/collection'
+        - name: name
+          in: path
+          required: true
+          description: The file's name in the collection, one path segment.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+        - $ref: '#/components/parameters/reprDigest'
+        - $ref: '#/components/parameters/dataMetadata'
+        - $ref: '#/components/parameters/dataSize'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: The file's first version.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+  /{community}/files/{file_id}/versions:
+    get:
+      operationId: listFileVersions
+      tags: [files]
+      summary: Every version of a file
+      description: |
+        Takes `read` on the file's collection; answers without a key while it is public.
+
+        Roles: non-member, member, admin; anonymous when the file's collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      x-bounded: the versions of one file
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/fileId'
+      responses:
+        '200':
+          description: The versions, oldest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileVersionList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      operationId: addFileVersion
+      tags: [files]
+      summary: Add a version to a file
+      description: |
+        New content, keeping the file's metadata unless `X-Data-Metadata` is sent; or, with
+        `X-Data-Metadata-Only: 1`, new metadata reusing the content. With
+        `If-Match: "v<n>"` it applies only if the newest version is still v<n> (412
+        otherwise). Only the file's creator, while it may write to the collection, or the
+        admin, adds versions.
+
+        Roles: member, admin.
+
+        Authentication: member issued key, session key.
+      x-roles: [member, admin]
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/fileId'
+        - $ref: '#/components/parameters/reprDigest'
+        - $ref: '#/components/parameters/dataMetadata'
+        - $ref: '#/components/parameters/dataSize'
+        - $ref: '#/components/parameters/ifMatch'
+        - name: X-Data-Metadata-Only
+          in: header
+          description: '`1` for a version of new metadata alone, reusing the content.'
+          schema:
+            type: string
+            enum: ['1']
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: The new version.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '413':
+          $ref: '#/components/responses/TooLarge'
+  /{community}/files/{file_id}:
+    delete:
+      operationId: deleteFile
+      tags: [files]
+      summary: Delete a file, keeping its versions
+      description: |
+        Adds a tombstone version, which keeps serving the previous content with
+        `X-Data-Deleted: true`; a later version restores the file. Takes `If-Match` as a new
+        version does. Only the file's creator, or the admin, deletes it.
+
+        Roles: member, admin.
+
+        Authentication: member issued key, session key.
+      x-roles: [member, admin]
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/fileId'
+        - $ref: '#/components/parameters/ifMatch'
+        - name: reason
+          in: query
+          description: Why the file is deleted, kept on the tombstone.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The tombstone version.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+  /{community}/files/{file_id}/v/{ref}:
+    get:
+      operationId: getFileContent
+      tags: [files]
+      summary: One version's content
+      description: |
+        Streams one version, with `Range` support. `ref` is a version number, or `latest`, the
+        newest version that isn't a tombstone. A purged version answers 410, its body the
+        error with the version's metadata beside it. Takes `read` on the file's collection;
+        answers without a key while it is public.
+
+        Roles: non-member, member, admin; anonymous when the file's collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      x-stored: the version's bytes, untouched
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/fileId'
+        - $ref: '#/components/parameters/versionRef'
+        - name: Range
+          in: header
+          description: One byte range, as `bytes=<first>-<last>`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The content.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Repr-Digest:
+              $ref: '#/components/headers/ReprDigest'
+            X-Data-Citation:
+              $ref: '#/components/headers/Citation'
+            Link:
+              $ref: '#/components/headers/Link'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '206':
+          description: The range asked for.
+          headers:
+            Content-Range:
+              description: The range answered.
+              schema:
+                type: string
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+  /{community}/files/{file_id}/v/{ref}/stat:
+    get:
+      operationId: statFileVersion
+      tags: [files]
+      summary: One version's metadata
+      description: |
+        The version's metadata, never its content. Takes `read` on the file's collection;
+        answers without a key while it is public.
+
+        Roles: non-member, member, admin; anonymous when the file's collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/fileId'
+        - $ref: '#/components/parameters/versionRef'
+      responses:
+        '200':
+          description: The version's metadata.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/files/{file_id}/v/{n}/purge:
+    post:
+      operationId: purgeVersion
+      tags: [admin]
+      summary: Free one version's content
+      description: |
+        The version stays addressable and answers 410 with its metadata from then on. Its
+        bytes are freed once no other live version shares them (`bytes_freed`).
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/fileId'
+        - $ref: '#/components/parameters/versionNumber'
+      responses:
+        '200':
+          description: The purge.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Purged'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/files/{file_id}/v/{n}/promote:
+    post:
+      operationId: promoteVersion
+      tags: [admin]
+      summary: Copy a version into a collection
+      description: |
+        Copies one version into a collection as a new file, atomically, its metadata the
+        source's merged with `metadata`. With `stamp_json_pointer`, the content is a JSON
+        document and the server writes the new version's own `created` at that pointer. The
+        gate accepts a submission this way. A taken name or a tombstone answers 409, purged
+        content 410.
+
+        Roles: admin.
+
+        Authentication: admin session key.
+      x-roles: [admin]
+      x-session: true
+      security:
+        - apiKey: []
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/fileId'
+        - $ref: '#/components/parameters/versionNumber'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoteIn'
+      responses:
+        '201':
+          description: The new file's version.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileVersion'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/collections/{collection}/changes:
+    get:
+      operationId: listChanges
+      tags: [files]
+      summary: A collection's versions, in order
+      description: |
+        Every version written into the collection after `since`, in `seq` order, with its
+        metadata, of the versions the caller may read. Page with `next_since` until `more` is
+        false. Takes `read` on the collection; answers without a key while it is public.
+
+        Roles: non-member, member, admin; anonymous when the collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/collection'
+        - $ref: '#/components/parameters/since'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: One page of versions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangesPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/collections/{collection}/query:
+    post:
+      operationId: queryCollection
+      tags: [files]
+      summary: A collection's versions whose metadata contains an object
+      description: |
+        Versions whose metadata contains `contains` (JSON containment), paged as
+        `listChanges` is. Takes `read` on the collection; answers without a key while it is
+        public.
+
+        Roles: non-member, member, admin; anonymous when the collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/collection'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryIn'
+      responses:
+        '200':
+          description: One page of versions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangesPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/collections/{collection}/find:
+    get:
+      operationId: findFile
+      tags: [files]
+      summary: The file holding a name
+      description: |
+        The file holding a name, at its newest version, tombstone or not: a deleted file still
+        holds its name. Takes `read` on the collection; answers without a key while it is
+        public.
+
+        Roles: non-member, member, admin; anonymous when the collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - $ref: '#/components/parameters/collection'
+        - name: name
+          in: query
+          required: true
+          description: The file's name.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The file's newest version.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileVersion'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /{community}/sha256/{sha}:
+    get:
+      operationId: findByHash
+      tags: [files]
+      summary: The versions holding some content
+      description: |
+        Every version of this community the caller may read that holds this content.
+
+        Roles: non-member, member, admin; anonymous when a collection holding it is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      x-bounded: the versions holding one content
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - name: sha
+          in: path
+          required: true
+          description: The content's sha256, 64 lowercase hex characters.
+          schema:
+            type: string
+            pattern: '^[0-9a-f]{64}$'
+      responses:
+        '200':
+          description: The versions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FileVersionItems'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /{community}/verify:
+    get:
+      operationId: verifyCitation
+      tags: [files]
+      summary: Check a citation
+      description: |
+        The version exists, its sha256 matches, and it was created strictly before `before`.
+        A version the caller cannot read answers as one that does not exist.
+
+        Roles: non-member, member, admin; anonymous when the cited file's collection is public.
+
+        Authentication: issued key, session key, no key (public).
+      x-roles: [non-member, member, admin]
+      x-anonymous: public
+      security:
+        - apiKey: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/community'
+        - name: cite
+          in: query
+          required: true
+          description: The citation, `symposium-data:<file id>@v<n>`.
+          schema:
+            type: string
+        - name: before
+          in: query
+          description: An instant the version must be strictly earlier than (ISO 8601).
+          schema:
+            type: string
+        - name: sha256
+          in: query
+          description: The sha256 the version must hold.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The check.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Verification'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+components:
+  securitySchemes:
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: sak_<43 base64url characters>
+      description: |
+        An API key, sent as `Authorization: Bearer sak_…`: a session key, obtained through the
+        session management endpoints, or an issued key, issued by a Member or the admin. Handle it as any API key: keep it on a
+        server or in a secret store, send it over HTTPS only, and revoke it if it leaks.
+
+        The key must belong to the community named in the `/{community}/…` path, or the
+        request answers 403; a key that acts as a Member works while that Member is on the
+        community's roster with a registered public key, or the request answers 401.
+  parameters:
+    community:
+      name: community
+      in: path
+      required: true
+      description: The community's name, matched ignoring case.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9_]{1,20}$'
+    artifactName:
+      name: name
+      in: path
+      required: true
+      description: The Artifact's `name`.
+      schema:
+        type: string
+        pattern: '^[^@.#][^.#]*$'
+    objectName:
+      name: object
+      in: path
+      required: true
+      description: The Object's `name` within its Artifact.
+      schema:
+        type: string
+        pattern: '^[^@.#][^.#]*$'
+    property:
+      name: property
+      in: path
+      required: true
+      description: The property's name.
+      schema:
+        type: string
+        pattern: '^[^@.#][^.#]*$'
+    handle:
+      name: handle
+      in: path
+      required: true
+      description: The Member's handle, its `name` without the `@`.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'
+    submission:
+      name: submission
+      in: path
+      required: true
+      description: The submission's id, the id of its file in `inbox`.
+      schema:
+        type: string
+        format: uuid
+    cursor:
+      name: cursor
+      in: query
+      description: The `next` of the previous page. Absent for the first page.
+      schema:
+        type: string
+        maxLength: 256
+        pattern: '^[A-Za-z0-9_-]+$'
+    limit:
+      name: limit
+      in: query
+      description: The most items to return.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 100
+    order:
+      name: order
+      in: query
+      description: '`created` for oldest first, `-created` for newest first.'
+      schema:
+        type: string
+        enum: [created, -created]
+        default: created
+    lastEventId:
+      name: Last-Event-ID
+      in: header
+      description: The `id` of the last event the client received. The stream resumes after it.
+      schema:
+        type: string
+        maxLength: 256
+        pattern: '^[A-Za-z0-9_-]+$'
+    collection:
+      name: collection
+      in: path
+      required: true
+      description: The collection's name.
+      schema:
+        type: string
+        pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'
+    fileId:
+      name: file_id
+      in: path
+      required: true
+      description: The file's id.
+      schema:
+        type: string
+        format: uuid
+    versionRef:
+      name: ref
+      in: path
+      required: true
+      description: A version number, or `latest` for the newest version that isn't a tombstone.
+      schema:
+        type: string
+        pattern: '^([1-9][0-9]*|latest)$'
+    versionNumber:
+      name: n
+      in: path
+      required: true
+      description: A version number.
+      schema:
+        type: integer
+        minimum: 1
+    keyId:
+      name: key_id
+      in: path
+      required: true
+      description: The API key's id.
+      schema:
+        type: string
+    since:
+      name: since
+      in: query
+      description: The `seq` to list after; the `next_since` of the previous page.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    reprDigest:
+      name: Repr-Digest
+      in: header
+      description: The body's sha-256, as `sha-256=:<base64>:`. Required with content.
+      schema:
+        type: string
+        pattern: '^sha-256=:[A-Za-z0-9+/]+=*:$'
+    dataMetadata:
+      name: X-Data-Metadata
+      in: header
+      description: The version's metadata, a JSON object, base64url-encoded.
+      schema:
+        type: string
+    dataSize:
+      name: X-Data-Size
+      in: header
+      description: The body's size in bytes, checked against what arrives.
+      schema:
+        type: string
+        pattern: '^[0-9]+$'
+    ifMatch:
+      name: If-Match
+      in: header
+      description: '`"v<n>"`: apply only while the newest version is still v<n>.'
+      schema:
+        type: string
+        pattern: '^"v[1-9][0-9]*"$'
+  headers:
+    ETag:
+      description: The version, as `"v<n>"`.
+      schema:
+        type: string
+    ReprDigest:
+      description: The content's sha-256, as `sha-256=:<base64>:`.
+      schema:
+        type: string
+    Citation:
+      description: The version's citation, `symposium-data:<file id>@v<n>`.
+      schema:
+        type: string
+    Link:
+      description: The `latest`, `prev` and `next` versions of the file.
+      schema:
+        type: string
+  requestBodies:
+    Submission:
+      required: true
+      description: One Artifact in canonical JSON, with `created` null.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/SubmittedArtifact'
+  responses:
+    BadRequest:
+      description: A parameter or the body is malformed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: |
+        The credential is absent, unknown, expired or revoked; or a `member` key's handle is
+        no longer a Member of the key's community (off its roster, or with no registered key).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: |
+        The key is valid, and its role does not allow this, or it belongs to a community other
+        than the one in the path.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: The community or the resource is unknown.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: |
+        The request conflicts with the state: a name already in the record or already
+        submitted.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooLarge:
+      description: The body is over 8 MiB, or over the Member's quota.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    TooManyStreams:
+      description: |
+        A stream cap is reached: 8 per API key, 4 per anonymous client address, 200
+        anonymous in all, or the server's `SYMPOSIUM_SERVER_MAX_STREAMS` (default 500).
+        `api/DESIGN.md` §10.5 holds the rules.
+        Close a stream or retry later.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ValidationFailed:
+      description: The validator failed the Artifact. `findings` lists every finding.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unprocessable:
+      description: The request's parameters or body do not fit the route.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    PreconditionFailed:
+      description: '`If-Match` names a version that is no longer the newest.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Gone:
+      description: |
+        The version's content was purged. The body is the error, with the version's metadata
+        (a `FileVersion`) beside `detail` and `code`.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+  schemas:
+    Error:
+      type: object
+      description: |
+        The one error body. `detail` is a sentence for a person; `code` is stable for a
+        program.
+      required: [detail, code]
+      properties:
+        detail:
+          type: string
+        code:
+          type: string
+          enum:
+            - bad_request
+            - unauthorized
+            - forbidden
+            - not_found
+            - conflict
+            - gone
+            - precondition_failed
+            - too_large
+            - validation_failed
+            - unprocessable
+            - not_operational
+            - too_many_streams
+        findings:
+          type: array
+          description: The validator's findings, on `validation_failed` only.
+          items:
+            $ref: '#/components/schemas/Finding'
+    CommunityName:
+      type: string
+      pattern: ^[A-Za-z0-9_]{1,20}$
+    Handle:
+      type: string
+      pattern: ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$
+    Name:
+      type: string
+      description: A name in the specification's sense. It holds no `.` or `#` and starts with no `@`.
+      pattern: ^[^@.#][^.#]*$
+    Address:
+      type: string
+      description: |
+        An address (specification §1.8): `@` and dot-separated segments naming a Member, an
+        Artifact, an Object or a property, then optionally `#` and a schema reference.
+      pattern: ^@[^.#]+
+      example: '@agent_lyra_data_overexpression_screen_v1.values#csv.row=BST2&col=Normalized infection'
+    Cursor:
+      type: string
+      maxLength: 256
+      pattern: ^[A-Za-z0-9_-]+$
+      description: |
+        An opaque position in an ordered listing, base64url. It stays valid for the life of the
+        record.
+    Position:
+      type: object
+      description: The state of the record a read response reflects.
+      required: [cursor, seq, created, as_of]
+      properties:
+        cursor:
+          $ref: '#/components/schemas/Cursor'
+        seq:
+          type: integer
+          minimum: 0
+          description: The `record` collection's sequence number at the newest Artifact reflected.
+        created:
+          type: string
+          nullable: true
+          format: date-time
+          description: The `created` of the newest Artifact reflected; null for an empty record.
+        as_of:
+          type: string
+          format: date-time
+          description: When the server read the record for this response.
+    PropertyValue:
+      description: |
+        A property value (specification §1.3): a number, a string, a boolean, a date-time or an
+        address written as a string, or a list of these.
+      anyOf:
+        - type: string
+        - type: integer
+        - type: number
+        - type: boolean
+        - type: array
+          items:
+            anyOf:
+              - type: string
+              - type: integer
+              - type: number
+              - type: boolean
+    ArtifactHeader:
+      type: object
+      description: |
+        An Artifact's properties (specification §1.5 and §2, profile §1 and §2.1). Members may
+        add properties of their own. An extra property takes any JSON value.
+      required: [name, type, created, published_by, specification_version]
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        type:
+          type: string
+          description: Argument, Data, ScientificPublication, Analysis, Model, NonGroundable, Message, ResearchGoal, or a type of the Member's own.
+        created:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Stamped by the gate at acceptance, so every record Artifact carries it. A submission
+            sends null, and `checkSubmission` and `submitArtifact` refuse any other value.
+        published_by:
+          $ref: '#/components/schemas/Address'
+        specification_version:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        text:
+          type: string
+        authors:
+          type: array
+          items:
+            type: string
+        supersedes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Address'
+        supersedes_rationale:
+          type: string
+        import_method:
+          type: string
+        produced_by:
+          $ref: '#/components/schemas/Address'
+        groundable:
+          type: boolean
+        serves_goals:
+          type: array
+          items:
+            $ref: '#/components/schemas/Address'
+        primary_assertion:
+          type: string
+          description: Argument. The name of its primary Assertion.
+        verdict:
+          type: string
+          description: Argument.
+        rationale:
+          type: string
+          description: Argument.
+        purpose:
+          type: string
+          description: Argument.
+        genre:
+          type: string
+          description: Argument, profile. `finding` or `assessment`.
+        extracted_from:
+          $ref: '#/components/schemas/Address'
+        extraction_method:
+          type: string
+        procedure:
+          type: string
+          description: Analysis.
+        inputs:
+          type: array
+          description: Analysis.
+          items:
+            $ref: '#/components/schemas/Address'
+        modeling_choices:
+          type: string
+          description: Model.
+        recipients:
+          type: array
+          description: Message.
+          items:
+            $ref: '#/components/schemas/Address'
+      additionalProperties: true
+    RecordObject:
+      type: object
+      description: |
+        An Object (specification §1.6). Assertion, Ground, Assumption and Content carry the
+        properties the specification requires of them; any other type is the author's.
+        An extra property takes any JSON value.
+      required: [name, type]
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        type:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        text:
+          type: string
+        claim:
+          type: string
+          description: Assertion.
+        scope:
+          type: string
+          description: Assertion.
+        citation:
+          $ref: '#/components/schemas/Address'
+        rationale:
+          type: string
+          description: Ground, Assumption.
+        criterion:
+          type: string
+          description: Ground. Its presence marks the Ground as a test.
+        addressing_method:
+          type: string
+          description: Content.
+        groundable:
+          type: boolean
+          description: Content.
+        location:
+          type: string
+          description: Content.
+        access_method:
+          type: string
+          description: Content.
+        sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+          description: Content, profile.
+      additionalProperties: true
+    Relationship:
+      type: object
+      description: |
+        A directed relationship between two Objects of one Artifact (specification §1.7).
+        An extra property takes any JSON value.
+      required: [rel, source, target]
+      properties:
+        rel:
+          type: string
+        source:
+          $ref: '#/components/schemas/Name'
+        target:
+          $ref: '#/components/schemas/Name'
+      additionalProperties: true
+    CanonicalArtifact:
+      type: object
+      description: One Artifact in canonical JSON (profile §1).
+      required: [artifact, objects, relationships]
+      properties:
+        artifact:
+          $ref: '#/components/schemas/ArtifactHeader'
+        objects:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecordObject'
+        relationships:
+          type: array
+          items:
+            $ref: '#/components/schemas/Relationship'
+    SubmittedArtifact:
+      type: object
+      description: One Artifact in canonical JSON as its author submits it.
+      required: [artifact, objects, relationships]
+      properties:
+        artifact:
+          $ref: '#/components/schemas/ArtifactHeader'
+        objects:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecordObject'
+        relationships:
+          type: array
+          items:
+            $ref: '#/components/schemas/Relationship'
+    Page:
+      type: object
+      description: The fields every paged listing carries.
+      required: [next, position]
+      properties:
+        next:
+          description: The cursor of the following page; null on the last page.
+          type: string
+          nullable: true
+          maxLength: 256
+          pattern: '^[A-Za-z0-9_-]+$'
+        position:
+          $ref: '#/components/schemas/Position'
+    RecordState:
+      type: object
+      required: [community, url, position, counts, members, specification_versions]
+      properties:
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        url:
+          type: string
+          format: uri
+        position:
+          $ref: '#/components/schemas/Position'
+        counts:
+          type: object
+          required: [artifacts, by_type, by_member, findings]
+          properties:
+            artifacts:
+              type: integer
+            by_type:
+              type: object
+              additionalProperties:
+                type: integer
+            by_member:
+              type: object
+              additionalProperties:
+                type: integer
+            findings:
+              type: object
+              description: Findings as the gate saw each Artifact at its acceptance, by level.
+              additionalProperties:
+                type: integer
+        members:
+          type: integer
+          description: Handles on the roster.
+        first_created:
+          type: string
+          nullable: true
+          format: date-time
+        specification_versions:
+          type: array
+          items:
+            type: string
+    ArtifactSummary:
+      type: object
+      description: One Artifact's header fields and counts, as a listing carries it.
+      required: [name, address, url, type, published_by, created]
+      properties:
+        name:
+          $ref: '#/components/schemas/Name'
+        address:
+          $ref: '#/components/schemas/Address'
+        url:
+          type: string
+          format: uri
+        type:
+          type: string
+        title:
+          type: string
+        published_by:
+          $ref: '#/components/schemas/Handle'
+        created:
+          type: string
+          format: date-time
+        groundable:
+          type: boolean
+          description: False for a non-groundable type or a header saying so.
+        supersedes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Address'
+        superseded_by:
+          type: array
+          items:
+            $ref: '#/components/schemas/Address'
+        counts:
+          type: object
+          properties:
+            objects:
+              type: integer
+            grounds:
+              type: integer
+            tests:
+              type: integer
+              description: Grounds carrying a `criterion`.
+            findings:
+              type: integer
+    ArtifactSummaryPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ArtifactSummary'
+    ArtifactResource:
+      type: object
+      required: [url, address, position, links, canonical]
+      properties:
+        url:
+          type: string
+          format: uri
+        address:
+          $ref: '#/components/schemas/Address'
+        position:
+          $ref: '#/components/schemas/Position'
+        links:
+          type: object
+          required: [member, supersedes, superseded_by, cited_by, findings]
+          properties:
+            member:
+              type: string
+              format: uri
+            supersedes:
+              type: array
+              items:
+                type: string
+                format: uri
+            superseded_by:
+              type: array
+              items:
+                type: string
+                format: uri
+            produced_by:
+              type: string
+              format: uri
+            cited_by:
+              type: string
+              format: uri
+            findings:
+              type: string
+              format: uri
+            content:
+              type: string
+              format: uri
+              description: The Artifact's stored canonical JSON, from `getArtifactContent`.
+        canonical:
+          $ref: '#/components/schemas/CanonicalArtifact'
+    PropertyResource:
+      type: object
+      required: [url, address, property, value, position]
+      properties:
+        url:
+          type: string
+          format: uri
+        address:
+          $ref: '#/components/schemas/Address'
+        property:
+          type: string
+        value:
+          $ref: '#/components/schemas/PropertyValue'
+        position:
+          $ref: '#/components/schemas/Position'
+    ObjectEntry:
+      type: object
+      required: [url, address, object]
+      properties:
+        url:
+          type: string
+          format: uri
+        address:
+          $ref: '#/components/schemas/Address'
+        object:
+          $ref: '#/components/schemas/RecordObject'
+    ObjectPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/ObjectEntry'
+    ObjectResource:
+      type: object
+      required: [url, address, artifact_url, object, position, relationships_url]
+      properties:
+        url:
+          type: string
+          format: uri
+        address:
+          $ref: '#/components/schemas/Address'
+        artifact_url:
+          type: string
+          format: uri
+        object:
+          $ref: '#/components/schemas/RecordObject'
+        relationships_url:
+          type: string
+          format: uri
+          description: The Artifact's relationships, narrowed to those touching this Object.
+        location_url:
+          type: string
+          format: uri
+          description: |
+            Where a `symposium-data:<file id>@v<n>` location is read on this API: the file
+            version's content (`getFileContent`), which its collection's access governs.
+        position:
+          $ref: '#/components/schemas/Position'
+    RelationshipPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Relationship'
+    CitationVia:
+      type: string
+      description: How a later Artifact cites this one.
+      enum:
+        - ground
+        - testimony
+        - produced_by
+        - inputs
+        - supersedes
+        - extracted_from
+        - serves_goals
+        - recipients
+        - prose
+    Citation:
+      type: object
+      description: One citation of this Artifact or its content by a later Artifact.
+      required: [via, address, from, from_url, from_type, from_created]
+      properties:
+        via:
+          $ref: '#/components/schemas/CitationVia'
+        address:
+          $ref: '#/components/schemas/Address'
+        from:
+          $ref: '#/components/schemas/Address'
+        from_url:
+          type: string
+          format: uri
+        from_type:
+          type: string
+        from_created:
+          type: string
+          format: date-time
+        ground:
+          description: For `ground` and `testimony`, the citing Ground's address.
+          allOf:
+            - $ref: '#/components/schemas/Address'
+    CitationPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Citation'
+    SupersessionEntry:
+      type: object
+      required: [address, url, created, direction, distance]
+      properties:
+        address:
+          $ref: '#/components/schemas/Address'
+        url:
+          type: string
+          format: uri
+        created:
+          type: string
+          format: date-time
+        direction:
+          type: string
+          enum: [earlier, later]
+        distance:
+          type: integer
+          minimum: 1
+        supersedes_rationale:
+          type: string
+    SupersessionPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/SupersessionEntry'
+    FindingLevel:
+      type: string
+      enum: [FAIL, REVIEW]
+    Finding:
+      type: object
+      description: One finding of the validator, as `tools/validate.py` writes it.
+      required: [check, level, msg]
+      properties:
+        check:
+          type: string
+          description: STRUCT, TYPE, ADDRESS, GROUND, CITATION, GOAL, INDEPENDENCE, NAMING, ORDER, SIZE, SUPERSEDED, UNIQUE.
+        level:
+          $ref: '#/components/schemas/FindingLevel'
+        msg:
+          type: string
+        object:
+          description: The Object the finding names, where it names one.
+          allOf:
+            - $ref: '#/components/schemas/Name'
+    FindingPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          required: [items, basis]
+          properties:
+            basis:
+              type: string
+              enum: [accepted, current]
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/Finding'
+    Resolution:
+      type: object
+      required: [address, kind, url, position]
+      properties:
+        address:
+          $ref: '#/components/schemas/Address'
+        kind:
+          type: string
+          enum: [member, artifact, object, property, object_property]
+        url:
+          type: string
+          format: uri
+        artifact:
+          $ref: '#/components/schemas/Name'
+        object:
+          $ref: '#/components/schemas/Name'
+        property:
+          type: string
+        node_type:
+          type: string
+          description: The type of the Artifact or Object named.
+        method:
+          type: string
+          description: The Content Object a schema reference reaches through.
+        ref:
+          type: string
+          description: The reference string after the Content Object's name.
+        verified:
+          type: boolean
+          description: True when the server checked the reference against embedded content.
+        value:
+          description: The value reached, where the address reaches one.
+          allOf:
+            - $ref: '#/components/schemas/PropertyValue'
+        location:
+          type: string
+          description: |
+            For a Content Object, or an address through one, the Object's `location`.
+        access_method:
+          type: string
+          description: |
+            For a Content Object, or an address through one, the Object's `access_method`.
+        location_url:
+          type: string
+          format: uri
+          description: |
+            Where a `symposium-data:<file id>@v<n>` location is read on this API: the file
+            version's content (`getFileContent`), which its collection's access governs.
+        position:
+          $ref: '#/components/schemas/Position'
+    MemberResource:
+      type: object
+      required: [handle, address, url, registered, counts, position]
+      properties:
+        handle:
+          $ref: '#/components/schemas/Handle'
+        address:
+          $ref: '#/components/schemas/Address'
+        url:
+          type: string
+          format: uri
+        registered:
+          type: boolean
+          description: True once the Member has joined from its invite.
+        counts:
+          type: object
+          properties:
+            artifacts:
+              type: integer
+            by_type:
+              type: object
+              additionalProperties:
+                type: integer
+        artifacts_url:
+          type: string
+          format: uri
+        messages_url:
+          type: string
+          format: uri
+        position:
+          $ref: '#/components/schemas/Position'
+    MemberPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/MemberResource'
+    KeyRole:
+      type: string
+      description: |
+        The key's one role. `member` holds everything `non-member` holds; `admin` is the
+        server admin's session.
+      enum: [non-member, member, admin]
+    KeyKind:
+      type: string
+      description: A session key from the session management endpoints, or an issued key.
+      enum: [session, issued]
+    Me:
+      type: object
+      required: [kind, handle, label, role, community, key_id, grants, position]
+      properties:
+        kind:
+          $ref: '#/components/schemas/KeyKind'
+        handle:
+          type: string
+          nullable: true
+          description: |
+            The Member the key acts as, or the admin for the admin's session; null for a
+            `non-member` key.
+        label:
+          type: string
+          nullable: true
+          description: The name the key's owner gave it; null for a session key.
+        role:
+          $ref: '#/components/schemas/KeyRole'
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        key_id:
+          type: string
+          format: uuid
+        kid:
+          type: string
+          nullable: true
+          description: |
+            For a session key, the thumbprint of the public key whose private key file obtained
+            it; null for an issued key.
+        expires:
+          type: string
+          nullable: true
+          format: date-time
+        suspect_after:
+          type: string
+          nullable: true
+          format: date-time
+          description: |
+            When the admin flagged the key's Member: what it writes after this instant reads
+            `"suspect": true`. Null when unflagged, and for a key that acts as no Member.
+        grants:
+          type: array
+          description: |
+            The grants the key reads and writes with in this community: its Member's, or the
+            ones given to a `non-member` key. Public collections are open to it as well.
+          items:
+            $ref: '#/components/schemas/Grant'
+        member_url:
+          type: string
+          format: uri
+          description: The Member this key publishes as, where it holds `member`.
+        position:
+          $ref: '#/components/schemas/Position'
+    Grant:
+      type: object
+      required: [collection, perm]
+      properties:
+        collection:
+          type: string
+        perm:
+          type: string
+          enum: [read, write]
+    SubmissionCheck:
+      type: object
+      required: [ok, findings, position]
+      properties:
+        ok:
+          type: boolean
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Finding'
+        position:
+          $ref: '#/components/schemas/Position'
+    SubmissionStatus:
+      type: string
+      description: |
+        `pending` until the gate decides. `skipped` when the gate's own rule sets it aside: its
+        inbox name is the artifact's name with the wrong prefix, or its submitter is off the
+        roster. Then `accepted` or `rejected`. `api/DESIGN.md` §6 says where each comes from.
+      enum: [pending, skipped, accepted, rejected]
+    SubmissionResource:
+      type: object
+      required: [id, url, name, submitted_by, submitted, status, citation, position]
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        name:
+          $ref: '#/components/schemas/Name'
+        type:
+          type: string
+        submitted_by:
+          $ref: '#/components/schemas/Handle'
+        submitted:
+          type: string
+          format: date-time
+        status:
+          $ref: '#/components/schemas/SubmissionStatus'
+        citation:
+          type: string
+          description: The submission's file version on the data server, `symposium-data:<uuid>@v1`.
+        decided:
+          type: string
+          nullable: true
+          format: date-time
+        artifact_url:
+          type: string
+          format: uri
+          description: Accepted. The record Artifact.
+        reply:
+          description: Rejected. The gate's reply.
+          allOf:
+            - $ref: '#/components/schemas/Reply'
+        position:
+          $ref: '#/components/schemas/Position'
+    SubmissionPage:
+      allOf:
+        - $ref: '#/components/schemas/Page'
+        - type: object
+          required: [items]
+          properties:
+            items:
+              type: array
+              items:
+                $ref: '#/components/schemas/SubmissionResource'
+    Reply:
+      type: object
+      description: The gate's reply to a rejected submission, as it sits in `inbox`.
+      required: [sender, sent, text, failures]
+      properties:
+        sender:
+          $ref: '#/components/schemas/Handle'
+        sent:
+          type: string
+          format: date-time
+        text:
+          type: string
+          description: The reply as the gate wrote it, `REJECTED` and one line per failure.
+        failures:
+          type: array
+          description: One line per failure the validator found.
+          items:
+            type: string
+    StreamEventBase:
+      type: object
+      description: One Server-Sent Events frame. `id` is a cursor for `Last-Event-ID`.
+      required: [id, event, data]
+      properties:
+        id:
+          $ref: '#/components/schemas/Cursor'
+        event:
+          type: string
+        data:
+          type: object
+    HeartbeatEvent:
+      allOf:
+        - $ref: '#/components/schemas/StreamEventBase'
+        - type: object
+          properties:
+            event:
+              enum: [heartbeat]
+            data:
+              type: object
+              required: [position]
+              properties:
+                position:
+                  $ref: '#/components/schemas/Position'
+    RecordStreamEvent:
+      oneOf:
+        - allOf:
+            - $ref: '#/components/schemas/StreamEventBase'
+            - type: object
+              properties:
+                event:
+                  enum: [artifact]
+                data:
+                  $ref: '#/components/schemas/ArtifactSummary'
+        - $ref: '#/components/schemas/HeartbeatEvent'
+    SubmissionStreamEvent:
+      oneOf:
+        - allOf:
+            - $ref: '#/components/schemas/StreamEventBase'
+            - type: object
+              properties:
+                event:
+                  enum:
+                    - submission.received
+                    - submission.accepted
+                    - submission.rejected
+                    - submission.skipped
+                data:
+                  $ref: '#/components/schemas/SubmissionResource'
+        - $ref: '#/components/schemas/HeartbeatEvent'
+    ServerStatus:
+      type: object
+      required: [api, version, server_id, mode, postgres, s3]
+      properties:
+        api:
+          type: string
+          description: The API's major version.
+        version:
+          type: string
+          description: The server's release.
+        server_id:
+          type: string
+        mode:
+          type: string
+          enum: [operational, non-operational]
+        postgres:
+          type: string
+          enum: [ok, unavailable]
+        s3:
+          type: string
+          enum: [ok, unavailable]
+        admin:
+          type: string
+          description: The admin's handle, once operational.
+        fingerprint:
+          type: string
+          description: The admin key's RFC 7638 thumbprint, once operational.
+        reason:
+          type: string
+          description: Why the server is non-operational.
+        api_index:
+          type: object
+          required: [behind]
+          properties:
+            behind:
+              type: integer
+              description: Record versions the index has yet to fold in, across every community.
+    Challenge:
+      type: object
+      required: [nonce, expires_in]
+      properties:
+        nonce:
+          type: string
+        expires_in:
+          type: integer
+          description: Seconds until the nonce expires.
+    ChallengeIn:
+      type: object
+      required: [handle]
+      properties:
+        handle:
+          $ref: '#/components/schemas/Handle'
+    AdminSessionRequest:
+      type: object
+      required: [nonce, signature]
+      properties:
+        nonce:
+          type: string
+        signature:
+          type: string
+          description: The nonce's Ed25519 signature, base64url.
+    SessionRequest:
+      type: object
+      required: [handle, nonce, signature]
+      properties:
+        handle:
+          $ref: '#/components/schemas/Handle'
+        nonce:
+          type: string
+        signature:
+          type: string
+          description: The nonce's Ed25519 signature, base64url.
+    Session:
+      type: object
+      required: [key, expires, expires_in, kid]
+      properties:
+        key:
+          type: string
+          description: 'The session key, `sak_…`. Send it as `Authorization: Bearer sak_…`.'
+        expires:
+          type: string
+          format: date-time
+        expires_in:
+          type: number
+          description: Seconds the session lasts.
+        kid:
+          type: string
+          description: The thumbprint of the public key whose private key file obtained it.
+    PublicJwk:
+      type: object
+      description: An Ed25519 public key as a JWK (`kty` OKP, `crv` Ed25519, `x`).
+      required: [kty, crv, x]
+      properties:
+        kty:
+          type: string
+          enum: [OKP]
+        crv:
+          type: string
+          enum: [Ed25519]
+        x:
+          type: string
+    RegisterIn:
+      type: object
+      required: [handle, public_jwk, nonce, signature]
+      properties:
+        handle:
+          $ref: '#/components/schemas/Handle'
+        public_jwk:
+          $ref: '#/components/schemas/PublicJwk'
+        nonce:
+          type: string
+        signature:
+          type: string
+          description: The nonce's signature by the key being registered, its proof of possession.
+        invite:
+          type: string
+          nullable: true
+          description: The Member's invite, `sdi_…`.
+    Registered:
+      type: object
+      required: [handle, kid, community]
+      properties:
+        handle:
+          $ref: '#/components/schemas/Handle'
+        kid:
+          type: string
+        community:
+          $ref: '#/components/schemas/CommunityName'
+    RotateIn:
+      type: object
+      required: [public_jwk, nonce, signature]
+      properties:
+        public_jwk:
+          $ref: '#/components/schemas/PublicJwk'
+        nonce:
+          type: string
+        signature:
+          type: string
+          description: The nonce's signature by the new key.
+    Rotated:
+      type: object
+      required: [handle, kid]
+      properties:
+        handle:
+          $ref: '#/components/schemas/Handle'
+        kid:
+          type: string
+    CommunityIn:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+    CommunityCreated:
+      type: object
+      required: [name, created]
+      properties:
+        name:
+          type: string
+        created:
+          type: boolean
+          description: False when exactly this name already existed.
+    CommunityList:
+      type: object
+      required: [communities]
+      properties:
+        communities:
+          type: array
+          items:
+            type: object
+            required: [name, created]
+            properties:
+              name:
+                $ref: '#/components/schemas/CommunityName'
+              created:
+                type: string
+                format: date-time
+    ImportResult:
+      type: object
+      required: [imported, handles]
+      properties:
+        imported:
+          $ref: '#/components/schemas/CommunityName'
+        handles:
+          type: array
+          items:
+            type: object
+            required: [handle, result]
+            properties:
+              handle:
+                $ref: '#/components/schemas/Handle'
+              result:
+                type: string
+      additionalProperties:
+        type: integer
+        description: How many rows of each table were imported.
+    PortIn:
+      type: object
+      required: [ndex_url, credentials]
+      properties:
+        ndex_url:
+          type: string
+          pattern: '^https?://'
+        credentials:
+          type: object
+          required: [username, password]
+          properties:
+            username:
+              type: string
+            password:
+              type: string
+        page_size:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          default: 100
+    Port:
+      type: object
+      required: [id, community, requested_by, source, state, started]
+      properties:
+        id:
+          type: string
+          format: uuid
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        requested_by:
+          type: string
+        source:
+          type: string
+        state:
+          type: string
+          enum: [running, ok, failed]
+        result:
+          type: object
+          nullable: true
+        started:
+          type: string
+          format: date-time
+        finished:
+          type: string
+          nullable: true
+          format: date-time
+    RosterEntry:
+      type: object
+      required: [handle, registered, invite_expires]
+      properties:
+        handle:
+          $ref: '#/components/schemas/Handle'
+        registered:
+          type: boolean
+        invite_expires:
+          type: string
+          nullable: true
+          format: date-time
+    Roster:
+      type: object
+      required: [community, roster]
+      properties:
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        roster:
+          type: array
+          items:
+            $ref: '#/components/schemas/RosterEntry'
+    RosterChange:
+      type: object
+      required: [community, handle]
+      properties:
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        handle:
+          $ref: '#/components/schemas/Handle'
+        added:
+          type: boolean
+        removed:
+          type: boolean
+        api_keys_revoked:
+          type: integer
+    InviteIn:
+      type: object
+      required: [handle]
+      properties:
+        handle:
+          $ref: '#/components/schemas/Handle'
+        hours:
+          type: integer
+          minimum: 1
+          maximum: 8784
+    Invite:
+      type: object
+      required: [community, handle, invite, expires]
+      properties:
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        handle:
+          $ref: '#/components/schemas/Handle'
+        invite:
+          type: string
+          description: The invite, `sdi_…`. Hand it over out of band.
+        expires:
+          type: string
+          format: date-time
+    InviteList:
+      type: object
+      required: [community, invites]
+      properties:
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        invites:
+          type: array
+          items:
+            type: object
+            required: [handle, invite, expires]
+            properties:
+              handle:
+                $ref: '#/components/schemas/Handle'
+              invite:
+                type: string
+              expires:
+                type: string
+                format: date-time
+    RebindIn:
+      type: object
+      properties:
+        hours:
+          type: integer
+          minimum: 1
+          maximum: 8784
+    Rebound:
+      allOf:
+        - $ref: '#/components/schemas/Invite'
+        - type: object
+          required: [retired_keys]
+          properties:
+            retired_keys:
+              type: integer
+    SuspectIn:
+      type: object
+      required: [at]
+      properties:
+        at:
+          type: string
+          format: date-time
+    SuspectAfter:
+      type: object
+      required: [community, handle, suspect_after]
+      properties:
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        handle:
+          $ref: '#/components/schemas/Handle'
+        suspect_after:
+          type: string
+          format: date-time
+    IssuedKeyIn:
+      type: object
+      required: [label]
+      properties:
+        label:
+          type: string
+          minLength: 1
+          maxLength: 200
+        role:
+          type: string
+          enum: [member, non-member]
+          description: |
+            By default a member issued key bound to the Member, and for the admin an
+            non-member issued key.
+        expires_days:
+          type: integer
+          minimum: 1
+          maximum: 366
+    IssuedKey:
+      type: object
+      required: [id, community, role, handle, label, key, created, created_by]
+      properties:
+        id:
+          type: string
+          format: uuid
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        role:
+          type: string
+          enum: [member, non-member]
+        handle:
+          type: string
+          nullable: true
+          description: The Member a `member` key acts as; null for a `non-member` key.
+        label:
+          type: string
+        key:
+          type: string
+          nullable: true
+          description: The key, for its owner; null for anyone else, and once revoked.
+        created:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+        expires:
+          type: string
+          nullable: true
+          format: date-time
+        revoked:
+          type: string
+          nullable: true
+          format: date-time
+        revoked_by:
+          type: string
+          nullable: true
+        last_used:
+          type: string
+          nullable: true
+          format: date-time
+    IssuedKeyPage:
+      type: object
+      required: [community, items, next]
+      properties:
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/IssuedKey'
+        next:
+          type: string
+          nullable: true
+          maxLength: 256
+          pattern: '^[A-Za-z0-9_-]+$'
+    CollectionIn:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$'
+    Collection:
+      type: object
+      required: [community, name, owner, public]
+      properties:
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        name:
+          type: string
+        owner:
+          type: string
+        public:
+          type: boolean
+    CollectionList:
+      type: object
+      required: [collections]
+      properties:
+        collections:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/Collection'
+              - type: object
+                required: [access]
+                properties:
+                  access:
+                    type: array
+                    description: What the caller may do in the collection.
+                    items:
+                      type: string
+                      enum: [read, write, manage]
+    GrantIn:
+      type: object
+      required: [perm]
+      description: Names a roster Member by `handle`, or a non-member issued key by `api_key_id`.
+      properties:
+        handle:
+          $ref: '#/components/schemas/Handle'
+        api_key_id:
+          type: string
+          format: uuid
+        perm:
+          type: string
+          enum: [read, write]
+        granted:
+          type: boolean
+          default: true
+    GrantChange:
+      type: object
+      required: [community, collection, handle, api_key_id, perm, granted]
+      properties:
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        collection:
+          type: string
+        handle:
+          type: string
+          nullable: true
+        api_key_id:
+          type: string
+          nullable: true
+          format: uuid
+        perm:
+          type: string
+          enum: [read, write]
+        granted:
+          type: boolean
+    PublicIn:
+      type: object
+      required: [public]
+      properties:
+        public:
+          type: boolean
+    PublicChange:
+      type: object
+      required: [community, collection, public]
+      properties:
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        collection:
+          type: string
+        public:
+          type: boolean
+    FileVersion:
+      type: object
+      description: One version of a file, its metadata without its content.
+      required:
+        - citation
+        - file_id
+        - name
+        - community
+        - collection
+        - version
+        - sha256
+        - size
+        - created
+        - seq
+        - created_by
+        - deleted
+        - file_deleted
+        - purged
+        - suspect
+        - integrity
+        - metadata
+      properties:
+        citation:
+          type: string
+          description: '`symposium-data:<file id>@v<n>`.'
+        file_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        community:
+          $ref: '#/components/schemas/CommunityName'
+        collection:
+          type: string
+        version:
+          type: integer
+        prev:
+          type: integer
+          nullable: true
+        next:
+          type: integer
+          nullable: true
+          description: The next version of the file; null for the newest.
+        latest:
+          type: integer
+          nullable: true
+          description: The newest version that isn't a tombstone.
+        sha256:
+          type: string
+        size:
+          type: integer
+        content_type:
+          type: string
+          nullable: true
+        created:
+          type: string
+          format: date-time
+        seq:
+          type: integer
+        created_by:
+          type: string
+        key_id:
+          type: string
+          nullable: true
+        deleted:
+          type: boolean
+        file_deleted:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+        purged:
+          type: boolean
+        suspect:
+          type: boolean
+        integrity:
+          type: string
+          enum: [ok, mismatch]
+        metadata:
+          type: object
+          additionalProperties: true
+    FileVersionList:
+      type: object
+      required: [versions]
+      properties:
+        versions:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileVersion'
+    FileVersionItems:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileVersion'
+    ChangesPage:
+      type: object
+      required: [items, next_since, more]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/FileVersion'
+        next_since:
+          type: integer
+          description: The `since` of the next page.
+        more:
+          type: boolean
+          description: False on the last page.
+    QueryIn:
+      type: object
+      required: [contains]
+      properties:
+        contains:
+          type: object
+          additionalProperties: true
+        since:
+          type: integer
+          minimum: 0
+          default: 0
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
+    Purged:
+      type: object
+      required: [purged, bytes_freed]
+      properties:
+        purged:
+          type: string
+          description: The purged version's citation.
+        bytes_freed:
+          type: boolean
+        note:
+          type: string
+    PromoteIn:
+      type: object
+      required: [collection]
+      properties:
+        collection:
+          type: string
+        name:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+        stamp_json_pointer:
+          type: string
+          nullable: true
+    Verification:
+      type: object
+      required: [ok, exists, reason]
+      properties:
+        ok:
+          type: boolean
+        exists:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+        citation:
+          type: string
+        sha256:
+          type: string
+        created:
+          type: string
+          format: date-time
+        deleted:
+          type: boolean
+        purged:
+          type: boolean

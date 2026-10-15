@@ -177,7 +177,7 @@ def render_claim_svg(elements, meta, title=None):
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{w_total:.0f}" '
         f'height="{h_total:.0f}" viewBox="0 0 {w_total:.0f} {h_total:.0f}" '
         f'font-family="Helvetica, Arial, sans-serif">',
-        f'<rect width="100%" height="100%" fill="#ffffff"/>',
+        '<rect width="100%" height="100%" fill="#ffffff"/>',
     ]
     if title:
         out.append(f'<title>{html.escape(str(title))}</title>')

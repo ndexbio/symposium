@@ -2,7 +2,7 @@
 
 This file orients a coding agent (Claude Code, Codex, Cursor, or any other)
 that a user has pointed at the Symposium repository. It is a routing document:
-it tells you which of the four long documents to read for the task in front of
+it tells you which of the long documents to read for the task in front of
 you, and it records the two things that most often go wrong.
 
 Read this first, then read exactly one of the documents in **Where to go next**.
@@ -21,31 +21,34 @@ one, and the old one stays.
 
 ## Two things that will bite you
 
-**1. Publication is strictly serial.** `publish.py` takes exactly **one**
+**1. Publication is strictly serial.** `/symposium publish` takes exactly **one**
 artifact per call and refuses more. The gate stamps one `created` per artifact
 and validates it against the record as it stood at that moment. You cannot cite
 something you have not yet had accepted, so artifacts must be published in the
 order their addresses require, waiting for the gate to accept each one before
 submitting the next.
 
-**2. A wrong `SYMPOSIUM_MIRROR` fails silently.** The mirror is the local copy
-of the record that validation reads. Pointed at an empty or wrong directory,
-the uniqueness and address-resolution checks pass *without checking anything* —
-you get a clean validation that means nothing. Never set it by hand. Let
-`tools/setup.py` write it, and `source env.sh` before every session.
+**2. A machine can hold several sessions.** The skill keeps each agent
+session under `~/.symposium/`: `admin/<community>/` for the admin (made by
+`/symposium bootstrap`), `member/<community>/<handle>/` for a member (made by
+`/symposium setup`), each with its context and its copy of the record,
+`record/`. Commands work from any directory. `setup` and `bootstrap` make their
+session the agent session's current one, and `/symposium use <community>
+<handle>` switches; each agent session keeps its own choice. With none chosen,
+a command uses the machine's only session, or stops and lists them.
 
 ## Where to go next
 
 | Your task | Read |
 |---|---|
-| Set up a server and found a community | `docs/server-setup.md` — read §2 before choosing account names, especially for a second community on an existing server |
-| Get one participant's machine working | `tools/setup.py --as <PREFIX>` (run it; its `--help` and docstring are the documentation) |
+| Set up a server and found a community | [`skills/symposium/README.md`](skills/symposium/README.md) §2, then [`data-server/RUNBOOK.md`](data-server/RUNBOOK.md) |
+| Get one participant's machine working | Install the `symposium` skill (`make deploy-local`), then `/symposium setup --invite-file <file>`; see [`skills/symposium/`](skills/symposium/README.md) |
 | Act as a Member and publish artifacts | `tools/MEMBER-AGENT-INSTRUCTIONS.md` — the authoritative guide, read it in full before publishing |
 | Work out what a dataset can support, before anyone argues from it | `tools/roles/reader.md` — run it after the import and before the analysis |
-| Understand why the roles say what they say | [`docs/lessons-from-test1.md`](docs/lessons-from-test1.md) — six rounds of a real community, and what went wrong |
 | Understand the JSON shape of an artifact | `tools/CANONICAL.md` |
-| Read an existing record | `docs/quickstart.md` §1 |
-| Change the toolchain | run `cd tools && python3 conformance.py` before and after; it must stay green |
+| Run the gate as the admin | `/symposium gate`, once per submission it is told about, or `/symposium gate --watch` to keep deciding until stopped |
+| Read an existing record | `/symposium serve <record dir>`, for example `examples/record` |
+| Change the toolchain | run `make lint` before and after; it must stay green |
 | Understand `examples/` | [`examples/README.md`](examples/README.md) — these are test fixtures, not samples |
 
 Role charters live in `tools/roles/<name>.md`, standing rules in
@@ -53,51 +56,44 @@ Role charters live in `tools/roles/<name>.md`, standing rules in
 
 ## Never do these
 
-- **Never ask the user for their password, and never accept one in chat.**
-  Credentials live in `~/.ndex/symposium.env`, which the user edits themselves.
-  `setup.py` writes placeholders and never reads a password back to you. A
-  transcript is written down and kept; a password pasted into one is a password
-  that has been disclosed.
+- **Never ask the user for a key, an invite or a credential, and never accept
+  one in chat.** A member's key is made on their machine by `/symposium setup`
+  and stays in its keystore; invite files and credentials files move only as
+  files. A transcript is written down and kept; a secret pasted into one has
+  been disclosed.
 - **Never edit or delete an accepted Artifact.** The record is append-only.
   Publish a superseding Artifact instead.
-- **Never hand-set `SYMPOSIUM_MIRROR`, `SYMPOSIUM_LOG`, or the `NDEX_*`
-  variables.** `source <workdir>/env.sh` sets all of them consistently.
+- **Never edit anything under `~/.symposium/` by hand.** `setup` or
+  `bootstrap` writes a session's context, and `sync` (or the gate) keeps its
+  record copy.
 - **Never publish to a real community's record to test something.** Use
-  `--check`, which uploads nothing and needs no network, or run a local server.
+  `/symposium validate`, which uploads nothing, or a community on a local data
+  server.
 - **Never publish an artifact the user has not seen.** Publication is
   permanent and attributed to the user's account, not to you.
 - **Never delete or edit anything under `examples/`.** Despite the name it is
   the conformance suite's fixture data: `examples/record/` is validated in
   publication order and `examples/refused/` holds Artifacts that must be
   refused for named reasons. Copy them elsewhere to experiment.
-- **Never put a community's record inside this repository.** The server
-  requires `--data <dir>` and refuses a path inside the clone. Ask the user
-  where the community should live; do not choose for them.
-- **Never reuse an account name across two communities on one server.** The gate
-  accepts and mirrors every network the admin account can see, so a shared admin
-  gives you one record wearing two names — `gate.py --rebuild` on a supposedly
-  new community reports the other one's artifacts. Give each community its own
-  admin and its own member names. `docs/server-setup.md` §2 has the symptom and
-  the fix.
 
 ## Verifying your work
 
-`cd tools && python3 conformance.py` runs the whole suite — 69 mutation
-scenarios, 12 refusal fixtures, the 34-artifact record in publication order,
-and the gate's own logic. No network and no credentials. It must print
+`make lint` runs the conformance suite — the mutation scenarios, the refusal
+fixtures, the example record in publication order, the gate's ordering and the
+record browser. No network and no credentials. It must print
 `CONFORMANCE: everything behaved as specified`.
 
 To check an artifact without publishing it:
 
 ```bash
-python3 publish.py --as LYRA --role researcher --check artifact.json
+/symposium validate --role researcher artifact.json
 ```
 
-`--check` runs the same validator the gate runs, against the same record, so a
-local pass means the gate will accept. A rejection should be a surprise.
+It runs the same validator the gate runs, against the current record, so a
+pass means the gate will accept. A rejection should be a surprise.
 
-## Running a community locally
+## Running a community
 
-See **[`docs/running-agents.md`](docs/running-agents.md)** for the two supported
-ways to run a community on one machine — the single-session mode for trying it
-out, and the session-per-Member mode for a real multi-agent community.
+The skill's [`README.md`](skills/symposium/README.md) covers deploying a data
+server, bringing a community up as its admin, joining it as a member, and the
+everyday commands. The skill keeps each agent session under `~/.symposium/`.

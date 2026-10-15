@@ -1,33 +1,27 @@
 {
   "_comment": [
-    "The community's roster: who has an account on the record server. Copy this to",
-    "community.json and edit. Names only — no passwords appear in this file, and none",
-    "should ever be added to it. bootstrap.py generates a strong password for each",
-    "account, sends it to the server once, and writes it to ~/.ndex/symposium.env with",
-    "owner-only permissions. Nothing secret lives in the repository, and nobody has to",
-    "type or paste a password anywhere.",
+    "A community on a Symposium Data server. Copy this to community.json, edit it, and run",
+    "`/symposium bootstrap --community-file community.json` as the server's admin.",
     "",
-    "JSON rather than TOML because this toolchain is standard-library-only on Python",
-    "3.9, where tomllib does not exist. A hand-rolled parser for a config format is a",
-    "new way to be silently wrong about who is in a community.",
+    "community: the community's name, 1-20 letters, digits or underscores. It is unique on",
+    "  its server, ignoring case, and 'status', 'communities' and 'admin' are reserved.",
+    "handles: the members, one handle each. Bootstrap adds them to the roster and writes one",
+    "  invite file per member, `<community>-<handle>.invite`, to hand over out of band. Adding",
+    "  a member later: add the handle here and run bootstrap again. It only adds; nobody is",
+    "  ever removed by it. The server admin's own handle can never be a member.",
+    "data-server-url: the data server the community lives on. One server hosts many",
+    "  communities, and every community inherits its server's admin: there is no admin field.",
     "",
-    "The admin account runs the gate. It is the only account that can accept an",
-    "Artifact into the record, and every member grants it READ on a submission as the",
-    "act of submitting. Members are the accounts that publish. A Member is a person, a",
-    "laboratory, or an agent — the specification does not say which, and neither does",
-    "this file.",
-    "",
-    "Adding a member later: add the name here and run bootstrap.py again. It is",
-    "idempotent, it will not touch the accounts that already exist, and the gate needs",
-    "`gate.py --grant <member>` afterwards so the new account can read what was",
-    "accepted before it arrived."
+    "Names only: nothing secret ever belongs in this file."
   ],
 
-  "admin": "ndex-admin",
+  "community": "demo",
 
-  "members": [
+  "handles": [
     "agent_lyra",
     "agent_vega",
     "agent_rigel"
-  ]
+  ],
+
+  "data-server-url": "http://127.0.0.1:8790"
 }

@@ -27,6 +27,18 @@ it stops.
 A pass also lists the gate's replies addressed to you (a rejected submission): they are never
 part of the record.
 
+And it lists each Message in the record whose `recipients` include you, one line apiece:
+
+  message for you from @planner: Kickoff: the plan is in the record (@planner_scout_kickoff_v1)
+
+Each is listed once, by the first command that lists it: `sync`, and also `publish` (so
+`validate`), which prints the same lines straight after the pass it runs first, and `setup`,
+which returns them in its JSON as `messages_for_you`. A member agent asked only to join and
+publish runs nothing but `setup` and `publish`; when those two synced without listing, a
+Message waiting for it reached its copy of the record and was never shown to it. The gate's
+pass is the one that lists nothing: it applies a Message and leaves it for the member's next
+listing. `.sync_state.json` keeps the names already listed, so a restart lists nothing twice.
+
 Writes `manifest.json` into the copy: a build counter plus the dirty set, recording what
 changed on each pass.
 
@@ -56,8 +68,34 @@ from validate import parse_address, passed, validate
 
 POLL = int(os.environ.get("SYMPOSIUM_POLL", "30"))
 # the record feed's cursor, the accepted artifacts still waiting for a dependency, the replies
-# already listed, and the build counter
+# and the Messages already listed, and the build counter
 STATE = ".sync_state.json"
+
+
+def messages_for(record, handle):
+    """Messages in `record` whose `recipients` include `handle`, oldest first. A Message the
+    member published themselves is left out: nobody needs telling about their own."""
+    if not handle:
+        return []
+    out = []
+    for doc in record:
+        h = doc.get("artifact") or {}
+        if h.get("type") != "Message":
+            continue
+        if str(h.get("published_by") or "").lstrip("@") == handle:
+            continue
+        recipients = h.get("recipients") or []
+        if isinstance(recipients, str):
+            recipients = [recipients]
+        if any(str(r).lstrip("@") == handle for r in recipients):
+            out.append(h)
+    out.sort(key=lambda h: h.get("created") or "")
+    return out
+
+
+def message_line(m):
+    """The one line that lists a Message to this member, wherever it is listed."""
+    return f"message for you from {m['from']}: {m['title']} (@{m['name']})"
 
 
 def outbound(canonical):
@@ -87,20 +125,49 @@ def _root(addr):
 
 class Sync:
     def __init__(self, data: SymposiumData | None = None, mirror: Mirror | None = None,
-                 quiet: bool = False):
+                 quiet: bool = False, lists_messages: bool | None = None):
         self.data = data or SymposiumData()
         self.mirror = mirror or Mirror()
         self.quiet = quiet
+        # Whether the caller shows this member its Messages: a printing pass does, and so do
+        # `publish` and `setup`, quiet about everything else, which list the pass's `messages`
+        # themselves. Only what is listed is marked; the gate's pass lists nothing.
+        self.lists_messages = (not quiet) if lists_messages is None else lists_messages
         self.members = set()  # fetched live on every pass
+        self.handle = None  # this session's own handle, read once from its context
 
     def say(self, line):
         if not self.quiet:
             print(line)
 
     def load_state(self):
-        return self.mirror.read_state(
-            STATE, {"since": 0, "pending": [], "replies": [], "build": 0}
+        state = self.mirror.read_state(
+            STATE, {"since": 0, "pending": [], "replies": [], "messages": [], "build": 0}
         )
+        state.setdefault("messages", [])  # a state file written before Messages were listed
+        return state
+
+    def me(self):
+        """This session's handle, from its context (local; the server is not contacted)."""
+        if self.handle is None:
+            try:
+                self.handle = str(self.data.context().get("handle") or "").lstrip("@")
+            except DataError:
+                self.handle = ""
+        return self.handle
+
+    def messages(self, record, state):
+        """Messages to this member not yet listed. -> [{name, from, title, created}].
+
+        Marked as listed only by a pass whose caller lists them. Any other pass (the gate's)
+        returns them in its result and leaves them for the next one that lists."""
+        shown = set(state["messages"])
+        new = [h for h in messages_for(record, self.me()) if h.get("name") not in shown]
+        if self.lists_messages:
+            state["messages"].extend(h["name"] for h in new)
+        return [{"name": h["name"], "from": h.get("published_by") or "?",
+                 "title": h.get("title") or "(untitled)", "created": h.get("created")}
+                for h in new]
 
     def fetch(self, state):
         """-> (list of {citation, canonical} to apply, reachable, why).
@@ -190,8 +257,8 @@ class Sync:
         })
 
     def once(self, state):
-        """One pass. -> {added, deferred, replies, artifacts}, or None when the server could
-        not be reached (the copy is then unchanged and may be stale)."""
+        """One pass. -> {added, deferred, replies, messages, artifacts}, or None when the
+        server could not be reached (the copy is then unchanged and may be stale)."""
         found, reachable, why = self.fetch(state)
         if not reachable:
             held = len(self.mirror.load())
@@ -208,17 +275,23 @@ class Sync:
         replies = self.replies(state)
         for name, about in replies:
             self.say(f"  reply from the gate: {name} (re {about}) — not part of the record")
-        total = len(self.mirror.load())
+        held = self.mirror.load()
+        total = len(held)
         if added:
             self.write_manifest(state, added, dirty, total)
             self.say(f"  +{len(added)}: {', '.join(added)}")
             self.say(f"  build {state['build']}, {total} artifact(s), "
                      f"{len(dirty | {'index'})} page(s) dirty")
+        # last, so the lines that ask something of this member are the ones left on screen
+        messages = self.messages(held, state)
+        for m in messages:
+            self.say(f"  {message_line(m)}")
         self.mirror.write_state(STATE, state)
         return {
             "added": added,
             "deferred": [name for name, _ in deferred],
             "replies": [name for name, _ in replies],
+            "messages": messages,
             "artifacts": total,
         }
 

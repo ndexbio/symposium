@@ -251,10 +251,11 @@ def plain_run(md, least=40):
 def case_f_argument_is_readable(dists):
     """Every Argument's prose has a page that scrolls, carrying all of it.
 
-    The claim map puts prose in a fixed 96-pixel strip beside the graph; on this record's
+    The claim map once put prose in a fixed 96-pixel strip beside the graph; on this record's
     one Argument that was 95 pixels of 26,019, so the verdict, purpose and rationale an
     author is required to write were four tenths of one per cent visible. A reader must be
-    able to reach all of it without scrolling a letterbox."""
+    able to reach all of it without scrolling a letterbox. (The claim map now shows the
+    verdict whole, case M; the reading page is still where all of it reads in one place.)"""
     bad = []
     for rec, dist in dists.items():
         for fn in sorted(rec.glob("*.json")):
@@ -494,6 +495,98 @@ def case_k_annotations_are_not_artifacts(dists):
     return (not bad, "a caption is drawn, uncounted, unlinked and uncitable", bad)
 
 
+def _storage_unwrapped(page_text):
+    """Lines of a page's script that touch localStorage outside a try. Storage throws outright
+    in some privacy modes, and a page that cannot remember a preference must still work."""
+    code = (ln.strip() for ln in page_text.splitlines())
+    return [ln for ln in code
+            if "localStorage." in ln and "try" not in ln and not ln.startswith(("//", "/*", "*"))]
+
+
+def case_l_overview_hides_context_links_by_default(dists):
+    """The overview starts with `cites` and Messages hidden, and says how it lays the record out.
+
+    At 74 artifacts, 323 of c037_2's 404 derived edges were prose citations: context, not
+    evidence, and drawn by default they buried the 81 edges that carry the evidential
+    structure. With them hidden, c037_2's 22 Messages, whose 96 edges were all `cites`, were a
+    third of the nodes and connected to nothing, so they start hidden too. The defaults live in
+    the build (meta.default_hidden_rels, meta.default_hidden_types) so this test and the page
+    read one value. The caption once said columns ran in publication order while the code laid
+    them out by citation depth; a reader was told how to read a picture it was not.
+    """
+    want = {"default_hidden_rels": ["cites"], "default_hidden_types": ["Message"]}
+    bad, checked = [], 0
+    for rec, dist in dists.items():
+        elements, meta = _overview_of(rec)
+        page = (pathlib.Path(dist) / "index.html").read_text(encoding="utf-8")
+        checked += 1
+        data = json.loads(re.search(
+            r'<script id="graph-data" type="application/json">(.*?)</script>', page, re.S).group(1))
+        for key, value in want.items():
+            if meta.get(key) != value:
+                bad.append(f"{rec.name}: {key} is {meta.get(key)!r}, want {value!r}")
+            if data["meta"].get(key) != value:
+                bad.append(f"{rec.name}: the compiled page does not carry {key}")
+            if f"DATA.meta.{key}" not in page:
+                bad.append(f"{rec.name}: the page never reads the {key} it carries")
+        for kind in ("mem", "type", "rel"):
+            if f"chip('{kind}'" not in page:
+                bad.append(f"{rec.name}: no legend toggle for {kind}")
+        if 'data-ctx="show"' not in page or "DEFAULTS.forEach" not in page:
+            bad.append(f"{rec.name}: no one-click restore for what starts hidden")
+        header = re.search(r'<div class="sub">(.*?)</div>', page, re.S).group(1)
+        if "citation depth" not in header or "publication order" in header:
+            bad.append(f"{rec.name}: the caption does not describe the citation-depth layout")
+        if "Messages" not in header:
+            bad.append(f"{rec.name}: the caption does not say Messages start hidden")
+        bad += [f"{rec.name}: unwrapped storage access: {ln[:80]}"
+                for ln in _storage_unwrapped(page)]
+    return (not bad, f"{checked} overview(s) start with cites and Messages hidden and describe "
+            "their layout", bad)
+
+
+_CAPPED = re.compile(r"max-height|overflow(-y)?\s*:\s*(auto|hidden|scroll)")
+
+
+def case_m_verdict_is_never_height_capped(dists):
+    """On an Argument's claim map, the whole verdict is shown, outside any height-capped box.
+
+    The verdict, purpose and rationale once shared a 96px strip that scrolled; on c037_2's
+    R1'' that showed about two lines of the verdict, the one thing a reader opens the page
+    for. The verdict must sit in no box whose height is capped, purpose and rationale in
+    sections a reader opens, and one control must expand the pane to its full height.
+
+    Checked by reading the compiled page: the rules for the verdict's own box and each box
+    around it (#intro, #verdictpanel, .vtext) must set no max-height and no scrolling overflow.
+    """
+    bad, checked = [], 0
+    for rec, dist in dists.items():
+        for a in browse.load_record(str(rec)):
+            h = a["artifact"]
+            if h["type"] != browse.ARGUMENT or not (h.get("verdict") or "").strip():
+                continue
+            page = (pathlib.Path(dist) / browse.page_name(h["name"])).read_text(encoding="utf-8")
+            checked += 1
+            verdict = html.escape(h["verdict"].strip())
+            if f'<div class="vtext">{verdict}</div>' not in page:
+                bad.append(f"{h['name']}: the verdict is not shown whole in the verdict pane")
+            css = re.sub(r"/\*.*?\*/", "", re.search(r"<style>(.*?)</style>", page, re.S).group(1),
+                         flags=re.S)
+            for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+                subjects = {part.strip().split()[-1] for part in sel.split(",") if part.strip()}
+                if subjects & {"#intro", "#verdictpanel", ".vtext"} and _CAPPED.search(body):
+                    bad.append(f"{h['name']}: '{sel.strip()}' caps the box the verdict is in")
+            for key, label in (("purpose", "Purpose and stakes"), ("rationale", "Rationale")):
+                if (h.get(key) or "").strip() and \
+                        f'<details class="vsec"><summary>{label}</summary>' not in page:
+                    bad.append(f"{h['name']}: {key} is not in a section a reader opens")
+            if 'id="btn-intro"' not in page or 'aria-expanded="false"' not in page:
+                bad.append(f"{h['name']}: no Expand control for the verdict pane")
+            bad += [f"{h['name']}: unwrapped storage access: {ln[:80]}"
+                    for ln in _storage_unwrapped(page)]
+    return (not bad, f"{checked} Argument page(s) show the whole verdict, uncapped", bad)
+
+
 CASES = [
     ("every Ground lands on the content it names", case_a_grounds_land),
     ("an Argument's prose is readable, not letterboxed", case_f_argument_is_readable),
@@ -506,6 +599,8 @@ CASES = [
     ("an Argument page restores moved nodes on load", case_i_claim_positions_restore_on_load),
     ("an Artifact's own Objects and relationships are shown", case_j_internal_structure_is_shown),
     ("a presenter caption is not mistaken for an artifact", case_k_annotations_are_not_artifacts),
+    ("the overview starts with context links and Messages hidden", case_l_overview_hides_context_links_by_default),
+    ("an Argument's verdict is never height-capped", case_m_verdict_is_never_height_capped),
 ]
 
 

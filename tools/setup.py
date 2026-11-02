@@ -9,7 +9,9 @@ one. Setup:
   1. sets this directory's context from the invite file (`symposium-data context set`);
   2. makes your key on this machine and registers it with the invite (`symposium-data owner
      register`). Your private key never leaves this machine, and the invite works once;
-  3. syncs: `./record`, beside the context, becomes your copy of the community's record.
+  3. syncs: `./record`, beside the context, becomes your copy of the community's record. The
+     Messages already in it addressed to you are in `messages_for_you`, one line each, as
+     `sync` lists them; a new member's peers have often written before it joins.
 
 It is idempotent: run again with the same invite, it reports that you are already registered
 with this machine's key and changes nothing. Run it in another directory with another invite
@@ -29,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from data_io import DataError, SymposiumData  # noqa: E402
-from sync import Sync  # noqa: E402
+from sync import Sync, message_line  # noqa: E402
 
 
 class Setup:
@@ -39,7 +41,7 @@ class Setup:
     def run(self, invite_file: str) -> dict:
         context = self.data.run("context", "set", "--invite-file", invite_file)["context"]
         registered = self.data.run("owner", "register")
-        sync = Sync(self.data, quiet=True)
+        sync = Sync(self.data, quiet=True, lists_messages=True)
         synced = sync.once(sync.load_state())
         if synced is None:
             raise DataError({"error": "registered, but the record could not be synced: run "
@@ -51,6 +53,7 @@ class Setup:
             "registered": registered["registered"],
             "fingerprint": registered["fingerprint"],
             "record": {"artifacts": synced["artifacts"], "replies": synced["replies"]},
+            "messages_for_you": [message_line(m) for m in synced["messages"]],
         }
 
 

@@ -180,6 +180,49 @@ def test_sync_lists_a_reply_only_to_its_recipient(suite, admin_dir, cli):
     assert code == 0 and "reply from the gate" not in out
 
 
+def message(directory: Path, handle: str, topic: str, recipients: list) -> Path:
+    """A small, valid Message from `handle` to `recipients` (Member addresses)."""
+    name = f"{handle}_msg_{topic}_v1"
+    path = directory / f"{name}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "artifact": {
+                    "name": name,
+                    "type": "Message",
+                    "specification_version": "1.0",
+                    "published_by": f"@{handle}",
+                    "created": None,
+                    "title": f"About {topic}",
+                    "recipients": recipients,
+                    "text": f"A short Message about {topic}, for the workflow tests.",
+                },
+                "objects": [],
+                "relationships": [],
+            }
+        )
+    )
+    return path
+
+
+def test_sync_lists_a_message_only_to_its_recipient_and_once(suite, admin_dir, cli):
+    lyra = enroll(cli, admin_dir, "lyra")
+    vega = enroll(cli, admin_dir, "vega")
+    nova = enroll(cli, admin_dir, "nova")
+    sent = message(lyra, "lyra", "kickoff", ["@vega"])
+    assert tool(suite, lyra, "publish.py", sent)[0] == 0
+    accept(cli, admin_dir, submissions(cli, admin_dir)[0])
+
+    code, out = tool(suite, vega, "sync.py")
+    assert code == 0, out
+    assert "message for you from @lyra: About kickoff (@lyra_msg_kickoff_v1)" in out
+    code, out = tool(suite, vega, "sync.py")
+    assert code == 0 and "message for you" not in out  # listed once
+    for other in (nova, lyra):  # not a recipient; the sender
+        code, out = tool(suite, other, "sync.py")
+        assert code == 0 and "message for you" not in out, out
+
+
 def test_sync_reports_an_unreachable_server_and_keeps_the_copy(suite, admin_dir, cli):
     lyra = enroll(cli, admin_dir, "lyra")
     assert tool(suite, lyra, "sync.py")[0] == 0
@@ -207,6 +250,43 @@ def test_setup_syncs_the_record_after_registering(suite, admin_dir, cli, skill):
         suite.home / ".symposium" / "member" / "demo" / "vega"
     )  # the session setup made
     assert (vega / "record" / "lyra_note_seed_v1.json").exists()
+
+
+def send(suite, cli, admin_dir: Path, member: Path, artifact: Path):
+    """Publish `artifact` from `member` and accept it, picking its submission by name: the
+    inbox keeps every submission, so the first one is not always this one."""
+    assert tool(suite, member, "publish.py", artifact)[0] == 0
+    name = json.loads(artifact.read_text())["artifact"]["name"]
+    mine = [s for s in submissions(cli, admin_dir) if s["name"].split("@")[0] == name]
+    accept(cli, admin_dir, mine[-1])
+
+
+def test_setup_and_publish_list_a_message_waiting_for_you(suite, admin_dir, cli, skill):
+    # A member agent asked only to join and publish runs `setup` and `publish`, never `sync`.
+    # Both sync first; a Message to the member that those passes bring in must be listed there,
+    # once, or the member is never told it is waiting (the F9 scenario: 2 of 5 fresh agents).
+    lyra = enroll(cli, admin_dir, "lyra")
+    cli.ok(admin_dir, "roster", "add", "--handle", "vega")
+    invite = admin_dir / "vega.invite"
+    cli.ok(admin_dir, "invite", "--handle", "vega", "--out", invite)
+    send(suite, cli, admin_dir, lyra, message(lyra, "lyra", "welcome", ["@vega"]))
+
+    joined = skill.ok(admin_dir, "setup", "--invite-file", invite)
+    assert joined["messages_for_you"] == [
+        "message for you from @lyra: About welcome (@lyra_msg_welcome_v1)"
+    ]
+    vega = suite.home / ".symposium" / "member" / "demo" / "vega"
+
+    send(suite, cli, admin_dir, lyra, message(lyra, "lyra", "handoff", ["@vega"]))
+    code, out = tool(suite, vega, "publish.py", "--check", note(vega, "vega", "intro"))
+    assert code == 0, out
+    listed = [line.strip() for line in out.splitlines() if "message for you" in line]
+    assert listed == [
+        "message for you from @lyra: About handoff (@lyra_msg_handoff_v1)"
+    ], out
+
+    code, out = tool(suite, vega, "sync.py")  # each was listed once, where it arrived
+    assert code == 0 and "message for you" not in out, out
 
 
 def test_an_address_to_a_member_who_has_not_published_resolves(suite, admin_dir, cli):

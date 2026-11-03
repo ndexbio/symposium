@@ -31,7 +31,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from data_io import RECORD_MARK, Mirror  # noqa: E402
-from sync import Sync, message_line  # noqa: E402
+from sync import Sync, list_messages, message_line  # noqa: E402
 
 V = "1.0"
 MEMBERS = {"ana", "res", "planner"}
@@ -267,6 +267,41 @@ def case_watcher_reloads_foreground_state(tmp):
     return not bad, "watcher and foreground passes share persisted listing state", bad
 
 
+def case_h_messages_lists_all_newest_first(tmp):
+    """`sync --messages` lists every Message to the member, newest first, the ones listed
+    before included, and marks `new` only those it is the first to list (R15)."""
+    data, root = FakeData("ana"), tmp / "h"
+    data.publish(message("planner_kickoff_v1", "planner", ["@ana"], "2026-01-01T00:00:01Z",
+                         "Kickoff"))
+    data.publish(message("ana_reply_v1", "ana", ["@planner"], "2026-01-01T00:00:02Z", "Reply"))
+    data.publish(message("res_to_planner_v1", "res", ["@planner"], "2026-01-01T00:00:03Z"))
+    run_pass(data, root)                                   # lists the kickoff
+    data.publish(message("planner_handoff_v1", "planner", ["@ana"], "2026-01-01T00:00:04Z",
+                         "Handoff"))
+
+    def listing():
+        sync = Sync(data, Mirror(root), lists_messages=True)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = list_messages(sync)
+        return code, [ln.strip() for ln in out.getvalue().splitlines() if "from @" in ln]
+
+    bad = []
+    code, first = listing()
+    want = [("new", "planner_handoff_v1"), ("", "planner_kickoff_v1")]
+    got = [("new" if ln.startswith("new") else "", ln.rsplit("(@", 1)[-1].rstrip(")"))
+           for ln in first]
+    if code != 0 or got != want:
+        bad.append(f"first listing {got} (exit {code}), want {want}")
+    _code, again = listing()
+    if any(ln.startswith("new") for ln in again) or len(again) != 2:
+        bad.append(f"second listing marked new or lost one: {again}")
+    _result, text = run_pass(data, root)
+    if listed(text):
+        bad.append(f"a plain sync after it listed again: {listed(text)}")
+    return not bad, "--messages lists all, newest first, new ones marked once", bad
+
+
 CASES = [
     ("a Message to you is listed once, and only to you", case_a_listed_once_and_only_to_its_recipient),
     ("what was listed survives a restart", case_b_survives_a_restart),
@@ -276,6 +311,7 @@ CASES = [
     ("publish and setup list the Messages their pass brings in", case_f_publish_and_setup_list_their_own),
     ("a Message's title, sender or name cannot add or rewrite a line", case_g_message_listing_collapses_whitespace),
     ("a watcher does not repeat a foreground pass's Message", case_watcher_reloads_foreground_state),
+    ("sync --messages lists them all, newest first, new ones marked", case_h_messages_lists_all_newest_first),
 ]
 
 

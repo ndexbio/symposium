@@ -93,7 +93,7 @@ def run_pass(data, root, quiet=False, lists_messages=None):
     sync = Sync(data, Mirror(root), quiet=quiet, lists_messages=lists_messages)
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
-        result = sync.once(sync.load_state())
+        result = sync.once()
     return result, out.getvalue()
 
 
@@ -212,6 +212,26 @@ def case_f_publish_and_setup_list_their_own(tmp):
     return not bad, "publish and setup list what their own pass brings in, once", bad
 
 
+def case_watcher_reloads_foreground_state(tmp):
+    """A watcher pass after a foreground pass sees the state the foreground pass persisted."""
+    data, root = FakeData("ana"), tmp / "watcher"
+    watcher = Sync(data, Mirror(root))
+    with contextlib.redirect_stdout(io.StringIO()):
+        watcher.once()
+    data.publish(message("planner_during_watch_v1", "planner", ["@ana"],
+                         "2026-01-01T00:00:01Z"))
+    foreground, _ = run_pass(data, root)
+    with contextlib.redirect_stdout(io.StringIO()):
+        next_watch = watcher.once()
+    bad = []
+    if [m["name"] for m in foreground["messages"]] != ["planner_during_watch_v1"]:
+        bad.append("the foreground pass did not list the new Message")
+    if next_watch["messages"]:
+        bad.append(f"the watcher listed the foreground pass's Message again: "
+                   f"{next_watch['messages']}")
+    return not bad, "watcher and foreground passes share persisted listing state", bad
+
+
 CASES = [
     ("a Message to you is listed once, and only to you", case_a_listed_once_and_only_to_its_recipient),
     ("what was listed survives a restart", case_b_survives_a_restart),
@@ -219,6 +239,7 @@ CASES = [
     ("your own Message is not listed back to you", case_d_own_message_not_listed),
     ("a copy synced before this lists its Messages once", case_e_old_state_lists_once),
     ("publish and setup list the Messages their pass brings in", case_f_publish_and_setup_list_their_own),
+    ("a watcher does not repeat a foreground pass's Message", case_watcher_reloads_foreground_state),
 ]
 
 

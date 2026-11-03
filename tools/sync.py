@@ -60,6 +60,7 @@ from data_io import (
     DataError,
     Mirror,
     SymposiumData,
+    file_lock,
     pause,
     stop_on_signals,
     take_over,
@@ -256,7 +257,12 @@ class Sync:
             "dirty": sorted(dirty | {"index"}),
         })
 
-    def once(self, state):
+    def once(self):
+        """Run one pass while sharing state atomically with other sync callers."""
+        with file_lock(self.mirror.root / ".sync.lock"):
+            return self._once(self.load_state())
+
+    def _once(self, state):
         """One pass. -> {added, deferred, replies, messages, artifacts}, or None when the
         server could not be reached (the copy is then unchanged and may be stale)."""
         found, reachable, why = self.fetch(state)
@@ -304,10 +310,9 @@ def main(argv):
         print(f"! {e}")
         return 1
     sync.mirror.root.mkdir(parents=True, exist_ok=True)
-    state = sync.load_state()
 
     if "--watch" not in argv:
-        result = sync.once(state)
+        result = sync.once()
         if result is None:
             return 1                       # unreachable: never report a stale copy as fine
         if not result["added"]:
@@ -321,7 +326,7 @@ def main(argv):
     try:
         while True:
             try:
-                if sync.once(state) is None:
+                if sync.once() is None:
                     misses += 1
                     if misses in (1, 5) or misses % 20 == 0:
                         print(f"  ({misses} consecutive failed poll(s) — the copy is not "

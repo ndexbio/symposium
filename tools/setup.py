@@ -42,7 +42,7 @@ class Setup:
         context = self.data.run("context", "set", "--invite-file", invite_file)["context"]
         registered = self.data.run("owner", "register")
         sync = Sync(self.data, quiet=True, lists_messages=True)
-        synced = sync.once(sync.load_state())
+        synced = sync.once()
         if synced is None:
             raise DataError({"error": "registered, but the record could not be synced: run "
                              "`/symposium sync` once the server answers"})

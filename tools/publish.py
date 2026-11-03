@@ -171,7 +171,7 @@ def main(argv):
     if role == "none":
         role = None
     sync = Sync(data, quiet=True, lists_messages=True)
-    synced = sync.once(sync.load_state())
+    synced = sync.once()
     if synced is None:
         print("! the data server could not be reached — nothing was checked and nothing was "
               "submitted.\n  Validation needs the current record and roster; try again once "

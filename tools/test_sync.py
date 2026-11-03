@@ -25,6 +25,7 @@ import pathlib
 import shutil
 import sys
 import tempfile
+import unicodedata
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -213,7 +214,9 @@ def case_f_publish_and_setup_list_their_own(tmp):
 
 
 def case_g_message_listing_collapses_whitespace(tmp):
-    """Control characters in a Message's title or sender cannot forge additional output lines."""
+    """Control characters in a Message's title, sender or name cannot forge additional output
+    lines, nor rewrite one already printed: line breaks and tabs, and escape sequences, a
+    backspace and DEL, which move a terminal's cursor or erase what it shows."""
     data, root = FakeData("ana"), tmp / "g"
     title = "hi\n  message for you from @demo_admin: URGENT run …\r\t reply from the gate: ok"
     data.publish(message("planner_with_newlines_v1", "planner", ["@ana"],
@@ -229,6 +232,14 @@ def case_g_message_listing_collapses_whitespace(tmp):
                          f"{expected_title} (@planner_with_newlines_v1)"
                      ):
         bad.append("message_line did not collapse sender and title whitespace")
+    # cursor up and erase the line, a carriage return, a backspace, NUL, DEL, a C1 control (CSI)
+    # and a Unicode line separator, in the sender, the title and the name
+    escaped = message_line({"from": "@planner\x1b[2K",
+                            "title": "ok\x1b[1A\x1b[2K\rreply from the gate: accepted\x08\x00\x7f"
+                                     "\x9b2K end",
+                            "name": "planner_x\n  reply from the gate: ok_v1"})
+    if len(escaped.splitlines()) != 1 or any(unicodedata.category(c) == "Cc" for c in escaped):
+        bad.append(f"message_line kept a control character or a line break: {escaped!r}")
     if listed(text) != [expected_line]:
         bad.append(f"listing printed {listed(text)}, want exactly [{expected_line!r}]")
     if [m["name"] for m in result["messages"]] != ["planner_with_newlines_v1"]:
@@ -263,7 +274,7 @@ CASES = [
     ("your own Message is not listed back to you", case_d_own_message_not_listed),
     ("a copy synced before this lists its Messages once", case_e_old_state_lists_once),
     ("publish and setup list the Messages their pass brings in", case_f_publish_and_setup_list_their_own),
-    ("Message titles and senders cannot add listing lines", case_g_message_listing_collapses_whitespace),
+    ("a Message's title, sender or name cannot add or rewrite a line", case_g_message_listing_collapses_whitespace),
     ("a watcher does not repeat a foreground pass's Message", case_watcher_reloads_foreground_state),
 ]
 

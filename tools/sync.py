@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import os
 import sys
+import unicodedata
 from datetime import datetime, timezone
 
 from data_io import (
@@ -94,11 +95,22 @@ def messages_for(record, handle):
     return out
 
 
+def one_line(text):
+    """Text a Member wrote, made fit to print inside one line of output: every control
+    character becomes a space, and every run of whitespace one space. A line break or a tab
+    would start a line of its own, and an escape sequence, a backspace or a DEL can move the
+    cursor or erase what a terminal already shows, so none of them reaches the output."""
+    text = "".join(" " if unicodedata.category(c) == "Cc" else c for c in str(text))
+    return " ".join(text.split())
+
+
 def message_line(m):
-    """The one line that lists a Message to this member, wherever it is listed."""
-    sender = " ".join(str(m["from"]).split())
-    title = " ".join(str(m["title"]).split())
-    return f"message for you from {sender}: {title} (@{m['name']})"
+    """The one line that lists a Message to this member, wherever it is listed. Its sender,
+    title and name are each what a Member wrote, and an agent is asked to relay this line,
+    so each is put on one line first: a title cannot add a line that seems to come from the
+    admin or the gate."""
+    return (f"message for you from {one_line(m['from'])}: {one_line(m['title'])} "
+            f"(@{one_line(m['name'])})")
 
 
 def outbound(canonical):

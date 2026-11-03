@@ -2301,6 +2301,10 @@ ARTIFACT_TEMPLATE = """<!doctype html>
   html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
                color:var(--ink); background:var(--bg); }}
   header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }}
+  /* The header is sticky, so a link to a place on this page (a Ground's row or cell, Cited by,
+     a mark's badge) would land under it. This keeps the target below a one-line header; the
+     page script below sizes it to the header as it stands. */
+  html {{ scroll-padding-top:68px; }}
   header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
   header .sub {{ font-size:12px; color:var(--muted); }}
   .uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
@@ -2390,6 +2394,19 @@ ARTIFACT_TEMPLATE = """<!doctype html>
 <script src="{cyto_src}"></script>
 <script src="vendor/cytoscape-svg.js"></script>
 <script>
+/* Keep link targets clear of the sticky header: size the scroll padding to the header, which
+   grows when a long title wraps, and re-place a target the page was opened at, since the
+   browser scrolled to it before this ran. */
+(function () {{
+  var header = document.querySelector('header'), root = document.documentElement;
+  function pad() {{ root.style.scrollPaddingTop = (header.offsetHeight + 12) + 'px'; }}
+  pad();
+  window.addEventListener('resize', pad);
+  var id = null;
+  try {{ id = decodeURIComponent(location.hash.slice(1)); }} catch (e) {{ /* malformed */ }}
+  var target = id && document.getElementById(id);
+  if (target) target.scrollIntoView();
+}})();
 /* Live reload while the record is growing. serve.py answers /__build with the current
    build number; a static host does not, and the fetch simply fails and stops. Nothing
    about the page depends on this — the compiled HTML is complete on its own. */

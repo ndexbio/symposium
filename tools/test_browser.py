@@ -862,6 +862,48 @@ def case_q_no_goals_no_rounds_page(dists):
     return (not bad, "only a record with a goal has a Rounds page", bad)
 
 
+_STICKY = re.compile(r"position\s*:\s*sticky")
+_PADDING = re.compile(r"scroll-padding-top\s*:\s*(\d+)px")
+HEADER_PX = 56  # an artifact page's header with a one-line title, measured at 1440px
+
+
+def _rules(page):
+    """A compiled page's CSS rules, as (set of selectors, body), comments removed."""
+    m = re.search(r"<style>(.*?)</style>", page, re.S)
+    css = re.sub(r"/\*.*?\*/", "", m.group(1) if m else "", flags=re.S)
+    return [({s.strip() for s in sel.split(",")}, body)
+            for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)]
+
+
+def case_r_link_targets_clear_the_sticky_header(dists):
+    """A link to a place on a page lands below the page's sticky header, not under it.
+
+    An artifact page's header is sticky. With no scroll padding, every in-page target (a
+    Ground's row or cell, Cited by, Serving this goal, a mark's badge) landed 56px up, under a
+    56px header, so a cited table row, about 27px tall, could not be seen at all.
+
+    Checked by reading each compiled page: where a rule makes the header sticky, the page must
+    pad its scroll by at least a one-line header in CSS, and its script must size the padding
+    to the header, which grows when a long title wraps.
+    """
+    bad, checked = [], 0
+    for rec, dist in dists.items():
+        for p in sorted(pathlib.Path(dist).glob("*.html")):
+            page = p.read_text(encoding="utf-8")
+            rules = _rules(page)
+            if not any("header" in sels and _STICKY.search(body) for sels, body in rules):
+                continue
+            checked += 1
+            pads = [int(v) for sels, body in rules if "html" in sels for v in _PADDING.findall(body)]
+            if not pads or max(pads) < HEADER_PX:
+                bad.append(f"{rec.name}/{p.name}: a sticky header, and no scroll padding for it")
+            if "scrollPaddingTop" not in page or "header.offsetHeight" not in page:
+                bad.append(f"{rec.name}/{p.name}: the scroll padding is not sized to the header")
+    if not checked:
+        bad.append("no compiled page has a sticky header, so nothing was checked")
+    return (not bad, f"{checked} page(s) with a sticky header keep link targets below it", bad)
+
+
 CASES = [
     ("every Ground lands on the content it names", case_a_grounds_land),
     ("an Argument's prose is readable, not letterboxed", case_f_argument_is_readable),
@@ -880,6 +922,7 @@ CASES = [
     ("cited content is marked and linked to its Ground", case_o_cited_content_is_marked),
     ("Rounds come from serves_goals addresses, not names", case_p_rounds_come_from_addresses),
     ("only a record with a goal has a Rounds page", case_q_no_goals_no_rounds_page),
+    ("a link target lands below the sticky header", case_r_link_targets_clear_the_sticky_header),
 ]
 
 

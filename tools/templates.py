@@ -1456,7 +1456,7 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   }}
   function chip(kind, val, swatch, text){{
     return '<span class="lg filter" role="button" tabindex="0" aria-pressed="true" data-kind="'+kind
-      +'" data-val="'+esc(val)+'" title="click, Enter or Space to show or hide">'+swatch+text+'</span>';
+      +'" data-val="'+esc(val).replace(/"/g,'&quot;')+'" title="click, Enter or Space to show or hide">'+swatch+text+'</span>';
   }}
   var legend=document.getElementById('legend');
   var html='<b>Members ('+Object.keys(mem).length+') — click to filter</b>';

@@ -96,7 +96,9 @@ def messages_for(record, handle):
 
 def message_line(m):
     """The one line that lists a Message to this member, wherever it is listed."""
-    return f"message for you from {m['from']}: {m['title']} (@{m['name']})"
+    sender = " ".join(str(m["from"]).split())
+    title = " ".join(str(m["title"]).split())
+    return f"message for you from {sender}: {title} (@{m['name']})"
 
 
 def outbound(canonical):

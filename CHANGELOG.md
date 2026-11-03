@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
+## [Symposium Skill 0.1.4] - Unreleased
+
+For Data Server 0.1.3.
+
+### Added
+
+- **Messages addressed to you are listed.** `sync` prints one line for each Message whose
+  `recipients` include the member, once: `message for you from @<sender>: <title> (@<name>)`.
+  `publish` and `validate` print the same lines after their sync, and `setup` returns them in
+  its JSON as `messages_for_you`. The gate's own sync lists none. The sender, title and name
+  are each put on one line, control characters removed, so a Message cannot print a line that
+  seems to come from the admin or the gate.
+- **Agents are told to report them.** `MEMBER-AGENT-INSTRUCTIONS.md` has a "Messages addressed
+  to you" section, and `SKILL.md` asks agents to report each Message and to run
+  `sync --watch` in long sessions.
+- **Filters on the record browser's overview.** Its legend entries for members, artifact
+  types and edge kinds show and hide them, by mouse or keyboard, and the choice is
+  remembered. Prose citations (`cites`) and Messages start hidden, with a notice under the
+  graph that says how many and brings them back.
+- **`serve` reports how long each build took.**
+
+### Changed
+
+- **A ResearchGoal is recognised.** `validate` and the gate no longer flag the profile's
+  `ResearchGoal` type as not defined by the specification. One that does not declare
+  `groundable: false` draws a REVIEW instead, so what the gate accepts is unchanged. Data
+  Server 0.1.2 still flags every ResearchGoal as not defined, in its submission checks and
+  findings; 0.1.3 runs the same rules as this skill.
+- **The claim map shows the whole verdict.** Purpose and rationale are sections the reader
+  opens, and an Expand control opens the whole pane.
+- **The overview's caption describes its citation-depth layout,** and its graph fills the
+  window below the header.
+
+### Fixed
+
+- **A reply is listed once when `sync --watch` runs beside other commands.** Sync passes now
+  run one at a time, each reading the session's saved state when it starts, so the watcher no
+  longer lists again what `publish`, `validate` or a foreground `sync` listed while it waited.
+
+## [Data Server 0.1.3] - Unreleased
+
+### Changed
+
+- **The rules recognise a ResearchGoal.** The server validates with the gate's rules
+  (`symposium_rules`): `POST /v1/{community}/submissions`, `POST
+  /v1/{community}/submissions/check` and an artifact's findings. A ResearchGoal, a type the
+  profile defines, no longer draws the STRUCT REVIEW "not defined by the specification". One
+  that does not declare `groundable: false` draws a STRUCT REVIEW saying it must. A REVIEW
+  refuses nothing, so what the server accepts is unchanged.
+
 ## [Symposium Skill 0.1.3] - 2026-10-14
 
 For Data Server 0.1.2.

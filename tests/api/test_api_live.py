@@ -1235,6 +1235,58 @@ def test_the_api_refuses_what_validate_refuses(world, suite, tmp_path):
     conforms("checkSubmission", checked)
 
 
+def goal(handle: str, topic: str, **extra) -> dict:
+    """A ResearchGoal, the type the profile defines (CANONICAL.md 2.1), with the
+    non-groundable `text_span` Content the profile asks for."""
+    content = {
+        "name": "text_span",
+        "type": "Content",
+        "groundable": False,
+        "addressing_method": '`#text_span.quote="<exact passage>"`',
+    }
+    header = head(
+        f"{handle}_goal_{topic}_v1",
+        "ResearchGoal",
+        handle,
+        title=f"What does {topic} show?",
+        text=f"Find out what {topic} shows, and stop when it is known.",
+        **extra,
+    )
+    return artifact(header, [content])
+
+
+def test_the_api_checks_a_research_goal_as_validate_does(world, suite, tmp_path):
+    """The server runs the gate's rules, so `POST /submissions/check` judges the profile's
+    ResearchGoal as `/symposium validate` does: one that declares `groundable: false` draws no
+    STRUCT finding, and one that does not draws the REVIEW saying it must. A REVIEW refuses
+    nothing, there as here. An image built before the profile's types were recognised flags
+    both as a type the specification does not define."""
+    api, lyra = world["api"], world["keys"]["lyra"]
+    member_dir = world["admin_dir"] / "lyra"
+    declared = goal("lyra", "declared", groundable=False)
+    undeclared = goal("lyra", "undeclared")
+    struct = {}
+    for doc in (declared, undeclared):
+        name = doc["artifact"]["name"]
+        checked = api.call("POST", "/demo/submissions/check", lyra, doc)
+        assert checked.status_code == 200 and checked.json()["ok"] is True, checked.text
+        conforms("checkSubmission", checked)
+        findings = checked.json()["findings"]
+        struct[name] = [
+            (f["level"], f["msg"]) for f in findings if f["check"] == "STRUCT"
+        ]
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(doc))
+        code, out = tool(suite, member_dir, "publish.py", "--check", path)
+        assert code == 0, out
+        local = re.findall(r"\[(\w+)\s+STRUCT\s*\] (.*)", out)
+        assert local == struct[name], (name, out, struct[name])
+
+    assert struct["lyra_goal_declared_v1"] == [], struct
+    [(level, msg)] = struct["lyra_goal_undeclared_v1"]
+    assert level == "REVIEW" and "must declare groundable: false" in msg, msg
+
+
 # ── collections decide: grants withdrawn, and felt at once ─────────────────────────────────
 def test_a_withdrawn_record_grant_is_felt_on_the_next_request_and_by_a_stream(
     world, cli

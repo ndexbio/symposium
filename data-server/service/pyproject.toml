@@ -1,6 +1,6 @@
 [project]
 name = "symposium-data"
-version = "0.1.2"
+version = "0.1.3"
 description = "Symposium Data: versioned file storage and sharing for Symposium communities"
 license = "MIT"
 requires-python = ">=3.11"

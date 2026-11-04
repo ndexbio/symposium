@@ -26,6 +26,8 @@ lifts the limit. A member with no --role publishes with no type limit.
 It syncs first, every time, `--check` included: validation is only as good as the record it
 sees, and a stale copy can miss a name collision or an address that has not landed yet. So the
 data server must be reachable; when it is not, nothing is checked and nothing is submitted.
+That pass's Messages addressed to you are listed first, one `message for you` line each, as
+`sync` lists them.
 
 Exit 0 = published (or --check passed). Exit 1 = nothing was uploaded.
 """
@@ -40,7 +42,7 @@ from pathlib import Path
 import telemetry
 from data_io import SUBMISSION_MARK, DataError, Mirror, SymposiumData
 from symposium_rules.checks import naming_refusal, payload_excess
-from sync import Sync
+from sync import Sync, message_line
 from validate import (
     EMBED_REFUSE,
     parse_instant,
@@ -168,12 +170,20 @@ def main(argv):
         role = "operator"
     if role == "none":
         role = None
-    sync = Sync(data, quiet=True)
-    if sync.once(sync.load_state()) is None:
+    sync = Sync(data, quiet=True, lists_messages=True)
+    synced = sync.once()
+    if synced is None:
         print("! the data server could not be reached — nothing was checked and nothing was "
               "submitted.\n  Validation needs the current record and roster; try again once "
               "it answers.")
         return 1
+    # Listed here, at once, and not only by `sync`: a member asked only to publish never runs
+    # sync, and this pass is the one that brings a Message into its copy of the record. Printed
+    # before anything can return, because the pass has already marked these as listed.
+    for m in synced["messages"]:
+        print(f"  {message_line(m)}")
+    if synced["messages"]:
+        print()
 
     arts = []
     for p in paths:

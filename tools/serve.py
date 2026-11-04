@@ -12,12 +12,14 @@ It runs until stopped, with no time limit of its own: run it in the background. 
 SIGTERM or (Windows) CTRL_BREAK stops it within a second, with exit code 0. A restart on the same port
 takes over from a `serve` still running there for this session, which it stops.
 
-Deliberately a full recompile on every change, with no incremental patching. A
-twenty-artifact record compiles in about 70 ms and the whole thing is linear, so at any
-size this event will reach, rebuilding everything is faster than deciding what not to
-rebuild — and it cannot drift from the record the way a partial update can. `sync.py`
-writes a build counter and a dirty set into `manifest.json`; those are useful as a
-signal that something changed, and are not used to decide what to recompile.
+Deliberately a full recompile on every change, with no incremental patching. Rebuilding
+everything cannot drift from the record the way a partial update can. Each build line says
+how long it took. A twenty-artifact record once compiled in about 70 ms; c037_2's 74
+artifacts take 3 to 5 s (2026-11-02, Apple M3, by machine load), nearly all of it in the
+overview's crossing-minimising layout (`browse._layout_overview`), whose score is quadratic
+in edges and is recomputed for every swap it tries. `sync.py` writes a build counter and a dirty set
+into `manifest.json`; those are useful as a signal that something changed, and are not used
+to decide what to recompile.
 
 Pages poll `/__build` and reload themselves when the number moves, so a browser left
 open on the overview keeps up with the day without anyone touching it.
@@ -59,14 +61,17 @@ def rebuild(record_dir, out_dir, title):
     """Compile, and never let a bad record take the server down — during an event the
     browser is how people find out something is wrong, so it has to survive it."""
     try:
+        started = time.perf_counter()
         manifest = browse.compile_record(record_dir, out_dir, title=title, quiet=True)
+        took = time.perf_counter() - started
         with _LOCK:
             STATE["build"] += 1
             STATE["error"] = None
             STATE["artifacts"] = manifest["artifacts"]
             STATE["at"] = time.strftime("%H:%M:%S")
         print(f"[{STATE['at']}] build {STATE['build']}: {manifest['artifacts']} artifacts, "
-              f"{manifest['arguments']} argument(s), {manifest['findings']} finding(s)")
+              f"{manifest['arguments']} argument(s), {manifest['findings']} finding(s), "
+              f"in {took:.2f}s")
     except Exception:
         with _LOCK:
             STATE["build"] += 1

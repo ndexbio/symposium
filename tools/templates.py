@@ -37,12 +37,15 @@ HTML_TEMPLATE = r"""<!doctype html>
   }}
   * {{ box-sizing: border-box; }}
   html, body {{ margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }}
-  header {{ padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }}
+  /* Header, verdict pane and claim map stack in one column. The pane takes the height its
+     content needs, and the claim map takes the rest, never less than 360px; past that the
+     page scrolls instead of the pane being cut short. */
+  body {{ display: flex; flex-direction: column; }}
+  header {{ flex: none; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }}
   header h1 {{ font-size: 15px; margin: 0 0 2px; font-weight: 650; }}
   header .sub {{ font-size: 12px; color: var(--muted); }}
   header .sub .genre {{ color: var(--ink); font-weight: 600; }}
-  #app {{ display: flex; height: calc(100% - 52px); }}
-  body.has-intro #app {{ height: calc(100% - 52px - var(--introh, 60px)); }}
+  #app {{ display: flex; flex: 1 1 0; min-height: 360px; }}
   #graphwrap {{ position: relative; flex: 1 1 62%; min-width: 0; }}
   /* White behind the graph, not the page grey: a dotted grey citation edge on a grey
      ground was very nearly invisible, and the edge that says 'this is a reference,
@@ -79,13 +82,29 @@ HTML_TEMPLATE = r"""<!doctype html>
   #verdictpanel {{ background: var(--panel); border: 1px solid var(--line);
     border-left: 4px solid var(--accent); border-radius: 6px;
     padding: 10px 14px; margin: 0 0 10px; }}
+  #verdictpanel .vhead {{ display: flex; align-items: center; gap: 12px; }}
   #verdictpanel .vlabel {{ font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
     color: var(--muted); font-weight: 700; }}
-  #verdictpanel .vtext {{ font-size: 14px; font-weight: 600; margin: 2px 0 6px; }}
+  #verdictpanel .vhead a {{ font-size: 12px; }}
+  #verdictpanel .vhead button {{ margin-left: auto; font-size: 12px; padding: 3px 10px; border: 1px solid var(--line);
+    background: #fff; border-radius: 6px; cursor: pointer; }}
+  #verdictpanel .vhead button:hover {{ background: #eef1f5; }}
+  #verdictpanel .vhead button:focus-visible, #verdictpanel summary:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
+  /* The verdict is never height-capped: it is the one thing a reader came for. */
+  #verdictpanel .vtext {{ font-size: 14px; font-weight: 600; line-height: 1.5; margin: 2px 0 6px; }}
+  #verdictpanel details.vsec {{ margin-top: 4px; }}
+  #verdictpanel summary {{ cursor: pointer; font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; padding: 2px 0; }}
+  /* An opened section scrolls within a third of the window, so opening one does not push the
+     claim map off the screen; Expand lifts that limit and shows the pane at full height. */
+  #verdictpanel .vbody {{ margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap;
+    max-height: 33vh; overflow-y: auto; }}
   #verdictpanel dl {{ margin: 0; }}
   #verdictpanel dt {{ font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
     color: var(--muted); font-weight: 700; margin-top: 6px; }}
   #verdictpanel dd {{ margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }}
+  #intro .intro-prose {{ max-height: 6em; overflow-y: auto; }}
+  body.intro-expanded #verdictpanel .vbody, body.intro-expanded #intro .intro-prose {{ max-height: none; overflow: visible; }}
   /* claim sections in the detail panel */
   #detail .section {{ margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }}
   #detail .section:first-of-type {{ border-top: none; margin-top: 6px; padding-top: 0; }}
@@ -128,8 +147,8 @@ HTML_TEMPLATE = r"""<!doctype html>
   /* The Argument's own framing prose. It carries the author's citations, and a
      citation is the one place nuance goes into prose rather than into vocabulary —
      so it has to be readable and its links have to work. */
-  #intro {{ padding:8px 16px; background:#fbfcfd; border-bottom:1px solid var(--line);
-            font-size:13px; line-height:1.5; max-height:96px; overflow-y:auto; }}
+  #intro {{ flex:none; padding:8px 16px; background:#fbfcfd; border-bottom:1px solid var(--line);
+            font-size:13px; line-height:1.5; }}
   #intro p {{ margin:0 0 6px; }} #intro p:last-child {{ margin-bottom:0; }}
   #intro a {{ color:var(--accent); }}
   #intro .cite-dead {{ border-bottom:1px dotted var(--muted); color:var(--muted); cursor:help; }}
@@ -942,6 +961,37 @@ HTML_TEMPLATE = r"""<!doctype html>
     // re-fit once the container has its final size (avoids an off-frame first paint)
     requestAnimationFrame(function () {{ cy.resize(); cy.fit(undefined, 30); deepLink(); }});
   }});
+
+  // ---- the verdict pane: Expand opens every section at full height ----
+  //
+  // The verdict is always shown whole; purpose and rationale start closed. Expand opens
+  // them all and lifts the height limit on an opened section, so the pane stands at its
+  // full height above the claim map, and Collapse returns it. The choice is one viewer's
+  // reading preference, remembered across Arguments in localStorage; every access is
+  // wrapped, because storage throws outright in some privacy modes.
+  (function () {{
+    var btn = document.getElementById('btn-intro');
+    function refit() {{ requestAnimationFrame(function () {{ cy.resize(); }}); }}
+    document.querySelectorAll('#intro details.vsec').forEach(function (d) {{
+      d.addEventListener('toggle', refit);
+    }});
+    if (!btn) {{ return; }}
+    var KEY = 'symposium:intro-expanded';
+    function setExpanded(open, remember) {{
+      document.body.classList.toggle('intro-expanded', open);
+      document.querySelectorAll('#intro details.vsec').forEach(function (d) {{ d.open = open; }});
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.textContent = open ? 'Collapse' : 'Expand';
+      if (remember) {{ try {{ localStorage.setItem(KEY, open ? '1' : '0'); }} catch (e) {{}} }}
+      refit();
+    }}
+    var saved = null;
+    try {{ saved = localStorage.getItem(KEY); }} catch (e) {{ saved = null; }}
+    setExpanded(saved === '1', false);
+    btn.addEventListener('click', function () {{
+      setExpanded(!document.body.classList.contains('intro-expanded'), true);
+    }});
+  }})();
   window.__cy = cy; // expose for headless/console verification
 }})();
 </script>
@@ -976,12 +1026,16 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
   * {{ box-sizing:border-box; }}
   html,body {{ margin:0; height:100%; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:var(--ink); background:var(--bg); }}
-  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  /* Header and graph stack in one column, the graph taking whatever height the header
+     leaves. A fixed allowance for the header put the graph's bottom edge, and anything
+     anchored there, below the window whenever the caption wrapped. */
+  body {{ display:flex; flex-direction:column; }}
+  header {{ flex:none; padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
   header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
   header .sub {{ font-size:12px; color:var(--muted); }}
   .uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
   .uplink:hover {{ text-decoration:underline; }}
-  #app {{ display:flex; height:calc(100% - 50px); }}
+  #app {{ display:flex; flex:1 1 0; min-height:360px; }}
   #graphwrap {{ position:relative; flex:1 1 66%; min-width:0; }}
   /* White behind the graph: a grey citation edge on the page grey is invisible. */
   #cy {{ position:absolute; inset:0; background:#ffffff; }}
@@ -992,6 +1046,15 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   .lg.filter {{ cursor:pointer; user-select:none; padding:2px 6px; border-radius:6px; }}
   .lg.filter.off {{ opacity:.35; text-decoration:line-through; }}
   .lg.filter:hover {{ background:#eef1f5; }}
+  .lg.filter:focus-visible {{ outline:2px solid var(--accent); outline-offset:1px; }}
+  /* Says how many links the current filter leaves out, with the one click that restores
+     them: hiding `cites` can hide the only link between two artifacts. */
+  .ctxnote {{ position:absolute; left:8px; bottom:8px; z-index:10; display:none; align-items:center; gap:8px;
+             max-width:calc(100% - 16px); font-size:12px; color:var(--ink); background:#fffbeb;
+             border:1px solid #fcd34d; border-radius:6px; padding:5px 9px; }}
+  .ctxnote.on {{ display:flex; }}
+  .ctxnote button {{ flex:none; white-space:nowrap; font-size:12px; padding:3px 9px; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; }}
+  .ctxnote button:hover {{ background:#eef1f5; }}
   .sw {{ width:12px; height:12px; border-radius:3px; display:inline-block; border:1px solid rgba(0,0,0,.15); }}
   .swl {{ width:20px; height:0; border-top-width:3px; border-top-style:solid; display:inline-block; }}
   #detail {{ flex:1; overflow:auto; padding:12px 14px; font-size:13px; }}
@@ -1015,10 +1078,11 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 <body>
 <header>
   <h1>Symposium community &middot; {corpus_title}</h1>
-  <div class="sub">{uplink}{exlink}Every artifact is a node (coloured by Member, shaped by type); every edge is a cross-artifact reference, derived from an <b>address</b> held in a property &mdash; a Ground's address, a provenance field, or a citation in prose. Columns run left&rarr;right in <b>publication order</b> (<b>earlier&nbsp;&larr;</b> left), so reference edges point <i>back</i> in time and the record is only ever built on what already existed. Rows group artifacts by type. Click an artifact for detail; open an <b>Argument</b> for its claim map, or any other artifact for the content a claim finally rests on.</div>
+  <div class="sub">{uplink}{exlink}Every artifact is a node (coloured by Member, shaped by type); every edge is a cross-artifact reference, derived from an <b>address</b> held in a property &mdash; a Ground's address, a provenance field, or a citation in prose. Columns run left&rarr;right by <b>citation depth</b>: each artifact stands right of everything it cites or rests on, so edges point <i>left</i>, to what already existed. Prose citations (<code>cites</code>) are context, not evidence, and start hidden, as do Messages, which link to what they discuss only in prose. Click an artifact for detail; open an <b>Argument</b> for its claim map, or any other artifact for the content a claim rests on.</div>
 </header>
 <div id="app">
   <div id="graphwrap">
+    <div id="ctxnote" class="ctxnote" role="status" aria-live="polite"></div>
     <div class="toolbar"><button id="btn-fit">Fit</button><button id="btn-export">Export PNG</button><button id="btn-export-svg" title="Vector, for print. Exports exactly what is on screen now, with hidden nodes left out.">Export SVG</button><button id="btn-hide">Hide node</button><button id="btn-showall">Show all</button><button id="btn-note" title="Place a caption on the graph. Captions are presenter annotations, not part of the record.">Add note</button><button id="btn-savepos" title="Download the current arrangement and captions as .browser_layout.json; drop it beside the record and it survives every rebuild">Save layout</button><button id="btn-resetpos" title="Return every node to its computed position">Reset layout</button><span id="postate" style="font-size:11px;color:var(--muted);align-self:center;user-select:none">alt-click a node to hide it &middot; drag to rearrange</span></div>
     <div id="cy"></div>
     <div id="tip" class="tip"></div>
@@ -1310,36 +1374,129 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   }};
   posState();
 
-  // ---- legend + member filter ----
+  // ---- legend: Member, artifact-type and edge-kind filters ----
+  //
+  // Each legend entry is a toggle. A node is hidden when its Member or its type is, and an
+  // edge when its kind is or when either end is hidden. `cites` (a citation in prose) starts
+  // hidden: it is context, not evidence, and at a few dozen artifacts it is most of the
+  // edges, burying the evidential structure the overview is for. Messages start hidden too:
+  // a Message links to what it discusses only in prose, so with `cites` hidden it would be a
+  // node connected to nothing. The defaults come from the build (meta.default_hidden_rels,
+  // meta.default_hidden_types), so the page and the tests read one value, and the notice
+  // under the graph says what they hide and restores it in one click.
+  //
+  // A viewer's choices are a reading preference, not part of the record, so they live in
+  // this browser's localStorage. Every access is wrapped: storage throws outright in some
+  // privacy modes, and the page must then still work, from the defaults.
   var mem=DATA.meta.members||{{}}, c=DATA.meta.counts;
-  var hidden={{}};
+  var FILTER_KEY='symposium:overview-filters:'+(document.title||'');
+  var hidden={{mem:{{}}, type:{{}}, rel:{{}}}};
+  (DATA.meta.default_hidden_rels||[]).forEach(function(r){{ hidden.rel[r]=true; }});
+  (DATA.meta.default_hidden_types||[]).forEach(function(t){{ hidden.type[t]=true; }});
+  function loadFilters(){{
+    var saved=null;
+    try {{ saved=JSON.parse(localStorage.getItem(FILTER_KEY)||'null'); }} catch (e) {{ saved=null; }}
+    if(!saved || typeof saved!=='object') return;
+    ['mem','type','rel'].forEach(function(k){{
+      var m=saved[k]; if(!m || typeof m!=='object') return;
+      Object.keys(m).forEach(function(v){{ hidden[k][v]=!!m[v]; }});
+    }});
+  }}
+  function saveFilters(){{
+    try {{ localStorage.setItem(FILTER_KEY, JSON.stringify(hidden)); }} catch (e) {{}}
+  }}
+  loadFilters();
+  var relCount={{}}; cy.edges().forEach(function(e){{ var r=e.data('rel'); relCount[r]=(relCount[r]||0)+1; }});
+  // what the defaults hide, present in this record, each with the reason it starts hidden
+  var DEFAULTS=[];
+  (DATA.meta.default_hidden_types||[]).forEach(function(t){{
+    var n=(c.by_type||{{}})[t]||0;
+    if(n) DEFAULTS.push({{kind:'type', val:t, n:n, one:t, many:t+'s',
+      why: t==='Message' ? 'a Message links to what it discusses only in prose' : ''}});
+  }});
+  (DATA.meta.default_hidden_rels||[]).forEach(function(r){{
+    var n=relCount[r]||0;
+    if(n) DEFAULTS.push({{kind:'rel', val:r, n:n,
+      one: r==='cites' ? 'context link' : r+' link', many: r==='cites' ? 'context links' : r+' links',
+      why: r==='cites' ? 'prose citations are context, not evidence' : ''}});
+  }});
+  function joined(parts){{
+    return parts.length<2 ? parts.join('') : parts.slice(0,-1).join(', ')+' and '+parts[parts.length-1];
+  }}
+  var ctxnote=document.getElementById('ctxnote');
+  function updateNote(){{
+    if(!DEFAULTS.length){{ ctxnote.className='ctxnote'; ctxnote.innerHTML=''; return; }}
+    ctxnote.className='ctxnote on';
+    var off=DEFAULTS.filter(function(d){{ return hidden[d.kind][d.val]; }});
+    var shown=off.length ? off : DEFAULTS;
+    var counts=joined(shown.map(function(d){{ return '<b>'+d.n+'</b> '+esc(d.n===1?d.one:d.many); }}));
+    var names=joined(shown.map(function(d){{ return esc(d.many); }}));
+    var why=shown.map(function(d){{ return d.why; }}).filter(Boolean);
+    ctxnote.innerHTML = off.length
+      ? '<span>'+counts+' hidden'+(why.length ? ' &mdash; '+esc(why.join('; '))+'.' : '.')+'</span>'
+        +'<button type="button" data-ctx="show">Show '+names+'</button>'
+      : '<span>'+counts+' shown.</span>'
+        +'<button type="button" data-ctx="hide">Hide '+names+'</button>';
+  }}
   function applyFilter(){{
-    cy.nodes().forEach(function(n){{ n.toggleClass('hidden', !!hidden[n.data('member')]); }});
+    cy.nodes().forEach(function(n){{
+      var nt=n.data('ntype');
+      if(nt==='Annotation' || nt==='TimeTick') return;      // never an artifact, never filtered
+      n.toggleClass('hidden', !!(hidden.mem[n.data('member')] || hidden.type[nt]));
+    }});
     cy.edges().forEach(function(e){{
-      e.toggleClass('hidden', e.source().hasClass('hidden')||e.target().hasClass('hidden')); }});
+      e.toggleClass('hidden', !!hidden.rel[e.data('rel')]
+        || e.source().hasClass('hidden') || e.target().hasClass('hidden')); }});
+    legend.querySelectorAll('.filter').forEach(function(el){{
+      var k=el.getAttribute('data-kind'), v=el.getAttribute('data-val'), off=!!hidden[k][v];
+      el.classList.toggle('off', off);
+      el.setAttribute('aria-pressed', off ? 'false' : 'true');
+    }});
+    updateNote();
+  }}
+  function chip(kind, val, swatch, text){{
+    return '<span class="lg filter" role="button" tabindex="0" aria-pressed="true" data-kind="'+kind
+      +'" data-val="'+esc(val).replace(/"/g,'&quot;')+'" title="click, Enter or Space to show or hide">'+swatch+text+'</span>';
   }}
   var legend=document.getElementById('legend');
-  var relsPresent={{}}; cy.edges().forEach(function(e){{ relsPresent[e.data('rel')]=1; }});
   var html='<b>Members ('+Object.keys(mem).length+') — click to filter</b>';
   Object.keys(mem).sort().forEach(function(h){{
-    html+='<span class="lg filter" data-mem="'+esc(h)+'"><span class="sw" style="border-radius:50%;background:'+mem[h]+'"></span>'
-      +esc(h)+' ('+((c.by_member||{{}})[h]||0)+')</span>';
+    html+=chip('mem', h, '<span class="sw" style="border-radius:50%;background:'+mem[h]+'"></span>',
+      esc(h)+' ('+((c.by_member||{{}})[h]||0)+')');
   }});
-  html+='<b>Publication order</b>';
-  html+='<div class="hint" style="margin:0 0 4px">'+esc(c.time_span||'')+' &middot; '+c.sessions+(c.sessions==1?' session':' sessions')+' (earlier &larr; left) &middot; rows = type</div>';
-  html+='<b>Artifact types ('+c.artifacts+')</b>';
+  html+='<b>Layout</b>';
+  html+='<div class="hint" style="margin:0 0 4px">columns = citation depth (cited &larr; left) &middot; shape = type'
+    +(c.time_span ? ' &middot; published '+esc(c.time_span) : '')
+    +' &middot; '+c.sessions+(c.sessions==1?' session':' sessions')+'</div>';
+  html+='<b>Artifact types ('+c.artifacts+') — click to filter</b>';
   Object.keys(c.by_type||{{}}).sort().forEach(function(cl){{
-    html+='<span class="lg">'+esc(cl)+' <b style="display:inline;color:var(--ink)">'+c.by_type[cl]+'</b></span>';
+    html+=chip('type', cl, '', esc(cl)+' <b style="display:inline;color:var(--ink)">'+c.by_type[cl]+'</b>');
   }});
-  html+='<b>Cross-artifact edges ('+c.cross_edges+')</b>';
-  Object.keys(relsPresent).sort().forEach(function(r){{
-    html+='<span class="lg"><span class="swl" style="border-top-color:'+(REL_COLORS[r]||'#94a3b8')+'"></span>'+esc(r)+'</span>';
+  html+='<b>Cross-artifact edges ('+c.cross_edges+') — click to filter</b>';
+  Object.keys(relCount).sort().forEach(function(r){{
+    html+=chip('rel', r, '<span class="swl" style="border-top-color:'+(REL_COLORS[r]||'#94a3b8')+'"></span>',
+      esc(r)+' ('+relCount[r]+')');
   }});
   legend.innerHTML=html;
+  function toggle(el){{
+    var k=el.getAttribute('data-kind'), v=el.getAttribute('data-val');
+    hidden[k][v]=!hidden[k][v]; saveFilters(); applyFilter();
+  }}
   legend.addEventListener('click',function(e){{
-    var el=e.target.closest?e.target.closest('.filter'):null; if(!el) return;
-    var m=el.getAttribute('data-mem'); hidden[m]=!hidden[m]; el.classList.toggle('off',!!hidden[m]); applyFilter();
+    var el=e.target.closest?e.target.closest('.filter'):null; if(el) toggle(el);
   }});
+  legend.addEventListener('keydown',function(e){{
+    if(e.key!=='Enter' && e.key!==' ') return;
+    var el=e.target.closest?e.target.closest('.filter'):null; if(!el) return;
+    e.preventDefault(); toggle(el);
+  }});
+  ctxnote.addEventListener('click',function(e){{
+    var b=e.target.closest?e.target.closest('button[data-ctx]'):null; if(!b) return;
+    var hide=b.getAttribute('data-ctx')==='hide';
+    DEFAULTS.forEach(function(d){{ hidden[d.kind][d.val]=hide; }});
+    saveFilters(); applyFilter();
+  }});
+  applyFilter();
 
   cy.ready(function(){{ cy.fit(undefined,40);
     // re-fit once the container has its final size (avoids an off-frame first paint)
@@ -1389,7 +1546,7 @@ OVERVIEW_REL_COLORS = {
 }
 
 
-def _verdict_panel(meta):
+def _verdict_panel(meta, reading_href=None, has_prose=False):
     """The Argument's judgment, rendered once at the top of its page.
 
     A verdict drawn from a closed set could be a colour on a node. The specification
@@ -1398,34 +1555,52 @@ def _verdict_panel(meta):
     header rather than in a click-to-open panel reflects that: a reader should not
     be able to look at an Argument without seeing what its author concluded, and
     for what purpose.
+
+    So the verdict is shown whole and never sits in a height-capped box. The pane once
+    shared one 96px strip between verdict, purpose and rationale, which on c037_2 showed
+    about two lines of a fourteen-line verdict. Purpose and rationale are longer and read
+    second, so they sit in sections that start closed, and one control (Expand) opens them
+    and shows the pane at its full height.
     """
     verdict = (meta.get("verdict") or "").strip()
     purpose = (meta.get("purpose") or "").strip()
     rationale = (meta.get("rationale") or "").strip()
-    if not (verdict or purpose or rationale):
+    sup = meta.get("supersedes") or []
+    if not (verdict or purpose or rationale or reading_href):
         return ""
-    out = ['<div id="verdictpanel">']
-    out.append('<div class="vlabel">Verdict</div>')
+    pages = meta.get("addr_pages", {})
+    out = ['<div id="verdictpanel">', '<div class="vhead"><span class="vlabel">Verdict</span>']
+    if reading_href:
+        out.append(f'<a href="{_html.escape(reading_href)}"><b>Read this Argument as a document '
+                   '&rarr;</b></a><span class="hint">verdict, purpose, rationale and every Ground '
+                   'in one place</span>')
+    if purpose or rationale or has_prose:
+        out.append('<button type="button" id="btn-intro" aria-expanded="false" aria-controls="intro" '
+                   'title="Open every section and show this pane at its full height">Expand</button>')
+    out.append('</div>')
     out.append('<div class="vtext">' + (_html.escape(verdict) or
                '<span style="color:#9ca3af">(none stated)</span>') + '</div>')
-    out.append('<dl>')
     if purpose:
-        out.append('<dt>Purpose and stakes</dt><dd>' + md_to_html(purpose, meta.get('addr_pages', {})) + '</dd>')
+        out.append('<details class="vsec"><summary>Purpose and stakes</summary><div class="vbody">'
+                   + md_to_html(purpose, pages) + '</div></details>')
     if rationale:
-        out.append('<dt>Rationale</dt><dd>' + md_to_html(rationale, meta.get('addr_pages', {})) + '</dd>')
-    sup = meta.get("supersedes") or []
+        out.append('<details class="vsec"><summary>Rationale</summary><div class="vbody">'
+                   + md_to_html(rationale, pages) + '</div></details>')
     if sup:
-        out.append('<dt>Supersedes</dt><dd>' + _html.escape("; ".join(str(x) for x in sup))
+        out.append('<dl><dt>Supersedes</dt><dd>' + _html.escape("; ".join(str(x) for x in sup))
                    + (' — ' + _html.escape(meta.get("supersedes_rationale", ""))
-                      if meta.get("supersedes_rationale") else "") + '</dd>')
-    out.append('</dl></div>')
+                      if meta.get("supersedes_rationale") else "") + '</dd></dl>')
+    out.append('</div>')
     return "".join(out)
 
 
-def render_claim_html(elements, meta, cytoscape_rel_path, intro_html=""):
+def render_claim_html(elements, meta, cytoscape_rel_path, intro_html="", reading_href=None):
+    """`intro_html` is the Argument's own framing prose (its `description` and `text`);
+    `reading_href` is its reading page, linked from the verdict pane."""
     payload = {"elements": elements, "meta": meta}
     genre = meta.get("genre_line", "")
-    intro_html = _verdict_panel(meta) + (intro_html or "")
+    prose = f'<div class="intro-prose">{intro_html}</div>' if intro_html else ""
+    intro_html = _verdict_panel(meta, reading_href, has_prose=bool(prose)) + prose
     return HTML_TEMPLATE.format(
         title=_html.escape(meta["title"]),
         review_id=_html.escape(meta["review_id"]),

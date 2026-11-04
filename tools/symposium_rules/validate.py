@@ -22,6 +22,14 @@ SPEC_VERSION = "1.0"
 ARTIFACT_TYPES = {"Argument", "Data", "ScientificPublication", "Analysis", "Model",
                   "NonGroundable", "Message"}
 NON_GROUNDABLE_TYPES = {"Analysis", "NonGroundable", "Message"}            # spec 2.1
+# Artifact types this profile defines (CANONICAL.md 2.1), beyond the specification's own. The
+# specification allows types it does not define (spec 2); these are the ones this profile
+# does, so they draw no "not defined" finding. A ResearchGoal is non-groundable because it
+# must declare `groundable: false`, which `groundable()` enforces from the header like any
+# other declaration; it is not added to NON_GROUNDABLE_TYPES, which is the spec's own list.
+PROFILE_TYPES = {"ResearchGoal"}
+# A profile type's required `groundable` value (CANONICAL.md 2.1).
+PROFILE_GROUNDABLE = {"ResearchGoal": False}
 # Model is groundable (spec 2.6): whether its content is genuinely evidential is a judgment
 # for the Ground's rationale and the Argument's rationale, not a type-level prohibition.
 ARGUMENT_OBJECTS = {"Assertion", "Ground", "Assumption", "Content"}
@@ -336,8 +344,19 @@ def check_structure(a):
     if h.get("specification_version") != SPEC_VERSION:
         f.append(finding("STRUCT", "FAIL",
                          f"specification_version {h.get('specification_version')!r} != '{SPEC_VERSION}'"))
-    if h.get("type") not in ARTIFACT_TYPES:
-        f.append(finding("STRUCT", "REVIEW", f"type '{h.get('type')}' is not defined by the spec"))
+    typ = h.get("type")
+    if typ in PROFILE_TYPES:
+        # Recognised, so no "not defined" finding. Its required `groundable` value is what
+        # keeps it out of evidence, and with the finding gone nothing else would say so when
+        # it is missing; a REVIEW, like the finding it replaces, so acceptance is unchanged.
+        want = PROFILE_GROUNDABLE.get(typ)
+        if want is not None and h.get("groundable") is not want:
+            f.append(finding("STRUCT", "REVIEW",
+                             f"a {typ} must declare groundable: {str(want).lower()} "
+                             f"(profile 2.1); this one declares {h.get('groundable')!r}"))
+    elif typ not in ARTIFACT_TYPES:
+        f.append(finding("STRUCT", "REVIEW",
+                         f"type '{typ}' is not defined by the specification or this profile"))
     pb = h.get("published_by")
     if not (isinstance(pb, str) and pb.startswith("@") and "." not in pb):
         f.append(finding("STRUCT", "FAIL", f"published_by must be a bare Member address, got {pb!r}"))

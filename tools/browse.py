@@ -558,6 +558,15 @@ _SHAPE = {"Argument": "round-rectangle", "NonGroundable": "hexagon", "Data": "re
           "ScientificPublication": "octagon", "Analysis": "diamond",
           "Model": "pentagon", "Message": "tag"}
 _SESSION_GAP = 20 * 60
+#: Edge kinds the overview starts with hidden. A `cites` edge is a citation in prose: context,
+#: not evidence (spec 2.2.5). On c037_2 it was 323 of 404 edges, and drawn by default it buried
+#: the evidential structure the overview is for. The page shows how many are hidden and restores
+#: them in one click, because a prose citation can be the only link between two artifacts.
+OVERVIEW_HIDDEN_RELS = ("cites",)
+#: Artifact types the overview starts with hidden. A Message links to what it discusses only in
+#: prose: on c037_2 all 96 edges touching its 22 Messages were `cites`, so with those hidden the
+#: Messages were a third of the nodes and connected to nothing. The same notice restores them.
+OVERVIEW_HIDDEN_TYPES = ("Message",)
 _ROW_DY, _BAND_GAP = 86.0, 54.0
 # Within one session's type band, wrap into sub-columns rather than one long stack. A bulk
 # publication — prepopulating the record, or any burst during the day — lands entirely inside
@@ -1009,6 +1018,8 @@ def build_overview(artifacts, index, colors, pages, findings_by, pins=None, anno
         hi = max(a["artifact"].get("created") or "" for a in artifacts)
         span = f"{lo[:16].replace('T', ' ')} → {hi[11:16]}"
     meta = {
+        "default_hidden_rels": list(OVERVIEW_HIDDEN_RELS),
+        "default_hidden_types": list(OVERVIEW_HIDDEN_TYPES),
         "members": {m: colors.get(m, "#9ca3af") for m in by_member},
         "counts": {"artifacts": len(artifacts), "by_member": dict(by_member),
                    "by_type": dict(by_type), "cross_edges": len(edges),
@@ -1584,13 +1595,11 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
             # and cites the work it answers. It is not in the graph and would otherwise
             # be invisible on the page that most needs it.
             reading = page_name(name).replace(".html", "_reading.html")
-            intro = (f'<p><a href="{html.escape(reading)}"><b>Read this Argument as a document &rarr;</b></a> '
-                     '<span class="hint">verdict, purpose, rationale and every Ground in '
-                     'one place</span></p>')
-            intro += "".join(T.md_to_html(a["artifact"][k], pages)
-                             for k in ("description", "text") if a["artifact"].get(k))
+            intro = "".join(T.md_to_html(a["artifact"][k], pages)
+                            for k in ("description", "text") if a["artifact"].get(k))
             (out / pages[name]).write_text(
-                T.render_claim_html(collapsed, meta, cyto, intro_html=intro), encoding="utf-8")
+                T.render_claim_html(collapsed, meta, cyto, intro_html=intro, reading_href=reading),
+                encoding="utf-8")
             (out / reading).write_text(
                 render_reading_page(a, index, pages, reading), encoding="utf-8")
             if figures_dir:

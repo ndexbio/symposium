@@ -130,6 +130,37 @@ def _locked(handle) -> bool:
         return False
 
 
+@contextlib.contextmanager
+def file_lock(path: Path):
+    """Hold an exclusive cross-process lock on `path` until the context exits."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = open(path, "a+")
+    acquired = False
+    try:
+        if WINDOWS and path.stat().st_size == 0:
+            handle.write("\0")
+            handle.flush()
+        while not _locked(handle):
+            time.sleep(0.05)
+        acquired = True
+        yield
+    finally:
+        try:
+            if acquired:
+                if WINDOWS:
+                    import msvcrt
+
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
 def _holder(pid_file: Path) -> int | None:
     try:
         return int(pid_file.read_text().split()[0])

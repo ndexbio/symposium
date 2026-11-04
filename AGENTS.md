@@ -79,8 +79,8 @@ Role charters live in `tools/roles/<name>.md`, standing rules in
 ## Verifying your work
 
 `make lint` runs the conformance suite — the mutation scenarios, the refusal
-fixtures, the example record in publication order, the gate's ordering and the
-record browser. No network and no credentials. It must print
+fixtures, the example record in publication order, the gate's ordering, the
+record browser and the Messages `sync` lists. No network and no credentials. It must print
 `CONFORMANCE: everything behaved as specified`.
 
 To check an artifact without publishing it:

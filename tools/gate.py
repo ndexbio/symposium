@@ -186,7 +186,7 @@ class Gate:
     # ── one pass ──────────────────────────────────────────────────────────────────────────
     def once(self) -> int:
         sync = Sync(self.data, self.mirror, quiet=True)
-        if sync.once(sync.load_state()) is None:
+        if sync.once() is None:
             print("! the data server could not be reached — nothing was decided")
             return 1
         try:
@@ -436,7 +436,7 @@ class Gate:
         for name in (SYNC_STATE, STATE):
             (self.mirror.root / name).unlink(missing_ok=True)
         sync = Sync(self.data, self.mirror, quiet=True)
-        synced = sync.once(sync.load_state())
+        synced = sync.once()
         if synced is None:
             print("! the data server could not be reached — nothing was rebuilt")
             return 1

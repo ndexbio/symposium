@@ -57,6 +57,12 @@ For Data Server 0.1.3.
   that does not declare `groundable: false` draws a STRUCT REVIEW saying it must. A REVIEW
   refuses nothing, so what the server accepts is unchanged.
 
+## [Symposium Helm 0.1.2] - Unreleased
+
+### Changed
+
+- **Deploys Data Server 0.1.3** (`appVersion`).
+
 ## [Symposium Skill 0.1.3] - 2026-10-14
 
 For Data Server 0.1.2.

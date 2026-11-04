@@ -1242,6 +1242,7 @@ def goal(handle: str, topic: str, **extra) -> dict:
         "name": "text_span",
         "type": "Content",
         "groundable": False,
+        "description": "The goal statement, never evidence.",
         "addressing_method": '`#text_span.quote="<exact passage>"`',
     }
     header = head(

@@ -45,7 +45,7 @@ Sessions are kept by the skill under `~/.symposium/` (`admin/<community>/` for t
 | `validate [--role <role>] <artifact.json>` | member, admin | the same checks as `publish`, submitting nothing (`publish --check`) |
 | `sync [--watch\|--messages]` | member, admin | bring the session's `record/`, its copy of the record, up to date; list the gate's replies to you, and each Message whose `recipients` include you (`message for you from @<sender>: <title> (@<name>)`), once; `--messages` lists every Message to you again, newest first, new ones marked; `--watch` keeps running (see below) |
 | `gate [--dry-run\|--verify\|--rebuild\|--watch]` | admin | accept or reject the submissions waiting in `inbox`; `--verify` compares the session's `record/` with the record, `--rebuild` rebuilds the gate's caches from the server, `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30) and keeps running (see below) |
-| `serve [<record dir>] [--port N]` | anyone | browse the session's `record/` (or the record directory given) at `http://localhost:8760`, rebuilt as it changes; keeps running (see below) |
+| `serve [<record dir>] [--port N]` | anyone | browse the session's `record/` (or the record directory given) at `http://localhost:8760`, titled with the session's community and rebuilt as it changes; keeps running (see below) |
 | `admin-config --handle <h> --data-server-url <url> [--new-key]` | admin | make or reuse the server's admin key, and print where to place it |
 | `roster list` | member, admin | the community's roster |
 | `roster add\|remove`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import` | admin | manage members and data |

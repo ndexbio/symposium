@@ -27,9 +27,27 @@ For Data Server 0.1.3.
   remembered. Prose citations (`cites`) and Messages start hidden, with a notice under the
   graph that says how many and brings them back.
 - **`serve` reports how long each build took.**
+- **A Lineage page in the record browser.** `lineage.html` draws the Arguments as lines,
+  oldest on the left: each follows the earlier Argument it supersedes, rests a Ground under
+  its primary Assertion on, or cites in prose. A prose link is drawn dashed and called what it
+  is, context and not evidence. Under the graph, each line lists its Arguments' verdict
+  openings in publication order, with every link each one states.
+- **Contents filters and search.** A chip per type shows or hides it, remembered in the
+  browser. Data, Messages, AnalysisPlans and ResearchGoals start hidden, so the list opens on
+  the Arguments and the work they rest on. A search box finds artifacts by title, name,
+  verdict and the claims of their Assertions, in every type, hidden ones too.
+- **The overview's legend says what each type is.** Each artifact type in the community has a
+  row with its node's shape, its count, what the type is and whether it can be evidence, and
+  still shows or hides the type. Every type now has a shape of its own: a ResearchGoal is a
+  star, and a type neither the specification nor the profile defines takes a spare shape
+  rather than the ellipse they all shared.
+- **Wide tables read from their key.** The row-key column stays in view as a table scrolls
+  sideways, the columns a Ground cites come first (a button restores the stored order), and a
+  table of more than 12 columns has a column picker.
 
 ### Changed
 
+- **`serve` titles the pages with the session's community** unless `--title` names another.
 - **A ResearchGoal is recognised.** `validate` and the gate no longer flag the profile's
   `ResearchGoal` type as not defined by the specification. One that does not declare
   `groundable: false` draws a REVIEW instead, so what the gate accepts is unchanged. Data

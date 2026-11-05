@@ -233,16 +233,25 @@ def test_a_download_on_the_data_server_is_verified(suite, admin_dir, cli):
     assert len(replies(cli, admin_dir)) == 2
 
 
-def test_the_admins_own_submission_is_accepted(suite, admin_dir, cli):
-    admin = cli.ok(admin_dir, "context", "show")["context"]["handle"]
-    path = note(admin_dir, admin, "welcome")
-    assert tool(suite, admin_dir, "publish.py", path)[0] == 0
+def test_a_removed_members_pending_submission_is_skipped(suite, admin_dir, cli):
+    lyra = enroll(cli, admin_dir, "lyra")
+    assert tool(suite, lyra, "publish.py", note(lyra, "lyra", "late"))[0] == 0
+    cli.ok(admin_dir, "users", "remove", "--handle", "lyra")
     out = gate(suite, admin_dir)
-    assert "ACCEPTED" in out
-    [stored] = records(cli, admin_dir)
-    assert (
-        stored["name"] == f"{admin}_note_welcome_v1" and stored["created_by"] == admin
-    )
+    assert "'lyra' is not an active member of this community" in out, out
+    assert "skipped" in out and records(cli, admin_dir) == []
+
+
+def test_a_gate_keeper_gates_until_its_role_is_unassigned(suite, admin_dir, cli):
+    bob = enroll(cli, admin_dir, "bob", "gate-keeper")
+    lyra = enroll(cli, admin_dir, "lyra")
+    assert tool(suite, lyra, "publish.py", note(lyra, "lyra", "first"))[0] == 0
+    assert "ACCEPTED" in gate(suite, bob)
+    cli.ok(admin_dir, "unassign", "--handle", "bob", "--access", "gate-keeper")
+    assert tool(suite, lyra, "publish.py", note(lyra, "lyra", "second"))[0] == 0
+    code, out = tool(suite, bob, "gate.py")
+    assert code == 1 and "takes the `gate` grant" in out, out
+    assert [r["name"] for r in records(cli, admin_dir)] == ["lyra_note_first_v1"]
 
 
 def test_the_gate_rebuilds_its_state_from_the_server(suite, admin_dir, cli):

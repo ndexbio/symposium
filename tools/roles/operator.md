@@ -35,7 +35,8 @@ Read by `/symposium publish`. `may_publish` is the type limit this session impos
 on itself; `must_not` is printed at the moment you violate it. Everything above is for you to
 read, nothing above is machine-checked.
 
-`/symposium publish` applies this role by default when the admin publishes. `--role none` disables the limit and is there for
+The operator publishes from a member account (`community-member`), separate from the
+`community-admin` account that runs the gate, with `--role operator`. `--role none` disables the limit and is there for
 operations that are not publication in the ordinary sense, such as replaying an existing record
 onto a new server.
 

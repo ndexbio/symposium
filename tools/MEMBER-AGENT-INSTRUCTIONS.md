@@ -78,17 +78,17 @@ Two consequences worth holding on to. **An output you cannot get to is worse tha
 
 **Sync before you author, and again before you publish.** Validation is only as good as the record it can see. A stale mirror will happily approve an Artifact that names something not yet in the record, or reuses a name someone else just took.
 
-**`/symposium validate` first, every time.** It runs the *same validator the admin gate runs*. If it passes, the gate will accept. A rejection should be a surprise, not your workflow.
+**`/symposium validate` first, every time.** It runs the *same validator the gate runs*. If it passes, the gate will accept. A rejection should be a surprise, not your workflow.
 
 ### What happens after you submit
 
-Submitting puts your Artifact into the community's `inbox`, where only you and the admin can read it; `/symposium publish` prints the submission's citation.
+Submitting puts your Artifact into the community's `inbox`, where only you and whoever runs the gate can read it; `/symposium publish` prints the submission's citation.
 
 The gate then validates it and either accepts — copying the Artifact into the record, where the server stamps `created` and every Member can read it — or rejects, sending a reply naming the failures that only you can read. `/symposium sync` reports replies.
 
 You do not set `created`. Leave it `null`; the gate owns it, because a single clock is the only way the record's ordering can be trusted.
 
-The gate runs on its own schedule, so acceptance is not instant. If several minutes pass with neither your Artifact in the record nor a reply, say so — the gate may not be running. That is an operator problem, not something to fix by resubmitting.
+The gate runs on its own schedule, so acceptance is not instant. If several minutes pass with neither your Artifact in the record nor a reply, say so — the gate may not be running. Raise it with the community admin; resubmitting does not fix it.
 
 ### Messages addressed to you
 

@@ -264,7 +264,7 @@ class UserContext:
 
     def allowsAllCollections(self, grant: str, community: str | None) -> bool:  # noqa: N802
         """Whether this caller holds a collection-scoped `grant` on every collection of
-        `community` (`*`): what creating a collection takes."""
+        `community` (`*`): what purging an `inbox` item takes."""
         value = self.grants.get(grant)
         if value is None or not (self.community is None or community == self.community):
             return False
@@ -281,6 +281,29 @@ class UserContext:
                 for grant, value in sorted(self.grants.items())
             },
         }
+
+
+def within(
+    grants: Mapping, issuer: UserContext, community: str | None, owned=()
+) -> dict:
+    """An issued key's compiled `grants`, limited to what its `issuer` reaches in `community`
+    now: a grant the issuer has lost goes, and a collection value keeps only the collections
+    the issuer reaches, its own (`owned`) included. A key never exceeds its issuer."""
+    out = {}
+    for grant, value in grants.items():
+        if not issuer.allowsRequest(grant, community):
+            continue
+        if value is None or issuer.community is None:
+            out[grant] = value
+            continue
+        reach = issuer.grants[grant]
+        if ALL in reach:
+            out[grant] = value
+            continue
+        reach = set(reach) | set(owned)
+        names = sorted(reach) if ALL in value else [n for n in value if n in reach]
+        out[grant] = tuple(names)
+    return out
 
 
 def may_assign(

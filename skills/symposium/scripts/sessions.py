@@ -2,22 +2,30 @@
 command works in. Nobody creates or enters a session directory; the skill keeps them under
 `~/.symposium/`, beside the keystore:
 
-    ~/.symposium/admin/                          admin-config's public key files
-    ~/.symposium/admin/<community>/              the admin's session for a community (bootstrap)
-    ~/.symposium/member/<community>/<handle>/    a member's session (setup, from the invite)
+    ~/.symposium/admin/                          a server-level user's server-wide session
+                                                 (admin-config for root, setup for a server
+                                                 admin) and root's public key files
+    ~/.symposium/admin/<community>/              a server-level user's session for a community
+                                                 (bootstrap, use-community)
+    ~/.symposium/member/<community>/<handle>/    a community user's session (setup, from the
+                                                 invite)
     ~/.symposium/current/<pid>.json              each agent session's current session
 
 A session directory holds what a working directory holds for the CLI and the tools: the context
-(`.symposium/context.json`), the runtime record, the copy of the record (`record/`), the invite
-files and the event log. The skill runs every command in its session's directory.
+(`.symposium/context.json`, with the access the server resolved for its user), the runtime
+record, the copy of the record (`record/`), the invite files and the event log. The skill runs
+every command in its session's directory.
 
-`setup`, `bootstrap`, `import` and `admin-config` name their session themselves. Every other
-command works in the agent session's current session: the one `/symposium use <community>
-<handle>` chose, or the one `setup` or `bootstrap` made; when the agent session has chosen none,
-the machine's only session. The choice is kept per agent process (agent_process.py), so two agent
-sessions on one machine never change each other's. Relative paths on a command line are the
-caller's: they are resolved against the directory the agent ran the command in, before the
-command moves into its session.
+`setup`, `bootstrap`, `use-community`, `import` and `admin-config` name their session
+themselves. Every other command works in the agent session's current session: the one
+`/symposium use` chose, or the one `setup`, `bootstrap` or `use-community` made; when the agent
+session has chosen none, the machine's only session. The choice is kept per agent process
+(agent_process.py), so two agent sessions on one machine never change each other's. Relative
+paths on a command line are the caller's: they are resolved against the directory the agent ran
+the command in, before the command moves into its session.
+
+A command that takes a grant (`REQUIRES`) is checked against the session's cached access first,
+so the refusal names the grant and the sessions that hold it.
 
 Standard library only, Python 3.9+.
 """
@@ -32,27 +40,43 @@ from pathlib import Path
 from agent_process import AgentProcess
 
 NO_SESSION = (
-    "no Symposium session on this machine: run `/symposium setup --invite-file <file>` "
-    "(members) or `/symposium bootstrap --community-file <file>` (admins) first"
+    "no Symposium session on this machine: run `/symposium setup --invite-file <file>` (with "
+    "an invite) or, as root, `/symposium admin-config` first"
 )
 # names that may name a session directory: a community (a slug, R-G8) and a handle
 COMMUNITY = re.compile(r"^[A-Za-z0-9_]{1,20}$")
 HANDLE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 # commands that name their own session, from their own arguments
-NAMED = {"admin-config", "bootstrap", "import", "setup"}
-# commands only the admin runs: they work in an admin's session
-ADMIN_ONLY = {
-    "roster",
-    "invite",
-    "rebind-key",
-    "suspect-after",
+NAMED = {"admin-config", "bootstrap", "import", "setup", "use-community"}
+# the grant a command takes, any one of several sufficing: checked against the session's cached
+# access before it runs (the server decides either way)
+REQUIRES = {
+    "publish": ("publish",),
+    "validate": ("publish",),
+    "gate": ("gate",),
+    "invite": ("members", "delegate"),
+    "users": ("members", "delegate"),
+    "rebind-key": ("members", "delegate"),
+    "suspect-after": ("members", "delegate"),
+    "purge": ("manage",),
+    "export": ("export",),
+    "port": ("communities",),
+}
+# commands that run in a community's session: a server-wide session has no community
+COMMUNITY_COMMANDS = {
+    "publish",
+    "validate",
+    "sync",
+    "gate",
+    "serve",
+    "port",
     "purge",
     "export",
-    "gate",
-    "port",
+    "gen-api-key",
+    "list-api-keys",
+    "revoke-api-key",
+    "roster",
 }
-# an admin-only command's subcommands that any member runs: they only read
-MEMBERS_TOO = {"roster": {"list"}}
 # options whose value is a path the caller gave, relative to the caller's directory
 PATH_OPTIONS = {
     "--invite-file",
@@ -69,6 +93,7 @@ PATH_POSITIONALS = {"publish", "validate", "serve", "port", "data"}
 # option's value (a file's `--name`, a `--collection`), kept as given
 FLAGS = {
     "--all",
+    "--server",
     "--new-key",
     "--non-member",
     "--private",
@@ -91,20 +116,41 @@ class SessionError(Exception):
 @dataclass(frozen=True)
 class Session:
     directory: Path
-    community: str
+    community: str  # "" for a server-wide session
     handle: str
-    role: str
+    home: str  # "" for a server-level user
+    access: dict
 
     def label(self) -> str:
-        return f"{self.community}/{self.handle}"
+        return f"{self.community or 'server'}/{self.handle}"
+
+    def use_command(self) -> str:
+        if not self.community:
+            return f"/symposium use {self.handle}"
+        return f"/symposium use {self.community} {self.handle}"
+
+    def grants(self) -> dict | None:
+        """The grants the server last resolved for this session's user, or None before the
+        session has read them (`/symposium access`)."""
+        context = (self.access or {}).get("context")
+        return None if context is None else context.get("grants") or {}
+
+    def holds(self, grants) -> bool | None:
+        """Whether the cached access holds any of `grants` in this session's community; None
+        when nothing is cached."""
+        held = self.grants()
+        if held is None:
+            return None
+        return any(g in held for g in grants)
 
     def view(self) -> dict:
         return {
-            "community": self.community,
+            "community": self.community or None,
             "handle": self.handle,
-            "role": self.role,
+            "server_level": not self.home,
+            "roles": [r["role"] for r in (self.access or {}).get("roles", [])],
             "directory": str(self.directory),
-            "use": f"/symposium use {self.community} {self.handle}",
+            "use": self.use_command(),
         }
 
 
@@ -123,7 +169,8 @@ class Sessions:
     def all(self) -> list:
         return [
             s
-            for context in sorted(self.root.glob("admin/*/.symposium/context.json"))
+            for context in sorted(self.root.glob("admin/.symposium/context.json"))
+            + sorted(self.root.glob("admin/*/.symposium/context.json"))
             + sorted(self.root.glob("member/*/*/.symposium/context.json"))
             if (s := self.at(context.parents[1])) is not None
         ]
@@ -136,10 +183,14 @@ class Sessions:
             return None
         return Session(
             directory,
-            held.get("community", ""),
+            held.get("community") or "",
             held.get("handle", ""),
-            held.get("role", ""),
+            held.get("home") or "",
+            held.get("access") or {},
         )
+
+    def server_session(self) -> Path:
+        return self.root / "admin"
 
     def admin_session(self, community: str) -> Path:
         return self.root / "admin" / community
@@ -199,11 +250,12 @@ class Sessions:
         return self.root / "current" / f"{pid}.json"
 
     def use(self, rest: list) -> dict:
-        """`/symposium use <community> <handle>`: make that session this agent session's
-        current one. With no arguments, or a session that does not exist, list them all."""
+        """`/symposium use <community> <handle>` (or `use <handle>`, a server-wide session):
+        make that session this agent session's current one. With no arguments, or a session
+        that does not exist, list them all."""
         sessions = self.all()
-        if len(rest) == 2:
-            community, handle = rest
+        if len(rest) in (1, 2):
+            community, handle = ("", rest[0]) if len(rest) == 1 else rest
             for session in sessions:
                 if (
                     session.community.lower() == community.lower()
@@ -211,9 +263,12 @@ class Sessions:
                 ):
                     self.make_current(session)
                     return {**session.view(), "current": True}
-            error = f"no session for {handle} in {community} on this machine"
+            where = community or "the server-wide sessions"
+            error = f"no session for {handle} in {where} on this machine"
         else:
-            error = "usage: /symposium use <community> <handle>"
+            error = (
+                "usage: /symposium use <community> <handle>, or /symposium use <handle>"
+            )
         raise SessionError(
             {
                 "error": error if sessions else NO_SESSION,
@@ -237,31 +292,29 @@ class Sessions:
             directory.mkdir(parents=True, exist_ok=True)
             return directory, self.at(directory), rest
         session = self.chosen()
-        if self.admin_only(command, rest) and session.role != "admin":
+        if command in COMMUNITY_COMMANDS and not session.community:
             raise SessionError(
                 {
-                    "error": f"`{self.named_command(command, rest)}` is the admin's, and this "
-                    "agent session works as "
-                    f"{session.label()}: switch with "
-                    f"`/symposium use {session.community} <the admin's handle>`",
-                    "sessions": [s.view() for s in self.all() if s.role == "admin"],
+                    "error": f"`{command}` works in a community, and this agent session works "
+                    f"server-wide as {session.handle}: choose a community's session with "
+                    "`/symposium use-community <community>`, or `/symposium use`",
+                    "sessions": [s.view() for s in self.all() if s.community],
                 }
             )
         return session.directory, session, rest
 
-    def admin_only(self, command: str, rest: list) -> bool:
-        """Only the admin runs it: an admin-only command, but not a subcommand any member runs
-        (`roster list`)."""
-        if command not in ADMIN_ONLY:
-            return False
-        return not (rest and rest[0] in MEMBERS_TOO.get(command, set()))
-
-    def named_command(self, command: str, rest: list) -> str:
-        """The command as a refusal names it: with its subcommand where members run others
-        (`roster add`)."""
-        if command in MEMBERS_TOO and rest and not rest[0].startswith("-"):
-            return f"{command} {rest[0]}"
-        return command
+    def refusal(self, command: str, session: Session) -> dict | None:
+        """The refusal of a command whose grant the session's cached access lacks, naming the
+        sessions on this machine that hold it; None when it holds it, or nothing is cached."""
+        grants = REQUIRES.get(command)
+        if not grants or session.holds(grants) is not False:
+            return None
+        named = " or ".join(f"`{g}`" for g in grants)
+        return {
+            "error": f"`{command}` takes the {named} grant, which {session.label()} does not "
+            "hold: `/symposium access` shows what it holds; switch with `/symposium use`",
+            "sessions": [s.view() for s in self.all() if s.holds(grants)],
+        }
 
     def chosen(self) -> Session:
         """The current session, or the machine's only one."""
@@ -282,15 +335,20 @@ class Sessions:
         )
 
     def named(self, command: str, rest: list) -> Path | None:
-        """The session a NAMED command names: the server's for admin-config; the community
-        file's for bootstrap and import; the invite's for setup. None for a file it cannot
-        read."""
+        """The session a NAMED command names: the server-wide one for admin-config; the
+        community file's for bootstrap and import; the community's for use-community; the
+        invite's for setup. None for a file it cannot read."""
         if command == "admin-config":
-            return self.root / "admin"
+            return self.server_session()
+        if command == "use-community":
+            community = rest[0] if rest and COMMUNITY.match(rest[0]) else None
+            return None if community is None else self.admin_session(community)
         if command == "setup":
-            invite = self.read(rest, "--invite-file")
+            invite = self.read(rest, "--invite-file", community_required=False)
             if invite is None or not invite["handle"]:
                 return None
+            if not invite["community"]:
+                return self.server_session()
             return self.member_session(invite["community"], invite["handle"])
         spec = self.read(rest, "--community-file")
         return None if spec is None else self.admin_session(spec["community"])
@@ -330,9 +388,12 @@ class Sessions:
             expanded if expanded.is_absolute() else (self.caller / expanded).resolve()
         )
 
-    def read(self, rest: list, option: str) -> dict | None:
+    def read(
+        self, rest: list, option: str, community_required: bool = True
+    ) -> dict | None:
         """The names in the JSON file an option names (a community file or an invite), or None
-        when the option, the file or its `community` is missing."""
+        when the option or the file is missing, or its `community` is invalid (or missing,
+        where one is required; an invite's is null for a server-level user)."""
         path = None
         for i, arg in enumerate(rest):
             name, equals, value = arg.partition("=")
@@ -344,12 +405,15 @@ class Sessions:
             spec = json.loads(Path(path).read_text())
         except (OSError, ValueError):
             return None
-        if not isinstance(spec, dict) or not COMMUNITY.match(
-            str(spec.get("community") or "")
-        ):
+        if not isinstance(spec, dict):
+            return None
+        community = spec.get("community")
+        if community is None and not community_required:
+            community = ""
+        elif not COMMUNITY.match(str(community or "")):
             return None
         handle = str(spec.get("handle") or "")
         return {
-            "community": spec["community"],
+            "community": community,
             "handle": handle if HANDLE.match(handle) else "",
         }

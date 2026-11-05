@@ -5,7 +5,7 @@
     python serve.py <record dir>
 
 Run it as `/symposium serve`. The record defaults to `./record`, the copy beside the session's
-context that sync (and the gate, on the admin's machine) keeps; it stops with an error when
+context that sync (and the gate, on its runner's machine) keeps; it stops with an error when
 that is missing.
 
 It runs until stopped, with no time limit of its own: run it in the background. ctrl-c,
@@ -143,7 +143,7 @@ def main(argv=None):
     out = pathlib.Path(args.out).resolve()
     if not record.is_dir():
         raise SystemExit(f"ERROR: no record copy at {record}: run `/symposium sync` here first\n"
-                         f"  (on the admin's machine, `/symposium gate` writes the gate's copy)")
+                         f"  (in the gate's session, `/symposium gate` writes the gate's copy)")
 
     stop_on_signals()
     if args.port == 0:

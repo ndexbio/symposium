@@ -1276,6 +1276,7 @@ paths:
 
         Authentication: session key.
       x-grants: [members, delegate]
+      x-bounded: the users of one community, or the server-level users
       x-session: true
       security:
         - apiKey: []
@@ -1312,6 +1313,7 @@ paths:
 
         Authentication: no key required.
       x-grants: []
+      x-bounded: the roles of one invite
       x-anonymous: always
       security:
         - apiKey: []
@@ -1392,6 +1394,7 @@ paths:
 
         Authentication: session key.
       x-grants: [members, delegate]
+      x-bounded: one user's roles
       x-session: true
       security:
         - apiKey: []
@@ -1403,7 +1406,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserResource'
+                $ref: '#/components/schemas/UserEntry'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -1425,6 +1428,7 @@ paths:
 
         Authentication: session key.
       x-grants: [members, delegate]
+      x-bounded: one user's roles
       x-session: true
       security:
         - apiKey: []
@@ -1464,6 +1468,7 @@ paths:
 
         Authentication: session key.
       x-grants: [members, delegate]
+      x-bounded: one user's roles
       x-session: true
       security:
         - apiKey: []
@@ -1481,7 +1486,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/UserResource'
+                $ref: '#/components/schemas/UserEntry'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -1505,6 +1510,7 @@ paths:
 
         Authentication: issued key, session key.
       x-grants: []
+      x-bounded: the six roles
       security:
         - apiKey: []
       responses:
@@ -1530,6 +1536,7 @@ paths:
 
         Authentication: session key.
       x-grants: [members, delegate]
+      x-bounded: the pending invites of one community
       x-session: true
       security:
         - apiKey: []
@@ -1566,6 +1573,7 @@ paths:
 
         Authentication: session key.
       x-grants: [members, delegate]
+      x-bounded: the roles of one invite
       x-session: true
       security:
         - apiKey: []
@@ -1607,6 +1615,7 @@ paths:
 
         Authentication: session key.
       x-grants: []
+      x-bounded: one principal's roles
       x-session: true
       security:
         - apiKey: []
@@ -1655,6 +1664,7 @@ paths:
 
         Authentication: session key.
       x-grants: []
+      x-bounded: one principal's roles
       x-session: true
       security:
         - apiKey: []
@@ -1696,6 +1706,7 @@ paths:
 
         Authentication: session key.
       x-grants: []
+      x-bounded: one principal's roles
       x-session: true
       security:
         - apiKey: []
@@ -2044,6 +2055,7 @@ paths:
 
         Authentication: session key.
       x-grants: []
+      x-bounded: one key's roles
       x-session: true
       security:
         - apiKey: []
@@ -2093,6 +2105,7 @@ paths:
 
         Authentication: session key.
       x-grants: []
+      x-bounded: one key's roles
       x-session: true
       security:
         - apiKey: []
@@ -2130,6 +2143,7 @@ paths:
 
         Authentication: session key.
       x-grants: []
+      x-bounded: one key's roles
       x-session: true
       security:
         - apiKey: []
@@ -4785,7 +4799,7 @@ components:
                   Each grant the role compiles to: null when it is not collection-scoped,
                   "assignment" when it takes the assignment's collection value, else a list.
                 additionalProperties: true
-    UserResource:
+    UserEntry:
       type: object
       required: [id, handle, community, registered, removed, roles]
       properties:
@@ -4825,7 +4839,7 @@ components:
         users:
           type: array
           items:
-            $ref: '#/components/schemas/UserResource'
+            $ref: '#/components/schemas/UserEntry'
     UserContext:
       type: object
       description: |

@@ -44,7 +44,15 @@ def admin_on(server, cli, directory: Path, community: str, create: bool = True) 
         community_file(directory, server, community),
     )
     if create:
-        cli.ok(directory, "communities", "create", "--name", community)
+        cli.ok(
+            directory,
+            "communities",
+            "create",
+            "--name",
+            community,
+            "--admin",
+            "steward",
+        )
     return directory
 
 

@@ -7,12 +7,13 @@ result. It is not a sync: a community that already holds files is refused, so ea
 ported once.
 
 ## Before you start
-- **A data server, operational**, with your admin key in place (`/symposium admin-config`, see
-  the skill's README, section 2). The data server itself connects to NDEx, so it needs outbound
+- **A data server, operational**, with root's key in place (`/symposium admin-config`, see
+  the skill's README, section 2), and a server admin's session: porting takes the
+  `communities` grant. The data server itself connects to NDEx, so it needs outbound
   access to the NDEx server.
 - **Drain the gate.** Run the gate on NDEx until nothing is waiting. A member's submission the
-  gate has not decided is not ported, because the NDEx admin account does not own it.
-- **The NDEx admin account's credentials file**, a bound pair, readable only by you:
+  gate has not decided is not ported, because the NDEx community admin's account does not own it.
+- **The NDEx community admin account's credentials file**, a bound pair, readable only by you:
 
   ```json
   {"username": "<the community admin's NDEx account>", "password": "<its password>"}
@@ -23,22 +24,23 @@ ported once.
   Never paste the password into a chat.
 
 ## The order
-1. `/symposium bootstrap --community-file community.json` creates the community (empty) and sets
-   this directory's context. List the members you already know in `handles`; the port adds the
-   rest.
+1. `/symposium bootstrap --community-file community.json` creates the community (empty), with
+   its first community admin, and sets this directory's context. List the members you already
+   know in `handles`; the port adds the rest.
 2. `/symposium port <ndex_credentials_file> <ndex_url>` ports into it.
 3. `/symposium bootstrap --community-file community.json` again: it writes an invite file for every
-   author and reply recipient the port added to the roster. Hand each one over out of band.
+   author and reply recipient the port added as a user. Hand each one over out of band.
 
 ## What is ported
-From the NDEx admin account, every network it owns:
+From the NDEx community admin's account, every network it owns:
 - networks marked `symposium_record` become files in `record`;
 - networks marked `symposium_reply` (the gate's rejection replies) become files in `inbox`,
   readable only by the members they were shared with.
 
 Each keeps its **exact bytes** (every sha256 is unchanged), its **name**, its original
-**`created`** time and its **author**. The NDEx admin account becomes the data server's admin.
-Every author and recipient joins the roster as a reserved handle, waiting for its member.
+**`created`** time and its **author**. The NDEx community admin's account becomes the data
+server's root. Every author and recipient becomes a user of the community, holding
+`community-member` on every collection and waiting for its member to join.
 
 **Not ported:** undecided submissions (drain the gate first), external `download` files (their
 artifacts keep their original location), and NDEx accounts and passwords.
@@ -48,9 +50,11 @@ The command reports the reason:
 - **404:** the context's community does not exist: run `bootstrap` first;
 - **400:** the community already holds files: a community is ported once;
 - **409:** another port is running on the server: wait, and run it again;
-- **401 or 403:** this directory's context is not the server's admin;
-- **`handle collision`:** an NDEx author or recipient, other than the admin account itself, has
-  the data server admin's handle. Nothing was written.
+- **401 or 403:** this session's user holds no `communities` grant;
+- **`handle collision`:** an NDEx author or recipient, other than the community admin's account
+  itself, is named like the data server's root. Nothing was written.
+- **a removed member's handle:** an NDEx author is named like a user removed from this
+  community. Nothing was written.
 
 Any failure writes nothing, and the community can be ported again once the cause is fixed.
 

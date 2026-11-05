@@ -233,6 +233,10 @@ class ApiService(Service):
         published = self.index.publishers(conn, community)
         return members_of(conn, self.records, community, published)
 
+    def submitters(self, conn, community) -> set:
+        """The handles whose submissions the gate decides (its skip rule)."""
+        return self.records.active_submitters(conn, community)
+
     # ── summaries ──────────────────────────────────────────────────────────────────────────
     def summary(self, conn, caller, community, row) -> dict:
         doc, header = row["doc"], row["doc"]["artifact"]
@@ -848,7 +852,9 @@ class ApiService(Service):
                 ],
             }
         else:
-            members = members if members is not None else self.members(conn, community)
+            members = (
+                members if members is not None else self.submitters(conn, community)
+            )
             why = skip_reason(
                 row["name"], row["created_by"], header.get("name"), members
             )
@@ -861,7 +867,7 @@ class ApiService(Service):
     def submissions_after(self, conn, caller, community, since, want, status=None):
         """Visible submissions after inbox seq `since`, up to `want`. -> (items, last seq
         scanned, whether the feed has more)."""
-        members = self.members(conn, community)
+        members = self.submitters(conn, community)
         items, last = [], since
         while len(items) < want:
             rows = self.records.changes(conn, community, "inbox", last, 200)
@@ -1132,7 +1138,7 @@ class ApiService(Service):
         """The events after the (inbox, record) positions. -> [(inbox, record, event, data)]"""
         out = []
         with self.connection() as conn:
-            members = self.members(conn, community)
+            members = self.submitters(conn, community)
             for row in self.records.changes(conn, community, "inbox", inbox, 200):
                 inbox = row["seq"]
                 meta = row["metadata"] or {}

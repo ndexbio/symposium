@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 
+from symposium_data.access import rbac
 from symposium_data.access.rbac import (
     ALL,
     COLLECTION_SCOPED,
@@ -384,3 +385,31 @@ def test_an_owner_may_put_its_own_collections_on_a_key():
     refs = {"mine": ref("mine", LYRA), "theirs": ref("theirs", MIA)}
     assert may_carry(owner_only, "community-observer", ("mine",), False, C, refs)
     assert not may_carry(owner_only, "community-observer", ("theirs",), False, C, refs)
+
+
+def test_a_key_never_exceeds_what_its_issuer_reaches_now():
+    member = rbac.UserContext(
+        "u",
+        "lyra",
+        "demo",
+        True,
+        {
+            "read": ("files",),
+            "write": ("files",),
+            "manage": (),
+            "publish": None,
+        },
+    )
+    key = {"read": ("*",), "write": ("files", "lab"), "publish": None, "gate": None}
+    capped = rbac.within(key, member, "demo", owned={"lab"})
+    assert capped == {
+        "read": ("files", "lab"),
+        "write": ("files", "lab"),
+        "publish": None,
+    }
+    # an issuer that lost publish takes it from its keys
+    narrowed = rbac.UserContext("u", "lyra", "demo", True, {"read": ("*",)})
+    assert rbac.within(key, narrowed, "demo") == {"read": ("*",)}
+    # a server-level issuer reaches every collection
+    root = rbac.UserContext("r", "root", None, True, {"read": ("*",), "gate": None})
+    assert rbac.within({"read": ("c1",)}, root, "demo") == {"read": ("c1",)}

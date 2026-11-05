@@ -2,11 +2,11 @@
 HTTP.
 
 Every operation in api/openapi.yaml is called and every answer is validated against the
-contract's schemas, errors included; every row of the endpoint × role table in api/DESIGN.md
-§3.2 is checked for each kind of caller, with the record private and public, and with a
-non-member key granted the record and one granted nothing; API keys are taken through their
-whole life with the skill's commands; withdrawing a grant is felt on the next request and by
-an open stream; publishing goes through the API and the unchanged gate; and the streams are
+contract's schemas, errors included; every record operation is checked for each kind of
+caller against the grants its `x-grants` names, with the record private and public, and with a
+non-member key reading the record and one reading only `files`; API keys are taken through
+their whole life with the skill's commands; unassigning a role is felt on the next request and
+by an open stream; publishing goes through the API and the unchanged gate; and the streams are
 read frame by frame. The record the tests build is published through the API and decided by
 `tools/gate.py`, exactly as a community's would be.
 """
@@ -37,7 +37,6 @@ API_DIR = REPO / "api"
 SPEC = yaml.safe_load((API_DIR / "openapi.yaml").read_text(encoding="utf-8"))
 DESIGN = (API_DIR / "DESIGN.md").read_text(encoding="utf-8")
 TOOLS = REPO / "tools"
-ROLES = ("non-member", "member", "admin")
 OPERATIONS = {
     op["operationId"]: (method.upper(), path, op)
     for path, item in SPEC["paths"].items()
@@ -89,20 +88,6 @@ def event_conforms(operation_id: str, frame: dict):
     ]
     item = {**schema["schema"]["items"], "components": SPEC["components"]}
     OAS30Validator(item).validate(frame)
-
-
-def role_table() -> dict:
-    """DESIGN §3.2 -> {operationId: the key roles it allows}."""
-    section = DESIGN.split("### 3.2 Endpoint × role", 1)[1]
-    rows = [line for line in section.splitlines() if line.startswith("|")][2:]
-    table = {}
-    for row in rows:
-        cells = [c.strip() for c in row.strip("|").split("|")]
-        if len(cells) != 2 + len(ROLES):
-            break
-        operation, _route, *marks = cells
-        table[operation] = {r for r, mark in zip(ROLES, marks) if mark.startswith("✓")}
-    return table
 
 
 # ── the community the tests use ────────────────────────────────────────────────────────────
@@ -254,14 +239,13 @@ def gate(suite, admin_dir: Path) -> str:
 
 
 def admin_session(suite, admin_dir: Path) -> str:
-    """The server admin's session key, signed in the way the CLI signs in."""
+    """Root's session key, signed in the way the CLI signs in."""
     return session_key(suite, admin_dir)
 
 
 def session_key(suite, directory: Path) -> str:
     """The session key of the session in `directory`, signed in with its Ed25519 key the way
-    the CLI signs in: the admin's in the admin's session, a Member's own in its member
-    session."""
+    the CLI signs in: root's in root's session, a member's own in its member session."""
     code = (
         f"import sys; sys.path.insert(0, {str(CLI_DIR)!r}); "
         "from main import Commands; print(Commands().signed_in().key)"
@@ -303,28 +287,45 @@ def key_value(cli_output: dict) -> str:
     return json.loads(Path(cli_output["key_file"]).read_text())["key"]
 
 
-def grant_record(cli, admin_dir: Path, key_id: str, granted: bool = True):
-    """The admin, who owns `record`, grants a non-member key read on it, or withdraws it."""
-    args = ["collection", "grant", "--collection", "record", "--api-key", key_id]
-    cli.ok(admin_dir, *args, "--perm", "read", *([] if granted else ["--revoke"]))
+def share_record(cli, admin_dir: Path, key_id: str, shared: bool = True):
+    """Root assigns a key `community-observer` on `record`, or unassigns it."""
+    how = "assign" if shared else "unassign"
+    cli.ok(admin_dir, how, "--api-key", key_id, "--access", "community-observer:record")
 
 
 @pytest.fixture
 def world(suite, server, cli, admin_dir):
-    """The `demo` community: members lyra and vega, each with a key it made for itself in its
-    own session; two `non-member` keys the admin made for apps, one granted read on `record`
-    and one granted nothing; and the six artifacts of RECORD published through the API and
-    accepted by the gate."""
+    """The `demo` community: members lyra and vega, each with a member key it made for itself
+    in its own session, carrying `community-member` on every collection; two non-member keys
+    root made for apps, one reading `record` and one reading only `files`; and the six
+    artifacts of RECORD published through the API and accepted by the gate."""
     sessions = {handle: enroll(cli, admin_dir, handle) for handle in ("lyra", "vega")}
     keys = {
-        handle: key_value(cli.ok(directory, "gen-api-key", "laptop"))
+        handle: key_value(
+            cli.ok(directory, "gen-api-key", "laptop", "--access", "community-member:*")
+        )
         for handle, directory in sessions.items()
     }
-    viewer = cli.ok(admin_dir, "gen-api-key", "viewer app")
-    assert viewer["role"] == "non-member"
-    grant_record(cli, admin_dir, viewer["id"])
+    viewer = cli.ok(
+        admin_dir,
+        "gen-api-key",
+        "viewer app",
+        "--non-member",
+        "--access",
+        "community-observer:record",
+    )
+    assert viewer["member_key"] is False
     keys["non-member"] = key_value(viewer)
-    keys["ungranted"] = key_value(cli.ok(admin_dir, "gen-api-key", "ungranted app"))
+    keys["ungranted"] = key_value(
+        cli.ok(
+            admin_dir,
+            "gen-api-key",
+            "ungranted app",
+            "--non-member",
+            "--access",
+            "community-observer:files",
+        )
+    )
     api = Api(server)
     assert [doc for batch in BATCHES for doc in batch] == RECORD
     for batch in BATCHES:
@@ -458,11 +459,9 @@ def test_every_operation_answers_as_the_contract_says(world, suite, server):
     )
     assert [i["name"] for i in messages.json()["items"]] == ["lyra_msg_c_v1"]
     me = check("getMe", "GET", "/demo/me", status=200).json()
-    assert (me["handle"], me["label"], me["role"]) == ("lyra", "laptop", "member")
-    assert (
-        me["kind"] == "issued"
-        and {"collection": "record", "perm": "read"} in me["grants"]
-    )
+    assert (me["handle"], me["label"], me["kind"]) == ("lyra", "laptop", "issued")
+    assert me["roles"] == [{"role": "community-member", "collections": ["*"]}]
+    assert me["context"]["community"] == "demo" and not me["context"]["via_session"]
 
     check(
         "checkSubmission",
@@ -484,7 +483,7 @@ def test_every_operation_answers_as_the_contract_says(world, suite, server):
     assert [s["name"] for s in mine.json()["items"]] == ["lyra_note_d_v1"]
     check("getSubmission", "GET", f"/demo/submissions/{made.json()['id']}", status=200)
 
-    # `admin` names no community: the admin's routes are its own
+    # `admin` names no community
     for method, body in (("GET", None), ("POST", {"label": "x"})):
         assert api.call(method, "/admin/api-keys", admin, body).status_code == 404
 
@@ -509,9 +508,9 @@ def test_every_operation_answers_as_the_contract_says(world, suite, server):
     assert called == record, f"never called: {record - called}"
 
 
-# ── roles ──────────────────────────────────────────────────────────────────────────────────
-def probe(world, operation_id, caller, credential):
-    """Call an operation the way the role matrix needs: harmless for whoever may call it."""
+# ── grants ─────────────────────────────────────────────────────────────────────────────────
+def probe(world, operation_id, credential):
+    """Call an operation the way the grant matrix needs: harmless for whoever may call it."""
     method, path, _ = OPERATIONS[operation_id]
     path = (
         path.replace("{community}", "demo")
@@ -536,21 +535,22 @@ def probe(world, operation_id, caller, credential):
     return api.call(method, path, credential, body).status_code
 
 
-def test_every_role_gets_exactly_the_access_the_table_states(world, cli):
-    """Every operation, for every kind of caller, with `record` private and public. A role the
-    table allows is the first gate; then the collection: an operation that reads the record
-    answers a caller who may read `record` (by a grant, or because it is public)."""
-    table = role_table()
-    assert set(table) == set(OPERATIONS)
-    # the record's operations; the hand-written ones are checked live with their own state
-    # (test_every_route_of_the_server_answers_as_the_contract_says, and the data server's
-    # access matrix)
-    table = {
-        name: roles
-        for name, roles in table.items()
-        if OPERATIONS[name][2].get("x-generated")
-    }
+def test_every_caller_gets_exactly_the_access_its_grants_give(world, cli):
+    """Every record operation, for every kind of caller, with `record` private and public.
+    An operation naming no grant answers any key of the community; one naming `read` answers
+    a caller who reads `record` (by its roles, or because it is public); one naming `publish`
+    answers a holder of `publish`."""
     keys, admin = world["keys"], world["admin_session"]
+    # caller -> (credential, the grants it holds in demo, whether it reads `record`)
+    callers = {
+        "root session": (admin, {"read", "write", "manage", "gate", "members"}, True),
+        "member key": (keys["lyra"], {"read", "write", "manage", "publish"}, True),
+        "non-member key reading the record": (keys["non-member"], {"read"}, True),
+        "non-member key reading files": (keys["ungranted"], {"read"}, False),
+    }
+    record = {
+        name: op for name, (_, _, op) in OPERATIONS.items() if op.get("x-generated")
+    }
     for public in (False, True):
         cli.ok(
             world["admin_dir"],
@@ -560,32 +560,28 @@ def test_every_role_gets_exactly_the_access_the_table_states(world, cli):
             "record",
             "--public" if public else "--private",
         )
-        for operation_id, allowed in table.items():
-            rule = OPERATIONS[operation_id][2]
-            anonymous = rule.get("x-anonymous")
-            reads_record = anonymous == "public"
-            callers = {
+        for operation_id, op in record.items():
+            grants, anonymous = set(op["x-grants"]), op.get("x-anonymous")
+            expected = {
                 "anonymous": (
                     None,
-                    anonymous == "always" or (public and reads_record),
-                ),
-                "admin session": (admin, "admin" in allowed),
-                "member key": (keys["lyra"], "member" in allowed),
-                "non-member key granted the record": (
-                    keys["non-member"],
-                    "non-member" in allowed,
-                ),
-                "non-member key granted nothing": (
-                    keys["ungranted"],
-                    "non-member" in allowed and (public or not reads_record),
-                ),
+                    anonymous == "always" or (anonymous == "public" and public),
+                )
             }
-            for caller, (credential, may) in callers.items():
-                status = probe(world, operation_id, caller, credential)
+            for caller, (credential, held, reads) in callers.items():
+                if not grants:
+                    may = True
+                elif grants == {"read"}:
+                    may = public or reads
+                else:
+                    may = bool(grants & held)
+                expected[caller] = (credential, may)
+            for caller, (credential, may) in expected.items():
+                status = probe(world, operation_id, credential)
                 refused = status in (401, 403)
                 assert refused != may, (
-                    f"{operation_id} for {caller} (record public: {public}) "
-                    f"answered {status}; the table says {'allowed' if may else 'refused'}"
+                    f"{operation_id} for {caller} (record public: {public}) answered "
+                    f"{status}; its grants say {'allowed' if may else 'refused'}"
                 )
 
 
@@ -639,28 +635,36 @@ def follow(api, credential=None, path="/demo/streams/record") -> threading.Event
 def test_api_keys_work_end_to_end(world, suite, server, cli):
     api, admin_dir, sessions = world["api"], world["admin_dir"], world["sessions"]
     lyra_dir = sessions["lyra"]
+    member = ["--access", "community-member:*"]
 
-    # a Member makes its own keys, several, each named; each acts as that Member
-    issued = cli.ok(lyra_dir, "gen-api-key", "notebook")
+    # a member makes its own keys, several, each named and carrying roles; each acts as it
+    issued = cli.ok(lyra_dir, "gen-api-key", "notebook", *member)
     assert "key" not in issued and mode(issued["key_file"]) == 0o600
-    assert (issued["role"], issued["handle"], issued["label"]) == (
-        "member",
+    assert (issued["member_key"], issued["handle"], issued["label"]) == (
+        True,
         "lyra",
         "notebook",
     )
+    assert issued["roles"] == [{"role": "community-member", "collections": ["*"]}]
     key = key_value(issued)
     assert key.startswith("sak_") and len(key) == 47
     me = api.call("GET", "/demo/me", key).json()
     assert (me["handle"], me["label"]) == ("lyra", "notebook")
-    second = key_value(cli.ok(lyra_dir, "gen-api-key", "tablet"))
+    second = key_value(cli.ok(lyra_dir, "gen-api-key", "tablet", *member))
     assert api.call("GET", "/demo/me", second).json()["handle"] == "lyra"
-    # a label names one live key among its owner's
+    # a label names one key among its owner's
     lyra_session = session_key(suite, lyra_dir)
-    taken = api.control("POST", "/demo/api-keys", lyra_session, {"label": "tablet"})
+    roles = [{"role": "community-member", "collections": ["*"]}]
+    taken = api.control(
+        "POST", "/demo/api-keys", lyra_session, {"label": "tablet", "roles": roles}
+    )
     assert taken.status_code == 409, taken.text
-    # and the body names no Member: the session decides
+    # and the body names no member: the session decides
     made = api.control(
-        "POST", "/demo/api-keys", lyra_session, {"label": "x", "handle": "vega"}
+        "POST",
+        "/demo/api-keys",
+        lyra_session,
+        {"label": "x", "handle": "vega", "roles": roles},
     )
     assert made.status_code == 201 and made.json()["handle"] == "lyra"
 
@@ -681,40 +685,45 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     )
     assert sealed and all(key not in row[0] for row in sealed)
 
-    # the admin sees a Member's keys, never their values, and cannot revoke one
+    # a `members` holder (root) sees a member's keys, never their values
     admin = world["admin_session"]
     seen = api.control("GET", "/demo/api-keys", admin).json()["items"]
     assert any(k["handle"] == "lyra" for k in seen)
     assert all(k["key"] is None for k in seen if k["handle"] is not None)
     one = api.control("GET", f"/demo/api-keys/{issued['id']}", admin).json()
     assert one["handle"] == "lyra" and one["key"] is None
-    assert (
-        api.control("DELETE", f"/demo/api-keys/{issued['id']}", admin).status_code
-        == 404
-    )
-    # another Member's session sees none of them
+    # another member's session reaches none of them
     vega_session = session_key(suite, sessions["vega"])
-    assert (
-        api.control("GET", f"/demo/api-keys/{issued['id']}", vega_session).status_code
-        == 404
-    )
+    other = api.control("GET", f"/demo/api-keys/{issued['id']}", vega_session)
+    assert other.status_code in (403, 404)
+    other = api.control("DELETE", f"/demo/api-keys/{issued['id']}", vega_session)
+    assert other.status_code in (403, 404)
 
-    # a stream closes within the heartbeat of its key's revocation, by its own Member
+    # a stream closes within the heartbeat of its key's revocation, by its own member: the
+    # key is deleted, and its label is free again
     ended = follow(api, key)
     revoked = cli.ok(lyra_dir, "revoke-api-key", issued["id"])
-    assert revoked["revoked"] is not None
+    assert revoked["id"] == issued["id"] and "key" not in revoked
     assert api.call("GET", "/demo/me", key).status_code == 401
     assert ended.wait(MAX_WAIT), "the stream outlived its key's revocation"
-    # and its label is free again
-    assert (
-        api.control(
-            "POST", "/demo/api-keys", lyra_session, {"label": "notebook"}
-        ).status_code
-        == 201
+    assert issued["id"] not in {
+        k["id"] for k in cli.ok(lyra_dir, "list-api-keys")["keys"]
+    }
+    assert sql(server, "SELECT count(*) FROM api_keys WHERE id = %s", issued["id"]) == [
+        [0]
+    ]
+    again = api.control(
+        "POST", "/demo/api-keys", lyra_session, {"label": "notebook", "roles": roles}
     )
+    assert again.status_code == 201
+    # root, a `members` holder, revokes a member's key too
+    gone = api.control("DELETE", f"/demo/api-keys/{again.json()['id']}", admin)
+    assert gone.status_code == 200, gone.text
 
     # an expired key answers 401, and its stream closes
-    short = cli.ok(sessions["vega"], "gen-api-key", "short", "--expires-days", "1")
+    short = cli.ok(
+        sessions["vega"], "gen-api-key", "short", *member, "--expires-days", "1"
+    )
     short_key = key_value(short)
     assert api.call("GET", "/demo/me", short_key).status_code == 200
     ended = follow(api, short_key)
@@ -726,51 +735,62 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     assert api.call("GET", "/demo/me", short_key).status_code == 401
     assert ended.wait(MAX_WAIT), "the stream outlived its key's expiry"
 
-    # removing a Member from the roster revokes every key it made, closing its streams,
-    # and it can make no new one
+    # removing a user deletes every key it issued, closing its streams, and it can make no
+    # new one
     vega = world["keys"]["vega"]
     assert api.call("GET", "/demo/me", vega).status_code == 200
     ended = follow(api, vega)
-    removed = cli.ok(admin_dir, "roster", "remove", "--handle", "vega")
-    assert removed["api_keys_revoked"] >= 1
+    removed = cli.ok(admin_dir, "users", "remove", "--handle", "vega")
+    assert removed["removed"]
     assert api.call("GET", "/demo/me", vega).status_code == 401
-    assert ended.wait(MAX_WAIT), "the stream outlived its member's roster entry"
-    revoked_by = sql(
+    assert ended.wait(MAX_WAIT), "the stream outlived its user's removal"
+    assert sql(
         server,
-        "SELECT DISTINCT revoked_by FROM api_keys WHERE handle = 'vega' "
-        "AND revoked_by IS NOT NULL AND id <> %s",
-        short["id"],
+        "SELECT count(*) FROM api_keys WHERE handle = 'vega' AND kind = 'issued'",
+    ) == [[0]]
+    refused = api.control(
+        "POST", "/demo/api-keys", vega_session, {"label": "again", "roles": roles}
     )
-    assert revoked_by == [["roster-removal"]]
-    refused = api.control("POST", "/demo/api-keys", vega_session, {"label": "again"})
     assert refused.status_code in (401, 403), refused.text
 
-    # the admin makes, reads and revokes application keys
-    made = api.control("POST", "/demo/api-keys", admin, {"label": "kiosk"})
+    # root makes, reads and revokes application keys
+    reader = [{"role": "community-observer", "collections": ["record"]}]
+    made = api.control(
+        "POST",
+        "/demo/api-keys",
+        admin,
+        {"label": "kiosk", "non_member": True, "roles": reader},
+    )
     assert made.status_code == 201 and made.headers["cache-control"] == "no-store"
-    assert (made.json()["role"], made.json()["handle"]) == ("non-member", None)
+    assert (made.json()["member_key"], made.json()["roles"]) == (False, reader)
     one = api.control("GET", f"/demo/api-keys/{made.json()['id']}", admin)
     assert one.status_code == 200 and one.json()["key"] == made.json()["key"]
     kiosk = made.json()["key"]
-    assert (
-        api.call("GET", "/demo/record", kiosk).status_code == 403
-    )  # granted nothing yet
-    grant_record(cli, admin_dir, made.json()["id"])
     assert api.call("GET", "/demo/record", kiosk).status_code == 200
-    cli.ok(admin_dir, "communities", "create", "--name", "elsewhere")
+    cli.ok(
+        admin_dir,
+        "communities",
+        "create",
+        "--name",
+        "elsewhere",
+        "--admin",
+        "x",
+        "--out",
+        admin_dir / "elsewhere-x.invite",
+    )
     assert (
         api.control(
             "GET", f"/elsewhere/api-keys/{made.json()['id']}", admin
         ).status_code
         == 404
     )
-    # the admin revokes its application key with the skill's command; it stops at once
+    # root revokes its application key with the skill's command; it stops at once
     gone = cli.ok(admin_dir, "revoke-api-key", made.json()["id"])
-    assert gone["revoked"] is not None and gone["role"] == "non-member"
+    assert gone["id"] == made.json()["id"] and gone["member_key"] is False
     refused = api.call("GET", "/demo/record", kiosk)
     assert refused.status_code == 401
     conforms("getRecord", refused)
-    # managing keys takes a session: an issued key is refused, and a missing label too
+    # managing keys takes a session: an issued key is refused, and missing roles too
     assert (
         api.control("GET", "/demo/api-keys", world["keys"]["lyra"]).status_code == 403
     )
@@ -971,7 +991,7 @@ def test_every_route_of_v1_answers_one_error_body(server, admin_dir, cli):
     """The hand-written routes refuse with the contract's Error body, as the generated ones do."""
     status = HTTP.get(server.url + "/v1/status").json()
     assert status["mode"] == "operational"
-    cli.ok(admin_dir, "communities", "create", "--name", "demo")
+    cli.ok(admin_dir, "communities", "create", "--name", "demo", "--admin", "steward")
     missing = HTTP.get(server.url + "/v1/demo/collections/record/find?name=x")
     assert missing.status_code == 401 and set(missing.json()) == {"detail", "code"}
     assert missing.json()["code"] == "unauthorized"
@@ -1032,27 +1052,42 @@ def test_every_stream_cap_reaches_its_429(server):
 def test_a_key_acts_only_within_its_community_and_standing(world, cli):
     api, keys, admin = world["api"], world["keys"], world["admin_session"]
     admin_dir = world["admin_dir"]
-    cli.ok(admin_dir, "communities", "create", "--name", "other")
+    cli.ok(
+        admin_dir,
+        "communities",
+        "create",
+        "--name",
+        "other",
+        "--admin",
+        "x",
+        "--out",
+        admin_dir / "other-x.invite",
+    )
 
     # every key belongs to one community and is refused in any other
     for key in (keys["lyra"], keys["non-member"]):
         elsewhere = api.call("GET", "/other/record", key)
-        assert (
-            elsewhere.status_code == 403
-            and "belongs to demo" in (elsewhere.json()["detail"])
-        )
+        assert elsewhere.status_code == 403, elsewhere.text
         conforms("getRecord", elsewhere)
 
-    # a non-member key names no Member: a handle like its label joining the roster
-    # changes nothing for it
-    made = api.control("POST", "/demo/api-keys", admin, {"label": "newcomer"})
-    assert made.status_code == 201
+    # a non-member key is its own identity: a user with a handle like its label joining the
+    # community changes nothing for it
+    made = api.control(
+        "POST",
+        "/demo/api-keys",
+        admin,
+        {
+            "label": "newcomer",
+            "non_member": True,
+            "roles": [{"role": "community-observer", "collections": ["record"]}],
+        },
+    )
+    assert made.status_code == 201, made.text
     app_key = made.json()["key"]
-    grant_record(cli, admin_dir, made.json()["id"])
     assert api.call("GET", "/demo/record", app_key).status_code == 200
-    cli.ok(admin_dir, "roster", "add", "--handle", "newcomer")
+    enroll(cli, admin_dir, "newcomer")
     assert api.call("GET", "/demo/record", app_key).status_code == 200
-    # and it publishes nothing: publishing needs a key a Member made for itself
+    # and it publishes nothing: publishing takes `publish`, which an observer lacks
     refused = api.call(
         "POST", "/demo/submissions", app_key, note("newcomer", "attempt")
     )
@@ -1288,52 +1323,54 @@ def test_the_api_checks_a_research_goal_as_validate_does(world, suite, tmp_path)
     assert level == "REVIEW" and "must declare groundable: false" in msg, msg
 
 
-# ── collections decide: grants withdrawn, and felt at once ─────────────────────────────────
-def test_a_withdrawn_record_grant_is_felt_on_the_next_request_and_by_a_stream(
-    world, cli
-):
+# ── roles decide: an unassigned role is felt at once ───────────────────────────────────────
+def key_id(cli, directory: Path, label: str) -> str:
+    return next(
+        k["id"]
+        for k in cli.ok(directory, "list-api-keys")["keys"]
+        if k["label"] == label
+    )
+
+
+def test_an_unassigned_role_is_felt_on_the_next_request_and_by_a_stream(world, cli):
     """The record's routes read the `record` collection, so a key reads them only while its
-    holder may read `record`: a Member's own key loses them with its Member's grant, and an
-    open stream closes within a heartbeat."""
+    roles reach `record`: a member key narrowed to `files` loses them, and an open stream
+    closes within a heartbeat."""
     api, keys, admin_dir = world["api"], world["keys"], world["admin_dir"]
     lyra = keys["lyra"]
+    laptop = key_id(cli, world["sessions"]["lyra"], "laptop")
     assert api.call("GET", "/demo/record", lyra).status_code == 200
     ended = follow(api, lyra)
+    # root, a `members` holder, narrows the key: community-member on `files` alone
+    cli.ok(admin_dir, "unassign", "--api-key", laptop, "--access", "community-member")
     cli.ok(
         admin_dir,
-        "collection",
-        "grant",
-        "--collection",
-        "record",
-        "--handle",
-        "lyra",
-        "--perm",
-        "read",
-        "--revoke",
+        "assign",
+        "--api-key",
+        laptop,
+        "--access",
+        "community-member:files",
     )
     refused = api.call("GET", "/demo/record", lyra)
     assert refused.status_code == 403
     conforms("getRecord", refused)
     assert api.call("GET", "/demo/artifacts", lyra).status_code == 403
-    assert ended.wait(MAX_WAIT), "the stream outlived its Member's grant"
-    # what is not the record stays open to the key: it is still lyra's
+    assert ended.wait(MAX_WAIT), "the stream outlived its key's role"
+    # what is not the record stays open to the key: it is still lyra's, and still publishes
     assert api.call("GET", "/demo/me", lyra).status_code == 200
     assert api.call("GET", "/demo/submissions", lyra).status_code == 200
 
-    # a non-member key's grant, withdrawn, closes its stream the same way
+    # a non-member key's role, unassigned, closes its stream the same way
     viewer = keys["non-member"]
     ended = follow(api, viewer)
-    [viewer_id] = [
-        k["id"]
-        for k in cli.ok(admin_dir, "list-api-keys")["keys"]
-        if k["label"] == "viewer app"
-    ]
-    grant_record(cli, admin_dir, viewer_id, granted=False)
-    assert api.call("GET", "/demo/record", viewer).status_code == 403
-    assert ended.wait(MAX_WAIT), "the stream outlived its key's grant"
+    share_record(cli, admin_dir, key_id(cli, admin_dir, "viewer app"), shared=False)
+    assert api.call("GET", "/demo/record", viewer).status_code in (401, 403)
+    assert ended.wait(MAX_WAIT), "the stream outlived its key's role"
 
 
-def test_a_non_member_key_reads_a_private_record_only_when_granted(world, cli):
+def test_a_non_member_key_reads_a_private_record_only_when_its_role_names_it(
+    world, cli
+):
     api, keys, admin_dir = world["api"], world["keys"], world["admin_dir"]
     for path in ("/demo/record", "/demo/artifacts", "/demo/members"):
         assert api.call("GET", path, keys["non-member"]).status_code == 200, path
@@ -1346,7 +1383,7 @@ def test_a_non_member_key_reads_a_private_record_only_when_granted(world, cli):
         headers={"Authorization": f"Bearer {keys['ungranted']}"},
     ) as response:
         assert response.status_code == 403
-    # public, the record answers everyone; private again, it answers the grant alone
+    # public, the record answers everyone; private again, only the roles that name it
     cli.ok(admin_dir, "collection", "set-public", "--collection", "record", "--public")
     assert api.call("GET", "/demo/record", keys["ungranted"]).status_code == 200
     assert api.call("GET", "/demo/record").status_code == 200
@@ -1355,51 +1392,47 @@ def test_a_non_member_key_reads_a_private_record_only_when_granted(world, cli):
     assert api.call("GET", "/demo/record").status_code == 401
 
 
-def test_publishing_takes_write_on_inbox(world, cli, server):
-    """Submitting writes into `inbox`, so it needs the Member's write grant there, which every
-    Member starts with; withdrawn, a submission is refused and nothing is stored."""
-    api, lyra, admin_dir = world["api"], world["keys"]["lyra"], world["admin_dir"]
+def test_publishing_takes_publish(world, cli, server):
+    """Submitting, and checking a submission, take `publish`, which `community-member` holds:
+    an observer is refused both, and nothing is stored."""
+    api, admin_dir = world["api"], world["admin_dir"]
+    olive_dir = enroll(cli, admin_dir, "olive", "community-observer:*")
+    olive = key_value(
+        cli.ok(olive_dir, "gen-api-key", "reader", "--access", "community-observer:*")
+    )
     stored = sql(
         server,
         "SELECT count(*) FROM files WHERE community = 'demo' AND collection = 'inbox'",
     )
-    cli.ok(
-        admin_dir,
-        "collection",
-        "grant",
-        "--collection",
-        "inbox",
-        "--handle",
-        "lyra",
-        "--perm",
-        "write",
-        "--revoke",
-    )
-    refused = api.call("POST", "/demo/submissions", lyra, note("lyra", "blocked"))
-    assert refused.status_code == 403, refused.text
-    conforms("submitArtifact", refused)
+    for operation_id, path in (
+        ("submitArtifact", "/demo/submissions"),
+        ("checkSubmission", "/demo/submissions/check"),
+    ):
+        refused = api.call("POST", path, olive, note("olive", "blocked"))
+        assert refused.status_code == 403, refused.text
+        conforms(operation_id, refused)
     after = sql(
         server,
         "SELECT count(*) FROM files WHERE community = 'demo' AND collection = 'inbox'",
     )
     assert after == stored
-    # checking stores nothing, so it needs no write grant
-    checked = api.call("POST", "/demo/submissions/check", lyra, note("lyra", "blocked"))
-    assert checked.status_code == 200
+    # the observer still reads the record
+    assert api.call("GET", "/demo/record", olive).status_code == 200
 
 
 # ── every route of /v1, against the one contract ───────────────────────────────────────────
-def admin_signature(suite, admin_dir: Path) -> dict:
-    """A fresh admin challenge, signed with the admin's key from the keystore, as the CLI
-    signs one: the body of an admin sign-in."""
+def root_signature(suite, admin_dir: Path) -> dict:
+    """A fresh challenge for root, signed with root's key from the keystore as the CLI signs
+    one: the body of root's sign-in."""
     code = (
         f"import json, sys; sys.path.insert(0, {str(CLI_DIR)!r}); "
         "from main import Commands; from keystore import ADMIN_SCOPE; "
         "c = Commands(); ctx = c.context.load(); "
-        "server = c.server_for(ctx['data-server-url'], ctx['community']); "
-        "nonce = server.request('POST', '/v1/admin/challenge', auth=False)['nonce']; "
+        "server = c.server_for(ctx['data-server-url']); "
+        "nonce = server.challenge(ctx['handle'], None); "
         "sig = c.keystore(ctx['server_id']).sign(ADMIN_SCOPE, ctx['handle'], nonce.encode()); "
-        "print(json.dumps({'nonce': nonce, 'signature': sig}))"
+        "print(json.dumps({'handle': ctx['handle'], 'community': None, "
+        "'nonce': nonce, 'signature': sig}))"
     )
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -1466,24 +1499,30 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         called.add(operation_id)
         return response
 
-    # the server, and signing in
+    # the server, and signing in: one flow for every user, root's with no community
     check("getStatus", "GET", "/status", status=200)
-    check("adminChallenge", "POST", "/admin/challenge", status=200)
-    signed = admin_signature(suite, world["admin_dir"])
-    session = check(
-        "createAdminSession", "POST", "/admin/token", body=signed, status=200
-    )
+    signed = root_signature(suite, world["admin_dir"])
+    session = check("createSession", "POST", "/auth/token", body=signed, status=200)
     assert session.headers["cache-control"] == "no-store"
     assert session.json()["key"].startswith("sak_")
-    check(
-        "createAdminSession", "POST", "/admin/token", body=signed, status=401
-    )  # spent
+    check("createSession", "POST", "/auth/token", body=signed, status=401)  # spent
 
     # communities
     check("listCommunities", "GET", "/communities", admin, status=200)
-    check("createCommunity", "POST", "/communities", admin, {"name": "other"}, 201)
-    check("createCommunity", "POST", "/communities", admin, {"name": "other"}, 200)
-    check("createCommunity", "POST", "/communities", lyra, {"name": "mine"}, 403)
+    other = {"name": "other", "admin": "boss"}
+    made = check("createCommunity", "POST", "/communities", admin, other, 201).json()
+    assert made["admin_invite"]["roles"] == [
+        {"role": "community-admin", "collections": None}
+    ]
+    check("createCommunity", "POST", "/communities", admin, other, 200)
+    check(
+        "createCommunity",
+        "POST",
+        "/communities",
+        lyra,
+        {"name": "mine", "admin": "me"},
+        403,
+    )
     exported = check("exportCommunity", "GET", "/other/export", admin, status=200)
     check(
         "importCommunity",
@@ -1507,23 +1546,36 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
     ).json()
     check("getPortNdex", "GET", f"/other/port-ndex/{port['id']}", admin, status=200)
 
-    # a new Member: the roster, an invite, registration, sign-in, rotation and rebind
-    check("addMember", "POST", "/demo/roster/nova", admin, status=201)
-    check("addMember", "POST", "/demo/roster/nova", admin, status=200)
-    check("listRoster", "GET", "/demo/roster", lyra, status=200)
-    check("listRoster", "GET", "/demo/roster", keys["non-member"], status=403)
+    # a new user: an invite carrying its roles, joining, sign-in, rotation, roles, rebind
+    # and removal
+    member = [{"role": "community-member", "collections": ["*"]}]
     invite = check(
-        "createInvite", "POST", "/demo/invites", admin, {"handle": "nova"}, 201
+        "createInvite",
+        "POST",
+        "/invites",
+        admin,
+        {"handle": "nova", "community": "demo", "roles": member},
+        201,
     ).json()
-    check("listInvites", "GET", "/demo/invites", admin, status=200)
+    assert invite["roles"] == member
+    check(
+        "createInvite",
+        "POST",
+        "/invites",
+        lyra,
+        {"handle": "nobody", "community": "demo", "roles": member},
+        403,
+    )
+    check("listInvites", "GET", "/invites?community=demo", admin, status=200)
+    check("listRoles", "GET", "/roles", lyra, status=200)
     nova = Ed25519Key()
 
     def challenge(handle):
         return check(
             "challenge",
             "POST",
-            "/demo/auth/challenge",
-            body={"handle": handle},
+            "/auth/challenge",
+            body={"handle": handle, "community": "demo"},
             status=200,
         ).json()["nonce"]
 
@@ -1535,13 +1587,14 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "signature": nova.sign(nonce),
         "invite": invite["invite"],
     }
-    check("register", "POST", "/demo/owners", body=registration, status=201)
+    joined = check("register", "POST", "/users", body=registration, status=201)
+    assert joined.json()["roles"] == member
     mallory = Ed25519Key()
     nonce = challenge("mallory")
     check(
         "register",
         "POST",
-        "/demo/owners",
+        "/users",
         body={
             "handle": "mallory",
             "public_jwk": mallory.jwk,
@@ -1549,14 +1602,19 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
             "signature": mallory.sign(nonce),
             "invite": invite["invite"],
         },
-        status=403,  # not on the roster
+        status=403,  # the invite is nova's, and used
     )
     nonce = challenge("nova")
     nova_session = check(
         "createSession",
         "POST",
-        "/demo/auth/token",
-        body={"handle": "nova", "nonce": nonce, "signature": nova.sign(nonce)},
+        "/auth/token",
+        body={
+            "handle": "nova",
+            "community": "demo",
+            "nonce": nonce,
+            "signature": nova.sign(nonce),
+        },
         status=200,
     ).json()["key"]
     rotated = Ed25519Key()
@@ -1564,56 +1622,86 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
     check(
         "rotateKey",
         "POST",
-        "/demo/owners/nova/keys",
+        "/users/me/keys",
         nova_session,
         {"public_jwk": rotated.jwk, "nonce": nonce, "signature": rotated.sign(nonce)},
         201,
     )
-    check("rotateKey", "POST", "/demo/owners/nova/keys", keys["lyra"], {}, 403)
-    check("rebindMember", "POST", "/demo/owners/nova/rebind", admin, status=200)
+    check("rotateKey", "POST", "/users/me/keys", keys["lyra"], {}, 403)
+
+    check("listRoster", "GET", "/demo/roster", lyra, status=200)
+    check("listRoster", "GET", "/demo/roster", keys["non-member"], status=200)
+    check("listRoster", "GET", "/other/roster", keys["lyra"], status=403)
+    users = check("listUsers", "GET", "/users?community=demo", admin, status=200)
+    check("listUsers", "GET", "/users?community=demo", lyra, status=403)
+    ids = {u["handle"]: u["id"] for u in users.json()["users"]}
+    observer = {
+        "handle": "nova",
+        "community": "demo",
+        "role": "community-observer",
+        "collections": ["*"],
+    }
+    check(
+        "listAssignments",
+        "GET",
+        "/assignments?handle=nova&community=demo",
+        admin,
+        status=200,
+    )
+    check("assignRole", "POST", "/assignments", admin, observer, 200)
+    check("assignRole", "POST", "/assignments", lyra, observer, 403)
+    check("unassignRole", "DELETE", "/assignments", admin, observer, 200)
+    rebound = check(
+        "rebindUser", "POST", f"/users/{ids['nova']}/rebind", admin, status=201
+    )
+    assert rebound.json()["retired_keys"] == 1
     check(
         "setSuspectAfter",
         "PUT",
-        "/demo/owners/vega/suspect-after",
+        f"/users/{ids['vega']}/suspect-after",
         admin,
         {"at": "2026-10-01T12:00:00+00:00"},
         200,
     )
-    check("removeMember", "DELETE", "/demo/roster/nova", admin, status=200)
-    check("removeMember", "DELETE", "/demo/roster/nova", admin, status=404)
+    check("removeUser", "DELETE", f"/users/{ids['nova']}", lyra, status=403)
+    check("removeUser", "DELETE", f"/users/{ids['nova']}", admin, status=200)
 
     # API keys
     made = check(
-        "createApiKey", "POST", "/demo/api-keys", lyra, {"label": "contract"}, 201
+        "createApiKey",
+        "POST",
+        "/demo/api-keys",
+        lyra,
+        {"label": "contract", "roles": member},
+        201,
     ).json()
-    check("createApiKey", "POST", "/demo/api-keys", keys["lyra"], {"label": "x"}, 403)
+    check(
+        "createApiKey",
+        "POST",
+        "/demo/api-keys",
+        keys["lyra"],
+        {"label": "x", "roles": member},
+        403,
+    )
     check("listApiKeys", "GET", "/demo/api-keys", lyra, status=200)
     check("getApiKey", "GET", f"/demo/api-keys/{made['id']}", lyra, status=200)
     check("revokeApiKey", "DELETE", f"/demo/api-keys/{made['id']}", lyra, status=200)
     check("getApiKey", "GET", f"/demo/api-keys/{uuid.uuid4()}", lyra, status=404)
 
-    # collections and grants
+    # collections, shared by assigning a role
     check("createCollection", "POST", "/demo/collections", lyra, {"name": "lab"}, 201)
     check("createCollection", "POST", "/demo/collections", lyra, {"name": "lab"}, 409)
     mine = check("listCollections", "GET", "/demo/collections", lyra, status=200)
     lab = next(c for c in mine.json()["collections"] if c["name"] == "lab")
     assert (lab["owner"], lab["access"]) == ("lyra", ["read", "write", "manage"])
     check("listCollections", "GET", "/nowhere/collections", lyra, status=404)
-    viewer_id = next(
-        k["id"]
-        for k in cli.ok(world["admin_dir"], "list-api-keys")["keys"]
-        if k["label"] == "viewer app"
-    )
-    grant = {"api_key_id": viewer_id, "perm": "read"}
-    check("setGrant", "PUT", "/demo/collections/lab/grants", lyra, grant, 200)
-    check(
-        "setGrant",
-        "PUT",
-        "/demo/collections/lab/grants",
-        lyra,
-        {**grant, "perm": "write"},
-        400,
-    )
+    viewer_key = viewer_id(cli, world["admin_dir"])
+    shared = {
+        "api_key_id": viewer_key,
+        "role": "community-observer",
+        "collections": ["lab"],
+    }
+    check("assignRole", "POST", "/assignments", admin, shared, 200)
     check(
         "setPublic", "PUT", "/demo/collections/lab/public", lyra, {"public": False}, 200
     )
@@ -1674,10 +1762,10 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
     )
     check("listFileVersions", "GET", f"/demo/files/{fid}/versions", viewer, status=200)
     check("listChanges", "GET", "/demo/collections/lab/changes", viewer, status=200)
-    # a non-member issued key lists what it is granted; a client with no key, the public ones
+    # a non-member issued key lists what its roles name; a client with no key, the public ones
     listed = check("listCollections", "GET", "/demo/collections", viewer, status=200)
-    granted = {c["name"]: c["access"] for c in listed.json()["collections"]}
-    assert granted.get("lab") == ["read"] and "inbox" not in granted
+    readable = {c["name"]: c["access"] for c in listed.json()["collections"]}
+    assert readable.get("lab") == ["read"] and "inbox" not in readable
     public = check("listCollections", "GET", "/demo/collections", status=200).json()
     assert all(c["public"] for c in public["collections"])
     check(
@@ -1829,13 +1917,16 @@ def test_a_cited_file_is_read_through_its_collections_access(world, suite, cli):
 
     dashboard = {"Authorization": f"Bearer {keys['non-member']}"}
     assert api.http.get(url, headers=dashboard).status_code == 403  # `record` only
-    grant = {"api_key_id": viewer_id(cli, admin_dir), "perm": "read"}
-    api.control("PUT", "/demo/collections/lab/grants", lyra, grant)
+    share = {
+        "api_key_id": viewer_id(cli, admin_dir),
+        "role": "community-observer",
+        "collections": ["lab"],
+    }
+    admin = world["admin_session"]
+    assert api.control("POST", "/assignments", admin, share).status_code == 200
     fetched = api.http.get(url, headers=dashboard)
     assert fetched.status_code == 200 and fetched.content == data
-    api.control(
-        "PUT", "/demo/collections/lab/grants", lyra, {**grant, "granted": False}
-    )
+    assert api.control("DELETE", "/assignments", admin, share).status_code == 200
     assert api.http.get(url, headers=dashboard).status_code == 403
     assert api.http.get(url).status_code == 401
     api.control("PUT", "/demo/collections/lab/public", lyra, {"public": True})

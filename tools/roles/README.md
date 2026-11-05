@@ -91,7 +91,9 @@ investigating, what is in scope, what would count as success, and when to stop. 
 supersession, so a reader can see a goal change; a goal changed by re-prompting is one the record
 cannot show changing.
 
-It is a **separate account from the admin**. The party that decides what must be investigated
+It is a **separate account from the community admin**, the account holding the
+`community-admin` access role and running the gate. The party that decides what must be
+investigated
 should not also decide what may be published, which is the concentration a critic already filed
 against this deployment.
 
@@ -99,11 +101,14 @@ Any artifact may name what it was working on in `serves_goals` (list of addresse
 optional, non-evidential bookkeeping, and it answers a question the record could not otherwise
 answer: what was this Member doing when they imported that data?
 
-## The admin holds a role too, and it is the narrowest one
+## The operator publishes from a member account
 
-`operator` (`operator.md`) is the admin's default role in `/symposium publish`. The party that runs the gate
-does not publish the material the community reasons over: a critic's contest against an admin
-import is accepted or refused by the publisher of the thing being contested, which is not a
-contest. The corpus enters through a Member session holding `importer`. `--role none` lifts the
-limit for work that is not publication in the ordinary sense, such as replaying a record onto a
-new server.
+The account that runs the gate, holding the `community-admin` or `gate-keeper` access role,
+publishes nothing: those access roles hold no `publish`. The operator's governance artifacts are
+published from a separate member account, holding `community-member`, in the `operator` role
+(`operator.md`), the narrowest one. The party that runs the gate does not publish the material
+the community reasons over: a critic's contest against the gate-runner's own import would be
+accepted or refused by the publisher of the thing being contested, which is not a contest. The
+corpus enters through a Member session holding `importer`. `--role none` lifts the limit for
+work that is not publication in the ordinary sense, such as replaying a record onto a new
+server.

@@ -225,9 +225,17 @@ def test_deploy_local_refuses_an_empty_destination(installed):
 def test_the_installed_skill_prepares_its_runtime_once_per_session(
     installed, admin_dir, cli, suite, tmp_path
 ):
-    cli.ok(admin_dir, "roster", "add", "--handle", "lyra")
     invite = admin_dir / "lyra.invite"
-    cli.ok(admin_dir, "invite", "--handle", "lyra", "--out", invite)
+    cli.ok(
+        admin_dir,
+        "invite",
+        "--handle",
+        "lyra",
+        "--access",
+        "community-member:*",
+        "--out",
+        invite,
+    )
     skill = installed["skills"] / "symposium"
     env = only_python3(suite, tmp_path)
     anywhere = (

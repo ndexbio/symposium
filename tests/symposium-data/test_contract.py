@@ -38,7 +38,15 @@ def load_cli():
 
 main = load_cli()
 # the client's own plumbing, which every call below goes through
-PLUMBING = {"request", "refusal", "check_api", "c", "api_keys_path", "upload"}
+PLUMBING = {
+    "request",
+    "refusal",
+    "check_api",
+    "c",
+    "api_keys_path",
+    "upload",
+    "params",
+}
 ARGUMENTS = {
     "name": "lab",
     "handle": "lyra",
@@ -64,9 +72,10 @@ ARGUMENTS = {
     "cite": "symposium-data:5779183b-bb3d-439f-bdbf-d042c2e58306@v1",
     "before": None,
     "sha256": "0" * 64,
-    "grantee": {"handle": "vega"},
-    "perm": "read",
-    "granted": True,
+    "home": "demo",
+    "admin": "steward",
+    "user_id": "5779183b-bb3d-439f-bdbf-d042c2e58306",
+    "params": {"handle": "lyra"},
     "public": True,
     "port_id": "5779183b-bb3d-439f-bdbf-d042c2e58306",
     "path": Path(__file__),

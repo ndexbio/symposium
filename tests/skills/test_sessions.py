@@ -54,11 +54,24 @@ def agent_session(root, caller, table, shell: int) -> Sessions:
     return Sessions(root, caller, AgentProcess(table, windows=False, start=shell))
 
 
-def session(root: Path, *parts, handle: str, role: str) -> Path:
-    """A session as setup or bootstrap leaves it: its directory and its context."""
+MEMBER = {"publish": None, "read": ["*"], "write": ["*"], "manage": []}
+ADMIN = {"gate": None, "members": None, "export": None, "communities": None}
+
+
+def session(root: Path, *parts, handle: str, grants=None) -> Path:
+    """A session as setup, bootstrap or admin-config leaves it: its directory and its context,
+    with the access `access` cached. A session under `admin/` is a server-level user's."""
     directory = root.joinpath(*parts)
     (directory / ".symposium").mkdir(parents=True)
-    context = {"community": parts[1], "handle": handle, "role": role}
+    server_level = parts[0] == "admin"
+    community = parts[1] if len(parts) > 1 else None
+    context = {
+        "community": community,
+        "handle": handle,
+        "home": None if server_level else community,
+    }
+    if grants is not None:
+        context["access"] = {"roles": [], "context": {"grants": grants}}
     (directory / ".symposium" / "context.json").write_text(json.dumps(context))
     return directory
 
@@ -78,6 +91,11 @@ def test_setup_and_bootstrap_make_their_sessions_from_their_files(root, caller, 
     assert directory == root / "member" / "demo" / "lyra" and directory.is_dir()
     assert rest == ["--invite-file", str(caller / "lyra.invite")]
     assert sessions.place("admin-config", ["--handle", "a"])[0] == root / "admin"
+    # a server-level invite: the server-wide session; use-community: a community's
+    (caller / "ana.invite").write_text(json.dumps({"community": None, "handle": "ana"}))
+    directory, _, _ = sessions.place("setup", ["--invite-file", "ana.invite"])
+    assert directory == root / "admin"
+    assert sessions.place("use-community", ["demo"])[0] == root / "admin" / "demo"
 
 
 def test_an_unusable_file_makes_no_session(root, caller, table):
@@ -91,7 +109,7 @@ def test_an_unusable_file_makes_no_session(root, caller, table):
 
 
 def test_with_no_choice_the_machines_only_session_is_used(root, caller, table):
-    lyra = session(root, "member", "demo", "lyra", handle="lyra", role="member")
+    lyra = session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     directory, chosen, rest = agent_session(root, caller, table, 300).place(
         "sync", ["--watch"]
     )
@@ -99,8 +117,8 @@ def test_with_no_choice_the_machines_only_session_is_used(root, caller, table):
 
 
 def test_several_sessions_need_a_choice(root, caller, table):
-    session(root, "admin", "demo", handle="demo-admin", role="admin")
-    session(root, "member", "demo", "lyra", handle="lyra", role="member")
+    session(root, "admin", "demo", handle="demo-admin", grants=ADMIN)
+    session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     with pytest.raises(SessionError) as several:
         agent_session(root, caller, table, 300).place("sync", [])
     assert "/symposium use <community> <handle>" in several.value.report["error"]
@@ -111,12 +129,12 @@ def test_several_sessions_need_a_choice(root, caller, table):
 
 
 def test_use_switches_this_agent_session_only(root, caller, table):
-    admin = session(root, "admin", "demo", handle="demo-admin", role="admin")
-    lyra = session(root, "member", "demo", "lyra", handle="lyra", role="member")
+    admin = session(root, "admin", "demo", handle="demo-admin", grants=ADMIN)
+    lyra = session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     first = agent_session(root, caller, table, 300)  # agent 200
     second = agent_session(root, caller, table, 500)  # agent 400
     assert first.use(["demo", "lyra"])["directory"] == str(lyra)
-    assert second.use(["demo", "demo-admin"])["role"] == "admin"
+    assert second.use(["demo", "demo-admin"])["server_level"] is True
     assert first.place("sync", [])[0] == lyra  # unchanged by the other agent's choice
     assert second.place("gate", [])[0] == admin
     first.use(["demo", "demo-admin"])
@@ -128,7 +146,7 @@ def test_use_switches_this_agent_session_only(root, caller, table):
 def test_use_with_no_arguments_or_no_such_session_lists_them_and_changes_nothing(
     root, caller, table
 ):
-    session(root, "admin", "demo", handle="demo-admin", role="admin")
+    session(root, "admin", "demo", handle="demo-admin", grants=ADMIN)
     sessions = agent_session(root, caller, table, 300)
     for args in ([], ["demo", "nobody"]):
         with pytest.raises(SessionError) as refused:
@@ -138,43 +156,53 @@ def test_use_with_no_arguments_or_no_such_session_lists_them_and_changes_nothing
     assert not (root / "current").exists()
 
 
-def test_no_session_names_setup_and_bootstrap(root, caller, table):
+def test_no_session_names_setup_and_admin_config(root, caller, table):
     with pytest.raises(SessionError) as missing:
         agent_session(root, caller, table, 300).place("roster", ["list"])
     error = missing.value.report["error"]
     assert "/symposium setup --invite-file" in error
-    assert "/symposium bootstrap --community-file" in error
+    assert "/symposium admin-config" in error
 
 
-def test_an_admin_command_is_refused_in_a_members_session(root, caller, table):
-    session(root, "admin", "demo", handle="demo-admin", role="admin")
-    session(root, "member", "demo", "lyra", handle="lyra", role="member")
+def test_a_command_is_refused_where_its_grant_is_not_held(root, caller, table):
+    session(root, "admin", "demo", handle="demo-admin", grants=ADMIN)
+    session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     sessions = agent_session(root, caller, table, 300)
     sessions.use(["demo", "lyra"])
+    _, lyra, _ = sessions.place("invite", ["--handle", "vega"])
+    refused = sessions.refusal("invite", lyra)
+    assert "`members` or `delegate`" in refused["error"]
+    assert [s["use"] for s in refused["sessions"]] == ["/symposium use demo demo-admin"]
+    assert sessions.refusal("publish", lyra) is None
+    assert sessions.refusal("roster", lyra) is None  # any member reads it
+    sessions.use(["demo", "demo-admin"])
+    _, admin, _ = sessions.place("gate", [])
+    assert sessions.refusal("gate", admin) is None
+    assert "`publish`" in sessions.refusal("publish", admin)["error"]
+
+
+def test_with_nothing_cached_the_server_decides(root, caller, table):
+    session(root, "member", "demo", "lyra", handle="lyra")
+    sessions = agent_session(root, caller, table, 300)
+    _, lyra, _ = sessions.place("invite", [])
+    assert sessions.refusal("invite", lyra) is None
+
+
+def test_a_server_wide_session_runs_server_commands_and_no_community_ones(
+    root, caller, table
+):
+    server = session(root, "admin", handle="demo-admin", grants=ADMIN)
+    sessions = agent_session(root, caller, table, 300)
+    assert sessions.use(["demo-admin"])["use"] == "/symposium use demo-admin"
+    assert sessions.place("invite", ["--handle", "ana"])[0] == server
     with pytest.raises(SessionError) as refused:
-        sessions.place("roster", ["add", "--handle", "vega"])
-    assert "/symposium use demo <the admin's handle>" in refused.value.report["error"]
-
-
-def test_a_member_lists_the_roster_but_does_not_change_it(root, caller, table):
-    session(root, "admin", "demo", handle="demo-admin", role="admin")
-    lyra = session(root, "member", "demo", "lyra", handle="lyra", role="member")
-    sessions = agent_session(root, caller, table, 300)
-    sessions.use(["demo", "lyra"])
-    assert sessions.place("roster", ["list"])[0] == lyra  # any member reads it
-    for change in (["add", "--handle", "vega"], ["remove", "--handle", "vega"]):
-        with pytest.raises(SessionError) as refused:
-            sessions.place("roster", change)
-        assert refused.value.report["error"].startswith(
-            f"`roster {change[0]}` is the admin's"
-        )
-    with pytest.raises(SessionError):
-        sessions.place("roster", [])
+        sessions.place("gate", [])
+    assert "/symposium use-community <community>" in refused.value.report["error"]
 
 
 def test_a_reused_pid_is_a_new_agent_session(root, caller, table):
-    session(root, "admin", "demo", handle="demo-admin", role="admin")
-    session(root, "member", "demo", "lyra", handle="lyra", role="member")
+    session(root, "admin", "demo", handle="demo-admin", grants=ADMIN)
+    session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     agent_session(root, caller, table, 300).use(["demo", "lyra"])
     # agent 200 ends, and a new process gets its PID: it has not chosen anything
     table.rows[200] = Process(200, 1, "a9", "agent")
@@ -183,7 +211,7 @@ def test_a_reused_pid_is_a_new_agent_session(root, caller, table):
 
 
 def test_records_of_ended_agent_processes_are_purged(root, caller, table):
-    session(root, "member", "demo", "lyra", handle="lyra", role="member")
+    session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     agent_session(root, caller, table, 500).use(["demo", "lyra"])  # agent 400
     del table.rows[400], table.rows[500]  # agent 400 ends
     agent_session(root, caller, table, 300).use(["demo", "lyra"])  # agent 200 records
@@ -191,7 +219,7 @@ def test_records_of_ended_agent_processes_are_purged(root, caller, table):
 
 
 def test_the_callers_paths_are_resolved_and_nothing_else(root, caller, table):
-    session(root, "member", "demo", "lyra", handle="lyra", role="member")
+    session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     (caller / "note.json").write_text("{}")
     (caller / "lyra").mkdir()  # a directory named like a handle is not a path argument
     sessions = agent_session(root, caller, table, 300)

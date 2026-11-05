@@ -10,6 +10,7 @@ from conftest import (
     community_with,
     create_community,
     enroll,
+    file_headers,
     init_admin,
     steward_of,
 )
@@ -254,3 +255,29 @@ def test_two_concurrent_demotions_of_the_last_two_admins_leave_one(server):
         if any(a["role"] == "community-admin" for a in r["roles"])
     ]
     assert len(admins) == 1
+
+
+def test_narrowing_the_issuer_narrows_its_keys_on_the_next_request(server):
+    admin, owners = community_with(server, members=("lyra",))
+    lyra = owners["lyra"]
+    key = lyra.issue(
+        "script", roles=[{"role": "community-member", "collections": EVERY}]
+    )
+    bearer = {"Authorization": f"Bearer {key['key']}"}
+    record = lyra.url("/collections/record/changes")
+    assert HTTP.get(record, headers=bearer).status_code == 200
+    admin.unassign("community-member", None, "lyra", "demo")
+    admin.assign("community-member", ["files"], "lyra", "demo")
+    assert HTTP.get(record, headers=bearer).status_code == 403
+    files = lyra.url("/collections/files/changes")
+    assert HTTP.get(files, headers=bearer).status_code == 200
+    admin.unassign("community-member", None, "lyra", "demo")
+    admin.assign("community-observer", EVERY, "lyra", "demo")
+    put = HTTP.put(
+        lyra.url("/collections/files/files/x.csv"),
+        content=b"x",
+        headers={**bearer, **file_headers(b"x")},
+    )
+    assert (
+        put.status_code == 403
+    )  # the issuer writes nothing now, and neither does its key

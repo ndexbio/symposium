@@ -25,7 +25,7 @@ CLI_DIR = REPO / "tools" / "symposium-data"
 # the CLI's Python entry, run with the suite's interpreter, which has the CLI's packages
 CLI = CLI_DIR / "cli.py"
 SKILL = REPO / "skills" / "symposium" / "scripts" / "main.py"
-ADMIN = "demo-admin"
+ADMIN = "demo-admin"  # root, bound from the key file
 
 
 class Cli:
@@ -116,13 +116,18 @@ def place_admin_key(server: Server, key_file: Path, fingerprint: str):
 
 
 def community_file(
-    directory: Path, server: Server, community: str = "demo", handles=()
+    directory: Path,
+    server: Server,
+    community: str = "demo",
+    handles=(),
+    admin: str = "steward",
 ) -> Path:
     path = directory / f"{community}.json"
     path.write_text(
         json.dumps(
             {
                 "community": community,
+                "admin": admin,
                 "handles": list(handles),
                 "data-server-url": server.url,
             }
@@ -131,12 +136,14 @@ def community_file(
     return path
 
 
-def enroll(cli: Cli, admin_dir: Path, handle: str) -> Path:
-    """A member, entirely through the CLI: the admin adds the handle and writes its invite
-    file; the member sets its context from the file, in its own directory, and registers."""
-    cli.ok(admin_dir, "roster", "add", "--handle", handle)
+def enroll(
+    cli: Cli, admin_dir: Path, handle: str, access: str = "community-member:*"
+) -> Path:
+    """A user, entirely through the CLI: an inviter (root's session for the community, or a
+    community admin's) writes its invite file carrying `access`; the user sets its context
+    from the file, in its own directory, and joins."""
     invite = admin_dir / f"{handle}.invite"
-    cli.ok(admin_dir, "invite", "--handle", handle, "--out", invite)
+    cli.ok(admin_dir, "invite", "--handle", handle, "--access", access, "--out", invite)
     member = admin_dir / handle
     member.mkdir()
     cli.ok(member, "context", "set", "--invite-file", invite)

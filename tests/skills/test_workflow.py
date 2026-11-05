@@ -1,7 +1,7 @@
 """The member's side of the workflow on the data server: `publish.py` submits into the
 community's `inbox` (R-G3), and `sync.py` keeps the session's copy of the record (`./record`)
 current from the `record` feed and lists the gate's replies. The gate's part (promote, reply)
-is done here by the admin through the CLI, as the gate does it."""
+is done here through root's community session and the CLI, as the gate does it."""
 
 import json
 import subprocess
@@ -241,9 +241,17 @@ def test_setup_syncs_the_record_after_registering(suite, admin_dir, cli, skill):
     assert tool(suite, lyra, "publish.py", note(lyra, "lyra", "seed"))[0] == 0
     accept(cli, admin_dir, submissions(cli, admin_dir)[0])
 
-    cli.ok(admin_dir, "roster", "add", "--handle", "vega")
     invite = admin_dir / "vega.invite"
-    cli.ok(admin_dir, "invite", "--handle", "vega", "--out", invite)
+    cli.ok(
+        admin_dir,
+        "invite",
+        "--handle",
+        "vega",
+        "--access",
+        "community-member:*",
+        "--out",
+        invite,
+    )
     joined = skill.ok(admin_dir, "setup", "--invite-file", invite)
     assert joined["registered"] is True and joined["record"]["artifacts"] == 1
     vega = (
@@ -265,13 +273,28 @@ def test_setup_and_publish_list_a_message_waiting_for_you(suite, admin_dir, cli,
     # A member agent asked only to join and publish runs `setup` and `publish`, never `sync`.
     # Both sync first; a Message to the member that those passes bring in must be listed there,
     # once, or the member is never told it is waiting (the F9 scenario: 2 of 5 fresh agents).
+    # A Message addresses a member once it has joined: vega joins, lyra writes to it, and
+    # vega's setup is the first pass that brings the Message in.
     lyra = enroll(cli, admin_dir, "lyra")
-    cli.ok(admin_dir, "roster", "add", "--handle", "vega")
     invite = admin_dir / "vega.invite"
-    cli.ok(admin_dir, "invite", "--handle", "vega", "--out", invite)
+    cli.ok(
+        admin_dir,
+        "invite",
+        "--handle",
+        "vega",
+        "--access",
+        "community-member:*",
+        "--out",
+        invite,
+    )
+    joining = admin_dir / "vega-joining"
+    joining.mkdir()
+    cli.ok(joining, "context", "set", "--invite-file", invite)
+    cli.ok(joining, "owner", "register")
     send(suite, cli, admin_dir, lyra, message(lyra, "lyra", "welcome", ["@vega"]))
 
     joined = skill.ok(admin_dir, "setup", "--invite-file", invite)
+    assert joined["registered"] is False  # joined already, with this machine's key
     assert joined["messages_for_you"] == [
         "message for you from @lyra: About welcome (@lyra_msg_welcome_v1)"
     ]
@@ -307,11 +330,10 @@ def test_sync_messages_lists_every_message_to_you_newest_first(suite, admin_dir,
 
 
 def test_an_address_to_a_member_who_has_not_published_resolves(suite, admin_dir, cli):
-    # vega is on the roster and invited, but has never published or even joined: `@vega` must
-    # still resolve in `publish --check`, through the live roster, as it will at the gate
+    # vega has joined but never published: `@vega` must still resolve in `publish --check`,
+    # through the live roster, as it will at the gate
     lyra = enroll(cli, admin_dir, "lyra")
-    cli.ok(admin_dir, "roster", "add", "--handle", "vega")
-    cli.ok(admin_dir, "invite", "--handle", "vega", "--out", admin_dir / "vega.invite")
+    enroll(cli, admin_dir, "vega")
     message = lyra / "lyra_msg_hello_v1.json"
     message.write_text(
         json.dumps(
@@ -336,11 +358,12 @@ def test_an_address_to_a_member_who_has_not_published_resolves(suite, admin_dir,
     assert not (lyra / "record" / ".roster.json").exists()
 
 
-def test_the_admin_publishes_as_operator_unless_it_lifts_the_limit(
+def test_publishing_takes_publish_and_a_member_has_no_type_limit_by_default(
     suite, admin_dir, cli
 ):
     lyra = enroll(cli, admin_dir, "lyra")
-    admin = cli.ok(admin_dir, "context", "show")["context"]["handle"]
+    olive = enroll(cli, admin_dir, "olive", "community-observer:*")
+    root = cli.ok(admin_dir, "context", "show")["context"]["handle"]
 
     def goal(directory: Path, handle: str) -> Path:
         path = directory / f"{handle}_goal_{directory.name}_v1.json"
@@ -363,14 +386,11 @@ def test_the_admin_publishes_as_operator_unless_it_lifts_the_limit(
         )
         return path
 
-    # the admin's default role is operator, which does not publish a ResearchGoal
-    code, out = tool(suite, admin_dir, "publish.py", goal(admin_dir, admin))
-    assert code == 1 and "role 'operator' may not publish a ResearchGoal" in out
+    # administrative roles hold no publish, and an observer only reads
+    for directory, handle in ((admin_dir, root), (olive, "olive")):
+        code, out = tool(suite, directory, "publish.py", goal(directory, handle))
+        assert code == 1 and "takes the `publish` grant" in out, out
     assert submissions(cli, admin_dir) == []
-    code, out = tool(
-        suite, admin_dir, "publish.py", "--role", "none", goal(admin_dir, admin)
-    )
-    assert code == 0 and "submitted  symposium-data:" in out, out
     # a member with no --role publishes with no type limit
     code, out = tool(suite, lyra, "publish.py", goal(lyra, "lyra"))
     assert code == 0 and "submitted  symposium-data:" in out, out

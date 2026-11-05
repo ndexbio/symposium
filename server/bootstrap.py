@@ -1,31 +1,30 @@
 #!/usr/bin/env python3
-"""Bring a community up on a data server, as its admin:
+"""Bring a community up on a data server, as a server admin:
 `/symposium bootstrap --community-file <file>`.
 
     python3 bootstrap.py --community-file community.json
 
-`community.json` holds three fields (see community.example.json): `community`, the community's
-name (1-20 letters, digits or underscores); `handles`, its members' handles; and
-`data-server-url`. A community inherits its server's admin, so there is no admin field.
+`community.json` (see community.example.json) holds `community`, the community's name (1-20
+letters, digits or underscores); `admin`, the handle of its first community admin; optionally
+`handles`, members to invite with `community-member` on every collection; and
+`data-server-url`.
 
 Bootstrap:
-  1. validates the file, reporting every missing or invalid field at once: a handle that is
-     not a valid handle name, or that is the server admin's own handle, is invalid;
-  2. checks that the data server answers and is operational, that this machine holds the
-     admin key for that server (otherwise run `/symposium admin-config`), and that the server
-     is bound to that very key (its `/v1/status` reports the key's handle and fingerprint;
-     otherwise the key file was not placed, or the server not restarted);
-  3. creates the community if it does not exist, sets this directory's context, and adds every
-     handle to the roster (only adding: nobody is ever removed);
-  4. writes the invite files: it mints an invite for every roster handle that is neither
-     registered nor already invited, then writes every pending invite into the directory it
-     runs in (the admin's session, `~/.symposium/admin/<community>/`, when the skill runs it) as
-     `<community>-<handle>.invite` (0600), and prints each full path. Hand each one to its member
-     out of band. It keeps no state about invites: a lost file is recovered by running it
-     again.
+  1. validates the file, reporting every missing or invalid field at once;
+  2. checks that the data server answers and is operational, then sets this directory's
+     context: the session of this machine's server-level user for the community;
+  3. creates the community with its first community admin, if it does not exist yet. The
+     admin joins with its invite and from then on runs the community: invites, roles, the gate;
+  4. invites every handle in `handles`, and every user of the community holding no key yet
+     (the authors a port brought in), that has not joined and is not invited yet, then writes
+     every pending invite, the admin's included, into the directory it runs in (the server
+     admin's session, `~/.symposium/admin/<community>/`, when the skill runs it) as
+     `<community>-<handle>.invite` (0600), and prints each full path. Hand each one over out of
+     band. A lost file is recovered by running it again.
 
-It is idempotent. Every step runs the `symposium-data` CLI (R-I1), signed in as the server
-admin; this script never contacts the data server itself. It prints one JSON object.
+It is idempotent. Every step runs the `symposium-data` CLI (R-I1), signed in as this machine's
+server-level user, which needs the `communities` grant (root or a server admin); this script
+never contacts the data server itself. It prints one JSON object.
 """
 
 from __future__ import annotations
@@ -43,7 +42,7 @@ from data_io import DataError, SymposiumData  # noqa: E402
 # The data server's rules (R-G8, R-D): a community name is a slug, not a route segment; a handle
 # is a plain name.
 COMMUNITY = re.compile(r"^[A-Za-z0-9_]{1,20}$")
-RESERVED = {"status", "communities", "admin"}
+RESERVED = {"status", "communities", "admin", "auth", "users", "invites", "roles", "assignments"}
 HANDLE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 
@@ -63,56 +62,45 @@ class Bootstrap:
                 if not problems:
                     raise
                 problems.append(f"data-server-url: {e}")
-        if status is not None:
-            if status.get("mode") != "operational":
-                raise DataError(
-                    {
-                        "error": "the data server is not operational: "
-                        f"{status.get('reason')}. Run `/symposium admin-config` and place the "
-                        "admin key file as it prints, then restart the server",
-                    }
-                )
-            admin = status["admin"]
-            for handle in spec.get("handles") or []:
-                if handle == admin:
-                    problems.append(
-                        f"handles: '{handle}' is the server admin's handle, which can never be "
-                        "a member"
-                    )
         if problems:
             raise DataError({"error": f"{community_file} is not valid", "problems": problems})
-
-        context = self.data.run("context", "set", "--community-file", community_file)["context"]
-        key = self.data.run("owner", "pubkey")
-        if (status["admin"], status["fingerprint"]) != (key["handle"], key["fingerprint"]):
+        if status.get("mode") != "operational":
             raise DataError(
                 {
-                    "error": f"the data server is bound to '{status['admin']}' with key "
-                    f"{status['fingerprint']}, but this machine holds '{key['handle']}' with "
-                    f"key {key['fingerprint']}: place the admin_pub_{key['handle']}.key "
-                    "file `/symposium admin-config` wrote, and restart the server",
+                    "error": "the data server is not operational: "
+                    f"{status.get('reason')}. As root, run `/symposium admin-config` and place "
+                    "the root key file as it prints, then restart the server",
                 }
             )
 
-        community = context["community"]
-        created = self.data.run("communities", "create", "--name", community)["created"]
-        added = [
-            handle
-            for handle in spec["handles"]
-            if self.data.run("roster", "add", "--handle", handle)["added"]
-        ]
-        for member in self.data.run("roster", "list")["roster"]:
-            if not member["registered"] and member["invite_expires"] is None:
-                path = Path(f"{community}-{member['handle']}.invite")
-                self.data.run("invite", "--handle", member["handle"], "--out", path)
+        context = self.data.run("context", "set", "--community-file", community_file)["context"]
+        community, admin = context["community"], spec["admin"]
+        made = self.data.run("communities", "create", "--name", community, "--admin", admin,
+                             "--out", Path(f"{community}-{admin}.invite"))
+        community = made.get("name", community)
+        self.data.run("access")  # the session knows what it may do
+        users = self.data.run("users", "list")["users"]
+        joined = {u["handle"] for u in users if u["registered"] or u["removed"]}
+        # users who hold no key yet: the authors a port brought in
+        keyless = [u["handle"] for u in users if not u["registered"] and not u["removed"]]
+        pending = {i["handle"]
+                   for i in self.data.run("invite", "list", "--out-dir", Path.cwd())["invites"]}
+        invited = []
+        for handle in [*(spec.get("handles") or []), *keyless]:
+            if handle in joined or handle in pending or handle == admin:
+                continue
+            pending.add(handle)
+            self.data.run("invite", "--handle", handle, "--access", "community-member:*",
+                          "--out", Path(f"{community}-{handle}.invite"))
+            invited.append(handle)
         # full paths: the invite files are in the session's directory, not the caller's
         written = self.data.run("invite", "list", "--out-dir", Path.cwd())["invites"]
         return {
             "community": community,
             "data-server-url": context["data-server-url"],
-            "admin": status["admin"],
-            "created": created,
-            "added_to_roster": added,
+            "admin": admin,
+            "created": made.get("created", False),
+            "invited": invited,
             "invite_files": [invite["invite_file"] for invite in written],
         }
 
@@ -139,14 +127,17 @@ class Bootstrap:
         ):
             problems.append(
                 f"community: '{community}' is not a community name: 1-20 letters, digits or "
-                "underscores, and not 'status', 'communities' or 'admin'"
+                f"underscores, and not one of {', '.join(sorted(RESERVED))}"
             )
+        admin = spec.get("admin")
+        if admin is None:
+            problems.append("admin: missing (the handle of the community's first admin)")
+        elif not isinstance(admin, str) or not HANDLE.match(admin):
+            problems.append(f"admin: '{admin}' is not a valid handle")
         handles = spec.get("handles")
-        if handles is None:
-            problems.append("handles: missing (the members' handles, a list)")
-        elif not isinstance(handles, list):
+        if handles is not None and not isinstance(handles, list):
             problems.append("handles: not a list")
-        else:
+        elif handles:
             for handle in handles:
                 if not isinstance(handle, str) or not HANDLE.match(handle):
                     problems.append(f"handles: '{handle}' is not a valid handle")
@@ -160,7 +151,7 @@ class Bootstrap:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        prog="bootstrap", description="Bring a community up on a data server, as its admin."
+        prog="bootstrap", description="Bring a community up on a data server, as a server admin."
     )
     parser.add_argument(
         "--community-file", required=True, help="community.json: it names the community"

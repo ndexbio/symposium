@@ -12,6 +12,7 @@ from __future__ import annotations
 from fastapi import HTTPException, Request
 
 from ..api_keys import PREFIX, SESSION, ApiKeys, KeyRow
+from . import rbac
 from .caller import ANONYMOUS_KIND, Caller
 
 
@@ -50,7 +51,8 @@ def standing(conn, records, row: KeyRow) -> str | None:
 
 def context_of(conn, records, row: KeyRow):
     """The `UserContext` of a live key: its user for a session, its issuer for a member key
-    (with the key's own roles), itself for a non-member key."""
+    (with the key's own roles), itself for a non-member key; an issued key's grants never
+    exceed what its issuer reaches now."""
     if row.kind == SESSION:
         return records.context_for(
             conn,
@@ -60,6 +62,16 @@ def context_of(conn, records, row: KeyRow):
             via_session=True,
             user_id=row.user_id,
         )
+    issuer = records.issuer_of(conn, row.community, row.created_by)
+    if issuer is None:
+        # an issuer removed: its keys go with it; until then the key holds nothing
+        return rbac.UserContext(
+            principal_id=row.id,
+            principal_name=row.label,
+            community=row.community,
+            via_session=False,
+            grants={},
+        )
     return records.context_for(
         conn,
         principal_id=row.user_id if row.user_id is not None else row.id,
@@ -67,6 +79,7 @@ def context_of(conn, records, row: KeyRow):
         community=row.community,
         via_session=False,
         api_key_id=row.id,
+        issuer=issuer,
     )
 
 

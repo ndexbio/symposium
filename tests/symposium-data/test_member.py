@@ -1,14 +1,14 @@
 """The CLI's member side against a real data server, with every setup step done through
-the CLI's own admin commands: registration (R-D1, R-D5), files and versions (R-A, R-B),
-collections, grants and API keys (R-E), lookups, verify and promote (R-G), and what
-rebind-key and suspect-after do to a registered member."""
+the CLI's own commands: joining by invite (R-D1, R-D5), files and versions (R-A, R-B),
+collections, sharing by access role and API keys (R-E), lookups, verify and promote (R-G),
+and what rebind-key and suspect-after do to a registered member."""
 
 import hashlib
 import json
 import stat
 from pathlib import Path
 
-from suite import ADMIN, enroll
+from suite import enroll
 
 
 def write(directory: Path, name: str, content: bytes) -> Path:
@@ -25,23 +25,26 @@ def test_registration_by_invite_file_is_idempotent(admin_dir, cli):
     )  # already registered with this key: nothing changes
     me = cli.ok(lyra, "owner", "whoami")
     assert me["handle"] == "lyra" and me["community"] == "demo"
-    assert (me["role"], me["kind"]) == ("member", "session")
-    assert {"collection": "files", "perm": "write"} in me["grants"]
+    assert me["kind"] == "session"
+    assert me["roles"] == [{"role": "community-member", "collections": ["*"]}]
+    assert me["context"]["grants"]["publish"] is None
     pubkey = cli.ok(lyra, "owner", "pubkey")
     assert pubkey["fingerprint"] == me["kid"] == again["fingerprint"]
     roster = cli.ok(admin_dir, "roster", "list")["roster"]
-    assert roster == [{"handle": "lyra", "registered": True, "invite_expires": None}]
+    assert [(m["handle"], m["registered"], m["removed"]) for m in roster] == [
+        ("lyra", True, None)
+    ]
     assert cli.ok(lyra, "roster", "list")["roster"] == roster  # any member reads it too
 
 
-def test_a_member_context_cannot_run_admin_commands_nor_an_admin_member_ones(
+def test_each_command_takes_its_grant_and_a_context_without_invite_joins_none(
     admin_dir, cli
 ):
     lyra = enroll(cli, admin_dir, "lyra")
     code, out = cli(lyra, "communities", "list")
-    assert code == 1 and "admin command" in out["error"]
+    assert code == 1 and out["status"] == 403  # communities: server admins
     code, out = cli(admin_dir, "owner", "register")
-    assert code == 1 and "member's command" in out["error"]
+    assert code == 1 and "without an invite" in out["error"]
 
 
 def test_files_and_versions(admin_dir, cli):
@@ -102,37 +105,16 @@ def test_files_and_versions(admin_dir, cli):
     assert code == 1 and "JSON object" in bad["error"]
 
 
-def test_collections_sharing_and_lookups(admin_dir, cli):
+def test_collections_sharing_and_lookups(admin_dir, cli, tmp_path):
     lyra = enroll(cli, admin_dir, "lyra")
-    vega = enroll(cli, admin_dir, "vega")
+    vega = enroll(cli, admin_dir, "vega", "community-observer:files")
     assert (
         cli.ok(lyra, "collection", "create", "--name", "project")["name"] == "project"
     )
-    code, out = cli(
-        vega,
-        "put",
-        write(vega, "a.txt", b"a"),
-        "--collection",
-        "project",
-        "--name",
-        "a.txt",
-    )
-    assert code == 1 and out["status"] == 403  # not granted yet
-    cli.ok(
-        lyra,
-        "collection",
-        "grant",
-        "--collection",
-        "project",
-        "--handle",
-        "vega",
-        "--perm",
-        "write",
-    )
     shared = cli.ok(
-        vega,
+        lyra,
         "put",
-        vega / "a.txt",
+        write(lyra, "a.txt", b"a"),
         "--collection",
         "project",
         "--name",
@@ -140,18 +122,25 @@ def test_collections_sharing_and_lookups(admin_dir, cli):
         "--metadata",
         '{"tag": "x"}',
     )
+    code, out = cli(vega, "get", shared["citation"], "--out", tmp_path / "a.txt")
+    assert code == 1 and out["status"] == 403  # not shared yet
+    # the owner shares it read-only by assigning community-observer with its name
+    cli.ok(lyra, "assign", "--handle", "vega", "--access", "community-observer:project")
+    assert cli(vega, "get", shared["citation"], "--out", tmp_path / "a.txt")[0] == 0
     code, out = cli(
         vega,
-        "collection",
-        "grant",
+        "put",
+        write(vega, "b.txt", b"b"),
         "--collection",
         "project",
-        "--handle",
-        "lyra",
-        "--perm",
-        "write",
+        "--name",
+        "b.txt",
     )
-    assert code == 1 and out["status"] == 403  # only the owner grants
+    assert code == 1 and out["status"] == 403  # read-only
+    code, out = cli(
+        vega, "assign", "--handle", "lyra", "--access", "community-observer:project"
+    )
+    assert code == 1 and out["status"] == 403  # only who manages it shares it
     assert (
         cli.ok(lyra, "collection", "set-public", "--collection", "project", "--public")[
             "public"
@@ -182,7 +171,7 @@ def test_collections_sharing_and_lookups(admin_dir, cli):
     assert late["ok"] is False and "not strictly earlier" in late["reason"]
 
 
-def test_an_application_key_reads_what_it_is_granted_with_no_context(
+def test_an_application_key_reads_its_collections_with_no_context(
     admin_dir, cli, tmp_path
 ):
     lyra = enroll(cli, admin_dir, "lyra")
@@ -196,11 +185,23 @@ def test_an_application_key_reads_what_it_is_granted_with_no_context(
         "--name",
         "r.txt",
     )
+    code, out = cli(lyra, "gen-api-key", "reviewer", "--non-member")
+    assert code == 1 and "--access" in out["error"]
     issued = cli.ok(
-        lyra, "gen-api-key", "reviewer", "--non-member", "--expires-days", 1
+        lyra,
+        "gen-api-key",
+        "reviewer",
+        "--non-member",
+        "--access",
+        "community-observer:project",
+        "--expires-days",
+        1,
     )
     assert "key" not in issued and issued["expires"] is not None  # never printed
-    assert (issued["role"], issued["handle"]) == ("non-member", None)
+    assert issued["member_key"] is False
+    assert issued["roles"] == [
+        {"role": "community-observer", "collections": ["project"]}
+    ]
     key_file = Path(issued["key_file"])
     assert stat.S_IMODE(key_file.stat().st_mode) == 0o600
     content = json.loads(key_file.read_text())
@@ -223,44 +224,39 @@ def test_an_application_key_reads_what_it_is_granted_with_no_context(
             key_file,
         )
 
-    code, out = read("before.txt")
-    assert code == 1 and out["status"] == 403  # issued, but granted nothing yet
-
-    code, out = cli(
-        lyra,
-        "collection",
-        "grant",
-        "--collection",
-        "project",
-        "--api-key",
-        issued["id"],
-        "--perm",
-        "write",
-    )
-    assert code == 1 and out["status"] == 400  # a non-member key is granted read only
-    granted = cli.ok(
-        lyra,
-        "collection",
-        "grant",
-        "--collection",
-        "project",
-        "--api-key",
-        issued["id"],
-        "--perm",
-        "read",
-    )
-    assert granted["api_key_id"] == issued["id"] and granted["granted"] is True
     code, read_out = read("r.txt")
     assert code == 0, read_out
     assert (outsider / "r.txt").read_bytes() == b"for a reviewer"
     assert read_out["sha256"] == put["sha256"]
+    cli.ok(
+        lyra,
+        "unassign",
+        "--api-key",
+        issued["id"],
+        "--access",
+        "community-observer:project",
+    )
+    assert read("withdrawn.txt")[1]["status"] in (401, 403)
+
+    code, out = cli(
+        lyra,
+        "gen-api-key",
+        "everything",
+        "--non-member",
+        "--access",
+        "community-observer:*",
+    )
+    assert code == 1 and out["status"] == 403  # `*` for an application takes members
 
     cli.ok(lyra, "revoke-api-key", issued["id"])
     code, out = read("again.txt")
-    assert code == 1 and out["status"] == 401  # refused from the very next request
+    assert code == 1 and out["status"] == 401  # deleted: refused from the next request
+    assert cli.ok(lyra, "list-api-keys")["keys"] == []
 
 
-def test_a_public_collection_is_read_by_an_ungranted_key(admin_dir, cli, tmp_path):
+def test_a_public_collection_is_read_by_a_key_it_names_nowhere(
+    admin_dir, cli, tmp_path
+):
     lyra = enroll(cli, admin_dir, "lyra")
     cli.ok(lyra, "collection", "create", "--name", "open")
     put = cli.ok(
@@ -272,7 +268,15 @@ def test_a_public_collection_is_read_by_an_ungranted_key(admin_dir, cli, tmp_pat
         "--name",
         "o.txt",
     )
-    issued = cli.ok(lyra, "gen-api-key", "anyone", "--non-member")
+    cli.ok(lyra, "collection", "create", "--name", "other")
+    issued = cli.ok(
+        lyra,
+        "gen-api-key",
+        "anyone",
+        "--non-member",
+        "--access",
+        "community-observer:other",
+    )
     outsider = tmp_path / "outsider"
     outsider.mkdir()
 
@@ -300,7 +304,7 @@ def test_a_public_collection_is_read_by_an_ungranted_key(admin_dir, cli, tmp_pat
     assert read("private-again.txt")[1]["status"] == 403
 
 
-def test_a_member_submission_is_promoted_by_the_admin(admin_dir, cli):
+def test_a_member_submission_is_promoted_by_the_gate(admin_dir, cli):
     lyra = enroll(cli, admin_dir, "lyra")
     goal = json.dumps({"artifact": {"name": "goal", "created": None}}).encode()
     submitted = cli.ok(
@@ -313,9 +317,11 @@ def test_a_member_submission_is_promoted_by_the_admin(admin_dir, cli):
         "goal-1.json",
         "--content-type",
         "application/json",
+        "--metadata",
+        '{"symposium_submission": true}',
     )
     code, out = cli(lyra, "promote", submitted["citation"], "--collection", "record")
-    assert code == 1 and "admin command" in out["error"]
+    assert code == 1 and out["status"] == 403  # promoting into record takes gate
 
     promoted = cli.ok(
         admin_dir,
@@ -432,9 +438,9 @@ def test_changes_all_pages_through_the_whole_feed(admin_dir, cli):
     assert later["items"] == []
 
 
-def test_a_member_grants_another_member_read_and_withdraws_it(admin_dir, cli, tmp_path):
+def test_an_owner_shares_read_access_and_withdraws_it(admin_dir, cli, tmp_path):
     lyra = enroll(cli, admin_dir, "lyra")
-    vega = enroll(cli, admin_dir, "vega")
+    vega = enroll(cli, admin_dir, "vega", "community-observer:files")
     cli.ok(lyra, "collection", "create", "--name", "shared")
     put = cli.ok(
         lyra,
@@ -449,31 +455,34 @@ def test_a_member_grants_another_member_read_and_withdraws_it(admin_dir, cli, tm
     def read(name):
         return cli(vega, "get", put["citation"], "--out", tmp_path / name)
 
-    grant = ["collection", "grant", "--collection", "shared", "--handle", "vega"]
+    share = ["--handle", "vega", "--access", "community-observer:shared"]
     assert read("before.txt")[1]["status"] == 403
-    granted = cli.ok(lyra, *grant, "--perm", "read")
-    assert (granted["handle"], granted["perm"], granted["granted"]) == (
-        "vega",
-        "read",
-        True,
-    )
+    shared = cli.ok(lyra, "assign", *share)
+    assert shared["roles"] == [
+        {"role": "community-observer", "collections": ["files", "shared"]}
+    ]
     code, out = read("granted.txt")
     assert code == 0, out
     assert (tmp_path / "granted.txt").read_bytes() == b"for vega"
-    withdrawn = cli.ok(lyra, *grant, "--perm", "read", "--revoke")
-    assert withdrawn["granted"] is False
+    cli.ok(lyra, "unassign", *share)
     assert read("withdrawn.txt")[1]["status"] == 403  # from the very next request
 
 
-def test_the_admin_revokes_a_members_non_member_issued_key(admin_dir, cli, tmp_path):
+def test_a_members_holder_revokes_any_key_of_the_community(admin_dir, cli, tmp_path):
     lyra = enroll(cli, admin_dir, "lyra")
-    issued = cli.ok(lyra, "gen-api-key", "dashboard", "--non-member")
+    cli.ok(lyra, "collection", "create", "--name", "dash")
+    issued = cli.ok(
+        lyra,
+        "gen-api-key",
+        "dashboard",
+        "--non-member",
+        "--access",
+        "community-observer:dash",
+    )
     seen = {k["id"]: k for k in cli.ok(admin_dir, "list-api-keys")["keys"]}
-    assert seen[issued["id"]]["role"] == "non-member"
-    revoked = cli.ok(admin_dir, "revoke-api-key", issued["id"])
-    assert revoked["revoked"] is not None and revoked["revoked_by"] == ADMIN
-    mine = {k["id"]: k for k in cli.ok(lyra, "list-api-keys")["keys"]}
-    assert mine[issued["id"]]["revoked"] is not None
+    assert seen[issued["id"]]["member_key"] is False
+    cli.ok(admin_dir, "revoke-api-key", issued["id"])
+    assert cli.ok(lyra, "list-api-keys")["keys"] == []
     code, out = cli(
         tmp_path,
         "get",
@@ -483,7 +492,7 @@ def test_the_admin_revokes_a_members_non_member_issued_key(admin_dir, cli, tmp_p
         "--api-key-file",
         issued["key_file"],
     )
-    assert code == 1 and out["status"] == 401  # revoked: refused from the next request
+    assert code == 1 and out["status"] == 401  # deleted: refused from the next request
 
 
 def test_a_purged_version_reports_410_with_its_metadata(admin_dir, cli, tmp_path):

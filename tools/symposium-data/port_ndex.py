@@ -67,7 +67,7 @@ def credentials(path: str, error) -> dict:
 
 def port(commands, args, error) -> dict:
     account = credentials(args.credentials_file, error)
-    server = commands.admin()
+    server = commands.signed_in()
     started = server.start_port(
         {
             "ndex_url": args.ndex_url,

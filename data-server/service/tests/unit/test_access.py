@@ -33,6 +33,12 @@ class Records:
     def key_is_active(self, conn, user_id, kid):
         return (user_id, kid) in self.active
 
+    def issuer_of(self, conn, community, handle):
+        for user in self.users.values():
+            if user["handle"] == handle and user.get("removed") is None:
+                return user
+        return None
+
     def context_for(
         self,
         conn,
@@ -43,6 +49,7 @@ class Records:
         via_session,
         user_id=None,
         api_key_id=None,
+        issuer=None,
     ):
         held = self.assignments.get(user_id if user_id is not None else api_key_id, [])
         return UserContext(

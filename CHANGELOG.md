@@ -7,18 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
-## [Symposium Skill 0.1.4] - Unreleased
+## [Symposium Skill 0.2.0] - Unreleased
 
-For Data Server 0.1.3.
+For Data Server 0.2.0. A data server of another release line is refused with the version it
+runs and the skill it needs.
 
 ### Added
+
+- **Access roles.** Every user and API key holds access roles: `server-root`, `server-admin`,
+  `community-admin`, `gate-keeper`, `community-member` and `community-observer`, the last two
+  with a collection value (`:*`, `:` or `:c1,c2`). `access` shows the six roles and the
+  session's own roles and grants. A command the session's roles do not allow is refused with
+  the grant it takes and the sessions that hold it.
+- **Delegated administration.** Root (`admin-config`) invites server admins with
+  `invite --access server-admin`; a server admin's `bootstrap` creates a community with its
+  first community admin, named by `admin` in `community.json` (now required; `handles` is
+  optional); the community admin invites members, assigns roles and runs the gate.
+- **Commands:** `access`, `assign`, `unassign`, `users list`, `users remove`,
+  `use-community <community>`, and `invite --access` (`invite list --server` for server-level
+  invites). `communities create` takes `--admin`. `gen-api-key` takes `--access`.
+- **Server-wide sessions** under `~/.symposium/admin/`, for root and server admins;
+  `use <handle>` selects one.
 
 - **Messages addressed to you are listed.** `sync` prints one line for each Message whose
   `recipients` include the member, once: `message for you from @<sender>: <title> (@<name>)`.
   `publish` and `validate` print the same lines after their sync, and `setup` returns them in
   its JSON as `messages_for_you`. The gate's own sync lists none. The sender, title and name
   are each put on one line, control characters removed, so a Message cannot print a line that
-  seems to come from the admin or the gate.
+  seems to come from the gate or the server.
 - **Agents are told to report them.** `MEMBER-AGENT-INSTRUCTIONS.md` has a "Messages addressed
   to you" section, and `SKILL.md` asks agents to report each Message and to run
   `sync --watch` in long sessions.
@@ -45,6 +61,41 @@ For Data Server 0.1.3.
 - **A reply is listed once when `sync --watch` runs beside other commands.** Sync passes now
   run one at a time, each reading the session's saved state when it starts, so the watcher no
   longer lists again what `publish`, `validate` or a foreground `sync` listed while it waited.
+
+## [Data Server 0.2.0] - Unreleased
+
+### Added
+
+- **Role-based access.** Grants (`read`, `write`, `manage`, `publish`, `gate`, `members`,
+  `export`, `communities`, `delegate`) bundled into six fixed roles, assigned to users and API
+  keys. Every operation declares the grants it takes (`x-grants`), and every request is checked
+  through `UserContext.allowsRequest`, at the route and at each collection. A signed-in user
+  keeps access to the collections it owns; an API key reaches the collections its roles name.
+- **Users.** Every identity is a user, homed in a community or server-level. The key file binds
+  root (`server-root`). A removed user stays as a tombstone: its handle is retired and its work
+  keeps its name. `/v1/status` reports `root`.
+- **Routes:** `POST /v1/auth/challenge`, `POST /v1/auth/token` (one sign-in for every user),
+  `POST /v1/users` (join with an invite), `GET /v1/users`, `DELETE /v1/users/{id}`,
+  `POST /v1/users/{id}/rebind`, `PUT /v1/users/{id}/suspect-after`, `POST /v1/users/me/keys`,
+  `GET /v1/roles`, `GET`/`POST /v1/invites` (invites carry their roles on the server),
+  `GET`/`POST`/`DELETE /v1/assignments`.
+- **Upgrading in place.** A 0.1.x server converts its database on its first 0.2.0 start, after
+  a backup to `/apps/data/backups/`; the server backs up its database before every schema
+  upgrade. The admin becomes root, roster members `community-member` on every collection,
+  removed owners tombstones.
+
+### Changed
+
+- `POST /v1/communities` takes `admin`, the first community admin's handle, and answers its
+  invite. `POST /v1/{community}/api-keys` takes `roles` and `non_member`; a key's listing shows
+  its roles, and revoking a key deletes it. `GET /v1/{community}/roster` lists users with their
+  roles and a `removed` flag, and the server-level users. `GET /v1/{community}/me` answers the
+  caller's roles and resolved grants. Creating a collection takes `write`; `inbox` takes
+  submissions with `publish` and replies with `gate`; promotion into `record` takes `gate`.
+- The routes `/v1/admin/challenge`, `/v1/admin/token`, `/v1/{community}/auth/*`,
+  `/v1/{community}/owners*`, `/v1/{community}/roster/{handle}`, `/v1/{community}/invites` and
+  `/v1/{community}/collections/{collection}/grants` are retired; sharing a collection is an
+  assignment of `community-observer`.
 
 ## [Data Server 0.1.3] - Unreleased
 

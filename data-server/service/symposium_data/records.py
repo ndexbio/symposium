@@ -282,6 +282,19 @@ class Records:
             ).fetchall()
         }
 
+    def active_submitters(self, conn, community: str) -> set:
+        """The handles whose submissions the gate decides: the community's users, not removed,
+        holding `publish` through a live `community-member` assignment."""
+        return {
+            r["handle"]
+            for r in conn.execute(
+                "SELECT u.handle FROM users u JOIN role_assignments a ON a.user_id = u.id "
+                "WHERE u.home = %s AND u.removed IS NULL AND a.revoked IS NULL "
+                "AND a.role_id = %s",
+                (community, rbac.COMMUNITY_MEMBER),
+            ).fetchall()
+        }
+
     # ── a user's sign-in keys ───────────────────────────────────────────────────────────────
     def active_keys(self, conn, user_id) -> list:
         return conn.execute(
@@ -474,17 +487,50 @@ class Records:
         via_session,
         user_id=None,
         api_key_id=None,
+        issuer=None,
     ) -> rbac.UserContext:
-        """The request's UserContext: the principal's live assignments, compiled."""
+        """The request's UserContext: the principal's live assignments, compiled. An issued
+        key's (`api_key_id` with `issuer`, the user who issued it) are limited to what its
+        issuer reaches now."""
+        grants = rbac.compile_grants(
+            self.assignments_of(conn, user_id=user_id, api_key_id=api_key_id)
+        )
+        if issuer is not None:
+            held = self.context_for(
+                conn,
+                principal_id=issuer["id"],
+                principal_name=issuer["handle"],
+                community=issuer["home"],
+                via_session=True,
+                user_id=issuer["id"],
+            )
+            owned = self.owned_collections(conn, community, issuer["id"])
+            grants = rbac.within(grants, held, community, owned)
         return rbac.UserContext(
             principal_id=principal_id,
             principal_name=principal_name,
             community=community,
             via_session=via_session,
-            grants=rbac.compile_grants(
-                self.assignments_of(conn, user_id=user_id, api_key_id=api_key_id)
-            ),
+            grants=grants,
         )
+
+    def owned_collections(self, conn, community: str, user_id) -> set:
+        return {
+            r["name"]
+            for r in conn.execute(
+                "SELECT name FROM collections WHERE community = %s AND owner = %s",
+                (community, user_id),
+            ).fetchall()
+        }
+
+    def issuer_of(self, conn, community: str, handle: str):
+        """The live user who issued a key of `community`: homed there, or server-level; None
+        once it is removed."""
+        for home in (community, None):
+            user = self.user_by_handle(conn, home, handle)
+            if user is not None:
+                return None if user["removed"] is not None else user
+        return None
 
     # ── invites ─────────────────────────────────────────────────────────────────────────────
     def add_invite(

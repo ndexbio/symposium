@@ -4,8 +4,11 @@ an error. Nothing secret is ever printed or taken from the command line (R-I4): 
 the keystore, and invites and API keys move only as files.
 
 Every command but `status`, `admin-config` and `context set` works on the context set in this
-directory (R-I3): `./.symposium/context.json`, written by `context set --community-file`
-(admins) or `context set --invite-file` (members).
+directory (R-I3): `./.symposium/context.json`, written by `context set --invite-file` (any user
+joining with an invite), `context set --community-file` (a server-level user working in a
+community) or `admin-config` (root's server-level context). The context names the user (its
+handle and home, none for a server-level user) and caches the access the server resolved for
+it, which `access` refreshes.
 """
 
 from __future__ import annotations
@@ -25,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import port_ndex  # the port-ndex command: all of the CLI's NDEx code is in port_ndex.py
+import rbac
 from keystore import ADMIN_SCOPE, Keystore, KeystoreError, thumbprint
 
 API_VERSION = "1"
@@ -33,8 +37,12 @@ CHUNK = 1 << 20
 CITATION = re.compile(r"^symposium-data:([0-9a-fA-F-]{36})@v(\d+)$")
 FILE_ID = re.compile(r"^[0-9a-fA-F-]{36}$")
 NO_CONTEXT = (
-    "no context in this directory: run `/symposium setup --invite-file <file>` (members) or "
-    "`/symposium bootstrap --community-file <file>` (admins) first"
+    "no context in this directory: run `/symposium setup --invite-file <file>` (with an "
+    "invite) or `/symposium bootstrap --community-file <file>` (server admins) first"
+)
+NO_COMMUNITY = (
+    "this is a community command, and this context is server-level: run it in a community's "
+    "session (`/symposium use-community <community>`)"
 )
 
 
@@ -73,6 +81,16 @@ def image_version() -> str:
         return "development checkout"
 
 
+def same_release(expected: str, running: str) -> bool | None:
+    """Whether two data-server versions are the same release line (major.minor); None when
+    either is not a version."""
+    pattern = re.compile(r"^(\d+)\.(\d+)")
+    ours, theirs = pattern.match(expected), pattern.match(running)
+    if not ours or not theirs:
+        return None
+    return ours.groups() == theirs.groups()
+
+
 def write_secret(path: Path, content: dict):
     """A file only its owner can read (R-E3): an invite or an API key. Never printed."""
     path = Path(path)
@@ -93,6 +111,18 @@ def read_json_file(path, what: str) -> dict:
     if not isinstance(content, dict):
         raise CommandError(f"the {what} {path} is not a JSON object")
     return content
+
+
+def loopback_warning(url: str) -> dict:
+    """A warning when an invite names a loopback address, which works on that machine only."""
+    host = urllib.parse.urlparse(url).hostname or ""
+    if host in ("localhost", "::1") or host.startswith("127."):
+        return {
+            "warning": f"the invite names {url}, which reaches the server only from this "
+            "machine: set the server's public URL (SYMPOSIUM_SERVER_PUBLIC_URL) for invites "
+            "used elsewhere"
+        }
+    return {}
 
 
 def json_object(text: str) -> dict:
@@ -125,7 +155,7 @@ def parse_ref(ref: str, version: str | None) -> tuple[str, str]:
 class DataServer:
     """The one client of a data server's REST API. Constructed for a community, so every
     community route is `/v1/{community}/…` without naming it again; the server-wide calls
-    (`status`, `communities`, the admin's sign-in, import) are here too."""
+    (`status`, sign-in, users, roles, invites, communities) are here too."""
 
     def __init__(self, base_url: str, community: str | None = None):
         self.base_url = base_url.rstrip("/")
@@ -181,7 +211,7 @@ class DataServer:
             detail = json.dumps(detail)
         if error.code == 501:
             return CommandError(
-                f"{detail}. Run `/symposium admin-config` and place the admin key file as it "
+                f"{detail}. Run `/symposium admin-config` and place the root key file as it "
                 "prints, then restart the server",
                 501,
             )
@@ -215,41 +245,80 @@ class DataServer:
                 f"at {self.base_url} speaks version {status.get('api')}; this bundle was built "
                 f"for data-server image {image_version()}"
             )
+        expected, running = image_version(), str(status.get("version") or "")
+        if (
+            re.match(r"^\d+\.\d+", expected)
+            and same_release(expected, running) is False
+        ):
+            raise CommandError(
+                f"the data server at {self.base_url} runs version {running}, and this skill "
+                f"works with data server {expected}: install the skill released for data "
+                f"server {running}"
+            )
 
     def c(self, path: str) -> str:
         if not self.community:
-            raise CommandError(NO_CONTEXT)
+            raise CommandError(NO_COMMUNITY)
         return f"/v1/{urllib.parse.quote(self.community)}{path}"
 
     # ── sign-in ────────────────────────────────────────────────────────────────────────────
-    def sign_in_admin(self, keystore: Keystore, handle: str):
-        nonce = self.request("POST", "/v1/admin/challenge", auth=False)["nonce"]
-        signature = keystore.sign(ADMIN_SCOPE, handle, nonce.encode())
+    def challenge(self, handle: str, home: str | None) -> str:
+        return self.request(
+            "POST",
+            "/v1/auth/challenge",
+            body={"handle": handle, "community": home},
+            auth=False,
+        )["nonce"]
+
+    def sign_in(self, keystore: Keystore, handle: str, home: str | None):
+        """A session key for the user `handle` homed in `home` (None: a server-level user),
+        signed with its key on this machine."""
+        nonce = self.challenge(handle, home)
+        signature = keystore.sign(home or ADMIN_SCOPE, handle, nonce.encode())
         self.key = self.request(
             "POST",
-            "/v1/admin/token",
-            body={"nonce": nonce, "signature": signature},
+            "/v1/auth/token",
+            body={
+                "handle": handle,
+                "community": home,
+                "nonce": nonce,
+                "signature": signature,
+            },
             auth=False,
         )["key"]
 
-    def sign_in_member(self, keystore: Keystore, handle: str):
-        nonce = self.request(
-            "POST", self.c("/auth/challenge"), body={"handle": handle}, auth=False
-        )["nonce"]
-        signature = keystore.sign(self.community, handle, nonce.encode())
-        self.key = self.request(
+    def register(self, handle: str, jwk: dict, nonce: str, signature: str, invite: str):
+        return self.request(
             "POST",
-            self.c("/auth/token"),
-            body={"handle": handle, "nonce": nonce, "signature": signature},
+            "/v1/users",
+            body={
+                "handle": handle,
+                "public_jwk": jwk,
+                "nonce": nonce,
+                "signature": signature,
+                "invite": invite,
+            },
             auth=False,
-        )["key"]
+        )
+
+    def rotate(self, jwk: dict, nonce: str, signature: str) -> dict:
+        return self.request(
+            "POST",
+            "/v1/users/me/keys",
+            body={"public_jwk": jwk, "nonce": nonce, "signature": signature},
+        )
+
+    def me(self) -> dict:
+        return self.request("GET", self.c("/me"))
 
     # ── server-wide ────────────────────────────────────────────────────────────────────────
     def communities(self) -> dict:
         return self.request("GET", "/v1/communities")
 
-    def create_community(self, name: str) -> dict:
-        return self.request("POST", "/v1/communities", body={"name": name})
+    def create_community(self, name: str, admin: str) -> dict:
+        return self.request(
+            "POST", "/v1/communities", body={"name": name, "admin": admin}
+        )
 
     def import_community(self, path: Path) -> dict:
         with open(path, "rb") as source:
@@ -263,35 +332,51 @@ class DataServer:
                 },
             )
 
-    # ── the community's roster, invites and members ────────────────────────────────────────
+    # ── users, roles and invites ───────────────────────────────────────────────────────────
+    @staticmethod
+    def params(params: dict) -> str:
+        given = {k: v for k, v in params.items() if v is not None}
+        return "?" + urllib.parse.urlencode(given) if given else ""
+
     def roster(self) -> dict:
         return self.request("GET", self.c("/roster"))
 
-    def add_to_roster(self, handle: str) -> dict:
-        return self.request("POST", self.c(f"/roster/{handle}"))
+    def users(self, community: str | None) -> dict:
+        return self.request("GET", "/v1/users" + self.params({"community": community}))
 
-    def remove_from_roster(self, handle: str) -> dict:
-        return self.request("DELETE", self.c(f"/roster/{handle}"))
+    def remove_user(self, user_id: str) -> dict:
+        return self.request("DELETE", f"/v1/users/{user_id}")
 
-    def invite(self, handle: str, hours: int | None) -> dict:
-        body = (
-            {"handle": handle} if hours is None else {"handle": handle, "hours": hours}
-        )
-        return self.request("POST", self.c("/invites"), body=body)
-
-    def pending_invites(self) -> dict:
-        return self.request("GET", self.c("/invites"))
-
-    def rebind(self, handle: str, hours: int | None) -> dict:
+    def rebind(self, user_id: str, hours: int | None) -> dict:
         body = {} if hours is None else {"hours": hours}
-        return self.request("POST", self.c(f"/owners/{handle}/rebind"), body=body)
+        return self.request("POST", f"/v1/users/{user_id}/rebind", body=body)
 
-    def suspect_after(self, handle: str, at: str) -> dict:
+    def suspect_after(self, user_id: str, at: str) -> dict:
         return self.request(
-            "PUT", self.c(f"/owners/{handle}/suspect-after"), body={"at": at}
+            "PUT", f"/v1/users/{user_id}/suspect-after", body={"at": at}
         )
 
-    # ── API keys: issued per community by a signed-in Member or the admin ────────────────────
+    def roles(self) -> dict:
+        return self.request("GET", "/v1/roles")
+
+    def assignments(self, params: dict) -> dict:
+        return self.request("GET", "/v1/assignments" + self.params(params))
+
+    def assign(self, body: dict) -> dict:
+        return self.request("POST", "/v1/assignments", body=body)
+
+    def unassign(self, body: dict) -> dict:
+        return self.request("DELETE", "/v1/assignments", body=body)
+
+    def invite(self, body: dict) -> dict:
+        return self.request("POST", "/v1/invites", body=body)
+
+    def pending_invites(self, community: str | None) -> dict:
+        return self.request(
+            "GET", "/v1/invites" + self.params({"community": community})
+        )
+
+    # ── API keys: issued per community by a signed-in user ─────────────────────────────────
     @staticmethod
     def api_keys_path(community: str, path: str = "") -> str:
         return f"/v1/{urllib.parse.quote(community)}/api-keys{path}"
@@ -300,7 +385,7 @@ class DataServer:
         return self.request("POST", self.api_keys_path(community), body=body)
 
     def api_keys(self, community: str) -> list:
-        """The community's API keys, page by page, each with its value."""
+        """The community's API keys the caller may see, page by page."""
         items, cursor = [], None
         while True:
             query = {"limit": "1000"}
@@ -320,35 +405,6 @@ class DataServer:
             "DELETE",
             self.api_keys_path(community, f"/{urllib.parse.quote(key_id)}"),
         )
-
-    def challenge(self, handle: str) -> str:
-        return self.request(
-            "POST", self.c("/auth/challenge"), body={"handle": handle}, auth=False
-        )["nonce"]
-
-    def register(self, handle: str, jwk: dict, nonce: str, signature: str, invite: str):
-        return self.request(
-            "POST",
-            self.c("/owners"),
-            body={
-                "handle": handle,
-                "public_jwk": jwk,
-                "nonce": nonce,
-                "signature": signature,
-                "invite": invite,
-            },
-            auth=False,
-        )
-
-    def rotate(self, handle: str, jwk: dict, nonce: str, signature: str) -> dict:
-        return self.request(
-            "POST",
-            self.c(f"/owners/{handle}/keys"),
-            body={"public_jwk": jwk, "nonce": nonce, "signature": signature},
-        )
-
-    def whoami(self) -> dict:
-        return self.request("GET", self.c("/me"))
 
     # ── files ──────────────────────────────────────────────────────────────────────────────
     def upload(
@@ -411,21 +467,12 @@ class DataServer:
         params.update({k: v for k, v in (("before", before), ("sha256", sha256)) if v})
         return self.request("GET", self.c("/verify?" + urllib.parse.urlencode(params)))
 
-    # ── collections and grants ─────────────────────────────────────────────────────────────
+    # ── collections ────────────────────────────────────────────────────────────────────────
     def list_collections(self) -> dict:
         return self.request("GET", self.c("/collections"))
 
     def create_collection(self, name: str) -> dict:
         return self.request("POST", self.c("/collections"), body={"name": name})
-
-    def grant(self, collection: str, grantee: dict, perm: str, granted: bool) -> dict:
-        """Grant (or withdraw) `perm` to a Member (`{"handle": …}`) or a non-member issued key
-        (`{"api_key_id": …}`)."""
-        return self.request(
-            "PUT",
-            self.c(f"/collections/{collection}/grants"),
-            body={**grantee, "perm": perm, "granted": granted},
-        )
 
     def set_public(self, collection: str, public: bool) -> dict:
         return self.request(
@@ -460,8 +507,10 @@ class DataServer:
 
 
 class Context:
-    """`./.symposium/context.json`: the community, the data-server URL and the handle this
-    directory works as (R-I3). It holds no secret: a member's invite stays in its file."""
+    """`./.symposium/context.json`: the data-server URL, the user this directory works as (its
+    handle, and its home: a community, or None for a server-level user), the community it
+    works in (None for a server-level context), and the access the server resolved for it.
+    It holds no secret: an invite stays in its file."""
 
     PATH = Path(".symposium") / "context.json"
 
@@ -473,6 +522,20 @@ class Context:
     def save(self, context: dict):
         self.PATH.parent.mkdir(exist_ok=True)
         self.PATH.write_text(json.dumps(context, indent=2) + "\n")
+
+
+def scope_of(context: dict) -> str:
+    """The keystore scope of the context's user: its home, or `admin` for a server-level
+    user."""
+    return context.get("home") or ADMIN_SCOPE
+
+
+def access_list(values) -> list:
+    """Every `--access` value of a command line, parsed."""
+    try:
+        return [rbac.parse_access(v) for v in values or []]
+    except rbac.AccessError as e:
+        raise CommandError(str(e)) from None
 
 
 class Commands:
@@ -487,33 +550,56 @@ class Commands:
         return Keystore(server_id)
 
     def signed_in(self, context: dict | None = None) -> DataServer:
-        """A client for the context's community, signed in as the context's handle."""
+        """A client for the context's community, signed in as the context's user."""
         context = context or self.context.load()
-        server = self.server_for(context["data-server-url"], context["community"])
+        server = self.server_for(context["data-server-url"], context.get("community"))
         keystore = self.keystore(context["server_id"])
-        if context["role"] == "admin":
-            server.sign_in_admin(keystore, context["handle"])
-        else:
-            server.sign_in_member(keystore, context["handle"])
+        try:
+            server.sign_in(keystore, context["handle"], context.get("home"))
+        except CommandError as e:
+            if e.status == 401 and "removed" in str(e):
+                where = context.get("home") or "this server"
+                raise CommandError(
+                    f"this account was removed from {where}", 401
+                ) from None
+            raise
         return server
 
-    def admin(self) -> DataServer:
-        context = self.context.load()
-        if context["role"] != "admin":
-            raise CommandError(
-                f"this is an admin command, but this directory's context is the member "
-                f"'{context['handle']}': run it where `/symposium bootstrap` set the context"
-            )
-        return self.signed_in(context)
-
-    def admin_handle(self, server_id: str, url: str) -> str:
+    def server_handle(self, server_id: str, url: str, handle: str | None = None) -> str:
+        """The server-level user whose key this machine holds for the server: `handle`, or
+        the only one."""
         handles = self.keystore(server_id).handles(ADMIN_SCOPE)
         if not handles:
             raise CommandError(
-                f"this machine holds no admin key for the data server at {url}: run "
-                "`/symposium admin-config --handle <admin> --data-server-url <url>` first"
+                f"this machine holds no server-level key for the data server at {url}: join "
+                "with a server-level invite (`/symposium setup --invite-file <file>`), or, as "
+                "root, run `/symposium admin-config --handle <root> --data-server-url <url>`"
+            )
+        if handle is not None:
+            if handle not in handles:
+                raise CommandError(
+                    f"this machine holds no server-level key for '{handle}' at {url}; it "
+                    f"holds {', '.join(handles)}"
+                )
+            return handle
+        if len(handles) > 1:
+            raise CommandError(
+                f"this machine holds the server-level keys of {', '.join(handles)} for {url}: "
+                "name one with --handle"
             )
         return handles[0]
+
+    def community_of(self, args, context: dict) -> str | None:
+        """The community a command names (`--community`), else the context's."""
+        return getattr(args, "community", None) or context.get("community")
+
+    def user_id(self, server: DataServer, handle: str, community: str | None) -> str:
+        """A user's id from its handle, in a community or among the server-level users."""
+        for user in server.users(community)["users"]:
+            if user["handle"] == handle:
+                return user["id"]
+        where = community or "the server-level users"
+        raise CommandError(f"no user '{handle}' in {where}", 404)
 
     # ── status and context ─────────────────────────────────────────────────────────────────
     def status(self, args) -> dict:
@@ -521,60 +607,66 @@ class Commands:
         return self.server_for(url).status()
 
     def context_set(self, args) -> dict:
-        if args.community_file:
-            spec = read_json_file(args.community_file, "community file")
-            community, url = spec.get("community"), spec.get("data-server-url")
-            if not community or not url:
-                raise CommandError(
-                    f"{args.community_file} needs `community` and `data-server-url`"
-                )
+        if args.community_file or args.community:
+            if args.community_file:
+                spec = read_json_file(args.community_file, "community file")
+                community, url = spec.get("community"), spec.get("data-server-url")
+                if not community or not url:
+                    raise CommandError(
+                        f"{args.community_file} needs `community` and `data-server-url`"
+                    )
+            else:
+                community, url = args.community, args.data_server_url
+                if not url:
+                    raise CommandError("--community takes --data-server-url too")
             status = self.server_for(url).status()
-            handle = self.admin_handle(status["server_id"], url)
-            role = "admin"
-            extra = {}
+            handle = self.server_handle(status["server_id"], url, args.handle)
+            home, extra = None, {}
         else:
             invite = read_json_file(args.invite_file, "invite file")
             missing = [
-                k
-                for k in ("invite", "handle", "community", "data-server-url")
-                if not invite.get(k)
+                k for k in ("invite", "handle", "data-server-url") if not invite.get(k)
             ]
-            if missing:
+            if missing or "community" not in invite:
+                missing += [] if "community" in invite else ["community"]
                 raise CommandError(f"{args.invite_file} lacks {', '.join(missing)}")
-            community, url, handle = (
-                invite["community"],
-                invite["data-server-url"],
-                invite["handle"],
-            )
+            community = home = invite["community"]
+            url, handle = invite["data-server-url"], invite["handle"]
             status = self.server_for(url).status()
-            role = "member"
             extra = {"invite_file": str(Path(args.invite_file).resolve())}
+        return {
+            "context": self.save_context(url, community, handle, home, status, extra)
+        }
+
+    def save_context(self, url, community, handle, home, status, extra=None) -> dict:
         context = {
             "community": community,
             "data-server-url": url.rstrip("/"),
             "handle": handle,
-            "role": role,
+            "home": home,
             "server_id": status["server_id"],
-            **extra,
+            **(extra or {}),
         }
         self.context.save(context)
-        return {"context": context}
+        return context
 
     def context_show(self, _args) -> dict:
         return {"context": self.context.load()}
 
-    # ── the server admin ───────────────────────────────────────────────────────────────────
+    # ── root ───────────────────────────────────────────────────────────────────────────────
     def admin_config(self, args) -> dict:
-        """Manage the server-wide admin key (R-D4): idempotent; a key pair is generated only
-        when this machine holds none for the server, or with --new-key."""
+        """Make root's key (R-D4) and set root's server-level context here: idempotent; a key
+        pair is generated only when this machine holds none for the server, or with
+        --new-key."""
         url = args.data_server_url.rstrip("/")
-        server_id = self.server_for(url).status()["server_id"]
+        status = self.server_for(url).status()
+        server_id = status["server_id"]
         keystore = self.keystore(server_id)
         held = keystore.handles(ADMIN_SCOPE)
-        if held and held[0] != args.handle:
+        if held and args.handle not in held:
             raise CommandError(
-                f"this machine holds the admin key of '{held[0]}' for this server, and the "
-                "admin's handle never changes: run admin-config with that handle"
+                f"this machine holds the server-level keys of {', '.join(held)} for this "
+                "server: run admin-config with root's handle"
             )
         created = args.new_key or not held
         jwk = (
@@ -585,6 +677,7 @@ class Commands:
         key_file = Path(f"admin_pub_{args.handle}.key").resolve()
         key_file.write_text(json.dumps(jwk))
         os.chmod(key_file, 0o644)
+        self.save_context(url, None, args.handle, None, status)
         out = {
             "handle": args.handle,
             "server_id": server_id,
@@ -600,84 +693,198 @@ class Commands:
                 f"{args.handle}}}` to the install's values file and run `helm upgrade "
                 "<release> <chart> -n <namespace> --version <chart version> -f <values "
                 f"file> --set-file adminKey.publicKey={key_file}`, which restarts the "
-                "server (the data server's RUNBOOK.md, 5.3: the admin key on Kubernetes)",
-                f"check that GET {url}/v1/status reports this fingerprint, then run "
-                "`/symposium bootstrap`",
+                "server (the data server's RUNBOOK.md, 5.3: the root key on Kubernetes)",
+                f"check that GET {url}/v1/status reports root '{args.handle}' with this "
+                "fingerprint",
             ],
         }
         if args.new_key and held:
             out["warning"] = (
-                "a new key: placing this file rebinds the server's admin, and the old key is "
-                "refused from then on"
+                "a new key: placing this file rebinds root, and the old key is refused from "
+                "then on"
             )
         return out
 
+    # ── communities ────────────────────────────────────────────────────────────────────────
     def communities_create(self, args) -> dict:
-        return self.admin().create_community(args.name)
+        """Create a community with its first community admin, and write that admin's invite
+        file (0600) when the community is new."""
+        server = self.signed_in()
+        made = server.create_community(args.name, args.admin)
+        issued = made.pop("admin_invite", None)
+        if issued is not None:
+            out = Path(args.out or f"{made.get('name', args.name)}-{args.admin}.invite")
+            write_secret(out, self.invite_file(server, issued))
+            made["admin_invite_file"] = str(out.resolve())
+        return made
 
     def communities_list(self, _args) -> dict:
-        return self.admin().communities()
+        return self.signed_in().communities()
 
     def roster_list(self, _args) -> dict:
-        """Every handle on the roster, registered or not yet: any member may read it."""
+        """Every user of the community, removed ones marked, with its roles, and the
+        server-level users: any principal of the community reads it."""
         return self.signed_in().roster()
 
-    def roster_add(self, args) -> dict:
-        return self.admin().add_to_roster(args.handle)
-
-    def roster_remove(self, args) -> dict:
-        return self.admin().remove_from_roster(args.handle)
-
+    # ── invites ────────────────────────────────────────────────────────────────────────────
     def invite_file(self, server: DataServer, issued: dict) -> dict:
+        """An invite as a file: its secret, the handle, its home and the server's URL. The
+        roles stay on the server."""
         return {
             "invite": issued["invite"],
             "handle": issued["handle"],
             "community": issued["community"],
-            "data-server-url": server.base_url,
+            "data-server-url": issued.get("data-server-url") or server.base_url,
         }
 
     def invite(self, args) -> dict:
         if args.action == "list":
             return self.invite_list(args)
-        if not args.handle or not args.out:
+        if not args.handle or not args.out or not args.access:
             raise CommandError(
-                "invite needs --handle and --out (or: invite list --out-dir)"
+                "invite needs --handle, --access and --out (or: invite list --out-dir)"
             )
-        server = self.admin()
-        issued = server.invite(args.handle, args.hours)
+        context = self.context.load()
+        server = self.signed_in(context)
+        body = {
+            "handle": args.handle,
+            "community": self.invitee_home(args, context),
+            "roles": access_list(args.access),
+        }
+        if args.hours is not None:
+            body["hours"] = args.hours
+        issued = server.invite(body)
         write_secret(Path(args.out), self.invite_file(server, issued))
         return {
             "community": issued["community"],
             "handle": issued["handle"],
+            "roles": issued["roles"],
             "expires": issued["expires"],
             "invite_file": str(Path(args.out).resolve()),
+            **loopback_warning(issued.get("data-server-url") or server.base_url),
         }
+
+    def invitee_home(self, args, context: dict) -> str | None:
+        """The invitee's home: --community, else the context's community. A server role
+        makes a server-level user."""
+        if any(
+            a.split(":")[0] in (rbac.SERVER_ADMIN, rbac.SERVER_ROOT)
+            for a in args.access
+        ):
+            return None
+        return self.community_of(args, context)
 
     def invite_list(self, args) -> dict:
         """Every pending invite as `<community>-<handle>.invite` (0600) in --out-dir; only
         the paths are printed, because invites are secrets."""
-        server = self.admin()
-        pending = server.pending_invites()
+        context = self.context.load()
+        server = self.signed_in(context)
+        community = None if args.server else self.community_of(args, context)
+        pending = server.pending_invites(community)
         directory = Path(args.out_dir)
         written = []
         for item in pending["invites"]:
-            path = directory / f"{pending['community']}-{item['handle']}.invite"
-            write_secret(
-                path,
-                self.invite_file(server, {**item, "community": pending["community"]}),
-            )
+            prefix = item["community"] or "server"
+            path = directory / f"{prefix}-{item['handle']}.invite"
+            write_secret(path, self.invite_file(server, item))
             written.append(
                 {
                     "handle": item["handle"],
+                    "roles": item["roles"],
                     "expires": item["expires"],
                     "invite_file": str(path.resolve()),
                 }
             )
         return {"community": pending["community"], "invites": written}
 
+    # ── access roles ───────────────────────────────────────────────────────────────────────
+    def access(self, _args) -> dict:
+        """The six access roles, and this context's own: its roles and the grants the server
+        resolved for it, which the context caches for the tools."""
+        context = self.context.load()
+        server = self.signed_in(context)
+        roles = server.roles()["roles"]
+        if context.get("community"):
+            me = server.me()
+            held, resolved = me["roles"], me["context"]
+        else:
+            held = server.assignments({"handle": context["handle"]})["roles"]
+            resolved = self.server_context(context, held, roles)
+        context["access"] = {"roles": held, "context": resolved}
+        self.context.save(context)
+        return {
+            "handle": context["handle"],
+            "community": context.get("community"),
+            "roles": held,
+            "context": resolved,
+            "access_roles": roles,
+        }
+
+    @staticmethod
+    def server_context(context: dict, held: list, roles: list) -> dict:
+        """A server-level user's grants, from its roles' grants: none takes a collection
+        value, and every collection-scoped grant reaches every collection."""
+        grants: dict = {}
+        by_id = {r["role"]: r for r in roles}
+        for assignment in held:
+            for grant, value in by_id[assignment["role"]]["grants"].items():
+                grants[grant] = None if value is None else [rbac.ALL]
+        return {
+            "principal": context["handle"],
+            "community": None,
+            "via_session": True,
+            "grants": dict(sorted(grants.items())),
+        }
+
+    def principal(self, args, context: dict) -> dict:
+        """The principal an assign or unassign names: a user, or an issued key."""
+        if args.api_key:
+            return {"api_key_id": args.api_key}
+        return {"handle": args.handle, "community": self.target_home(args, context)}
+
+    def target_home(self, args, context: dict) -> str | None:
+        """--community, else the context's community; --server names a server-level user."""
+        if getattr(args, "server", False):
+            return None
+        return self.community_of(args, context)
+
+    def assign(self, args) -> dict:
+        return self.change_roles(args, "assign")
+
+    def unassign(self, args) -> dict:
+        return self.change_roles(args, "unassign")
+
+    def change_roles(self, args, how: str) -> dict:
+        context = self.context.load()
+        server = self.signed_in(context)
+        target = self.principal(args, context)
+        roles = []
+        for value in args.access:
+            role, colon, _ = value.partition(":")
+            if how == "unassign" and not colon:
+                # unassigning a role whole, whatever its collection value
+                assignment = {"role": role, "collections": None}
+            else:
+                assignment = access_list([value])[0]
+            roles = getattr(server, how)({**target, **assignment})["roles"]
+        return {**target, "roles": roles}
+
+    # ── users ──────────────────────────────────────────────────────────────────────────────
+    def users_list(self, args) -> dict:
+        context = self.context.load()
+        return self.signed_in(context).users(self.target_home(args, context))
+
+    def users_remove(self, args) -> dict:
+        context = self.context.load()
+        server = self.signed_in(context)
+        home = self.target_home(args, context)
+        return server.remove_user(self.user_id(server, args.handle, home))
+
     def rebind_key(self, args) -> dict:
-        server = self.admin()
-        issued = server.rebind(args.handle, args.hours)
+        context = self.context.load()
+        server = self.signed_in(context)
+        home = self.target_home(args, context)
+        issued = server.rebind(self.user_id(server, args.handle, home), args.hours)
         write_secret(Path(args.out), self.invite_file(server, issued))
         return {
             "community": issued["community"],
@@ -688,20 +895,23 @@ class Commands:
         }
 
     def suspect_after(self, args) -> dict:
-        return self.admin().suspect_after(args.handle, args.at)
+        context = self.context.load()
+        server = self.signed_in(context)
+        home = self.target_home(args, context)
+        return server.suspect_after(self.user_id(server, args.handle, home), args.at)
 
-    # ── API keys (api/DESIGN.md §4.5): values move as 0600 files, never on stdout ───────────
+    # ── API keys (api/DESIGN.md §4.6): values move as 0600 files, never on stdout ───────────
     @staticmethod
     def api_key_dir(context: dict) -> Path:
-        """Where a session's key files go: the admin's beside its other admin files, a
-        Member's in its own session."""
-        if context["role"] == "admin":
+        """Where a session's key files go: a homed user's in its own session, a server-level
+        user's beside its other server-level files."""
+        if not context.get("home"):
             return Path.home() / ".symposium" / "admin" / "api-keys"
         return (
             Path.home()
             / ".symposium"
             / "member"
-            / context["community"]
+            / context["home"]
             / context["handle"]
             / "api-keys"
         )
@@ -711,15 +921,26 @@ class Commands:
         """A key as printed: everything but its value."""
         return {k: v for k, v in item.items() if k != "key"}
 
+    def key_community(self, args, context: dict) -> str:
+        community = self.community_of(args, context)
+        if not community:
+            raise CommandError(NO_COMMUNITY)
+        return community
+
     def gen_api_key(self, args) -> dict:
-        """A Member's session makes one more of the Member's own keys, which act as it, or,
-        with --non-member, a non-member issued key, which reads what its collections'
-        owners grant it. The admin issues non-member issued keys only."""
+        """Issue a key carrying --access roles: a member key acts as the signed-in user,
+        within its grants; with --non-member, a key of its own for an application, carrying
+        community-observer."""
         context = self.context.load()
-        community = args.community or context["community"]
+        community = self.key_community(args, context)
         server = self.signed_in(context)
-        non_member = args.non_member or context["role"] == "admin"
-        body = {"label": args.label, "role": "non-member" if non_member else "member"}
+        if not args.access:
+            raise CommandError(f"gen-api-key needs --access: {rbac.ACCESS_FORMS}")
+        body = {
+            "label": args.label,
+            "non_member": args.non_member,
+            "roles": access_list(args.access),
+        }
         if args.expires_days:
             body["expires_days"] = args.expires_days
         issued = server.create_api_key(community, body)
@@ -735,10 +956,10 @@ class Commands:
         return {**self.api_key_view(issued), "key_file": str(path.resolve())}
 
     def list_api_keys(self, args) -> dict:
-        """The keys this session's owner issued, or, for the admin, every issued key in the
-        community (a Member's own keys without their values)."""
+        """The keys this user issued, or every key of the community for a `members`
+        holder, with their roles."""
         context = self.context.load()
-        community = args.community or context["community"]
+        community = self.key_community(args, context)
         server = self.signed_in(context)
         items = server.api_keys(community)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
@@ -754,21 +975,21 @@ class Commands:
         }
 
     def revoke_api_key(self, args) -> dict:
-        """Revoke a key this session's owner issued; the admin revokes any non-member issued
-        key."""
+        """Delete a key this user issued, or any key of the community with `members`."""
         context = self.context.load()
-        community = args.community or context["community"]
+        community = self.key_community(args, context)
         server = self.signed_in(context)
         return self.api_key_view(server.revoke_api_key(community, args.key_id))
 
+    # ── curation, export and import ────────────────────────────────────────────────────────
     def purge(self, args) -> dict:
         cited = CITATION.match(args.cite)
         if not cited:
             raise CommandError("--cite takes a citation: symposium-data:<file-id>@v<n>")
-        return self.admin().purge(cited.group(1), cited.group(2))
+        return self.signed_in().purge(cited.group(1), cited.group(2))
 
     def export(self, args) -> dict:
-        server = self.admin()
+        server = self.signed_in()
         out = Path(args.out)
         size = 0
         partial = out.with_name(out.name + ".partial")
@@ -782,7 +1003,8 @@ class Commands:
         return {"exported": server.community, "file": str(out.resolve()), "bytes": size}
 
     def import_(self, args) -> dict:
-        """Create the exported community on this server (R-J6), then set the context."""
+        """Create the exported community on this server (R-J6), then set the context: the
+        server-level user's session for that community."""
         source = Path(args.from_)
         spec = read_json_file(args.community_file, "community file")
         exported = self.exported_community(source)
@@ -795,11 +1017,12 @@ class Commands:
         if not url:
             raise CommandError(f"{args.community_file} needs `data-server-url`")
         status = self.server_for(url).status()
+        handle = self.server_handle(status["server_id"], url)
         context = {
             "community": exported,
             "data-server-url": url.rstrip("/"),
-            "handle": self.admin_handle(status["server_id"], url),
-            "role": "admin",
+            "handle": handle,
+            "home": None,
             "server_id": status["server_id"],
         }
         report = self.signed_in(context).import_community(source)
@@ -819,57 +1042,54 @@ class Commands:
             f"{source} is not a community export: no manifest.json first"
         )
 
-    # ── a member's identity ────────────────────────────────────────────────────────────────
-    def member_context(self) -> dict:
-        context = self.context.load()
-        if context["role"] != "member":
-            raise CommandError(
-                "this is a member's command: set the context from an invite file "
-                "(`/symposium setup --invite-file <file>`)"
-            )
-        return context
-
+    # ── this user's identity ───────────────────────────────────────────────────────────────
     def owner_register(self, _args) -> dict:
-        """Register this handle with a key made on this machine (R-D1, R-D5). Idempotent: a
-        handle already registered with this machine's key is reported, not registered again."""
-        context = self.member_context()
-        community, handle = context["community"], context["handle"]
+        """Join with the context's invite and a key made on this machine (R-D1, R-D5): the
+        server creates the user with the invite's roles. Idempotent: a user already joined
+        with this machine's key is reported, not joined again."""
+        context = self.context.load()
+        if not context.get("invite_file"):
+            raise CommandError(
+                "this context was set without an invite: join with "
+                "`/symposium setup --invite-file <file>`"
+            )
+        handle, scope = context["handle"], scope_of(context)
         keystore = self.keystore(context["server_id"])
-        server = self.server_for(context["data-server-url"], community)
-        out = {"community": community, "handle": handle}
-        if keystore.exists(community, handle):
+        server = self.server_for(context["data-server-url"], context.get("community"))
+        out = {"community": context.get("home"), "handle": handle}
+        if keystore.exists(scope, handle):
             try:
-                server.sign_in_member(keystore, handle)
-                jwk = keystore.public_jwk(community, handle)
+                server.sign_in(keystore, handle, context.get("home"))
+                jwk = keystore.public_jwk(scope, handle)
                 return {**out, "registered": False, "fingerprint": thumbprint(jwk)}
             except CommandError as e:
-                if e.status != 401:
-                    raise  # 401: this key is not (or no longer) registered; register anew
+                if e.status != 401 or "removed" in str(e):
+                    raise  # 401: this key is not (or no longer) registered; join anew
         invite = read_json_file(context["invite_file"], "invite file").get("invite")
-        jwk = keystore.stage(community, handle)
+        jwk = keystore.stage(scope, handle)
         try:
-            nonce = server.challenge(handle)
-            signature = keystore.sign_staged(community, handle, nonce.encode())
-            server.register(handle, jwk, nonce, signature, invite)
-        except CommandError as e:
-            keystore.discard(community, handle)
-            if e.status == 409:
-                raise CommandError(
-                    f"'{handle}' is already registered in {community} with another key: ask "
-                    "the admin for `/symposium rebind-key`, then set up with its invite",
-                    409,
-                ) from None
+            nonce = server.challenge(handle, context.get("home"))
+            signature = keystore.sign_staged(scope, handle, nonce.encode())
+            joined = server.register(handle, jwk, nonce, signature, invite)
+        except CommandError:
+            keystore.discard(scope, handle)
             raise
-        keystore.commit(community, handle)
-        return {**out, "registered": True, "fingerprint": thumbprint(jwk)}
+        keystore.commit(scope, handle)
+        return {
+            **out,
+            "registered": True,
+            "roles": joined.get("roles", []),
+            "fingerprint": thumbprint(jwk),
+        }
 
     def owner_whoami(self, _args) -> dict:
-        return self.signed_in().whoami()
+        return self.signed_in().me()
 
     def owner_pubkey(self, _args) -> dict:
         context = self.context.load()
-        scope = ADMIN_SCOPE if context["role"] == "admin" else context["community"]
-        jwk = self.keystore(context["server_id"]).public_jwk(scope, context["handle"])
+        jwk = self.keystore(context["server_id"]).public_jwk(
+            scope_of(context), context["handle"]
+        )
         return {
             "handle": context["handle"],
             "public_jwk": jwk,
@@ -877,21 +1097,21 @@ class Commands:
         }
 
     def owner_rotate(self, _args) -> dict:
-        """A new key for this handle, proven by the new key and authorized by the current one;
+        """A new key for this user, proven by the new key and authorized by the current one;
         the current key is replaced only once the server has accepted the new one."""
-        context = self.member_context()
-        community, handle = context["community"], context["handle"]
+        context = self.context.load()
+        handle, scope = context["handle"], scope_of(context)
         keystore = self.keystore(context["server_id"])
         server = self.signed_in(context)
-        jwk = keystore.stage(community, handle)
+        jwk = keystore.stage(scope, handle)
         try:
-            nonce = server.challenge(handle)
-            signature = keystore.sign_staged(community, handle, nonce.encode())
-            rotated = server.rotate(handle, jwk, nonce, signature)
+            nonce = server.challenge(handle, context.get("home"))
+            signature = keystore.sign_staged(scope, handle, nonce.encode())
+            rotated = server.rotate(jwk, nonce, signature)
         except CommandError:
-            keystore.discard(community, handle)
+            keystore.discard(scope, handle)
             raise
-        keystore.commit(community, handle)
+        keystore.commit(scope, handle)
         return {**rotated, "fingerprint": thumbprint(jwk)}
 
     # ── writing ────────────────────────────────────────────────────────────────────────────
@@ -939,24 +1159,14 @@ class Commands:
         ):
             if value is not None:
                 body[key] = value
-        return self.admin().promote(file_id, n, body)
+        return self.signed_in().promote(file_id, n, body)
 
-    # ── collections and grants ─────────────────────────────────────────────────────────────
+    # ── collections ────────────────────────────────────────────────────────────────────────
     def collection_list(self, _args) -> dict:
         return self.signed_in().list_collections()
 
     def collection_create(self, args) -> dict:
         return self.signed_in().create_collection(args.name)
-
-    def collection_grant(self, args) -> dict:
-        """Grant (or, with --revoke, withdraw) a Member read or write, or a non-member issued
-        key read, on a collection the caller owns."""
-        grantee = (
-            {"handle": args.handle} if args.handle else {"api_key_id": args.api_key}
-        )
-        return self.signed_in().grant(
-            args.collection, grantee, args.perm, not args.revoke
-        )
 
     def collection_set_public(self, args) -> dict:
         return self.signed_in().set_public(args.collection, args.public)
@@ -1005,7 +1215,7 @@ class Commands:
 
     def with_api_key(self, path) -> DataServer:
         """A client that reads with an API key file, as `gen-api-key` writes one, with no
-        context: what an application holding a non-member issued key does (R-E3)."""
+        context: what an application holding an issued key does (R-E3)."""
         key = read_json_file(path, "API key file")
         missing = [k for k in ("key", "community", "data-server-url") if not key.get(k)]
         if missing:
@@ -1069,96 +1279,178 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     actions = context.add_subparsers(dest="action", metavar="<action>", required=True)
     p = command(actions, "set", commands.context_set, "set the context from a file")
     which = p.add_mutually_exclusive_group(required=True)
-    which.add_argument("--community-file", help="community.json (admins)")
-    which.add_argument("--invite-file", help="an invite file (members)")
+    which.add_argument(
+        "--community-file",
+        help="community.json: a server-level user's community session",
+    )
+    which.add_argument("--invite-file", help="an invite file: the user it invites")
+    which.add_argument(
+        "--community",
+        help="a server-level user's session for an existing community (with "
+        "--data-server-url)",
+    )
+    p.add_argument("--data-server-url", help="with --community: the data server")
+    p.add_argument(
+        "--handle",
+        help="with --community-file or --community: the server-level user, when this "
+        "machine holds several",
+    )
     command(actions, "show", commands.context_show, "print the context")
 
     p = command(
         sub,
         "admin-config",
         commands.admin_config,
-        "manage this server's admin key (R-D4)",
+        "make root's key and its public key file, and set root's server-level context "
+        "(R-D4)",
     )
     p.add_argument("--handle", required=True)
     p.add_argument("--data-server-url", required=True)
     p.add_argument(
         "--new-key",
         action="store_true",
-        help="replace the key: placing the new file rebinds the server's admin",
+        help="replace the key: placing the new file rebinds root",
     )
 
-    communities = sub.add_parser("communities", help="the server's communities (admin)")
+    access_help = (
+        "an access role, repeatable: <role>, or for community-member and community-observer "
+        "<role>:* (every collection), <role>: (only its own) or <role>:c1,c2"
+    )
+
+    communities = sub.add_parser(
+        "communities", help="the server's communities (`communities` grant)"
+    )
     actions = communities.add_subparsers(
         dest="action", metavar="<action>", required=True
     )
-    p = command(actions, "create", commands.communities_create, "create a community")
+    p = command(
+        actions,
+        "create",
+        commands.communities_create,
+        "create a community with its first community admin, and write that admin's invite "
+        "file (0600)",
+    )
     p.add_argument("--name", required=True)
+    p.add_argument("--admin", required=True, help="the first community admin's handle")
+    p.add_argument(
+        "--out", help="the admin's invite file; default <community>-<admin>.invite"
+    )
     command(actions, "list", commands.communities_list, "list the communities")
 
-    roster = sub.add_parser(
-        "roster",
-        help="the community's roster: any member lists it, the admin changes it",
-    )
+    roster = sub.add_parser("roster", help="the community's users")
     actions = roster.add_subparsers(dest="action", metavar="<action>", required=True)
     command(
         actions,
         "list",
         commands.roster_list,
-        "every handle on the roster, registered or not yet (any member)",
+        "every user of the community, removed ones marked, with its roles, and the "
+        "server-level users",
     )
-    for name, func, text in (
-        ("add", commands.roster_add, "add a handle (admin)"),
-        ("remove", commands.roster_remove, "remove a handle (admin)"),
-    ):
-        command(actions, name, func, text).add_argument("--handle", required=True)
 
     p = command(
         sub,
         "invite",
         commands.invite,
-        "write a single-use invite file for a roster handle (admin); "
-        "`invite list --out-dir <dir>` writes every pending invite",
+        "write a single-use invite file carrying access roles, which the server applies when "
+        "the invitee joins; `invite list --out-dir <dir>` writes every pending invite",
     )
     p.add_argument("--handle")
+    p.add_argument("--access", action="append", help=access_help)
+    p.add_argument("--community", help="the invitee's community; default the context's")
     p.add_argument("--out", help="the invite file to write (0600)")
     p.add_argument("--hours", type=int)
     actions = p.add_subparsers(dest="action", metavar="list")
-    q = actions.add_parser("list", help="write every pending invite as a file (admin)")
+    q = actions.add_parser("list", help="write every pending invite as a file")
     q.add_argument("--out-dir", required=True)
+    q.add_argument("--community", help="default: the context's community")
+    q.add_argument(
+        "--server", action="store_true", help="the server-level users' pending invites"
+    )
+
+    command(
+        sub,
+        "access",
+        commands.access,
+        "the six access roles, and this context's roles and resolved grants (cached in the "
+        "context for the tools)",
+    )
+
+    for name, func, text in (
+        ("assign", commands.assign, "assign access roles to a user or an issued key"),
+        (
+            "unassign",
+            commands.unassign,
+            "unassign access roles, or some collections of one: `<role>` ends the "
+            "assignment, `<role>:c1` removes c1",
+        ),
+    ):
+        p = command(sub, name, func, text)
+        who = p.add_mutually_exclusive_group(required=True)
+        who.add_argument("--handle", help="a user")
+        who.add_argument("--api-key", help="an issued key's id")
+        p.add_argument(
+            "--community", help="the user's community; default the context's"
+        )
+        p.add_argument("--server", action="store_true", help="a server-level user")
+        p.add_argument("--access", action="append", required=True, help=access_help)
+
+    users = sub.add_parser("users", help="users: list and remove")
+    actions = users.add_subparsers(dest="action", metavar="<action>", required=True)
+    p = command(
+        actions,
+        "list",
+        commands.users_list,
+        "a community's users, or with --server the server-level users, removed ones marked",
+    )
+    p.add_argument("--community", help="default: the context's community")
+    p.add_argument("--server", action="store_true")
+    p = command(
+        actions,
+        "remove",
+        commands.users_remove,
+        "remove a user: it stays as a tombstone, its handle retired and its work kept",
+    )
+    p.add_argument("--handle", required=True)
+    p.add_argument("--community", help="default: the context's community")
+    p.add_argument("--server", action="store_true", help="a server-level user")
 
     p = command(
         sub,
         "rebind-key",
         commands.rebind_key,
-        "retire a member's keys and write a fresh invite file (admin)",
+        "retire a user's keys and write a fresh invite file",
     )
     p.add_argument("--handle", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--hours", type=int)
+    p.add_argument("--community", help="default: the context's community")
+    p.add_argument("--server", action="store_true", help="a server-level user")
 
     p = command(
         sub,
         "suspect-after",
         commands.suspect_after,
-        "flag a member's writes after an instant (admin)",
+        "flag a user's writes after an instant",
     )
     p.add_argument("--handle", required=True)
     p.add_argument("--at", required=True, help="ISO 8601, with a timezone")
+    p.add_argument("--community", help="default: the context's community")
+    p.add_argument("--server", action="store_true", help="a server-level user")
 
     p = command(
         sub,
         "gen-api-key",
         commands.gen_api_key,
-        "issue a key and write it to a 0600 file in this session's api-keys/: in a "
-        "member's session one more member issued key, bound to the member, or with "
-        "--non-member a non-member issued key, which reads the collections it is granted; the admin "
-        "issues non-member issued keys",
+        "issue a key carrying --access roles and write it to a 0600 file in this session's "
+        "api-keys/: a member key acts as you, within your grants; with --non-member, a key "
+        "of its own for an application, carrying community-observer",
     )
-    p.add_argument("label", help="the key's name, unique among your live keys")
+    p.add_argument("label", help="the key's name, unique among your keys")
+    p.add_argument("--access", action="append", help=access_help)
     p.add_argument(
         "--non-member",
         action="store_true",
-        help="a key for an application: it acts as no Member",
+        help="a key for an application: its own identity, reading only",
     )
     p.add_argument("--community", help="default: the context's community")
     p.add_argument("--expires-days", type=int)
@@ -1167,9 +1459,9 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "list-api-keys",
         commands.list_api_keys,
-        "write the keys this session's owner issued, with their values, to a 0600 file in "
-        "this session's api-keys/; print them without values (the admin also sees members' "
-        "issued keys, without their values)",
+        "write the keys you issued, with their roles and values, to a 0600 file in this "
+        "session's api-keys/, and print them without values; a `members` holder sees every "
+        "key of the community",
     )
     p.add_argument("--community", help="default: the context's community")
 
@@ -1177,23 +1469,25 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "revoke-api-key",
         commands.revoke_api_key,
-        "revoke an issued key this session's owner issued (the admin also revokes any "
-        "non-member issued key)",
+        "delete a key you issued, or with `members` any key of the community; its next "
+        "request answers 401",
     )
     p.add_argument("key_id")
     p.add_argument("--community", help="default: the context's community")
 
-    p = command(sub, "purge", commands.purge, "free one version's content (admin)")
+    p = command(sub, "purge", commands.purge, "free one version's content (`manage`)")
     p.add_argument("--cite", required=True, help="symposium-data:<file-id>@v<n>")
 
-    p = command(sub, "export", commands.export, "export the community as a tar (admin)")
+    p = command(
+        sub, "export", commands.export, "export the community as a tar (`export`)"
+    )
     p.add_argument("--out", required=True)
 
     p = command(
         sub,
         "import",
         commands.import_,
-        "create a community from an export, then set the context (admin)",
+        "create a community from an export, then set the context (`communities`)",
     )
     p.add_argument("--from", dest="from_", required=True)
     p.add_argument("--community-file", required=True)
@@ -1230,13 +1524,13 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     p = command(sub, "versions", commands.versions, "every version of a file")
     p.add_argument("file_id")
 
-    owner = sub.add_parser("owner", help="this member's identity")
+    owner = sub.add_parser("owner", help="this user's identity")
     actions = owner.add_subparsers(dest="action", metavar="<action>", required=True)
     command(
         actions,
         "register",
         commands.owner_register,
-        "register with the context's invite and a key made here (idempotent)",
+        "join with the context's invite and a key made here (idempotent)",
     )
     command(actions, "whoami", commands.owner_whoami, "who the server says this is")
     command(
@@ -1285,7 +1579,7 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "promote",
         commands.promote,
-        "copy a version into a collection as a new file (admin)",
+        "copy a version into a collection as a new file (`gate` into record)",
     )
     p.add_argument("ref", help="symposium-data:<file-id>@v<n>")
     p.add_argument("--collection", required=True)
@@ -1295,7 +1589,10 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         "--stamp-json-pointer", help="where to write the server's clock in the JSON"
     )
 
-    collection = sub.add_parser("collection", help="collections and their sharing")
+    collection = sub.add_parser(
+        "collection",
+        help="collections; share one read-only with `assign --access community-observer:<c>`",
+    )
     actions = collection.add_subparsers(
         dest="action", metavar="<action>", required=True
     )
@@ -1311,22 +1608,9 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     p.add_argument("--name", required=True)
     p = command(
         actions,
-        "grant",
-        commands.collection_grant,
-        "let a roster member read or write a collection the caller owns, or a non-member "
-        "issued key read it; --revoke withdraws",
-    )
-    p.add_argument("--collection", required=True)
-    grantee = p.add_mutually_exclusive_group(required=True)
-    grantee.add_argument("--handle", help="a roster member")
-    grantee.add_argument("--api-key", help="the id of a non-member issued key")
-    p.add_argument("--perm", required=True, choices=("read", "write"))
-    p.add_argument("--revoke", action="store_true", help="withdraw the grant")
-    p = command(
-        actions,
         "set-public",
         commands.collection_set_public,
-        "make your collection readable by anyone, or not",
+        "make a collection you manage readable by anyone, or not",
     )
     p.add_argument("--collection", required=True)
     visibility = p.add_mutually_exclusive_group(required=True)

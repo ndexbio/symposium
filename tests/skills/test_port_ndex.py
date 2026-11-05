@@ -41,6 +41,7 @@ def test_bootstrap_then_port_then_bootstrap_invites_the_authors(
     again = bootstrap(skill, tmp_path, server)
     assert sorted(Path(p).name for p in again["invite_files"]) == [
         "demo-lyra.invite",
+        "demo-steward.invite",
         "demo-vega.invite",
     ]
     record = skill.ok(tmp_path, "data", "changes", "--collection", "record")["items"]

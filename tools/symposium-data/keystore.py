@@ -1,12 +1,12 @@
 """Key storage for the symposium-data CLI. Nobody handles a raw private key.
 
-    ~/.symposium/keys/<server-id>/admin/<handle>.ed25519.pem         the server admin's key
-    ~/.symposium/keys/<server-id>/<community>/<handle>.ed25519.pem   a member's key, per community
+    ~/.symposium/keys/<server-id>/admin/<handle>.ed25519.pem         a server-level user's key
+    ~/.symposium/keys/<server-id>/<community>/<handle>.ed25519.pem   a user's key, per community
     … each with <handle>.pub.jwk beside it (the public JWK, not a secret)
 
 Keys are keyed by the server's id, not its URL: a server reached through a new address is the
-same identity domain. `admin` is never a community name (it is reserved), so the two kinds of
-key never share a directory. Private keys are encrypted PKCS#8, mode 0600. The passphrase comes
+same identity domain. `admin` is never a community name (it is reserved), so a server-level
+user's key and a community user's key never share a directory. Private keys are encrypted PKCS#8, mode 0600. The passphrase comes
 from SYMPOSIUM_KEY_PASSPHRASE when it is set, otherwise from the OS keychain through the
 optional `keyring` package. Nothing here prints a private key or a passphrase.
 """

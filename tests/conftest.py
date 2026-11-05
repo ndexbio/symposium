@@ -73,7 +73,7 @@ def skill(suite):
 @pytest.fixture(autouse=True)
 def clean_slate(suite):
     """Every test starts from an empty, operational server and no skill sessions on the suite's
-    machine; the admin binding and the keystore stay."""
+    machine; root's binding and the keystore stay."""
     if suite.server is not None:
         suite.server.reset()
     for sessions in ("admin", "member", "current"):
@@ -83,9 +83,20 @@ def clean_slate(suite):
 
 @pytest.fixture
 def admin_dir(tmp_path, server, cli) -> Path:
-    """A working directory whose context is the admin's, on an existing `demo` community."""
+    """A working directory whose context is root's session for an existing `demo`
+    community, whose first community admin, `steward`, is invited."""
     cli.ok(
         tmp_path, "context", "set", "--community-file", community_file(tmp_path, server)
     )
-    cli.ok(tmp_path, "communities", "create", "--name", "demo")
+    cli.ok(
+        tmp_path,
+        "communities",
+        "create",
+        "--name",
+        "demo",
+        "--admin",
+        "steward",
+        "--out",
+        tmp_path / "steward.invite",
+    )
     return tmp_path

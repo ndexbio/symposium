@@ -15,7 +15,9 @@ symposium-data status [-h] [--data-server-url DATA_SERVER_URL]
 set the context from a file
 
 ```
-symposium-data context set [-h] (--community-file COMMUNITY_FILE | --invite-file INVITE_FILE)
+symposium-data context set [-h]
+                                  (--community-file COMMUNITY_FILE | --invite-file INVITE_FILE | --community COMMUNITY)
+                                  [--data-server-url DATA_SERVER_URL] [--handle HANDLE]
 ```
 
 ## `context show`
@@ -28,7 +30,7 @@ symposium-data context show [-h]
 
 ## `admin-config`
 
-manage this server's admin key (R-D4)
+make root's key and its public key file, and set root's server-level context (R-D4)
 
 ```
 symposium-data admin-config [-h] --handle HANDLE --data-server-url DATA_SERVER_URL
@@ -37,10 +39,10 @@ symposium-data admin-config [-h] --handle HANDLE --data-server-url DATA_SERVER_U
 
 ## `communities create`
 
-create a community
+create a community with its first community admin, and write that admin's invite file (0600)
 
 ```
-symposium-data communities create [-h] --name NAME
+symposium-data communities create [-h] --name NAME --admin ADMIN [--out OUT]
 ```
 
 ## `communities list`
@@ -53,65 +55,94 @@ symposium-data communities list [-h]
 
 ## `roster list`
 
-every handle on the roster, registered or not yet (any member)
+every user of the community, removed ones marked, with its roles, and the server-level users
 
 ```
 symposium-data roster list [-h]
 ```
 
-## `roster add`
-
-add a handle (admin)
-
-```
-symposium-data roster add [-h] --handle HANDLE
-```
-
-## `roster remove`
-
-remove a handle (admin)
-
-```
-symposium-data roster remove [-h] --handle HANDLE
-```
-
 ## `invite`
 
-write a single-use invite file for a roster handle (admin); `invite list --out-dir <dir>` writes every pending invite
+write a single-use invite file carrying access roles, which the server applies when the invitee joins; `invite list --out-dir <dir>` writes every pending invite
 
 ```
-symposium-data invite [-h] [--handle HANDLE] [--out OUT] [--hours HOURS] list ...
+symposium-data invite [-h] [--handle HANDLE] [--access ACCESS] [--community COMMUNITY]
+                             [--out OUT] [--hours HOURS]
+                             list ...
+```
+
+## `access`
+
+the six access roles, and this context's roles and resolved grants (cached in the context for the tools)
+
+```
+symposium-data access [-h]
+```
+
+## `assign`
+
+assign access roles to a user or an issued key
+
+```
+symposium-data assign [-h] (--handle HANDLE | --api-key API_KEY) [--community COMMUNITY]
+                             [--server] --access ACCESS
+```
+
+## `unassign`
+
+unassign access roles, or some collections of one: `<role>` ends the assignment, `<role>:c1` removes c1
+
+```
+symposium-data unassign [-h] (--handle HANDLE | --api-key API_KEY) [--community COMMUNITY]
+                               [--server] --access ACCESS
+```
+
+## `users list`
+
+a community's users, or with --server the server-level users, removed ones marked
+
+```
+symposium-data users list [-h] [--community COMMUNITY] [--server]
+```
+
+## `users remove`
+
+remove a user: it stays as a tombstone, its handle retired and its work kept
+
+```
+symposium-data users remove [-h] --handle HANDLE [--community COMMUNITY] [--server]
 ```
 
 ## `rebind-key`
 
-retire a member's keys and write a fresh invite file (admin)
+retire a user's keys and write a fresh invite file
 
 ```
 symposium-data rebind-key [-h] --handle HANDLE --out OUT [--hours HOURS]
+                                 [--community COMMUNITY] [--server]
 ```
 
 ## `suspect-after`
 
-flag a member's writes after an instant (admin)
+flag a user's writes after an instant
 
 ```
-symposium-data suspect-after [-h] --handle HANDLE --at AT
+symposium-data suspect-after [-h] --handle HANDLE --at AT [--community COMMUNITY] [--server]
 ```
 
 ## `gen-api-key`
 
-issue a key and write it to a 0600 file in this session's api-keys/: in a member's session one more member issued key, bound to the member, or with --non-member a non-member issued key, which reads the collections it is granted; the admin issues non-member issued keys
+issue a key carrying --access roles and write it to a 0600 file in this session's api-keys/: a member key acts as you, within your grants; with --non-member, a key of its own for an application, carrying community-observer
 
 ```
-symposium-data gen-api-key [-h] [--non-member] [--community COMMUNITY]
+symposium-data gen-api-key [-h] [--access ACCESS] [--non-member] [--community COMMUNITY]
                                   [--expires-days EXPIRES_DAYS]
                                   label
 ```
 
 ## `list-api-keys`
 
-write the keys this session's owner issued, with their values, to a 0600 file in this session's api-keys/; print them without values (the admin also sees members' issued keys, without their values)
+write the keys you issued, with their roles and values, to a 0600 file in this session's api-keys/, and print them without values; a `members` holder sees every key of the community
 
 ```
 symposium-data list-api-keys [-h] [--community COMMUNITY]
@@ -119,7 +150,7 @@ symposium-data list-api-keys [-h] [--community COMMUNITY]
 
 ## `revoke-api-key`
 
-revoke an issued key this session's owner issued (the admin also revokes any non-member issued key)
+delete a key you issued, or with `members` any key of the community; its next request answers 401
 
 ```
 symposium-data revoke-api-key [-h] [--community COMMUNITY] key_id
@@ -127,7 +158,7 @@ symposium-data revoke-api-key [-h] [--community COMMUNITY] key_id
 
 ## `purge`
 
-free one version's content (admin)
+free one version's content (`manage`)
 
 ```
 symposium-data purge [-h] --cite CITE
@@ -135,7 +166,7 @@ symposium-data purge [-h] --cite CITE
 
 ## `export`
 
-export the community as a tar (admin)
+export the community as a tar (`export`)
 
 ```
 symposium-data export [-h] --out OUT
@@ -143,7 +174,7 @@ symposium-data export [-h] --out OUT
 
 ## `import`
 
-create a community from an export, then set the context (admin)
+create a community from an export, then set the context (`communities`)
 
 ```
 symposium-data import [-h] --from FROM_ --community-file COMMUNITY_FILE
@@ -183,7 +214,7 @@ symposium-data versions [-h] file_id
 
 ## `owner register`
 
-register with the context's invite and a key made here (idempotent)
+join with the context's invite and a key made here (idempotent)
 
 ```
 symposium-data owner register [-h]
@@ -243,7 +274,7 @@ symposium-data delete [-h] [--reason REASON] file_id
 
 ## `promote`
 
-copy a version into a collection as a new file (admin)
+copy a version into a collection as a new file (`gate` into record)
 
 ```
 symposium-data promote [-h] --collection COLLECTION [--name NAME] [--metadata METADATA]
@@ -267,19 +298,9 @@ create a collection you own
 symposium-data collection create [-h] --name NAME
 ```
 
-## `collection grant`
-
-let a roster member read or write a collection the caller owns, or a non-member issued key read it; --revoke withdraws
-
-```
-symposium-data collection grant [-h] --collection COLLECTION
-                                       (--handle HANDLE | --api-key API_KEY) --perm {read,write}
-                                       [--revoke]
-```
-
 ## `collection set-public`
 
-make your collection readable by anyone, or not
+make a collection you manage readable by anyone, or not
 
 ```
 symposium-data collection set-public [-h] --collection COLLECTION (--public | --private)

@@ -41,6 +41,9 @@ For Data Server 0.1.3.
   still shows or hides the type. Every type now has a shape of its own: a ResearchGoal is a
   star, and a type neither the specification nor the profile defines takes a spare shape
   rather than the ellipse they all shared.
+- **The claim map's verdict pane can be resized.** Drag its lower edge, or use the arrow keys
+  on it, to give the claim map more room; a double-click or End puts it back. Each page opens
+  with the whole verdict shown, so the height is not kept between pages.
 - **Wide tables read from their key.** The row-key column stays in view as a table scrolls
   sideways, the columns a Ground cites come first (a button restores the stored order), and a
   table of more than 12 columns has a column picker.
@@ -60,6 +63,11 @@ For Data Server 0.1.3.
 
 ### Fixed
 
+- **The claim map's legend matches its graph.** It showed claims in a fixed blue, one Member's
+  colour, while each claim is drawn in its author's, and it showed every grounding in the full
+  graph as a test. Each swatch is now read from the graph as drawn, each row has a count, and
+  a row appears only for what the graph shows, Members included. A claim with a checker
+  finding now has the orange border the legend described.
 - **A reply is listed once when `sync --watch` runs beside other commands.** Sync passes now
   run one at a time, each reading the session's saved state when it starts, so the watcher no
   longer lists again what `publish`, `validate` or a foreground `sync` listed while it waited.

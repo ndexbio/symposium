@@ -32,6 +32,7 @@ from symposium_rules.validate import (
 )
 
 from symposium_data.access import Caller, standing
+from symposium_data.access.authn import context_of
 from symposium_data.errors import ApiError
 
 from .generated import models as m
@@ -144,7 +145,7 @@ class ApiService(Service):
         its `record` collection, or anyone while it is public."""
         community = self.community(conn, value)
         if not self.records.can_read_collection(
-            conn, caller.principal(), community, "record"
+            conn, caller.context, community, "record"
         ):
             if caller.anonymous:
                 raise ApiError(
@@ -307,7 +308,11 @@ class ApiService(Service):
                     "url": f"{self.base(caller)}/{quote(community)}/record",
                     "position": self.position(conn, community),
                     "counts": self.index.counts(conn, community),
-                    "members": len(self.records.roster(conn, community)),
+                    "members": sum(
+                        1
+                        for u in self.records.users(conn, community)
+                        if u["removed"] is None
+                    ),
                     "first_created": iso(rows[0]["created"]) if rows else None,
                     "specification_versions": versions,
                 }
@@ -680,11 +685,13 @@ class ApiService(Service):
     def member(self, conn, caller, community, handle, roster: dict) -> dict:
         counts = self.index.member_counts(conn, community, handle)
         url = self.member_url(caller, community, handle)
+        user = roster.get(handle, {})
         return {
             "handle": handle,
             "address": f"@{handle}",
             "url": url,
-            "registered": bool(roster.get(handle, {}).get("registered")),
+            "registered": bool(user.get("registered")),
+            "removed": iso(user.get("removed")),
             "counts": counts,
             "artifacts_url": f"{url}/artifacts",
             "messages_url": f"{url}/messages",
@@ -692,7 +699,7 @@ class ApiService(Service):
         }
 
     def handles(self, conn, community) -> tuple[list, dict]:
-        roster = {r["handle"]: r for r in self.records.roster(conn, community)}
+        roster = {r["handle"]: r for r in self.records.users(conn, community)}
         published = self.index.publishers(conn, community)
         return sorted(set(roster) | published), roster
 
@@ -757,31 +764,30 @@ class ApiService(Service):
             row = conn.execute(
                 "SELECT expires FROM api_keys WHERE id = %s", (caller.key_id,)
             ).fetchone()
-            if caller.role == "non-member":
-                grants = self.records.key_grants(conn, community, caller.key_id)
-            elif caller.admin:
-                grants = []
-            else:
-                grants = self.records.grants(conn, community, caller.handle)
-            member = (
-                self.records.owner(conn, community, caller.handle)
-                if caller.role == "member"
-                else None
+            user = self.records.user(conn, caller.user_id) if caller.user_id else None
+            roles = (
+                self.records.role_list(conn, user_id=caller.user_id)
+                if caller.session
+                else self.records.role_list(conn, api_key_id=caller.key_id)
             )
             out = {
                 "kind": caller.kind,
                 "handle": caller.handle,
                 "label": caller.label,
-                "role": caller.role,
                 "community": community,
                 "key_id": str(caller.key_id),
                 "kid": caller.ed25519_kid,
                 "expires": iso(row["expires"]) if row else None,
-                "suspect_after": iso(member["suspect_after"]) if member else None,
-                "grants": [{"collection": c, "perm": p} for c, p in grants],
+                "suspect_after": iso(user["suspect_after"]) if user else None,
+                "roles": roles,
+                "context": caller.context.view(),
                 "position": self.position(conn, community),
             }
-            if caller.handle and not caller.admin:
+            if (
+                caller.user_id is not None
+                and user is not None
+                and user["home"] == community
+            ):
                 out["member_url"] = self.member_url(caller, community, caller.handle)
             return m.Me.model_validate(out)
 
@@ -978,7 +984,9 @@ class ApiService(Service):
         runtime, records = self.runtime, self.records
         with self.connection() as conn:
             community = self.fresh(conn, community)
-            if not records.can_create(conn, caller.principal(), community, "inbox"):
+            if not records.can_create(
+                conn, caller.context, community, "inbox", {MARK_SUBMISSION: True}
+            ):
                 raise ApiError(403, f"'{caller.handle}' may not submit to {community}")
             # a name already in the record is a conflict, before the validator says so
             if self.index.artifact(conn, community, name) is not None:
@@ -1039,10 +1047,11 @@ class ApiService(Service):
         with self.connection() as conn:
             if not caller.anonymous:
                 row = self.keys.live(conn, caller.key_id)
-                if row is None or standing(conn, self.records, row, community):
+                if row is None or standing(conn, self.records, row):
                     return False
+                caller.context = context_of(conn, self.records, row)
             return collection is None or self.records.can_read_collection(
-                conn, caller.principal(), community, collection
+                conn, caller.context, community, collection
             )
 
     def stream_record(self, caller, *, community, last__event__i_d):
@@ -1051,7 +1060,7 @@ class ApiService(Service):
             start = decode(last__event__i_d, r=int).get("r")
             if start is None:
                 start = self.index.position(conn, community)
-        stream_id = self.caps.open(caller.key_id, caller.role, caller.client_addr)
+        stream_id = self.caps.open(caller.key_id, caller.kind, caller.client_addr)
         return self.record_events(caller, community, int(start), stream_id)
 
     async def record_events(self, caller, community, seq, stream_id):
@@ -1114,7 +1123,7 @@ class ApiService(Service):
                     "i": self.records.collection_row(conn, community, "inbox")["seq"],
                     "r": self.records.collection_row(conn, community, "record")["seq"],
                 }
-        stream_id = self.caps.open(caller.key_id, caller.role, caller.client_addr)
+        stream_id = self.caps.open(caller.key_id, caller.kind, caller.client_addr)
         return self.submission_events(
             caller, community, int(start["i"]), int(start.get("r", 0)), stream_id
         )

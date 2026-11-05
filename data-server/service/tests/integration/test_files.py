@@ -205,14 +205,29 @@ def test_errors(demo):
     assert HTTP.get(f"{server.url}/v1/demo/files/{fid}/v/1").status_code == 401
 
 
-def test_inbox_submissions_are_private_to_submitter_admin_and_recipients(demo):
+def test_inbox_takes_marked_submissions_and_replies_only(demo):
+    """`inbox` holds submissions (publish) and the gate's replies (gate): a submission is
+    private to its submitter and the gate, a reply to its recipients."""
     _, admin, owners = demo
     lyra, vega, rigel = owners["lyra"], owners["vega"], owners["rigel"]
-    fid = lyra.put("demo", "inbox", "sub.json", b"{}").json()["file_id"]
+    assert lyra.put("demo", "inbox", "plain.json", b"{}").status_code == 403
+    fid = lyra.put(
+        "demo", "inbox", "sub.json", b"{}", {"symposium_submission": True}
+    ).json()["file_id"]
     assert vega.get(fid).status_code == 403
     assert admin.get(fid).status_code == 200
+    assert (
+        lyra.put(
+            "demo", "inbox", "fake.json", b"{}", {"symposium_reply": True}
+        ).status_code
+        == 403
+    )
     reply = admin.put(
-        "demo", "inbox", "reply.json", b"{}", {"recipients": ["vega"]}
+        "demo",
+        "inbox",
+        "reply.json",
+        b"{}",
+        {"symposium_reply": True, "recipients": ["vega"]},
     ).json()
     assert vega.get(reply["file_id"]).status_code == 200
     assert rigel.get(reply["file_id"]).status_code == 403
@@ -263,7 +278,7 @@ def test_suspect_versions_are_flagged(demo):
     early = lyra.put("demo", "files", "early.txt", b"before").json()
     # suspicion starts after the instant: the early version, created at it, is not suspect
     flagged = HTTP.put(
-        f"{server.url}/v1/demo/owners/lyra/suspect-after",
+        f"{server.url}/v1/users/{admin.user_id('lyra', 'demo')}/suspect-after",
         json={"at": early["created"]},
         headers=admin.headers(),
     )

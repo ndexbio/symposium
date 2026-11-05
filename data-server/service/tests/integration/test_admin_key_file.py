@@ -28,7 +28,7 @@ def fingerprint(key: OwnerKey) -> str:
 def test_the_admin_is_bound_from_its_key_file(server):
     status = server.status()
     assert status["mode"] == "operational" and "reason" not in status
-    assert status["admin"] == ADMIN
+    assert status["root"] == ADMIN
     assert status["fingerprint"] == fingerprint(server.admin_key)
     backup = json.loads(server.exec("cat", BACKUP).stdout)
     assert backup == {"handle": ADMIN, "jwk": server.admin_key.jwk}
@@ -49,11 +49,11 @@ def test_without_its_key_the_server_is_not_operational(server):
             "the server never left operational mode",
         )
         assert status["reason"] == "admin key missing"
-        assert status["server_id"] and "admin" not in status
+        assert status["server_id"] and "root" not in status
         for method, path in (
             ("GET", "/v1/communities"),
-            ("POST", "/v1/admin/challenge"),
-            ("POST", "/v1/demo/auth/challenge"),
+            ("POST", "/v1/auth/challenge"),
+            ("POST", "/v1/users"),
             ("GET", "/v1/demo/collections/record/changes"),
         ):
             r = HTTP.request(method, server.url + path)
@@ -82,7 +82,7 @@ def test_a_new_key_file_rebinds_the_admin(server, tmp_path):
             lambda s: s.get("fingerprint") == fingerprint(new_key),
             "the admin was never rebound",
         )
-        assert status["mode"] == "operational" and status["admin"] == ADMIN
+        assert status["mode"] == "operational" and status["root"] == ADMIN
 
         # the old key is retired: its session and its signature are both refused
         url = f"{server.url}/v1/communities"
@@ -116,7 +116,7 @@ def test_the_key_file_is_read_from_the_mounted_directory_too(server):
         # mounted file, and reading it saves the backup again
         assert server.exec("rm", BACKUP).returncode == 0
         status = server.restarted()
-        assert status["mode"] == "operational" and status["admin"] == ADMIN
+        assert status["mode"] == "operational" and status["root"] == ADMIN
         assert status["fingerprint"] == fingerprint(server.admin_key)
         assert json.loads(server.exec("cat", BACKUP).stdout) == json.loads(saved)
     finally:

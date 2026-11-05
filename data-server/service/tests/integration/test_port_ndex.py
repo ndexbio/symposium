@@ -119,7 +119,7 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
         result["pages"] == 3 and stub.listing_pages == 3
     )  # 10 networks at page size 4
     assert result["reserved_roster"] == ["lyra", "vega"]
-    assert result["admin"] == admin.handle and result["source"] == stub.url
+    assert result["root"] == admin.handle and result["source"] == stub.url
 
     recorded = recorded_artifacts()
     records = [r for r in recorded if r[3].get("symposium_record") is True]
@@ -146,11 +146,12 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
         reply["created_by"] == admin.handle
     )  # the NDEx admin account maps to the server's admin
 
-    # the authors and the recipient are on the roster, and claim their handles by invite
+    # the authors and the recipient are users of the community, and claim their handles by
+    # invite
     lyra, vega = Owner(server, "lyra"), Owner(server, "vega")
     assert enroll(admin, lyra, "demo").status_code == 201
     assert enroll(admin, vega, "demo").status_code == 201
-    assert invite(admin, "demo", "mallory").status_code == 403  # not on the roster
+    assert invite(admin, "demo", "lyra").status_code == 409  # claimed once
     assert lyra.get(reply["file_id"]).status_code == 200
     assert (
         vega.get(reply["file_id"]).status_code == 403
@@ -176,8 +177,13 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
     assert validated.returncode == 0, validated.stdout + validated.stderr
     assert "9 artifacts: 0 FAIL" in validated.stdout
 
-    # the record's clock continues after the last ported instant
-    after = admin.put("demo", "record", "after.json", b"{}").json()
+    # the record's clock continues after the last ported instant: the next accept takes it
+    sub = lyra.put("demo", "inbox", "after.json", b"{}", {"symposium_submission": True})
+    after = HTTP.post(
+        admin.url(f"/files/{sub.json()['file_id']}/v/1/promote"),
+        json={"collection": "record"},
+        headers=admin.headers(),
+    ).json()
     assert after["seq"] == 10
     assert datetime.fromisoformat(after["created"]) > records[-1][0]
     assert_consistent(server)
@@ -207,8 +213,9 @@ def test_a_failing_port_writes_nothing(demo):
     reason = outcome["result"]["reason"]
     assert name in reason and "already exists" in reason
 
-    for table in ("files", "versions", "payloads", "roster"):
+    for table in ("files", "versions", "payloads"):
         assert psql(server, f"SELECT count(*) FROM {table}") == "0", table
+    assert psql(server, "SELECT count(*) FROM users WHERE home IS NOT NULL") == "0"
     assert (
         psql(server, "SELECT count(*) FROM collections") == "3"
     )  # the defaults, empty
@@ -242,8 +249,9 @@ def test_an_author_with_the_admins_handle_fails_the_port(demo):
         stub.close()
     assert outcome["state"] == "failed", outcome
     assert outcome["result"]["reason"] == "handle collision"
-    for table in ("files", "versions", "payloads", "roster"):
+    for table in ("files", "versions", "payloads"):
         assert psql(server, f"SELECT count(*) FROM {table}") == "0", table
+    assert psql(server, "SELECT count(*) FROM users WHERE home IS NOT NULL") == "0"
     assert_consistent(server)
 
 
@@ -264,7 +272,7 @@ def test_a_file_that_lands_while_the_port_runs_fails_it(demo):
     assert (
         psql(server, "SELECT name FROM files") == "landed.csv"
     )  # only the member's file
-    assert psql(server, "SELECT count(*) FROM roster") == "0"
+    assert psql(server, "SELECT count(*) FROM users WHERE home IS NOT NULL") == "0"
     assert_consistent(server)
 
 
@@ -348,7 +356,6 @@ def test_a_port_is_refused_before_any_ndex_call(demo, stub):
     server, admin = demo
     assert start_port(server, admin.headers(), stub.url, "nowhere").status_code == 404
     assert start_port(server, {}, stub.url).status_code == 401
-    HTTP.post(f"{server.url}/v1/demo/roster/lyra", headers=admin.headers())
     lyra = Owner(server, "lyra")
     enroll(admin, lyra, "demo")
     assert start_port(server, lyra.headers(), stub.url).status_code == 403
@@ -356,7 +363,11 @@ def test_a_port_is_refused_before_any_ndex_call(demo, stub):
     assert HTTP.get(status_url, headers=admin.headers()).status_code == 404
     assert HTTP.get(status_url).status_code == 401
     assert HTTP.get(status_url, headers=lyra.headers()).status_code == 403
-    for issued in (lyra.issue("notebook"), lyra.issue("dashboard", role="non-member")):
+    observer = [{"role": "community-observer", "collections": ["*"]}]
+    for issued in (
+        lyra.issue("notebook"),
+        admin.issue("dashboard", roles=observer, non_member=True),
+    ):
         by_key = {"Authorization": f"Bearer {issued['key']}"}
         assert start_port(server, by_key, stub.url).status_code == 403
         assert HTTP.get(status_url, headers=by_key).status_code == 403

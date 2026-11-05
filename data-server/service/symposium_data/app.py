@@ -1,17 +1,18 @@
-"""The hand-written routes of `/v1`: communities, session management, the roster, API keys, collections
-and files. Every byte is streamed by this service; S3 is never exposed. The record's routes are
-generated from the contract and mounted beside these by `symposium_server`.
+"""The hand-written routes of `/v1`: sign-in, users, invites, role assignments, communities,
+API keys, collections and files. Every byte is streamed by this service; S3 is never exposed.
+The record's routes are generated from the contract and mounted beside these by
+`symposium_server`.
 
 Communities are tenants (R-G8): every community-dependent route is under /v1/{community}/...,
 with collection-scoped routes under collections/{collection}/ and file routes under files/{id}/.
-Only /v1/status, /v1/communities and the admin's session management (/v1/admin/...) are
+Sign-in (/v1/auth/...), users, invites, roles, assignments, communities and /v1/status are
 server-wide.
 
-Every request presents one API key or none (`access`). The session management routes answer a
-session key; collections decide what a key may read and write.
+Every request presents one API key or none (`access`), and is decided by its caller's
+`UserContext`: the operation's grants at the door, then each collection it touches here.
 
-Nobody has a shell on the server (R-D7): every admin operation is an admin-only route, and the
-admin's key comes from the key file on the volume (R-D4). Without a usable one the server is
+Nobody has a shell on the server (R-D7): every administrative operation is a route, and the root
+user's key comes from the key file on the volume (R-D4). Without a usable one the server is
 non-operational: every route but /v1/status answers 501.
 """
 
@@ -37,12 +38,12 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from . import API_VERSION, access, version
-from .access import Caller, authorize
+from .access import Caller, authorize, rbac
 from .admin_key import AdminKeyFile, AdminMode
 from .api_keys import ApiKeys, LabelInUse, Sealer, key_file_from
 from .archive import Archive, Malformed, Refused
@@ -268,7 +269,8 @@ def status(
 ):
     """Version, mode and health. Answers 503 while PostgreSQL or the S3 store is unavailable,
     so a readiness probe never routes traffic to a server that cannot serve it. In both modes it
-    reports the server's id; once operational, the admin's handle and key fingerprint."""
+    reports the server's id; once operational, the root user's handle and key fingerprint, and
+    the server's public URL when one is configured."""
     postgres_ok = True
     try:
         with db.connection(timeout=0.5) as conn:  # inside the probe's 1 s
@@ -287,7 +289,9 @@ def status(
         "s3": "ok" if s3_ok else "unavailable",
     }
     if admin_mode.operational:
-        body.update(admin=admin_mode.handle, fingerprint=admin_mode.fingerprint)
+        body.update(root=admin_mode.handle, fingerprint=admin_mode.fingerprint)
+        if caller.base_url and access.authz.public_url():
+            body["public_url"] = access.authz.public_url()
         if postgres_ok:
             for extend in status_extensions:
                 body.update(extend())
@@ -299,25 +303,26 @@ def status(
 # ── identity ────────────────────────────────────────────────────────────────────────────────
 class ChallengeIn(BaseModel):
     handle: str = Field(pattern=NAME)
+    community: str | None = None  # the user's home; None for a server-level user
 
 
 class SessionIn(BaseModel):
     handle: str = Field(pattern=NAME)
-    nonce: str
-    signature: str
-
-
-class AdminSessionIn(BaseModel):
+    community: str | None = None
     nonce: str
     signature: str
 
 
 class RegisterIn(BaseModel):
+    """Joining with an invite: the request names no roles and no home; the invite holds them."""
+
+    model_config = ConfigDict(extra="allow")
+
     handle: str = Field(pattern=NAME)
     public_jwk: dict
     nonce: str
     signature: str
-    invite: str | None = None
+    invite: str
 
 
 class RotateIn(BaseModel):
@@ -326,13 +331,35 @@ class RotateIn(BaseModel):
     signature: str
 
 
+class RoleIn(BaseModel):
+    role: str
+    # community-member and community-observer only: ["*"], [] or collection names
+    collections: list[str] | None = None
+
+
 class InviteIn(BaseModel):
     handle: str = Field(pattern=NAME)
+    # the invitee's home; a homed caller's own community when omitted, and for a
+    # server-level caller, omitted means a server-level user
+    community: str | None = None
+    roles: list[RoleIn] = Field(min_length=1)
     hours: int | None = Field(default=None, ge=1, le=24 * 366)
+
+
+class AssignmentIn(BaseModel):
+    """A principal (a user by handle and community, or an API key by id) and one role. On
+    DELETE, `collections` names the collections to remove; omitted, the whole assignment."""
+
+    handle: str | None = Field(default=None, pattern=NAME)
+    community: str | None = None
+    api_key_id: str | None = None
+    role: str
+    collections: list[str] | None = None
 
 
 class CommunityIn(BaseModel):
     name: str
+    admin: str = Field(pattern=NAME)  # the first community admin's handle
 
 
 def refuse(status: int, message: str, conn=None):
@@ -354,9 +381,13 @@ def community_of(conn, name: str) -> str:
     return found
 
 
-def checked_new_key(conn, community: str, handle: str, body) -> tuple[str, dict]:
+def home_of(conn, name: str | None) -> str | None:
+    return None if name is None else community_of(conn, name)
+
+
+def checked_new_key(conn, home: str | None, handle: str, body) -> tuple[str, dict]:
     """Consume the challenge and check the new key's proof of possession -> (kid, jwk)."""
-    if not records.take_challenge(conn, community, handle, body.nonce):
+    if not records.take_challenge(conn, home, handle, body.nonce):
         refuse(401, "the challenge is unknown, spent or expired")
     try:
         keys.validate(body.public_jwk)
@@ -371,16 +402,6 @@ def checked_new_key(conn, community: str, handle: str, body) -> tuple[str, dict]
     return keys.thumbprint(body.public_jwk), body.public_jwk
 
 
-# ── the server admin and communities (server-wide) ──────────────────────────────────────────
-@app.post("/v1/admin/challenge")
-def admin_challenge(caller: Annotated[Caller, Depends(authorize("adminChallenge"))]):
-    nonce = secrets.new("n_")
-    with db.connection() as conn:
-        admin = records.config(conn, "admin")
-        records.add_challenge(conn, None, admin, nonce)
-    return {"nonce": nonce, "expires_in": 300}
-
-
 def session_out(row, key: str) -> dict:
     return {
         "key": key,
@@ -390,57 +411,624 @@ def session_out(row, key: str) -> dict:
     }
 
 
-@app.post("/v1/admin/token")
-def create_admin_session(
-    caller: Annotated[Caller, Depends(authorize("createAdminSession"))],
-    body: AdminSessionIn,
+def removed_message(home: str | None) -> str:
+    return "this account was removed" + (f" from {home}" if home else "")
+
+
+@app.post("/v1/auth/challenge")
+def challenge(
+    caller: Annotated[Caller, Depends(authorize("challenge"))], body: ChallengeIn
+):
+    """A nonce to sign, for signing in or for proving a new key, by any handle: the answer is
+    the same whether or not the handle exists."""
+    nonce = secrets.new("n_")
+    with db.connection() as conn:
+        home = home_of(conn, body.community)
+        records.add_challenge(conn, home, body.handle, nonce)
+    return {"nonce": nonce, "expires_in": 300}
+
+
+@app.post("/v1/auth/token")
+def create_session(
+    caller: Annotated[Caller, Depends(authorize("createSession"))],
+    body: SessionIn,
     response: Response,
 ):
-    """The admin's session key: the challenge signed with the admin's private key file, valid
-    in every
-    community."""
+    """A session key: the challenge signed with the user's private key file. It acts as that
+    user, with the user's roles."""
     with db.connection() as conn:
-        admin = records.config(conn, "admin")
-        if not records.take_challenge(conn, None, admin, body.nonce):
+        home = home_of(conn, body.community)
+        if not records.take_challenge(conn, home, body.handle, body.nonce):
             refuse(401, "the challenge is unknown, spent or expired", conn)
-        for key in records.admin_keys(conn):
+        user = records.user_by_handle(conn, home, body.handle)
+        if user is None:
+            refuse(
+                401, "the signature does not match an active key of this handle", conn
+            )
+        if user["removed"] is not None:
+            refuse(401, removed_message(home), conn)
+        for key in records.active_keys(conn, user["id"]):
             if keys.verify(key["jwk"], body.nonce.encode(), body.signature):
                 row, session = api_keys.create_session(
                     conn,
-                    community=None,
-                    role="admin",
-                    handle=admin,
+                    user_id=user["id"],
+                    community=home,
+                    handle=user["handle"],
                     ed25519_kid=key["kid"],
                     ttl_seconds=settings.session_ttl,
                 )
                 response.headers["Cache-Control"] = "no-store"
                 return session_out(row, session)
-        refuse(401, "the signature does not match the admin's key", conn)
+        refuse(401, "the signature does not match an active key of this handle", conn)
 
 
+@app.post("/v1/users", status_code=201)
+def register(
+    caller: Annotated[Caller, Depends(authorize("register"))], body: RegisterIn
+):
+    """Join with an invite: register a key generated on the invitee's machine (R-D1, R-D5).
+    The invite, held by the server, says the home and the roles; the request names neither."""
+    if body.model_extra:
+        refuse(
+            400,
+            "joining takes the invite, the handle and the key; the invite holds the rest",
+        )
+    digest = secrets.digest(body.invite)
+    with db.connection() as conn:
+        invite = records.pending_invite(conn, digest, body.handle)
+        if invite is None:
+            refuse(403, "a valid, unused invite for this handle is required")
+        home = invite["home"]
+        kid, jwk = checked_new_key(conn, home, body.handle, body)
+        if records.take_invite(conn, digest, body.handle) is None:
+            refuse(403, "a valid, unused invite for this handle is required", conn)
+        if invite["user_id"] is not None:
+            user = records.user(conn, invite["user_id"])
+            if user is None or user["removed"] is not None:
+                refuse(409, f"handle '{body.handle}' belongs to a removed member")
+            if records.active_keys(conn, user["id"]):
+                refuse(409, f"'{body.handle}' is already registered")
+        else:
+            try:
+                user = records.create_user(conn, body.handle, home)
+            except Conflict as e:
+                conn.rollback()
+                refuse(409, str(e))
+        records.add_key(conn, user["id"], kid, jwk)
+        for entry in invite["roles"]:
+            records.assign(
+                conn,
+                entry["role"],
+                entry.get("collections"),
+                invite["created_by"],
+                user_id=user["id"],
+            )
+        return {
+            "handle": body.handle,
+            "community": home,
+            "kid": kid,
+            "roles": records.role_list(conn, user_id=user["id"]),
+        }
+
+
+@app.post("/v1/users/me/keys", status_code=201)
+def rotate(caller: Annotated[Caller, Depends(authorize("rotateKey"))], body: RotateIn):
+    """Replace the signed-in user's key, proven by the new key; the old key retires (versions
+    name it) and the sessions it obtained end."""
+    with db.connection() as conn:
+        kid, jwk = checked_new_key(conn, caller.community, caller.handle, body)
+        if records.key_on_record(conn, kid):
+            refuse(409, "that key is already on record", conn)
+        records.add_key(conn, caller.user_id, kid, jwk)
+        return {"handle": caller.handle, "kid": kid}
+
+
+def user_out(conn, row) -> dict:
+    return {
+        "id": str(row["id"]),
+        "handle": row["handle"],
+        "community": row["home"],
+        "registered": row["registered"],
+        "removed": iso(row["removed"]),
+        "removed_by": row["removed_by"],
+        "suspect_after": iso(row["suspect_after"]),
+        "roles": records.role_list(conn, user_id=row["id"]),
+    }
+
+
+def target_home(conn, caller: Caller, community: str | None) -> str | None:
+    """The home a request names: its `community`, or a homed caller's own."""
+    if community is None:
+        return caller.community
+    return community_of(conn, community)
+
+
+def require_user_admin(caller: Caller, home: str | None):
+    """`delegate` for server-level users, `members` in their community otherwise."""
+    if home is None:
+        if not caller.allows(rbac.DELEGATE, None):
+            refuse(403, "only the root administrator manages server-level users")
+    elif not caller.allows(rbac.MEMBERS, home):
+        refuse(403, f"this needs the members grant in {home}")
+
+
+def user_row(conn, user_id: str):
+    try:
+        found = records.user(conn, uuid.UUID(user_id))
+    except ValueError:
+        found = None
+    if found is None:
+        refuse(404, f"no user '{user_id}'")
+    return found
+
+
+@app.get("/v1/users")
+def list_users(
+    caller: Annotated[Caller, Depends(authorize("listUsers"))],
+    community: str | None = None,
+):
+    """A community's users (or, with no community, the server-level users), removed ones
+    included and marked, each with its roles."""
+    with db.connection() as conn:
+        home = target_home(conn, caller, community)
+        require_user_admin(caller, home)
+        return {
+            "community": home,
+            "users": [user_out(conn, r) for r in records.users(conn, home)],
+        }
+
+
+@app.delete("/v1/users/{user_id}")
+def remove_user(
+    caller: Annotated[Caller, Depends(authorize("removeUser"))],
+    user_id: str,
+):
+    """Remove a user. It stays as a tombstone: its handle is never used again, and everything
+    it published keeps its name. Its roles end, its keys retire, and its sessions and every
+    API key it issued are deleted."""
+    with db.connection() as conn:
+        user = user_row(conn, user_id)
+        require_user_admin(caller, user["home"])
+        if (
+            records.current_value(conn, rbac.SERVER_ROOT, user_id=user["id"])
+            is not False
+        ):
+            refuse(
+                409,
+                "the root administrator is bound by the key file and not removed here",
+            )
+        try:
+            removed = records.remove_user(conn, user["id"], caller.handle)
+        except Conflict as e:
+            conn.rollback()
+            refuse(409, str(e))
+        if not removed:
+            refuse(409, f"'{user['handle']}' was already removed")
+        return user_out(conn, records.user(conn, user["id"]))
+
+
+class RebindIn(BaseModel):
+    hours: int | None = Field(default=None, ge=1, le=24 * 366)
+
+
+@app.post("/v1/users/{user_id}/rebind", status_code=201)
+def rebind(
+    caller: Annotated[Caller, Depends(authorize("rebindUser"))],
+    user_id: str,
+    body: RebindIn | None = None,
+):
+    """A lost or compromised key: retire the user's keys, end its sessions, and return a fresh
+    invite that registers a new key for the same user, with its roles as they are."""
+    with db.connection() as conn:
+        user = user_row(conn, user_id)
+        require_user_admin(caller, user["home"])
+        if user["removed"] is not None:
+            refuse(409, f"'{user['handle']}' was removed")
+        retired = records.retire_keys(conn, user["id"])
+        issued = mint_invite(
+            conn,
+            handle=user["handle"],
+            home=user["home"],
+            roles=[],
+            by=caller.handle,
+            hours=body.hours if body else None,
+            url=caller.base_url,
+            user_id=user["id"],
+        )
+        return {"retired_keys": retired, **issued}
+
+
+class SuspectIn(BaseModel):
+    at: datetime
+
+
+@app.put("/v1/users/{user_id}/suspect-after")
+def suspect_after(
+    caller: Annotated[Caller, Depends(authorize("setSuspectAfter"))],
+    user_id: str,
+    body: SuspectIn,
+):
+    """Flag everything the user writes after an instant; nothing is deleted."""
+    if body.at.tzinfo is None:
+        refuse(400, "the instant needs a timezone, e.g. 2026-10-01T12:00:00+00:00")
+    with db.connection() as conn:
+        user = user_row(conn, user_id)
+        require_user_admin(caller, user["home"])
+        if not records.set_suspect_after(conn, user["id"], body.at):
+            refuse(409, f"'{user['handle']}' was removed")
+        return user_out(conn, records.user(conn, user["id"]))
+
+
+# ── roles, invites and assignments ──────────────────────────────────────────────────────────
+@app.get("/v1/roles")
+def roles(caller: Annotated[Caller, Depends(authorize("listRoles"))]):
+    """The six roles and what each grants: the registry, read-only."""
+    return {
+        "roles": [
+            {
+                "role": r.id,
+                "assignable_to": sorted(r.assignable_to),
+                "takes_collections": r.takes_collections,
+                "keys_may_carry": r.key_assignable,
+                "assignable": r.assignable,
+                "grants": {
+                    g: (
+                        "assignment"
+                        if v is rbac.VALUE
+                        else None
+                        if v is None
+                        else list(v)
+                    )
+                    for g, v in r.grants.items()
+                },
+            }
+            for r in rbac.ROLES.values()
+        ]
+    }
+
+
+def refs_for(conn, community: str | None, names) -> dict:
+    """The CollectionRef of each named collection; 404 for one that does not exist."""
+    if community is None:
+        return {}
+    return {
+        name: records.collection_ref(conn, community, name)
+        for name in rbac.names_in(None if names is None else tuple(names))
+    }
+
+
+def checked_value(role_id: str, collections) -> tuple | None:
+    try:
+        return rbac.collection_value(role_id, collections)
+    except rbac.AssignmentError as e:
+        refuse(400, str(e))
+
+
+def mint_invite(conn, *, handle, home, roles, by, hours, url, user_id=None) -> dict:
+    invite = secrets.new("sdi_")
+    hours = settings.invite_hours if hours is None else hours
+    expires = records.add_invite(
+        conn,
+        digest=secrets.digest(invite),
+        secret=invite,
+        handle=handle,
+        home=home,
+        roles=roles,
+        by=by,
+        hours=hours,
+        user_id=user_id,
+    )
+    return invite_out(handle, home, roles, invite, expires, url)
+
+
+def invite_out(handle, home, roles, invite, expires, url) -> dict:
+    return {
+        "handle": handle,
+        "community": home,
+        "roles": roles,
+        "invite": invite,
+        "expires": iso(expires),
+        "data-server-url": url,
+    }
+
+
+@app.post("/v1/invites", status_code=201)
+def create_invite(
+    caller: Annotated[Caller, Depends(authorize("createInvite"))],
+    body: InviteIn,
+):
+    """A single-use invite for a new user, returned once. It carries the user's home and roles,
+    which the server keeps and applies when the invite is redeemed; the inviter needs the
+    authority to assign every one of them. Any earlier pending invite for the handle is
+    revoked."""
+    with db.connection() as conn:
+        home = target_home(conn, caller, body.community)
+        if caller.community is not None and home != caller.community:
+            refuse(403, f"this key belongs to {caller.community}")
+        kind = rbac.SERVER_USER if home is None else rbac.HOMED_USER
+        roles_ = []
+        for entry in body.roles:
+            value = checked_value(entry.role, entry.collections)
+            refs = refs_for(conn, home, value)
+            if not rbac.may_assign(caller.context, entry.role, value, kind, home, refs):
+                refuse(
+                    403,
+                    f"assigning '{entry.role}' here is not within this caller's grants",
+                )
+            roles_.append(
+                {
+                    "role": entry.role,
+                    "collections": None if value is None else list(value),
+                }
+            )
+        # a user without a key (a ported author) claims its handle with this invite
+        existing = records.user_by_handle(conn, home, body.handle)
+        if (
+            existing is not None
+            and existing["removed"] is None
+            and not existing["registered"]
+        ):
+            claimed = existing["id"]
+        else:
+            claimed = None
+            try:
+                records.check_new_handle(conn, body.handle, home)
+            except Conflict as e:
+                refuse(409, str(e))
+        return mint_invite(
+            conn,
+            handle=body.handle,
+            home=home,
+            roles=roles_,
+            by=caller.handle,
+            hours=body.hours,
+            url=caller.base_url,
+            user_id=claimed,
+        )
+
+
+@app.get("/v1/invites")
+def list_invites(
+    caller: Annotated[Caller, Depends(authorize("listInvites"))],
+    community: str | None = None,
+):
+    """The pending invites of a community (or of server-level users), with their secrets, so
+    they can be handed over again. Used, expired and revoked invites are never listed."""
+    with db.connection() as conn:
+        home = target_home(conn, caller, community)
+        require_user_admin(caller, home)
+        return {
+            "community": home,
+            "invites": [
+                invite_out(
+                    r["handle"],
+                    r["home"],
+                    r["roles"],
+                    r["secret"],
+                    r["expires"],
+                    caller.base_url,
+                )
+                for r in records.pending_invites(conn, home)
+            ],
+        }
+
+
+def assignee(conn, caller: Caller, body: AssignmentIn) -> dict:
+    """The principal an assignment request names: kind, community, and its user or key."""
+    if (body.handle is None) == (body.api_key_id is None):
+        refuse(400, "name either a user (handle) or an API key (api_key_id)")
+    if body.handle is not None:
+        home = target_home(conn, caller, body.community)
+        user = records.user_by_handle(conn, home, body.handle)
+        if user is None:
+            refuse(404, f"no user '{body.handle}'")
+        if user["removed"] is not None:
+            refuse(409, f"'{body.handle}' was removed")
+        return {
+            "kind": rbac.SERVER_USER if home is None else rbac.HOMED_USER,
+            "community": home,
+            "user_id": user["id"],
+            "api_key_id": None,
+        }
+    key = conn.execute(
+        "SELECT * FROM api_keys WHERE id = %s AND kind = 'issued'",
+        (api_key_id(body.api_key_id),),
+    ).fetchone()
+    if key is None:
+        refuse(404, f"no API key '{body.api_key_id}'")
+    if not (
+        (
+            key["created_by"] == caller.handle
+            and caller.community in (None, key["community"])
+        )
+        or caller.allows(rbac.MEMBERS, key["community"])
+    ):
+        refuse(403, "only the key's issuer, or a members holder, changes a key")
+    return {
+        "kind": rbac.MEMBER_KEY if key["user_id"] is not None else rbac.NON_MEMBER_KEY,
+        "community": key["community"],
+        "user_id": None,
+        "api_key_id": key["id"],
+        "key": key,
+    }
+
+
+def issuer_context(conn, key) -> rbac.UserContext:
+    """The context of the user who issued `key`: what the key may never exceed."""
+    issuer = records.user_by_handle(conn, key["community"], key["created_by"])
+    if issuer is None:
+        issuer = records.user_by_handle(conn, None, key["created_by"])
+    if issuer is None:
+        refuse(409, "the key's issuer is gone")
+    return records.context_for(
+        conn,
+        principal_id=issuer["id"],
+        principal_name=issuer["handle"],
+        community=issuer["home"],
+        via_session=True,
+        user_id=issuer["id"],
+    )
+
+
+def may_change(conn, caller: Caller, who: dict, role_id: str, value) -> bool:
+    """Whether `caller` may assign `role_id` with `value` (or remove `value`'s names) on `who`."""
+    community = who["community"]
+    refs = refs_for(conn, community, value)
+    if who["kind"] == rbac.MEMBER_KEY:
+        return rbac.may_carry(
+            issuer_context(conn, who["key"]), role_id, value, True, community, refs
+        )
+    allowed = rbac.may_assign(
+        caller.context, role_id, value, who["kind"], community, refs
+    )
+    if allowed and who["kind"] == rbac.NON_MEMBER_KEY:
+        allowed = rbac.may_carry(
+            issuer_context(conn, who["key"]), role_id, value, False, community, refs
+        )
+    return allowed
+
+
+@app.get("/v1/assignments")
+def list_assignments(
+    caller: Annotated[Caller, Depends(authorize("listAssignments"))],
+    handle: str | None = None,
+    community: str | None = None,
+    api_key_id: str | None = None,
+):
+    """A principal's live roles: one's own, or another's for a members (or delegate) holder,
+    or a key's for its issuer."""
+    with db.connection() as conn:
+        if handle is None and api_key_id is None:
+            return {"roles": records.role_list(conn, user_id=caller.user_id)}
+        body = AssignmentIn(
+            handle=handle,
+            community=community,
+            api_key_id=api_key_id,
+            role=rbac.COMMUNITY_MEMBER,
+        )
+        who = assignee(conn, caller, body)
+        if who["user_id"] is not None and who["user_id"] != caller.user_id:
+            require_user_admin(caller, who["community"])
+        return {
+            "roles": records.role_list(
+                conn, user_id=who["user_id"], api_key_id=who["api_key_id"]
+            )
+        }
+
+
+@app.post("/v1/assignments")
+def assign(
+    caller: Annotated[Caller, Depends(authorize("assignRole"))], body: AssignmentIn
+):
+    """Assign a role, or add collections to the principal's assignment of it."""
+    with db.connection() as conn:
+        who = assignee(conn, caller, body)
+        if who["kind"] not in rbac.role(body.role).assignable_to:
+            refuse(400, f"'{body.role}' is not assigned to this kind of principal")
+        value = checked_value(body.role, body.collections)
+        if not may_change(conn, caller, who, body.role, value):
+            refuse(
+                403, f"assigning '{body.role}' here is not within this caller's grants"
+            )
+        records.assign(
+            conn,
+            body.role,
+            value,
+            caller.handle,
+            user_id=who["user_id"],
+            api_key_id=who["api_key_id"],
+        )
+        return {
+            "roles": records.role_list(
+                conn, user_id=who["user_id"], api_key_id=who["api_key_id"]
+            )
+        }
+
+
+@app.delete("/v1/assignments")
+def unassign(
+    caller: Annotated[Caller, Depends(authorize("unassignRole"))], body: AssignmentIn
+):
+    """Remove collections from a principal's assignment of a role, ending it when none remain;
+    without collections, end it. Removing a collection needs the authority to assign it."""
+    with db.connection() as conn:
+        who = assignee(conn, caller, body)
+        current = records.current_value(
+            conn, body.role, user_id=who["user_id"], api_key_id=who["api_key_id"]
+        )
+        if current is False:
+            refuse(404, f"no '{body.role}' assignment to remove")
+        removing = (
+            current
+            if body.collections is None
+            else checked_value(body.role, body.collections)
+        )
+        allowed = may_change(conn, caller, who, body.role, removing)
+        if not allowed and body.collections is None and who["community"] is not None:
+            allowed = caller.allows(rbac.MEMBERS, who["community"])
+        if not allowed:
+            refuse(
+                403, f"removing '{body.role}' here is not within this caller's grants"
+            )
+        try:
+            records.unassign(
+                conn,
+                body.role,
+                None if body.collections is None else rbac.names_in(removing),
+                caller.handle,
+                user_id=who["user_id"],
+                api_key_id=who["api_key_id"],
+            )
+        except Conflict as e:
+            conn.rollback()
+            refuse(409, str(e))
+        return {
+            "roles": records.role_list(
+                conn, user_id=who["user_id"], api_key_id=who["api_key_id"]
+            )
+        }
+
+
+# ── communities (server-wide) ───────────────────────────────────────────────────────────────
 @app.post("/v1/communities")
 def create_community(
     caller: Annotated[Caller, Depends(authorize("createCommunity"))],
     body: CommunityIn,
     response: Response,
 ):
-    """Create a community and its default collections (R-G8); admin only, idempotent: the
-    exact existing name answers 200, a new one 201."""
+    """Create a community, its default collections, and the invite of its first community
+    admin (R-G8). Idempotent: the exact existing name answers 200 and changes nothing."""
     if not valid_community(body.name):
         refuse(
             400,
-            "a community name is 1-20 letters, digits or underscores, and not "
-            "'status', 'communities' or 'admin'",
+            "a community name is 1-20 letters, digits or underscores, and not a "
+            "server-wide route name",
         )
     with db.connection() as conn:
-        admin = caller.handle
+        root = records.root_user(conn)
         try:
-            created = records.create_community(conn, body.name, admin)
+            created = records.create_community(conn, body.name, root["id"])
         except Conflict as e:
             conn.rollback()
             refuse(400, f"{e}; names are unique ignoring case")
+        out = {"name": body.name, "created": created}
+        if created:
+            try:
+                records.check_new_handle(conn, body.admin, body.name)
+            except Conflict as e:
+                conn.rollback()
+                refuse(409, str(e))
+            out["admin_invite"] = mint_invite(
+                conn,
+                handle=body.admin,
+                home=body.name,
+                roles=[{"role": rbac.COMMUNITY_ADMIN, "collections": None}],
+                by=caller.handle,
+                hours=None,
+                url=caller.base_url,
+            )
         response.status_code = 201 if created else 200
-        return {"name": body.name, "created": created}
+        return out
 
 
 @app.get("/v1/communities")
@@ -454,106 +1042,14 @@ def list_communities(caller: Annotated[Caller, Depends(authorize("listCommunitie
         }
 
 
-# ── identity within a community ─────────────────────────────────────────────────────────────
-@app.post("/v1/{community}/auth/challenge")
-def challenge(
-    caller: Annotated[Caller, Depends(authorize("challenge"))],
-    community: str,
-    body: ChallengeIn,
-):
-    nonce = secrets.new("n_")
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        records.add_challenge(conn, community, body.handle, nonce)
-    return {"nonce": nonce, "expires_in": 300}
-
-
-@app.post("/v1/{community}/auth/token")
-def create_session(
-    caller: Annotated[Caller, Depends(authorize("createSession"))],
-    community: str,
-    body: SessionIn,
-    response: Response,
-):
-    """A Member's session key: the challenge signed with the Member's private key file, valid in
-    this community."""
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        if not records.take_challenge(conn, community, body.handle, body.nonce):
-            refuse(401, "the challenge is unknown, spent or expired", conn)
-        for key in records.active_keys(conn, community, body.handle):
-            if keys.verify(key["jwk"], body.nonce.encode(), body.signature):
-                row, session = api_keys.create_session(
-                    conn,
-                    community=community,
-                    role="member",
-                    handle=body.handle,
-                    ed25519_kid=key["kid"],
-                    ttl_seconds=settings.session_ttl,
-                )
-                response.headers["Cache-Control"] = "no-store"
-                return session_out(row, session)
-        refuse(401, "the signature does not match an active key of this handle", conn)
-
-
-@app.post("/v1/{community}/owners", status_code=201)
-def register(
-    caller: Annotated[Caller, Depends(authorize("register"))],
-    community: str,
-    body: RegisterIn,
-):
-    """Register a handle in this community with a key generated on the member's machine
-    (R-D1, R-D5). Identity is per community."""
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        kid, jwk = checked_new_key(conn, community, body.handle, body)
-        if not records.on_roster(conn, community, body.handle):
-            refuse(403, f"'{body.handle}' is not on the {community} roster", conn)
-        if records.active_keys(conn, community, body.handle):
-            refuse(409, f"'{body.handle}' is already registered in {community}", conn)
-        if not records.consume_invite(
-            conn, secrets.digest(body.invite or ""), community, body.handle
-        ):
-            refuse(
-                403,
-                "a valid, unused invite for this handle and community is required",
-                conn,
-            )
-        records.register(conn, community, body.handle, kid, jwk)
-        return {"handle": body.handle, "kid": kid, "community": community}
-
-
-@app.post("/v1/{community}/owners/{handle}/keys", status_code=201)
-def rotate(
-    caller: Annotated[Caller, Depends(authorize("rotateKey"))],
-    community: str,
-    handle: str,
-    body: RotateIn,
-):
-    """Replace the caller's key in this community, with a session key of the current key
-    and proven by the new key; the old key is retired, not deleted, so attribution survives, and
-    the session keys obtained with it end."""
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        if caller.handle != handle:
-            refuse(403, "an owner may rotate only their own key")
-        kid, jwk = checked_new_key(conn, community, handle, body)
-        if records.key_on_record(conn, community, kid):
-            refuse(409, "that key is already on record", conn)
-        retired = [k["kid"] for k in records.active_keys(conn, community, handle)]
-        records.rotate(conn, community, handle, kid, jwk)
-        api_keys.end_sessions(conn, retired, "rotation")
-        return {"handle": handle, "kid": kid}
-
-
 @app.get("/v1/{community}/roster")
 def roster(
     caller: Annotated[Caller, Depends(authorize("listRoster"))],
     community: str,
 ):
-    """The roster, one entry per handle, registered or not yet: whether it has registered,
-    and when its pending invite expires (R-D6). Any member of the community may read it, as
-    the admin may: members validate addresses to one another (`@handle`) against it."""
+    """Every user homed in the community, removed ones included and marked, with whether it
+    has registered and its roles, and the server-level users. Members resolve one another's
+    `@handle` against it."""
     with db.connection() as conn:
         community = community_of(conn, community)
         return {
@@ -562,146 +1058,45 @@ def roster(
                 {
                     "handle": r["handle"],
                     "registered": r["registered"],
-                    "invite_expires": iso(r["invite_expires"]),
+                    "removed": iso(r["removed"]),
+                    "roles": r["roles"],
                 }
-                for r in records.roster(conn, community)
+                for r in records.users(conn, community)
             ],
+            "server_users": [r["handle"] for r in records.users(conn, None)],
         }
 
 
-def roster_handle(handle: str) -> str:
-    if not re.match(NAME, handle):
-        refuse(422, "a handle is a plain name")
-    return handle
-
-
-@app.post("/v1/{community}/roster/{handle}")
-def add_member(
-    caller: Annotated[Caller, Depends(authorize("addMember"))],
-    community: str,
-    handle: str,
-    response: Response,
-):
-    """Add one handle, with the default grants (admin only; R-D6). Idempotent: 201 when added,
-    200 when already there. Adding never removes anyone; the admin's handle is refused."""
-    handle = roster_handle(handle)
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        try:
-            added = records.add_to_roster(conn, community, handle)
-        except Forbidden as e:
-            conn.rollback()
-            refuse(400, str(e))
-        response.status_code = 201 if added else 200
-        return {"community": community, "handle": handle, "added": added}
-
-
-@app.delete("/v1/{community}/roster/{handle}")
-def remove_member(
-    caller: Annotated[Caller, Depends(authorize("removeMember"))],
-    community: str,
-    handle: str,
-):
-    """Remove one handle: its grants and pending invite go, and every API key it holds or issued
-    is revoked; its identity and attribution stay (admin only)."""
-    handle = roster_handle(handle)
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        removed = records.remove_from_roster(conn, community, handle)
-        if not removed:
-            refuse(404, f"'{handle}' is not on the {community} roster")
-        revoked = api_keys.revoke_for(conn, community, handle, "roster-removal")
-        return {
-            "community": community,
-            "handle": handle,
-            "removed": True,
-            "api_keys_revoked": revoked,
-        }
-
-
-@app.post("/v1/{community}/invites", status_code=201)
-def create_invite(
-    caller: Annotated[Caller, Depends(authorize("createInvite"))],
-    community: str,
-    body: InviteIn,
-):
-    """A single-use invite for a roster handle, returned once (admin only; R-D5, R-D6). It
-    revokes any earlier unused invite for the handle, and stays retrievable from
-    GET .../invites only while pending."""
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        if not records.on_roster(conn, community, body.handle):
-            refuse(403, f"'{body.handle}' is not on the {community} roster")
-        return mint_invite(conn, community, body.handle, body.hours)
-
-
-def mint_invite(conn, community: str, handle: str, hours: int | None) -> dict:
-    invite = secrets.new("sdi_")
-    hours = settings.invite_hours if hours is None else hours
-    expires = records.add_invite(
-        conn, secrets.digest(invite), invite, community, handle, hours
-    )
-    return {
-        "community": community,
-        "handle": handle,
-        "invite": invite,
-        "expires": iso(expires),
-    }
-
-
-@app.get("/v1/{community}/invites")
-def list_invites(
-    caller: Annotated[Caller, Depends(authorize("listInvites"))],
-    community: str,
-):
-    """Every pending invite of the community, with its secret, so the admin can hand it over
-    again (admin only). Used, expired and revoked invites are never listed."""
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        return {
-            "community": community,
-            "invites": [
-                {
-                    "handle": r["handle"],
-                    "invite": r["secret"],
-                    "expires": iso(r["expires"]),
-                }
-                for r in records.pending_invites(conn, community)
-            ],
-        }
-
-
-# ── API keys: a signed-in caller issues keys for applications ─────────────────────────────────
+# ── API keys: a signed-in user issues keys for applications ─────────────────────────────────
 class ApiKeyIn(BaseModel):
     label: str = Field(min_length=1, max_length=200)
-    # by default a Member's own key, and for the admin a key for an application
-    role: str | None = Field(default=None, pattern=r"^(member|non-member)$")
+    # a member key acts as its issuer; a non-member key is its own principal
+    non_member: bool = False
+    roles: list[RoleIn] = Field(min_length=1)
     expires_days: int | None = Field(default=None, ge=1, le=366)
 
 
-def api_key_out(row, reveal: bool) -> dict:
-    """One issued key as its caller sees it. Its value only when `reveal` (the key's owner),
-    and null once revoked."""
+def api_key_out(conn, row, reveal: bool) -> dict:
+    """One issued key as its caller sees it; its value only when `reveal` (its issuer)."""
     return {
         "id": str(row["id"]),
         "community": row["community"],
-        "role": row["role"],
+        "member_key": row["user_id"] is not None,
         "handle": row["handle"],
         "label": row["label"],
         "key": api_keys.value(row) if reveal else None,
+        "roles": records.role_list(conn, api_key_id=row["id"]),
         "created": iso(row["created"]),
         "created_by": row["created_by"],
         "expires": iso(row["expires"]),
-        "revoked": iso(row["revoked"]),
-        "revoked_by": row["revoked_by"],
         "last_used": iso(row["last_used"]),
     }
 
 
-def owns(row, caller: Caller) -> bool:
-    """Whoever issued a key owns it; the admin also owns every non-member key."""
-    return row["created_by"] == caller.handle or (
-        caller.admin and row["role"] == "non-member"
+def issued_by(row, caller: Caller) -> bool:
+    return row["created_by"] == caller.handle and caller.community in (
+        None,
+        row["community"],
     )
 
 
@@ -712,17 +1107,6 @@ def api_key_id(key_id: str) -> uuid.UUID:
         refuse(404, f"no API key '{key_id}'")
 
 
-def key_manager(conn, caller: Caller, community: str) -> Caller:
-    """Issuing, listing and revoking keys takes a session (the contract's `x-session`): the
-    admin's, or a registered Member's."""
-    if not caller.admin and not (
-        records.on_roster(conn, community, caller.handle)
-        and records.active_keys(conn, community, caller.handle)
-    ):
-        refuse(403, f"'{caller.handle}' is not a registered member of {community}")
-    return caller
-
-
 @app.post("/v1/{community}/api-keys", status_code=201)
 def create_api_key(
     caller: Annotated[Caller, Depends(authorize("createApiKey"))],
@@ -730,31 +1114,45 @@ def create_api_key(
     body: ApiKeyIn,
     response: Response,
 ):
-    """An issued API key for this community, answered once with its value. A Member makes
-    `member` keys, which act as itself, and `non-member` keys for applications; the admin makes
-    `non-member` keys. A non-member key reads the collections its owners grant it. Its label
-    names it among its issuer's live keys."""
+    """An issued API key for this community, answered once with its value, carrying the roles
+    named. A member key acts as its issuer and never exceeds the issuer's grants; a non-member
+    key is its own principal, and its roles also need the authority to assign them."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        caller = key_manager(conn, caller, community)
-        role = body.role or ("non-member" if caller.admin else "member")
-        if role == "member" and caller.admin:
-            refuse(400, "the admin is not a Member: it issues non-member keys")
+        kind = rbac.NON_MEMBER_KEY if body.non_member else rbac.MEMBER_KEY
+        values = []
+        for entry in body.roles:
+            value = checked_value(entry.role, entry.collections)
+            refs = refs_for(conn, community, value)
+            ok = rbac.may_carry(
+                caller.context, entry.role, value, not body.non_member, community, refs
+            )
+            if ok and body.non_member:
+                ok = rbac.may_assign(
+                    caller.context, entry.role, value, kind, community, refs
+                )
+            if not ok:
+                refuse(
+                    403, f"a key may not carry '{entry.role}' with these collections"
+                )
+            values.append((entry.role, value))
         try:
             row, _ = api_keys.create(
                 conn,
                 community=community,
-                role=role,
-                handle=caller.handle if role == "member" else None,
+                user_id=None if body.non_member else caller.user_id,
+                handle=None if body.non_member else caller.handle,
                 label=body.label,
                 expires_days=body.expires_days,
                 created_by=caller.handle,
             )
         except LabelInUse:
-            refuse(409, f"a live key is already labelled '{body.label}'")
+            refuse(409, f"a key is already labelled '{body.label}'")
+        for role_id, value in values:
+            records.assign(conn, role_id, value, caller.handle, api_key_id=row["id"])
         conn.commit()
         response.headers["Cache-Control"] = "no-store"
-        return api_key_out(row, reveal=True)
+        return api_key_out(conn, row, reveal=True)
 
 
 @app.get("/v1/{community}/api-keys")
@@ -764,11 +1162,9 @@ def list_api_keys(
     response: Response,
     cursor: str | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
-    include_revoked: bool = True,
 ):
-    """The keys the caller issued, with their values; for the admin, every issued key in the
-    community, the non-member keys with their values and the Members' keys without. Expired
-    keys' values are erased before anything is listed."""
+    """The keys the caller issued, with their values and roles; for a members holder, every key
+    in the community, others' without their values. Expired keys' values are erased first."""
     after = None
     if cursor:
         try:
@@ -780,30 +1176,43 @@ def list_api_keys(
             refuse(400, "the cursor is not one this server issued")
     with db.connection() as conn:
         community = community_of(conn, community)
-        caller = key_manager(conn, caller, community)
         api_keys.sweep(conn)
         conn.commit()
+        everyone = caller.allows(rbac.MEMBERS, community)
         rows = api_keys.page(
             conn,
             community=community,
             after=after,
             limit=limit + 1,
-            issuer=None if caller.admin else caller.handle,
-            include_revoked=include_revoked,
+            issuer=None if everyone else caller.handle,
         )
-    more, rows = len(rows) > limit, rows[:limit]
-    following = None
-    if more:
-        position = {"c": rows[-1]["created"].isoformat(), "k": str(rows[-1]["id"])}
-        following = (
-            base64.urlsafe_b64encode(json.dumps(position).encode()).decode().rstrip("=")
+        more, rows = len(rows) > limit, rows[:limit]
+        following = None
+        if more:
+            position = {"c": rows[-1]["created"].isoformat(), "k": str(rows[-1]["id"])}
+            following = (
+                base64.urlsafe_b64encode(json.dumps(position).encode())
+                .decode()
+                .rstrip("=")
+            )
+        response.headers["Cache-Control"] = "no-store"
+        return {
+            "community": community,
+            "items": [api_key_out(conn, r, reveal=issued_by(r, caller)) for r in rows],
+            "next": following,
+        }
+
+
+def key_for(conn, caller: Caller, community: str, key_id: str):
+    """The community's key `key_id`, when the caller issued it or holds `members` there."""
+    row = api_keys.row(conn, community, api_key_id(key_id))
+    if row is None:
+        refuse(404, f"no API key '{key_id}' in {community}")
+    if not (issued_by(row, caller) or caller.allows(rbac.MEMBERS, community)):
+        refuse(
+            403, "only the key's issuer, or a members holder, may use this key's record"
         )
-    response.headers["Cache-Control"] = "no-store"
-    return {
-        "community": community,
-        "items": [api_key_out(r, reveal=owns(r, caller)) for r in rows],
-        "next": following,
-    }
+    return row
 
 
 @app.get("/v1/{community}/api-keys/{key_id}")
@@ -813,16 +1222,12 @@ def get_api_key(
     key_id: str,
     response: Response,
 ):
-    """One issued key: its issuer reads it with its value; the admin reads any key of the
-    community, a Member's without its value."""
+    """One issued key: its issuer reads it with its value; a members holder without."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        caller = key_manager(conn, caller, community)
-        row = api_keys.row(conn, community, api_key_id(key_id))
-        if row is None or not (caller.admin or row["created_by"] == caller.handle):
-            refuse(404, f"no API key '{key_id}' in {community}")
+        row = key_for(conn, caller, community, key_id)
         response.headers["Cache-Control"] = "no-store"
-        return api_key_out(row, reveal=owns(row, caller))
+        return api_key_out(conn, row, reveal=issued_by(row, caller))
 
 
 @app.delete("/v1/{community}/api-keys/{key_id}")
@@ -831,68 +1236,15 @@ def revoke_api_key(
     community: str,
     key_id: str,
 ):
-    """Revoke a key its caller owns: its issuer's, or any non-member key for the admin. It
-    stops authenticating at once, its value is erased, and its row stays as the record."""
+    """Revoke a key by deleting it, with its roles: its issuer's, or any key for a members
+    holder. Its next request answers 401; a new key is issued if one is needed."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        caller = key_manager(conn, caller, community)
-        row = api_keys.row(conn, community, api_key_id(key_id))
-        if row is None or not owns(row, caller):
-            refuse(404, f"no API key '{key_id}' in {community}")
-        row = api_keys.revoke(conn, community, row["id"], caller.handle)
+        row = key_for(conn, caller, community, key_id)
+        out = api_key_out(conn, row, reveal=False)
+        api_keys.delete(conn, community, row["id"])
         conn.commit()
-        return api_key_out(row, reveal=False)
-
-
-class RebindIn(BaseModel):
-    hours: int | None = Field(default=None, ge=1, le=24 * 366)
-
-
-@app.post("/v1/{community}/owners/{handle}/rebind")
-def rebind(
-    caller: Annotated[Caller, Depends(authorize("rebindMember"))],
-    community: str,
-    handle: str,
-    body: RebindIn | None = None,
-):
-    """A lost or compromised key (admin only): retire the member's keys and return a fresh
-    invite, so they register a new key under the same handle. Attribution is untouched."""
-    handle = roster_handle(handle)
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        if not records.on_roster(conn, community, handle):
-            refuse(404, f"'{handle}' is not on the {community} roster")
-        kids = [k["kid"] for k in records.active_keys(conn, community, handle)]
-        retired = records.retire_keys(conn, community, handle)
-        api_keys.end_sessions(conn, kids, "rebind")
-        hours = body.hours if body else None
-        return {"retired_keys": retired, **mint_invite(conn, community, handle, hours)}
-
-
-class SuspectIn(BaseModel):
-    at: datetime
-
-
-@app.put("/v1/{community}/owners/{handle}/suspect-after")
-def suspect_after(
-    caller: Annotated[Caller, Depends(authorize("setSuspectAfter"))],
-    community: str,
-    handle: str,
-    body: SuspectIn,
-):
-    """Flag everything the handle writes after an instant (admin only); nothing is deleted."""
-    if body.at.tzinfo is None:
-        refuse(400, "the instant needs a timezone, e.g. 2026-10-01T12:00:00+00:00")
-    handle = roster_handle(handle)
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        if not records.set_suspect_after(conn, community, handle, body.at):
-            refuse(404, f"no owner '{handle}' in {community}")
-    return {
-        "community": community,
-        "handle": handle,
-        "suspect_after": iso(body.at),
-    }
+        return out
 
 
 # ── export and import (R-J6) ────────────────────────────────────────────────────────────────
@@ -997,9 +1349,9 @@ class Upload:
         cleanup.discard_pending(self.pid)
 
 
-def quota_for(conn, handle: str) -> int:
-    """The per-owner quota; the server admin's own writes are exempt (R-H2)."""
-    return 0 if records.is_admin(conn, handle) else settings.quota()
+def quota_for(caller: Caller) -> int:
+    """The per-owner quota; a holder of `communities` writes without one (R-H2)."""
+    return 0 if caller.allows(rbac.COMMUNITIES, None) else settings.quota()
 
 
 async def stream_upload(
@@ -1065,7 +1417,7 @@ def written(conn, community, file_id, n, status_code=201) -> JSONResponse:
 
 
 def commit_version(
-    conn, community, file_id, upload, head, metadata, content_type, handle, kid
+    conn, community, file_id, upload, head, metadata, content_type, handle, kid, quota
 ) -> tuple:
     """The atomic step (R-A6): quota under the owner's lock, the payload turned ready (or an
     identical one reused), and the version inserted, all in the caller's transaction.
@@ -1080,7 +1432,7 @@ def commit_version(
             upload.sha,
             upload.size,
             handle,
-            quota_for(conn, handle),
+            quota,
         )
     n = records.add_version(conn, file_id, payload, metadata, content_type, handle, kid)
     return n, duplicate
@@ -1122,13 +1474,15 @@ async def put_file(
             handle, kid = caller.handle, caller.ed25519_kid
             if not records.collection_exists(conn, found, collection):
                 refuse(404, f"no collection {found}/{collection}")
-            if not records.can_create(conn, caller.principal(), found, collection):
+            if not records.can_create(
+                conn, caller.context, found, collection, metadata
+            ):
                 refuse(403, f"no write access to {found}/{collection}")
             return (
                 found,
                 handle,
                 kid,
-                quota_for(conn, handle),
+                quota_for(caller),
                 records.reserve_file(conn, found, collection, name, handle),
             )
 
@@ -1158,6 +1512,7 @@ async def put_file(
                     content_type,
                     handle,
                     kid,
+                    quota,
                 )
             except (QuotaExceeded, PreconditionFailed) as e:
                 conn.rollback()
@@ -1196,13 +1551,16 @@ async def put_version(
             found = community_of(conn, community)
             handle, kid = caller.handle, caller.ed25519_kid
             row = records.file_row(conn, found, file_id)
-            if not records.can_modify(conn, caller.principal(), row):
-                refuse(403, "only the file's creator or the admin may add versions")
+            if not records.can_modify(conn, caller.context, row):
+                refuse(
+                    403,
+                    "only the file's creator, or manage on its collection, adds versions",
+                )
             head = records.latest_version(conn, file_id)
             if expected is not None and head["n"] != expected:
                 # fail fast, before any bytes are streamed; re-checked under the lock below
                 refuse(412, f"the file is at v{head['n']}, not v{expected}")
-            return found, handle, kid, quota_for(conn, handle)
+            return found, handle, kid, quota_for(caller)
 
     community, handle, kid, quota = await run_in_threadpool(check)
     upload = (
@@ -1227,6 +1585,7 @@ async def put_version(
                     else request.headers.get("content-type", head["content_type"]),
                     handle,
                     kid,
+                    quota,
                 )
             except (QuotaExceeded, PreconditionFailed) as e:
                 conn.rollback()
@@ -1258,8 +1617,10 @@ def delete_file(
         community = community_of(conn, community)
         handle, kid = caller.handle, caller.ed25519_kid
         row = records.file_row(conn, community, file_id)
-        if not records.can_modify(conn, caller.principal(), row):
-            refuse(403, "only the file's creator or the admin may delete it")
+        if not records.can_modify(conn, caller.context, row):
+            refuse(
+                403, "only the file's creator, or manage on its collection, deletes it"
+            )
         try:
             n = records.tombstone(conn, file_id, handle, kid, reason, expected)
         except PreconditionFailed as e:
@@ -1276,14 +1637,22 @@ def purge(
     file_id: uuid.UUID,
     n: int,
 ):
-    """Free one version's content (admin only; R-B3). The version stays addressable and
-    answers 410 with its metadata; the bytes go only when no other live version shares them.
-    When S3 refuses, the payload stays purging and the janitor finishes the job."""
+    """Free one version's content (`manage` on its collection; R-B3). The version stays
+    addressable and answers 410 with its metadata; the bytes go only when no other live version
+    shares them. When S3 refuses, the payload stays purging and the janitor finishes the job."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        records.version(
+        row = records.version(
             conn, community, file_id, n
         )  # 404 unless it is this community's
+        if row["collection"] == rbac.INBOX:
+            allowed = caller.context.allowsAllCollections(rbac.MANAGE, community)
+        else:
+            allowed = records.allows(
+                conn, caller.context, rbac.MANAGE, community, row["collection"]
+            )
+        if not allowed:
+            refuse(403, f"purging needs manage on {community}/{row['collection']}")
         pid = records.purge(conn, file_id, n)
     freed = pid is not None and cleanup.finish_purge(pid)
     result = {"purged": f"symposium-data:{file_id}@v{n}", "bytes_freed": freed}
@@ -1298,7 +1667,7 @@ def readable(caller: Caller, community: str, file_id, ref):
     with db.connection() as conn:
         community = community_of(conn, community)
         row = records.version(conn, community, file_id, ref)
-        if not records.can_read(conn, caller.principal(), row):
+        if not records.can_read(conn, caller.context, row):
             if caller.anonymous:
                 refuse(401, "use an API key to read this file")
             refuse(403, "no read access to this file")
@@ -1384,21 +1753,11 @@ class PublicIn(BaseModel):
     public: bool
 
 
-class GrantIn(BaseModel):
-    """A grant names a roster Member by `handle`, or a non-member API key by `api_key_id`."""
-
-    handle: str | None = Field(default=None, pattern=NAME)
-    api_key_id: uuid.UUID | None = None
-    perm: str = Field(pattern=r"^(read|write)$")
-    granted: bool = True
-
-
 def require_manager(conn, caller: Caller, community, collection) -> Caller:
-    """Changing who may use a collection takes the session (the contract's `x-session`) of
-    its owner or the admin."""
-    records.collection_row(conn, community, collection)
-    if not records.can_manage(conn, caller.principal(), community, collection):
-        refuse(403, "only the collection's owner or the admin may do this")
+    """Changing a collection takes `manage` on it: its owner, or a holder of `manage` on
+    every collection."""
+    if not records.allows(conn, caller.context, rbac.MANAGE, community, collection):
+        refuse(403, f"this needs manage on {community}/{collection}")
     return caller
 
 
@@ -1407,14 +1766,12 @@ def list_collections(
     caller: Annotated[Caller, Depends(authorize("listCollections"))],
     community: str,
 ):
-    """The collections the caller may use: public ones, and those it owns or is granted.
-    Without a key, the public ones."""
+    """The collections the caller may use, with what it may do in each: public ones, and
+    those its grants or ownership reach. Without a key, the public ones."""
     with db.connection() as conn:
         community = community_of(conn, community)
         return {
-            "collections": records.readable_collections(
-                conn, caller.principal(), community
-            )
+            "collections": records.readable_collections(conn, caller.context, community)
         }
 
 
@@ -1424,12 +1781,13 @@ def create_collection(
     community: str,
     body: CollectionIn,
 ):
-    """A roster member, or the admin, creates a collection and becomes its owner (R-D3)."""
+    """Create a collection, owned by the caller's user (R-D3), who reaches it through the
+    owner allowance. It takes `write` in the community, with any collection value."""
     with db.connection() as conn:
         community = community_of(conn, community)
-        if not (caller.admin or records.on_roster(conn, community, caller.handle)):
-            refuse(403, f"'{caller.handle}' is not on the {community} roster")
-        records.create_collection(conn, community, body.name, caller.handle)
+        if caller.user_id is None:
+            refuse(403, "a collection is owned by a user: create it as a member")
+        records.create_collection(conn, community, body.name, caller.user_id)
         return {
             "community": community,
             "name": body.name,
@@ -1453,37 +1811,6 @@ def set_public(
         return {"community": community, "collection": collection, "public": body.public}
 
 
-@app.put("/v1/{community}/collections/{collection}/grants")
-def set_grant(
-    caller: Annotated[Caller, Depends(authorize("setGrant"))],
-    community: str,
-    collection: str,
-    body: GrantIn,
-):
-    """The owner grants (or withdraws) read or write to a roster Member, or read to a
-    non-member API key (R-D3)."""
-    with db.connection() as conn:
-        community = community_of(conn, community)
-        require_manager(conn, caller, community, collection)
-        records.set_grant(
-            conn,
-            community,
-            collection,
-            body.perm,
-            body.granted,
-            handle=body.handle,
-            api_key_id=body.api_key_id,
-        )
-        return {
-            "community": community,
-            "collection": collection,
-            "handle": body.handle,
-            "api_key_id": str(body.api_key_id) if body.api_key_id else None,
-            "perm": body.perm,
-            "granted": body.granted,
-        }
-
-
 # ── parity: the change feed, lookups, promote and verify (R-G) ──────────────────────────────
 MAX_PAGE = 1000
 
@@ -1502,9 +1829,9 @@ class PromoteIn(BaseModel):
 
 
 def lister(conn, caller: Caller, community: str, collection: str):
-    """Who may list a collection -> their principal; refuses everyone else."""
+    """Who may list a collection -> their context; refuses everyone else."""
     records.collection_row(conn, community, collection)
-    who = caller.principal()
+    who = caller.context
     if not records.can_read_collection(conn, who, community, collection):
         if caller.anonymous:
             refuse(401, "use an API key to read this collection")
@@ -1592,7 +1919,7 @@ def by_hash(
         refuse(400, "a sha256 is 64 lowercase hex characters")
     with db.connection() as conn:
         community = community_of(conn, community)
-        who = caller.principal()
+        who = caller.context
         return {
             "items": [
                 records.stat(conn, r)
@@ -1610,7 +1937,8 @@ def promote(
     n: int,
     body: PromoteIn,
 ):
-    """Copy one version into a collection as a new file, atomically (R-G4); admin only.
+    """Copy one version into a collection as a new file, atomically (R-G4). Into `record`
+    this is the gate's accept and takes `gate`; into any other collection, `manage` on it.
 
     With `stamp_json_pointer` the content is a JSON document, and the server writes the new
     version's own `created` at that pointer: the clock is the server's, never the caller's.
@@ -1625,6 +1953,17 @@ def promote(
         handle = caller.handle
         source = records.version(conn, community, file_id, n)
         records.collection_row(conn, community, body.collection)
+        if body.collection == "record":
+            allowed = caller.allows(rbac.GATE, community)
+        else:
+            allowed = records.allows(
+                conn, caller.context, rbac.MANAGE, community, body.collection
+            )
+        if not allowed or not records.can_read(conn, caller.context, source):
+            refuse(
+                403,
+                f"promoting into {community}/{body.collection} is not within these grants",
+            )
         name = name or source["name"]
         if not valid_file_name(name):
             refuse(400, "a file name is one path segment of 1-255 characters")
@@ -1665,7 +2004,7 @@ def promote(
                         hashlib.sha256(data).hexdigest(),
                         len(data),
                         handle,
-                        quota_for(conn, handle),
+                        0,  # a promotion copy counts against no one's quota
                     )
                 except QuotaExceeded as e:
                     conn.rollback()
@@ -1677,7 +2016,7 @@ def promote(
                 metadata,
                 source["content_type"],
                 # credited to the submitter, like a ported record (R-G4, R-M2); the
-                # admin's session only authorizes the promote
+                # promoter's session only authorizes it
                 source["created_by"],
                 None,
                 clock=clock,
@@ -1709,7 +2048,7 @@ def verify(
     when = wire(parse_instant, before) if before else None
     with db.connection() as conn:
         community = community_of(conn, community)
-        who = caller.principal()
+        who = caller.context
         cited = parse_citation(cite)
         if cited is None:
             return {

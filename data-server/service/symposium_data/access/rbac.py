@@ -34,6 +34,8 @@ COLLECTION_SCOPED = frozenset({READ, WRITE, MANAGE})
 ALL = "*"
 # outside every collection-scoped grant: reached through `publish` and `gate` alone
 INBOX = "inbox"
+# written only by promotion, which takes `gate`
+RECORD = "record"
 
 # ── who a role is assigned to ───────────────────────────────────────────────────────────────
 SERVER_USER = "server-user"
@@ -44,6 +46,12 @@ PRINCIPAL_KINDS = frozenset({SERVER_USER, HOMED_USER, MEMBER_KEY, NON_MEMBER_KEY
 
 # a role's grant takes the assignment's own collection value
 VALUE = object()
+
+# the roles the server itself assigns: the key file's root user, a new community's first admin,
+# and a ported community's authors
+SERVER_ROOT = "server-root"
+COMMUNITY_ADMIN = "community-admin"
+COMMUNITY_MEMBER = "community-member"
 
 
 class AssignmentError(ValueError):
@@ -80,7 +88,7 @@ ROLES: dict[str, Role] = {
     role.id: role
     for role in (
         Role(
-            id="server-root",
+            id=SERVER_ROOT,
             assignable_to=frozenset({SERVER_USER}),
             grants={
                 READ: _EVERY,
@@ -110,7 +118,7 @@ ROLES: dict[str, Role] = {
             assigned_by=DELEGATE,
         ),
         Role(
-            id="community-admin",
+            id=COMMUNITY_ADMIN,
             assignable_to=frozenset({HOMED_USER}),
             grants={
                 READ: _EVERY,
@@ -129,7 +137,7 @@ ROLES: dict[str, Role] = {
             assigned_by=MEMBERS,
         ),
         Role(
-            id="community-member",
+            id=COMMUNITY_MEMBER,
             assignable_to=frozenset({HOMED_USER, MEMBER_KEY}),
             grants={READ: VALUE, WRITE: VALUE, MANAGE: (), PUBLISH: None},
             assigned_by=MEMBERS,
@@ -254,6 +262,14 @@ class UserContext:
             return True
         return collection.name in value
 
+    def allowsAllCollections(self, grant: str, community: str | None) -> bool:  # noqa: N802
+        """Whether this caller holds a collection-scoped `grant` on every collection of
+        `community` (`*`): what creating a collection takes."""
+        value = self.grants.get(grant)
+        if value is None or not (self.community is None or community == self.community):
+            return False
+        return self.community is None or ALL in value
+
     def view(self) -> dict:
         """What `GET /me` and the CLI's `access` show."""
         return {
@@ -349,7 +365,7 @@ def validate_registry() -> None:
                 raise AssertionError(
                     f"{found.id}: '{grant}' has the wrong kind of value"
                 )
-            if PUBLISH == grant and found.id != "community-member":
+            if PUBLISH == grant and found.id != COMMUNITY_MEMBER:
                 raise AssertionError(f"{found.id}: only community-member publishes")
         if found.assigned_by not in GRANTS:
             raise AssertionError(f"{found.id}: assigned_by '{found.assigned_by}'")

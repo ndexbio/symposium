@@ -23,6 +23,7 @@ import re
 import urllib.request
 from datetime import datetime
 
+from .access import rbac
 from .cleanup import Cleanup, PendingBatch
 from .records import COLLECTIONS, Conflict, Records
 from .runtime import Database, PayloadStore
@@ -180,8 +181,8 @@ class Port:
         }
 
     def handle(self, user: str, admin_user: str) -> str:
-        """An NDEx account as a handle here: the admin account becomes this server's admin;
-        any other account named like the admin collides with it."""
+        """An NDEx account as a handle here: the source's admin account becomes this server's
+        root user; any other account named like the root collides with it."""
         if user == admin_user:
             return self.admin
         if user == self.admin:
@@ -201,7 +202,7 @@ class Port:
     # ── writing ─────────────────────────────────────────────────────────────────────────────
     def port(self) -> dict:
         with self.db.connection() as conn:
-            self.admin = self.records.config(conn, "admin")
+            self.admin = self.records.root_user(conn)["handle"]
         client, found = self.read_source()
         items = [("record", x) for x in found["record"]] + [
             ("inbox", x) for x in found["inbox"]
@@ -235,7 +236,7 @@ class Port:
             self.cleanup.discard_pending(pid)
         return {
             "community": self.community,
-            "admin": self.admin,
+            "root": self.admin,
             "pages": client.listing_pages,
             "networks": found["networks"],
             "skipped": found["skipped"],
@@ -245,8 +246,8 @@ class Port:
         }
 
     def write(self, conn, items: list, members: list, duplicates: list):
-        """The one transaction: the roster, every file and version, then the checks. Nothing
-        is visible until it commits."""
+        """The one transaction: the authors as users, every file and version, then the checks.
+        Nothing is visible until it commits."""
         # Lock the community's collections, as every write's clock does, so no file can land
         # between this check and the commit.
         conn.execute(
@@ -256,12 +257,19 @@ class Port:
         if self.records.holds_files(conn, self.community):
             raise PortRefused(f"community '{self.community}' holds files")
         for handle in members:
-            self.records.add_to_roster(conn, self.community, handle)
-        for handle in members:
-            conn.execute(
-                "INSERT INTO owners (community, handle, reserved) VALUES (%s, %s, true) "
-                "ON CONFLICT (community, handle) DO NOTHING",
-                (self.community, handle),
+            # an author is a user of the community, holding community-member on every
+            # collection; one without a key claims its handle later by invite
+            existing = self.records.user_by_handle(conn, self.community, handle)
+            if existing is not None:
+                if existing["removed"] is not None:
+                    raise PortRefused(f"handle '{handle}' belongs to a removed member")
+                continue
+            try:
+                user = self.records.create_user(conn, handle, self.community)
+            except Conflict as e:
+                raise PortRefused(str(e)) from None
+            self.records.assign(
+                conn, rbac.COMMUNITY_MEMBER, [rbac.ALL], self.admin, user_id=user["id"]
             )
         written = []
         for collection, item in items:

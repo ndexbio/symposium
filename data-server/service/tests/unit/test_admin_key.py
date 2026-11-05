@@ -1,5 +1,5 @@
-"""R-D4: who the server admin is, decided at start-up from the key file and the backup. One test
-per case, on a temporary apps directory with fake records."""
+"""R-D4: who the root user is, decided at start-up from the key file and the backup. One test per
+case, on a temporary apps directory with fake records."""
 
 import base64
 import json
@@ -44,26 +44,27 @@ class FakeDb:
 
 
 class FakeRecords:
-    """The admin binding: the handle, and every admin key with whether it is active."""
+    """The root binding: the root user's handle, and each of its keys with whether it is
+    active."""
 
     def __init__(self, admin=None, jwk=None):
         self.admin, self.keys, self.events = admin, {}, []
         if jwk is not None:
             self.keys[KEYS.thumbprint(jwk)] = True
 
-    def config(self, _conn, key):
-        return self.admin if key == "admin" else None
+    def root_user(self, _conn):
+        return None if self.admin is None else {"id": "root", "handle": self.admin}
 
-    def admin_keys(self, _conn):
+    def active_keys(self, _conn, _user_id):
         return [{"kid": kid} for kid, active in self.keys.items() if active]
 
-    def bind_admin(self, _conn, handle, kid, _jwk):
+    def bind_root(self, _conn, handle, kid, _jwk):
         self.admin, self.keys[kid] = handle, True
         self.events.append(("bind", handle, kid))
 
-    def rebind_admin(self, _conn, handle, kid, _jwk):
+    def add_key(self, _conn, _user_id, kid, _jwk):
         self.keys = {k: False for k in self.keys} | {kid: True}
-        self.events.append(("rebind", handle, kid))
+        self.events.append(("rebind", self.admin, kid))
 
 
 @pytest.fixture

@@ -1,13 +1,13 @@
 """API keys: `sak_` bearer keys, the one credential every route of `/v1` takes.
 
-A key's row is its caller's identity: its kind, role, community, Member and label.
+A key's row says who calls: its kind, its user (none for a non-member key), its community and
+its label. What it may do is its principal's role assignments (`role_assignments`).
 
-- A **session key** is what the session management routes answer. It lasts the session TTL,
-  acts as the Member or the admin it is bound to, and ends when the key that obtained it is
-  retired.
-- An **issued key** is made by a signed-in caller for an application, with a label, and lasts
-  until it is revoked or its optional expiry. A `member` key acts as the Member who made it; a
-  `non-member` key names nobody and reads what its collections' owners grant it.
+- A **session key** is what sign-in answers. It lasts the session TTL, acts as the user who
+  signed in, and ends when the key that obtained it is retired.
+- An **issued key** is made by a signed-in user for an application, with a label, and lasts
+  until it is revoked (which deletes it) or its optional expiry. A member key acts as its
+  issuer; a non-member key is its own principal. Each carries its own role assignments.
 
 Authentication hashes the presented key and looks the hash up; it decrypts nothing. An issued
 key is also sealed with AES-256-GCM under the 32-byte key in API_KEY_ENC_KEY_FILE, which
@@ -86,7 +86,7 @@ def aad(key_id, handle: str | None, label: str, community: str) -> bytes:
 
 SESSION = "session"
 ISSUED = "issued"
-ROW = "id, kind, role, community, handle, label, created_by, ed25519_kid"
+ROW = "id, kind, user_id, community, handle, label, created_by, ed25519_kid"
 
 # last_used is refreshed at most this often, so a busy key is not one hot row of writes
 TOUCH_SECONDS = 60
@@ -98,9 +98,9 @@ class KeyRow:
 
     id: uuid.UUID
     kind: str  # SESSION or ISSUED
-    role: str  # admin, member or non-member
-    community: str | None  # None for an admin session, which works in every community
-    handle: str | None  # the Member, or the admin; None for a non-member key
+    user_id: uuid.UUID | None  # the user it acts as; None for a non-member key
+    community: str | None  # None for a server-level user's session
+    handle: str | None  # the user's handle; None for a non-member key
     label: str | None  # issued keys only
     created_by: str
     ed25519_kid: str | None  # session keys only
@@ -119,24 +119,24 @@ class ApiKeys:
         self,
         conn,
         *,
+        user_id,
         community: str | None,
-        role: str,
         handle: str,
         ed25519_kid: str,
         ttl_seconds: float,
     ) -> tuple[dict, str]:
-        """A session key for a Member (`community` named) or the admin (`community` None),
+        """A session key for a user (`community` its home, None for a server-level user),
         obtained with the key `ed25519_kid`. -> (the new row, its key)."""
         key = new_key()
         row = conn.execute(
-            "INSERT INTO api_keys (id, hash, kind, role, community, handle, ed25519_kid, "
+            "INSERT INTO api_keys (id, hash, kind, user_id, community, handle, ed25519_kid, "
             "created_by, expires) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, "
             "now() + %s * interval '1 second') RETURNING *",
             (
                 uuid.uuid4(),
                 digest(key),
                 SESSION,
-                role,
+                user_id,
                 community,
                 handle,
                 ed25519_kid,
@@ -151,14 +151,14 @@ class ApiKeys:
         conn,
         *,
         community: str,
-        role: str,
+        user_id,
         handle: str | None,
         label: str,
         expires_days: int | None,
         created_by: str,
     ) -> tuple[dict, str]:
-        """An issued key: a `member` key when `handle` names its Member, a `non-member` key
-        otherwise. -> (the new row, its key). Raises LabelInUse when the issuer holds a live
+        """An issued key: a member key when `user_id` names the user it acts as, a non-member
+        key otherwise. -> (the new row, its key). Raises LabelInUse when the issuer holds a
         key so labelled."""
         key_id, key = uuid.uuid4(), new_key()
         ciphertext, nonce = self.sealer.seal(key, aad(key_id, handle, label, community))
@@ -167,20 +167,20 @@ class ApiKeys:
         )
         taken = conn.execute(
             "SELECT 1 FROM api_keys WHERE community = %s AND created_by = %s AND label = %s "
-            "AND kind = %s AND revoked IS NULL",
+            "AND kind = %s",
             (community, created_by, label, ISSUED),
         ).fetchone()
         if taken:
             raise LabelInUse(label)
         row = conn.execute(
-            "INSERT INTO api_keys (id, hash, kind, role, community, handle, label, "
+            "INSERT INTO api_keys (id, hash, kind, user_id, community, handle, label, "
             "ciphertext, nonce, enc_kid, created_by, expires) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
             (
                 key_id,
                 digest(key),
                 ISSUED,
-                role,
+                user_id,
                 community,
                 handle,
                 label,
@@ -204,7 +204,7 @@ class ApiKeys:
             aad(row["id"], row["handle"], row["label"], row["community"]),
         )
 
-    def page(self, conn, *, community, after, limit, issuer, include_revoked) -> list:
+    def page(self, conn, *, community, after, limit, issuer) -> list:
         """One community's issued keys in creation order after the (created, id) position
         `after`: those `issuer` made when it names one, every one otherwise."""
         clauses, args = ["community = %s", "kind = %s"], [community, ISSUED]
@@ -214,8 +214,6 @@ class ApiKeys:
         if issuer is not None:
             clauses.append("created_by = %s")
             args.append(issuer)
-        if not include_revoked:
-            clauses.append("revoked IS NULL")
         return conn.execute(
             f"SELECT * FROM api_keys WHERE {' AND '.join(clauses)} "
             "ORDER BY created, id LIMIT %s",
@@ -230,51 +228,20 @@ class ApiKeys:
         ).fetchone()
 
     # ── revoking ───────────────────────────────────────────────────────────────────────────
-    def revoke(self, conn, community: str, key_id, by: str):
-        """Stop the community's issued key, erase its value and drop the grants made to it; the
-        row stays as the record of who held it. Revoking a revoked key answers it unchanged;
-        None for an unknown key."""
-        row = conn.execute(
-            "UPDATE api_keys SET revoked = COALESCE(revoked, now()), "
-            "revoked_by = COALESCE(revoked_by, %s), ciphertext = NULL, nonce = NULL "
-            "WHERE id = %s AND community = %s AND kind = %s RETURNING *",
-            (by, key_id, community, ISSUED),
-        ).fetchone()
-        if row is not None:
-            conn.execute("DELETE FROM grants WHERE api_key_id = %s", (row["id"],))
-        return row
-
-    def revoke_for(self, conn, community: str, handle: str, by: str) -> int:
-        """Revoke every live key of one Member in the community: the keys that act as it,
-        sessions included, and the non-member keys it issued, whose grants go with them.
-        -> how many issued keys."""
-        rows = conn.execute(
-            "UPDATE api_keys SET revoked = now(), revoked_by = %s, ciphertext = NULL, "
-            "nonce = NULL WHERE community = %s AND (handle = %s OR created_by = %s) "
-            "AND revoked IS NULL RETURNING id, kind",
-            (by, community, handle, handle),
-        ).fetchall()
-        conn.execute(
-            "DELETE FROM grants WHERE api_key_id = ANY(%s)", ([r["id"] for r in rows],)
-        )
-        return sum(1 for row in rows if row["kind"] == ISSUED)
-
-    def end_sessions(self, conn, ed25519_kids: list[str], by: str) -> int:
-        """Revoke every live session key obtained with one of these Ed25519 keys."""
-        if not ed25519_kids:
-            return 0
+    def delete(self, conn, community: str, key_id) -> dict | None:
+        """Revoke the community's issued key by deleting it, with its role assignments.
+        -> the deleted row, or None for an unknown key."""
         return conn.execute(
-            "UPDATE api_keys SET revoked = now(), revoked_by = %s WHERE kind = %s "
-            "AND ed25519_kid = ANY(%s) AND revoked IS NULL",
-            (by, SESSION, list(ed25519_kids)),
-        ).rowcount
+            "DELETE FROM api_keys WHERE id = %s AND community = %s AND kind = %s RETURNING *",
+            (key_id, community, ISSUED),
+        ).fetchone()
 
     # ── authentication ─────────────────────────────────────────────────────────────────────
     def find(self, conn, key: str) -> KeyRow | None:
-        """The live key `key` names; None for an unknown, revoked or expired key. Its
+        """The live key `key` names; None for an unknown or expired key. Its
         last_used is refreshed when it is older than TOUCH_SECONDS."""
         row = conn.execute(
-            f"SELECT {ROW}, last_used FROM api_keys WHERE hash = %s AND revoked IS NULL "
+            f"SELECT {ROW}, last_used FROM api_keys WHERE hash = %s "
             "AND (expires IS NULL OR expires > now())",
             (digest(key),),
         ).fetchone()
@@ -291,7 +258,7 @@ class ApiKeys:
     def live(self, conn, key_id) -> KeyRow | None:
         """The key by id while it is still live: a stream re-checks its key this way."""
         row = conn.execute(
-            f"SELECT {ROW} FROM api_keys WHERE id = %s AND revoked IS NULL "
+            f"SELECT {ROW} FROM api_keys WHERE id = %s "
             "AND (expires IS NULL OR expires > now())",
             (key_id,),
         ).fetchone()
@@ -299,15 +266,15 @@ class ApiKeys:
 
     # ── upkeep ─────────────────────────────────────────────────────────────────────────────
     def sweep(self, conn) -> int:
-        """Erase the value of every expired issued key, and delete every session that expired
-        or was revoked. -> how many rows changed."""
+        """Erase the value of every expired issued key, and delete every expired session.
+        -> how many rows changed."""
         erased = conn.execute(
             "UPDATE api_keys SET ciphertext = NULL, nonce = NULL "
             "WHERE kind = %s AND expires <= now() AND ciphertext IS NOT NULL",
             (ISSUED,),
         ).rowcount
         deleted = conn.execute(
-            "DELETE FROM api_keys WHERE kind = %s AND (expires <= now() OR revoked IS NOT NULL)",
+            "DELETE FROM api_keys WHERE kind = %s AND expires <= now()",
             (SESSION,),
         ).rowcount
         return erased + deleted

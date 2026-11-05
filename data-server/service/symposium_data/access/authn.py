@@ -1,9 +1,10 @@
 """Authentication: the API key a request presents, and the caller its row names.
 
-Every route takes one credential, `Authorization: Bearer sak_…`, or none. A key's row says who
-calls: its kind (session or issued), its role, its community and its Member. A key keeps its
-standing only while what it stands on holds: a Member's key while the Member is on the roster
-and registered, a session while the Ed25519 key that signed it in is active.
+Every route takes one credential, `Authorization: Bearer sak_…`, or none. A session key acts
+as the user who signed in; a member key acts as the user who issued it; a non-member key is its
+own principal. A key keeps its standing only while its user is not removed and, for a session,
+while the Ed25519 key that signed it in is active. The caller's `UserContext` is compiled from
+its principal's live role assignments on every request and every stream beat.
 """
 
 from __future__ import annotations
@@ -33,32 +34,40 @@ def anonymous(request: Request, base_url: str = "") -> Caller:
     )
 
 
-def standing(
-    conn, records, row: KeyRow, community: str | None
-) -> tuple[int, str] | None:
-    """(status, why) when a live key may not act now, or None. Runs on every request and every
-    stream beat. A key that lost its standing answers 401; a sound key used on another
-    community answers 403."""
-    if row.role == "admin":
-        if not records.admin_key_is_active(conn, row.ed25519_kid):
-            return 401, "the admin key this session key was obtained with is retired"
+def standing(conn, records, row: KeyRow) -> str | None:
+    """Why a live key may not act now, or None. Runs on every request and every stream beat."""
+    if row.user_id is None:
         return None
-    if row.role == "member":
-        if not records.on_roster(conn, row.community, row.handle):
-            return (
-                401,
-                f"'{row.handle}' is no longer on the roster of {row.community}",
-            )
-        if row.kind == SESSION:
-            if not records.key_is_active(
-                conn, row.community, row.handle, row.ed25519_kid
-            ):
-                return 401, "the key this session key was obtained with is retired"
-        elif not records.active_keys(conn, row.community, row.handle):
-            return 401, f"'{row.handle}' has no registered key in {row.community}"
-    if community is not None and row.community != community:
-        return 403, f"this key belongs to {row.community}"
+    user = records.user(conn, row.user_id)
+    if user is None or user["removed"] is not None:
+        return "the user this key acts as was removed"
+    if row.kind == SESSION and not records.key_is_active(
+        conn, row.user_id, row.ed25519_kid
+    ):
+        return "the key this session key was obtained with is retired"
     return None
+
+
+def context_of(conn, records, row: KeyRow):
+    """The `UserContext` of a live key: its user for a session, its issuer for a member key
+    (with the key's own roles), itself for a non-member key."""
+    if row.kind == SESSION:
+        return records.context_for(
+            conn,
+            principal_id=row.user_id,
+            principal_name=row.handle,
+            community=row.community,
+            via_session=True,
+            user_id=row.user_id,
+        )
+    return records.context_for(
+        conn,
+        principal_id=row.user_id if row.user_id is not None else row.id,
+        principal_name=row.handle if row.user_id is not None else row.label,
+        community=row.community,
+        via_session=False,
+        api_key_id=row.id,
+    )
 
 
 def authenticate(
@@ -66,11 +75,10 @@ def authenticate(
     records,
     keys: ApiKeys,
     request: Request,
-    community: str | None,
     base_url: str = "",
 ) -> Caller:
     """The caller behind `request`, anonymous when it presents no key. A key that is not one,
-    is unknown, revoked or expired, or has lost its standing is refused here."""
+    is unknown or expired, or has lost its standing is refused here (401)."""
     caller = anonymous(request, base_url)
     credential = bearer(request)
     if credential is None:
@@ -82,12 +90,13 @@ def authenticate(
     row = keys.find(conn, credential)
     conn.commit()  # a refreshed last_used stays, even when the request is refused
     if row is None:
-        raise HTTPException(401, "the API key is unknown, expired or revoked")
-    refusal = standing(conn, records, row, community)
+        raise HTTPException(401, "the API key is unknown or expired")
+    refusal = standing(conn, records, row)
     if refusal:
-        raise HTTPException(*refusal)
-    caller.kind, caller.role = row.kind, row.role
-    caller.handle, caller.label = row.handle, row.label
+        raise HTTPException(401, refusal)
+    caller.kind = row.kind
+    caller.context = context_of(conn, records, row)
+    caller.user_id, caller.handle, caller.label = row.user_id, row.handle, row.label
     caller.key_id, caller.community = row.id, row.community
     caller.ed25519_kid = row.ed25519_kid
     return caller

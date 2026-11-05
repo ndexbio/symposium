@@ -54,20 +54,27 @@ TEST_ENV = {
 
 SUPERVISORCTL = ("supervisorctl", "-c", "/tmp/supervisord.conf")
 
-# Run inside the container: empty every data table and the bucket, keeping the admin binding
-# and the admin's sessions, as a test's admin signed in before the reset.
+# Run inside the container: empty every data table and the bucket, keeping the root user (bound
+# from the key file), its key and role, and its sessions, as a test's root signed in before the
+# reset.
 RESET = """
 import os, psycopg
 from symposium_data.runtime import PayloadStore, Settings
 settings = Settings()
 store = PayloadStore(settings)
 with psycopg.connect(settings.database_url) as conn:
+    root = conn.execute(
+        "SELECT user_id FROM role_assignments WHERE role_id = 'server-root' AND revoked IS NULL"
+    ).fetchone()[0]
     conn.execute(
-        "TRUNCATE communities, owners, owner_keys, challenges, roster, grants, invites, "
-        "collections, files, versions, payloads, ports, api_streams, "
-        "api_index, api_citations, api_index_position CASCADE"
+        "TRUNCATE challenges, invites, versions, files, payloads, collections, ports, "
+        "api_streams, api_index, api_citations, api_index_position"
     )
-    conn.execute("DELETE FROM api_keys WHERE role <> 'admin'")
+    conn.execute("DELETE FROM api_keys WHERE user_id IS DISTINCT FROM %s", (root,))
+    conn.execute("DELETE FROM role_assignments WHERE user_id IS DISTINCT FROM %s", (root,))
+    conn.execute("DELETE FROM user_keys WHERE user_id <> %s", (root,))
+    conn.execute("DELETE FROM users WHERE id <> %s", (root,))
+    conn.execute("DELETE FROM communities")
 for page in store.s3.get_paginator("list_objects_v2").paginate(Bucket=store.bucket):
     for item in page.get("Contents", []):
         store.s3.delete_object(Bucket=store.bucket, Key=item["Key"])
@@ -161,10 +168,11 @@ class Server:
         self.volume = f"{self.name}-vol"
         self.url = ""
 
-    def start(self, key_file: Path | None = None):
-        """Create the container, copy the admin key file onto its volume when one is given (as
-        an operator places it), and start it. Without a key file it starts non-operational,
-        for a suite that onboards it the way an operator does."""
+    def start(self, key_file: Path | None = None, image: str | None = None, wait=True):
+        """Create the container from `image` (the image under test by default), copy the admin
+        key file onto its volume when one is given (as an operator places it), and start it.
+        Without a key file it starts non-operational, for a suite that onboards it the way an
+        operator does."""
         # Docker assigns the host port itself: picking a "free" port first races with
         # anything else that grabs it before the container binds. The host alias lets the
         # server reach a stub a test runs on this machine.
@@ -173,14 +181,21 @@ class Server:
         cmd += ["-v", f"{self.volume}:/apps"]
         for key, value in self.env.items():
             cmd += ["-e", f"{key}={value}"]
-        docker(*cmd, IMAGE)
+        docker(*cmd, image or IMAGE)
         if key_file is not None:
             docker("cp", str(key_file), f"{self.name}:/apps/{key_file.name}")
         docker("start", self.name)
         mapped = docker("port", self.name, "8080").stdout.splitlines()[0].strip()
         self.url = f"http://127.0.0.1:{mapped.rsplit(':', 1)[1]}"
-        self.wait()
+        if wait:
+            self.wait()
         return self
+
+    def upgrade(self, wait=True):
+        """Replace the container with one of the image under test on the same volume, as an
+        operator upgrades a server in place."""
+        docker("rm", "-f", self.name, check=False)
+        return self.start(wait=wait)
 
     def wait(self):
         deadline = time.monotonic() + MAX_WAIT

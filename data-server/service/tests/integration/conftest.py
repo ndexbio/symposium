@@ -1,6 +1,7 @@
 """The data server's integration fixtures: the session's container (tests/harness.py), started
-with the admin's key file copied onto its volume before it starts, as an operator places it
-(R-D4), and the members and the admin acting on it over HTTP.
+with the root user's key file copied onto its volume before it starts, as an operator places it
+(R-D4), and the users acting on it over HTTP: the root, server admins, community admins and
+members, each with its own key and roles.
 """
 
 from __future__ import annotations
@@ -16,12 +17,16 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from harness import HTTP, IMAGE, MAX_WAIT, TEST_ENV, Server
 
-ADMIN = "demo-admin"
+ADMIN = "demo-admin"  # the root user, bound from the key file
+STEWARD = (
+    "steward"  # each community's first community admin, unless a test names another
+)
+EVERY = ["*"]
 
 
 @pytest.fixture(scope="session")
 def server(tmp_path_factory):
-    """The one container, started with the admin's key file in place: the admin is bound at
+    """The one container, started with the root's key file in place: the root user is bound at
     its first start (R-D4)."""
     if not IMAGE:
         pytest.fail(
@@ -78,33 +83,34 @@ class OwnerKey:
 
 
 class Owner:
-    """A member as the skill would act: a handle in one community, a locally generated key,
-    a server URL. Identity is per community, so the same handle elsewhere is someone else."""
+    """A user as the skill would act: a handle homed in one community (None: server-level), a
+    locally generated key, a server URL."""
 
     def __init__(
         self,
         server: Server,
         handle: str,
         key: OwnerKey | None = None,
-        community: str = "demo",
+        community: str | None = "demo",
     ):
         self.server, self.handle, self.community = server, handle, community
+        self.home = community
         self.key = key or OwnerKey()
 
     def url(self, path: str) -> str:
-        """A route of this owner's community."""
+        """A route of the community this user is calling."""
         return f"{self.server.url}/v1/{self.community}{path}"
 
     def challenge(self) -> str:
-        r = HTTP.post(self.url("/auth/challenge"), json={"handle": self.handle})
+        r = HTTP.post(
+            f"{self.server.url}/v1/auth/challenge",
+            json={"handle": self.handle, "community": self.home},
+        )
         r.raise_for_status()
         return r.json()["nonce"]
 
-    def register(
-        self, community: str, invite: str | None = None, key: OwnerKey | None = None
-    ):
-        """Register in `community`, which becomes this owner's community."""
-        self.community = community
+    def register(self, invite: str, key: OwnerKey | None = None, **extra):
+        """Join with `invite`, proving `key`; `extra` adds fields a test sends on purpose."""
         key = key or self.key
         nonce = self.challenge()
         body = {
@@ -112,17 +118,22 @@ class Owner:
             "public_jwk": key.jwk,
             "nonce": nonce,
             "signature": key.sign(nonce),
+            "invite": invite,
+            **extra,
         }
-        if invite is not None:
-            body["invite"] = invite
-        return HTTP.post(self.url("/owners"), json=body)
+        return HTTP.post(f"{self.server.url}/v1/users", json=body)
 
     def sign_in(self, key: OwnerKey | None = None):
         key = key or self.key
         nonce = self.challenge()
         return HTTP.post(
-            self.url("/auth/token"),
-            json={"handle": self.handle, "nonce": nonce, "signature": key.sign(nonce)},
+            f"{self.server.url}/v1/auth/token",
+            json={
+                "handle": self.handle,
+                "community": self.home,
+                "nonce": nonce,
+                "signature": key.sign(nonce),
+            },
         )
 
     def session_key(self) -> str:
@@ -131,15 +142,59 @@ class Owner:
         assert r.status_code == 200, r.text
         return r.json()["key"]
 
-    def issue(self, label: str, role: str | None = None, expires_days=None) -> dict:
-        """An issued API key, made with this owner's session: by default a Member's own key,
-        and the admin's a non-member key. -> the issued key's row, with its value in `key`."""
-        body = {"label": label} if role is None else {"label": label, "role": role}
-        if expires_days is not None:
-            body["expires_days"] = expires_days
-        r = HTTP.post(self.url("/api-keys"), json=body, headers=self.headers())
+    def issue(
+        self, label: str, roles=None, non_member: bool = False, expires_days=None
+    ) -> dict:
+        """An issued API key, made with this user's session: by default a member key carrying
+        community-member on every collection. -> the key's row, with its value in `key`."""
+        r = self.issue_request(label, roles, non_member, expires_days)
         assert r.status_code == 201, r.text
         return r.json()
+
+    def issue_request(self, label, roles=None, non_member=False, expires_days=None):
+        if roles is None:
+            roles = [{"role": "community-member", "collections": EVERY}]
+        body = {"label": label, "roles": roles, "non_member": non_member}
+        if expires_days is not None:
+            body["expires_days"] = expires_days
+        return HTTP.post(self.url("/api-keys"), json=body, headers=self.headers())
+
+    # ── roles ────────────────────────────────────────────────────────────────────────────────
+    def assign(
+        self, role: str, collections=None, handle=None, community=None, api_key_id=None
+    ):
+        return HTTP.post(
+            f"{self.server.url}/v1/assignments",
+            json=assignment(role, collections, handle, community, api_key_id),
+            headers=self.headers(),
+        )
+
+    def unassign(
+        self, role: str, collections=None, handle=None, community=None, api_key_id=None
+    ):
+        return HTTP.request(
+            "DELETE",
+            f"{self.server.url}/v1/assignments",
+            json=assignment(role, collections, handle, community, api_key_id),
+            headers=self.headers(),
+        )
+
+    def invite(self, handle: str, roles, community=None, hours=None):
+        body = {"handle": handle, "roles": roles, "community": community}
+        if hours is not None:
+            body["hours"] = hours
+        return HTTP.post(
+            f"{self.server.url}/v1/invites", json=body, headers=self.headers()
+        )
+
+    def user_id(self, handle: str, community=None) -> str:
+        r = HTTP.get(
+            f"{self.server.url}/v1/users",
+            params={"community": community} if community else {},
+            headers=self.headers(),
+        )
+        assert r.status_code == 200, r.text
+        return next(u["id"] for u in r.json()["users"] if u["handle"] == handle)
 
     def headers(self, key: str | None = None) -> dict:
         """This owner's key as a request header: by default a session key, signed in once."""
@@ -196,27 +251,29 @@ class Owner:
 
 
 class Admin(Owner):
-    """The server admin: server-wide, signed in through /v1/admin/..., and acting in any
-    community. `community` only selects which community's routes it calls."""
+    """A server-level user (the root, or a server admin): its home is none, and `community`
+    only selects which community's routes it calls."""
 
-    def challenge(self) -> str:
-        r = HTTP.post(self.server.url + "/v1/admin/challenge")
-        r.raise_for_status()
-        return r.json()["nonce"]
-
-    def sign_in(self, key: OwnerKey | None = None):
-        key = key or self.key
-        nonce = self.challenge()
-        return HTTP.post(
-            self.server.url + "/v1/admin/token",
-            json={"nonce": nonce, "signature": key.sign(nonce)},
-        )
+    def __init__(self, server, handle, key=None, community="demo"):
+        super().__init__(server, handle, key, community)
+        self.home = None
 
     def at(self, community: str) -> Admin:
-        """The same admin, calling another community's routes."""
+        """The same user, calling another community's routes."""
         other = Admin(self.server, self.handle, self.key, community)
         other._session = getattr(self, "_session", None)
         return other
+
+
+def assignment(
+    role, collections=None, handle=None, community=None, api_key_id=None
+) -> dict:
+    body = {"role": role, "collections": collections}
+    if api_key_id is not None:
+        body["api_key_id"] = api_key_id
+    else:
+        body["handle"], body["community"] = handle, community
+    return body
 
 
 def b64u_json(value) -> str:
@@ -245,8 +302,8 @@ def set_quota(server: Server, quota_bytes: int):
     assert result.returncode == 0, result.stderr
 
 
-def purge(admin: Admin, file_id, n: int, community: str = "demo"):
-    """The admin frees one version's content through the purge route. -> the response."""
+def purge(admin: Owner, file_id, n: int, community: str = "demo"):
+    """A holder of `manage` frees one version's content through the purge route."""
     return HTTP.post(
         f"{admin.server.url}/v1/{community}/files/{file_id}/v/{n}/purge",
         headers=admin.headers(),
@@ -272,66 +329,68 @@ def until_sql(server: Server, query: str, expected: str, message: str):
         time.sleep(0.2)
 
 
-def community_with(server: Server, members=("lyra", "vega", "rigel")):
-    """An initialized server: the demo roster, each member enrolled by invite.
-    -> (admin, {handle: Owner})."""
+def community_with(server: Server, members=("lyra", "vega", "rigel"), community="demo"):
+    """An initialized server: the community, each member joined by invite with
+    community-member on every collection. -> (root, {handle: Owner})."""
     admin = init_admin(server)
-    set_roster(server, admin, "demo", list(members))
+    create_community(server, admin, community)
     owners = {}
     for handle in members:
-        owner = Owner(server, handle)
-        r = enroll(admin, owner, "demo")
+        owner = Owner(server, handle, community=community)
+        r = enroll(admin.at(community), owner, community)
         assert r.status_code == 201, r.text
         owners[handle] = owner
     return admin, owners
 
 
-def invite(admin: Admin, community: str, handle: str, hours: int | None = None):
-    """The admin issues an invite through the API, as bootstrap does. -> the response."""
-    body = {"handle": handle} if hours is None else {"handle": handle, "hours": hours}
-    return HTTP.post(
-        f"{admin.server.url}/v1/{community}/invites", json=body, headers=admin.headers()
-    )
+def invite(admin: Owner, community: str, handle: str, hours=None, roles=None):
+    """An invite through the API, as bootstrap does: by default community-member on every
+    collection. -> the response."""
+    roles = roles or [{"role": "community-member", "collections": EVERY}]
+    return admin.invite(handle, roles, community=community, hours=hours)
 
 
-def enroll(admin: Admin, owner: Owner, community: str):
-    """Invite a roster handle and register it with that invite: the only way to join."""
-    r = invite(admin, community, owner.handle)
+def enroll(admin: Owner, owner: Owner, community: str, roles=None):
+    """Invite a handle and join with that invite: the only way to join."""
+    r = invite(admin, community, owner.handle, roles=roles)
     assert r.status_code == 201, r.text
-    return owner.register(community, invite=r.json()["invite"])
+    return owner.register(r.json()["invite"])
 
 
 def init_admin(server: Server) -> Admin:
-    """The session's admin, bound once when the server started."""
+    """The session's root user, bound once when the server started."""
     return Admin(server, ADMIN, server.admin_key)
 
 
-def create_community(server: Server, admin: Admin, community: str):
+def create_community(server: Server, admin: Owner, community: str, steward=STEWARD):
+    """Create `community` with `steward` as its first community admin, invited but not yet
+    joined. -> the response; its admin invite is in `admin_invite`."""
     r = HTTP.post(
         f"{server.url}/v1/communities",
-        json={"name": community},
+        json={"name": community, "admin": steward},
         headers=admin.headers(),
     )
     assert r.status_code in (200, 201), r.text
     return r
 
 
-def set_roster(server: Server, admin: Admin, community: str, handles: list) -> dict:
-    """Create the community if it does not exist yet, then make its roster exactly `handles`,
-    one handle at a time. -> {"added": [...], "removed": [...]}."""
-    create_community(server, admin, community)
-    url = f"{server.url}/v1/{community}/roster"
-    current = {
-        m["handle"] for m in HTTP.get(url, headers=admin.headers()).json()["roster"]
-    }
-    added, removed = sorted(set(handles) - current), sorted(current - set(handles))
-    for handle in added:
-        r = HTTP.post(f"{url}/{handle}", headers=admin.headers())
+def steward_of(server: Server, community: str = "demo", handle=STEWARD) -> Owner:
+    """The community's first admin, joined: creates the community when it does not exist."""
+    admin = init_admin(server)
+    created = create_community(server, admin, community, handle).json()
+    owner = Owner(server, handle, community=community)
+    issued = created.get("admin_invite")
+    if issued is None:
+        r = admin.invite(
+            handle,
+            [{"role": "community-admin", "collections": None}],
+            community=community,
+        )
         assert r.status_code == 201, r.text
-    for handle in removed:
-        r = HTTP.delete(f"{url}/{handle}", headers=admin.headers())
-        assert r.status_code == 200, r.text
-    return {"added": added, "removed": removed}
+        issued = r.json()
+    r = owner.register(issued["invite"])
+    assert r.status_code == 201, r.text
+    return owner
 
 
 def store_counts(server: Server) -> tuple[int, int]:

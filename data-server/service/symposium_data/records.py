@@ -1,5 +1,5 @@
-"""The server's records: configuration, communities, identities, rosters, grants, invites, files
-and versions. Every community-dependent record is scoped by its community (R-G8).
+"""The server's records: configuration, communities, users and their role assignments, invites,
+files and versions. Every community-dependent record is scoped by its community (R-G8).
 
 Used by the HTTP service, its jobs, export and import, and the port, so every invariant has one
 implementation.
@@ -9,23 +9,20 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import psycopg
 
-# Every roster member gets these grants in their community (R-D6).
-DEFAULT_GRANTS = (
-    ("inbox", "write"),
-    ("files", "write"),
-    ("files", "read"),
-    ("record", "read"),
-)
-
+from .access import rbac
 
 # The collections every community has: submissions, stored files and the
 # accepted record.
 COLLECTIONS = ("inbox", "files", "record")
+
+# The two kinds of `inbox` item, by the mark in their metadata: a member's submission to the
+# gate, and the gate's reply to it.
+SUBMISSION_MARK = "symposium_submission"
+REPLY_MARK = "symposium_reply"
 
 
 class AlreadyInitialized(Exception):
@@ -56,18 +53,6 @@ class Invalid(Exception):
     """A request the server understands but cannot apply as asked (400)."""
 
 
-@dataclass(frozen=True)
-class Principal:
-    """Who an access check is for: a Member or the admin by `handle`, a non-member API key by
-    `api_key_id`, and nobody at all for an anonymous caller."""
-
-    handle: str | None = None
-    api_key_id: uuid.UUID | None = None
-
-
-ANONYMOUS = Principal()
-
-
 def unpurged(file_id_sql: str) -> str:
     """A SQL condition, true while every version of the file `file_id_sql` names keeps its
     content: the purge model is this module's, so other packages filter through it."""
@@ -91,42 +76,6 @@ class Records:
             (key, value),
         )
 
-    def bind_admin(self, conn, handle: str, kid: str, jwk: dict):
-        """Initialize the server: bind the admin handle to its public key. Works exactly once.
-        The admin is server-wide, so its keys live in admin_keys, not in any community."""
-        conn.execute("LOCK TABLE server_config IN EXCLUSIVE MODE")
-        current = self.config(conn, "admin")
-        if current is not None:
-            raise AlreadyInitialized(current)
-        conn.execute(
-            "INSERT INTO admin_keys (kid, handle, jwk) VALUES (%s, %s, %s)",
-            (kid, handle, json.dumps(jwk)),
-        )
-        self.set_config(conn, "admin", handle)
-
-    def rebind_admin(self, conn, handle: str, kid: str, jwk: dict):
-        """Make `kid` the admin's only active key; the old keys are retired, never deleted. A
-        key that was the admin's before becomes active again."""
-        conn.execute(
-            "UPDATE admin_keys SET active = false, retired = now() "
-            "WHERE active AND kid <> %s",
-            (kid,),
-        )
-        conn.execute(
-            "INSERT INTO admin_keys (kid, handle, jwk) VALUES (%s, %s, %s) "
-            "ON CONFLICT (kid) DO UPDATE SET active = true, retired = NULL",
-            (kid, handle, json.dumps(jwk)),
-        )
-
-    def admin_keys(self, conn) -> list:
-        return conn.execute("SELECT kid, jwk FROM admin_keys WHERE active").fetchall()
-
-    def admin_key_is_active(self, conn, kid: str) -> bool:
-        row = conn.execute(
-            "SELECT 1 FROM admin_keys WHERE kid = %s AND active", (kid,)
-        ).fetchone()
-        return row is not None
-
     # ── communities ─────────────────────────────────────────────────────────────────────────
     def community_name(self, conn, name: str) -> str | None:
         """The community's name as it was created, matching `name` ignoring case."""
@@ -135,10 +84,10 @@ class Records:
         ).fetchone()
         return row["name"] if row else None
 
-    def create_community(self, conn, name: str, admin: str) -> bool:
-        """Create a community and its default collections, owned by the admin. -> True when
-        created, False when exactly this name already exists. A name differing only in case
-        from an existing one is a Conflict."""
+    def create_community(self, conn, name: str, owner_id) -> bool:
+        """Create a community and its default collections, owned by `owner_id` (the root user).
+        -> True when created, False when exactly this name already exists. A name differing
+        only in case from an existing one is a Conflict."""
         existing = self.community_name(conn, name)
         if existing == name:
             return False
@@ -149,7 +98,7 @@ class Records:
                 conn.execute("INSERT INTO communities (name) VALUES (%s)", (name,))
         except psycopg.errors.UniqueViolation:
             raise Conflict(f"community '{name}' already exists") from None
-        self.ensure_collections(conn, name, admin)
+        self.ensure_collections(conn, name, owner_id)
         return True
 
     def communities(self, conn) -> list:
@@ -201,143 +150,395 @@ class Records:
             "WHERE state = 'running'"
         ).rowcount
 
-    # ── identity, per community ─────────────────────────────────────────────────────────────
-    def add_challenge(
-        self, conn, community: str | None, handle: str, nonce: str, ttl: int = 300
-    ):
-        """`community` None is the server admin's challenge."""
-        conn.execute("DELETE FROM challenges WHERE expires < now()")
-        conn.execute(
-            "INSERT INTO challenges (nonce, community, handle, expires) "
-            "VALUES (%s, %s, %s, now() + %s * interval '1 second')",
-            (nonce, community, handle, ttl),
-        )
+    # ── users ───────────────────────────────────────────────────────────────────────────────
+    _USER = (
+        "SELECT u.*, EXISTS (SELECT 1 FROM user_keys k WHERE k.user_id = u.id AND k.active) "
+        "AS registered FROM users u "
+    )
 
-    def take_challenge(
-        self, conn, community: str | None, handle: str, nonce: str
-    ) -> bool:
-        """Consume a challenge: true only once, for its own community and handle, before it
-        expires."""
-        row = conn.execute(
-            "DELETE FROM challenges WHERE nonce = %s AND handle = %s "
-            "AND community IS NOT DISTINCT FROM %s RETURNING expires > now() AS live",
-            (nonce, handle, community),
-        ).fetchone()
-        return bool(row and row["live"])
+    def user(self, conn, user_id):
+        return conn.execute(self._USER + "WHERE u.id = %s", (user_id,)).fetchone()
 
-    def active_keys(self, conn, community: str, handle: str) -> list:
+    def user_by_handle(self, conn, home: str | None, handle: str):
+        """The user `handle` homed in `home` (None: server-level), removed ones included."""
         return conn.execute(
-            "SELECT kid, jwk FROM owner_keys WHERE community = %s AND handle = %s AND active",
-            (community, handle),
+            self._USER + "WHERE u.home IS NOT DISTINCT FROM %s AND u.handle = %s",
+            (home, handle),
+        ).fetchone()
+
+    def users(self, conn, home: str | None) -> list:
+        """Every user of a community (or every server-level user), removed ones included, each
+        with its live roles."""
+        rows = conn.execute(
+            self._USER + "WHERE u.home IS NOT DISTINCT FROM %s ORDER BY u.handle",
+            (home,),
         ).fetchall()
-
-    def key_is_active(self, conn, community: str, handle: str, kid: str) -> bool:
-        row = conn.execute(
-            "SELECT 1 FROM owner_keys WHERE community = %s AND handle = %s AND kid = %s "
-            "AND active",
-            (community, handle, kid),
-        ).fetchone()
-        return row is not None
-
-    def on_roster(self, conn, community: str, handle: str) -> bool:
-        row = conn.execute(
-            "SELECT 1 FROM roster WHERE community = %s AND handle = %s",
-            (community, handle),
-        ).fetchone()
-        return row is not None
-
-    def add_to_roster(self, conn, community: str, handle: str) -> bool:
-        """Add one handle with the default grants (R-D6). Idempotent: -> False when the handle
-        was already on the roster. The admin's handle is reserved: it can never be a member."""
-        if handle == self.config(conn, "admin"):
-            raise Forbidden("the admin's handle cannot be on a roster")
-        added = conn.execute(
-            "INSERT INTO roster (community, handle) VALUES (%s, %s) "
-            "ON CONFLICT DO NOTHING RETURNING handle",
-            (community, handle),
-        ).fetchone()
-        for collection, perm in DEFAULT_GRANTS:
-            conn.execute(
-                "INSERT INTO grants (community, collection, handle, perm) VALUES (%s, %s, %s, %s) "
-                "ON CONFLICT DO NOTHING",
-                (community, collection, handle, perm),
-            )
-        return added is not None
-
-    def remove_from_roster(self, conn, community: str, handle: str) -> bool:
-        """Remove one handle: it loses every grant and pending invite in the community but keeps
-        its identity and attribution. -> False when it was not on the roster."""
-        removed = conn.execute(
-            "DELETE FROM roster WHERE community = %s AND handle = %s RETURNING handle",
-            (community, handle),
-        ).fetchone()
-        conn.execute(
-            "DELETE FROM grants WHERE community = %s AND handle = %s",
-            (community, handle),
-        )
-        self.revoke_invites(conn, community, handle)
-        return removed is not None
-
-    def roster(self, conn, community: str) -> list:
-        """Each handle with whether it has registered and when its pending invite expires."""
-        return conn.execute(
-            "SELECT r.handle, "
-            "EXISTS (SELECT 1 FROM owner_keys k WHERE k.community = r.community "
-            "AND k.handle = r.handle AND k.active) AS registered, "
-            "(SELECT max(i.expires) FROM invites i WHERE i.community = r.community "
-            "AND i.handle = r.handle AND i.used IS NULL AND i.revoked IS NULL "
-            "AND i.expires > now()) AS invite_expires "
-            "FROM roster r WHERE r.community = %s ORDER BY r.handle",
-            (community,),
-        ).fetchall()
-
-    def grants(self, conn, community: str, handle: str) -> list:
         return [
-            (r["collection"], r["perm"])
+            {**row, "roles": self.role_list(conn, user_id=row["id"])} for row in rows
+        ]
+
+    def root_user(self, conn):
+        """The server-level user holding server-root, or None before the key file binds one."""
+        return conn.execute(
+            self._USER + "JOIN role_assignments a ON a.user_id = u.id "
+            "WHERE a.role_id = %s AND a.revoked IS NULL",
+            (rbac.SERVER_ROOT,),
+        ).fetchone()
+
+    def bind_root(self, conn, handle: str, kid: str, jwk: dict):
+        """Initialize the server: the key file's handle becomes the server-level root user,
+        holding `server-root`, with this key. Works exactly once."""
+        conn.execute("LOCK TABLE users IN EXCLUSIVE MODE")
+        current = self.root_user(conn)
+        if current is not None:
+            raise AlreadyInitialized(current["handle"])
+        root = self.create_user(conn, handle, None)
+        self.add_key(conn, root["id"], kid, jwk)
+        conn.execute(
+            "INSERT INTO role_assignments (user_id, role_id, created_by) VALUES (%s, %s, %s)",
+            (root["id"], rbac.SERVER_ROOT, handle),
+        )
+
+    def create_user(self, conn, handle: str, home: str | None):
+        """A new user (`check_new_handle` first). -> its row."""
+        self.check_new_handle(conn, handle, home)
+        conn.execute("INSERT INTO users (handle, home) VALUES (%s, %s)", (handle, home))
+        return self.user_by_handle(conn, home, handle)
+
+    def check_new_handle(self, conn, handle: str, home: str | None):
+        """Conflict unless `handle` can become a new user in `home`: unused there (a tombstone
+        included) and, across server-level and community users, never both."""
+        taken = self.user_by_handle(conn, home, handle)
+        if taken is not None:
+            if taken["removed"] is not None:
+                raise Conflict(f"handle '{handle}' belongs to a removed member")
+            raise Conflict(f"'{handle}' already exists")
+        if home is None:
+            clash = conn.execute(
+                "SELECT home FROM users WHERE handle = %s AND home IS NOT NULL LIMIT 1",
+                (handle,),
+            ).fetchone()
+        else:
+            clash = conn.execute(
+                "SELECT home FROM users WHERE handle = %s AND home IS NULL", (handle,)
+            ).fetchone()
+        if clash is not None:
+            raise Conflict(
+                f"'{handle}' is a server-level handle"
+                if home is not None
+                else f"'{handle}' is a handle in {clash['home']}"
+            )
+
+    def set_suspect_after(self, conn, user_id, instant) -> bool:
+        return (
+            conn.execute(
+                "UPDATE users SET suspect_after = %s WHERE id = %s AND removed IS NULL",
+                (instant, user_id),
+            ).rowcount
+            == 1
+        )
+
+    def remove_user(self, conn, user_id, by: str) -> bool:
+        """Make the user a tombstone: its assignments end, its sign-in keys retire, its
+        sessions and every API key it issued go. -> False when it was already removed."""
+        found = self.user(conn, user_id)
+        if found is None or found["removed"] is not None:
+            return False
+        if found["home"] is not None:
+            self.lock_community(conn, found["home"])
+            if self.last_members_holder(conn, found["home"], user_id):
+                raise Conflict(
+                    "this is the community's last admin; appoint another one first"
+                )
+        conn.execute(
+            "UPDATE users SET removed = now(), removed_by = %s WHERE id = %s",
+            (by, user_id),
+        )
+        conn.execute(
+            "UPDATE role_assignments SET revoked = now(), revoked_by = %s "
+            "WHERE user_id = %s AND revoked IS NULL",
+            (by, user_id),
+        )
+        self.retire_keys(conn, user_id)
+        conn.execute(
+            "DELETE FROM api_keys WHERE user_id = %s OR (created_by = %s AND "
+            "community IS NOT DISTINCT FROM %s)",
+            (user_id, found["handle"], found["home"]),
+        )
+        conn.execute(
+            "UPDATE invites SET revoked = now(), secret = NULL WHERE user_id = %s "
+            "AND used IS NULL AND revoked IS NULL",
+            (user_id,),
+        )
+        return True
+
+    def known_handles(self, conn, community: str) -> set:
+        """Every handle that resolves in the community: its users, removed ones included, and
+        every server-level user."""
+        return {
+            r["handle"]
             for r in conn.execute(
-                "SELECT collection, perm FROM grants WHERE community = %s AND handle = %s "
-                "ORDER BY collection, perm",
-                (community, handle),
+                "SELECT handle FROM users WHERE home = %s OR home IS NULL", (community,)
+            ).fetchall()
+        }
+
+    # ── a user's sign-in keys ───────────────────────────────────────────────────────────────
+    def active_keys(self, conn, user_id) -> list:
+        return conn.execute(
+            "SELECT kid, jwk FROM user_keys WHERE user_id = %s AND active", (user_id,)
+        ).fetchall()
+
+    def key_is_active(self, conn, user_id, kid: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM user_keys WHERE user_id = %s AND kid = %s AND active",
+            (user_id, kid),
+        ).fetchone()
+        return row is not None
+
+    def add_key(self, conn, user_id, kid: str, jwk: dict):
+        """The user's only active key: earlier ones retire, never deleted (versions name
+        them). A key that was the user's before becomes active again."""
+        self.retire_keys(conn, user_id, keep=kid)
+        conn.execute(
+            "INSERT INTO user_keys (user_id, kid, jwk) VALUES (%s, %s, %s) "
+            "ON CONFLICT (user_id, kid) DO UPDATE SET active = true, retired = NULL",
+            (user_id, kid, json.dumps(jwk)),
+        )
+
+    def retire_keys(self, conn, user_id, keep: str | None = None) -> int:
+        """Retire the user's active keys and end the sessions they obtained."""
+        retired = conn.execute(
+            "UPDATE user_keys SET active = false, retired = now() "
+            "WHERE user_id = %s AND active AND kid IS DISTINCT FROM %s RETURNING kid",
+            (user_id, keep),
+        ).fetchall()
+        kids = [r["kid"] for r in retired]
+        if kids:
+            conn.execute(
+                "DELETE FROM api_keys WHERE kind = 'session' AND user_id = %s "
+                "AND ed25519_kid = ANY(%s)",
+                (user_id, kids),
+            )
+        return len(kids)
+
+    def key_on_record(self, conn, kid: str) -> bool:
+        """Whether `kid` is, or was, any user's key."""
+        row = conn.execute("SELECT 1 FROM user_keys WHERE kid = %s", (kid,)).fetchone()
+        return row is not None
+
+    # ── role assignments ────────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _principal(user_id, api_key_id) -> tuple:
+        if (user_id is None) == (api_key_id is None):
+            raise Invalid("name either a user or an API key")
+        return (
+            ("user_id", user_id) if user_id is not None else ("api_key_id", api_key_id)
+        )
+
+    def assignments_of(self, conn, *, user_id=None, api_key_id=None) -> list:
+        column, value = self._principal(user_id, api_key_id)
+        return [
+            rbac.Assignment(
+                r["role_id"],
+                None if r["collections"] is None else tuple(r["collections"]),
+            )
+            for r in conn.execute(
+                f"SELECT role_id, collections FROM role_assignments WHERE {column} = %s "
+                "AND revoked IS NULL ORDER BY role_id",
+                (value,),
             ).fetchall()
         ]
 
-    def add_invite(
-        self, conn, digest: str, secret: str, community: str, handle: str, hours: int
-    ):
-        """Issue an invite, revoking any earlier unused one for the handle, so only the newest
-        works (R-D6). The secret is kept, retrievable by the admin, only while pending."""
-        self.revoke_invites(conn, community, handle)
-        return conn.execute(
-            "INSERT INTO invites (hash, secret, community, handle, expires) "
-            "VALUES (%s, %s, %s, %s, now() + %s * interval '1 hour') RETURNING expires",
-            (digest, secret, community, handle, hours),
-        ).fetchone()["expires"]
+    def role_list(self, conn, *, user_id=None, api_key_id=None) -> list:
+        """The live roles of a principal, as the API shows them."""
+        return [
+            {
+                "role": a.role_id,
+                "collections": None if a.collections is None else list(a.collections),
+            }
+            for a in self.assignments_of(conn, user_id=user_id, api_key_id=api_key_id)
+        ]
 
-    def revoke_invites(self, conn, community: str, handle: str):
+    def assign(
+        self, conn, role_id: str, collections, by: str, *, user_id=None, api_key_id=None
+    ):
+        """Add `collections` to the principal's live assignment of `role_id`, or create it.
+        `*` absorbs names; names leave a `*` assignment as it is. -> the stored value."""
+        column, value = self._principal(user_id, api_key_id)
+        wanted = rbac.collection_value(role_id, collections)
+        current = conn.execute(
+            f"SELECT id, collections FROM role_assignments WHERE {column} = %s "
+            "AND role_id = %s AND revoked IS NULL FOR UPDATE",
+            (value, role_id),
+        ).fetchone()
+        if current is None:
+            conn.execute(
+                f"INSERT INTO role_assignments ({column}, role_id, collections, created_by) "
+                "VALUES (%s, %s, %s, %s)",
+                (value, role_id, None if wanted is None else list(wanted), by),
+            )
+            return wanted
+        if wanted is None:
+            return None
+        merged = rbac.merge(tuple(current["collections"]), wanted)
         conn.execute(
-            "UPDATE invites SET revoked = now(), secret = NULL WHERE community = %s "
-            "AND handle = %s AND used IS NULL AND revoked IS NULL",
-            (community, handle),
+            "UPDATE role_assignments SET collections = %s WHERE id = %s",
+            (list(merged), current["id"]),
+        )
+        return merged
+
+    def current_value(self, conn, role_id: str, *, user_id=None, api_key_id=None):
+        """The principal's live assignment of `role_id`: its collection value (None for a role
+        without one), or False when it holds no such assignment."""
+        column, value = self._principal(user_id, api_key_id)
+        row = conn.execute(
+            f"SELECT collections FROM role_assignments WHERE {column} = %s AND role_id = %s "
+            "AND revoked IS NULL",
+            (value, role_id),
+        ).fetchone()
+        if row is None:
+            return False
+        return None if row["collections"] is None else tuple(row["collections"])
+
+    def unassign(
+        self, conn, role_id: str, names, by: str, *, user_id=None, api_key_id=None
+    ) -> bool:
+        """Remove `names` from the principal's live assignment of `role_id`, ending it when
+        none remain; with `names` None, end it. A user's ended assignment stays, revoked, as
+        its access history; a key's goes. -> False when there was nothing to remove."""
+        column, value = self._principal(user_id, api_key_id)
+        current = conn.execute(
+            f"SELECT id, collections FROM role_assignments WHERE {column} = %s "
+            "AND role_id = %s AND revoked IS NULL FOR UPDATE",
+            (value, role_id),
+        ).fetchone()
+        if current is None:
+            return False
+        if names is not None and current["collections"] is not None:
+            held = list(current["collections"])
+            if not set(names) & set(held):
+                return False
+            left = [c for c in held if c not in set(names)]
+            if left:
+                conn.execute(
+                    "UPDATE role_assignments SET collections = %s WHERE id = %s",
+                    (left, current["id"]),
+                )
+                return True
+        if user_id is not None:
+            found = self.user(conn, user_id)
+            if found is not None and found["home"] is not None:
+                self.lock_community(conn, found["home"])
+                if rbac.MEMBERS in rbac.role(
+                    role_id
+                ).grants and self.last_members_holder(conn, found["home"], user_id):
+                    raise Conflict(
+                        "this is the community's last admin; appoint another one first"
+                    )
+            conn.execute(
+                "UPDATE role_assignments SET revoked = now(), revoked_by = %s WHERE id = %s",
+                (by, current["id"]),
+            )
+        else:
+            conn.execute("DELETE FROM role_assignments WHERE id = %s", (current["id"],))
+        return True
+
+    def lock_community(self, conn, community: str):
+        conn.execute(
+            "SELECT 1 FROM communities WHERE name = %s FOR UPDATE", (community,)
         )
 
-    def pending_invites(self, conn, community: str) -> list:
+    def last_members_holder(self, conn, community: str, user_id) -> bool:
+        """Whether `user_id` is the only registered, unremoved user of the community holding
+        `members`. Called with the community row locked."""
+        roles = [r.id for r in rbac.ROLES.values() if rbac.MEMBERS in r.grants]
+        holders = [
+            r["id"]
+            for r in conn.execute(
+                "SELECT DISTINCT u.id FROM users u JOIN role_assignments a ON a.user_id = u.id "
+                "WHERE u.home = %s AND u.removed IS NULL AND a.revoked IS NULL "
+                "AND a.role_id = ANY(%s) AND EXISTS (SELECT 1 FROM user_keys k "
+                "WHERE k.user_id = u.id AND k.active)",
+                (community, roles),
+            ).fetchall()
+        ]
+        return holders == [user_id]
+
+    def context_for(
+        self,
+        conn,
+        *,
+        principal_id,
+        principal_name,
+        community,
+        via_session,
+        user_id=None,
+        api_key_id=None,
+    ) -> rbac.UserContext:
+        """The request's UserContext: the principal's live assignments, compiled."""
+        return rbac.UserContext(
+            principal_id=principal_id,
+            principal_name=principal_name,
+            community=community,
+            via_session=via_session,
+            grants=rbac.compile_grants(
+                self.assignments_of(conn, user_id=user_id, api_key_id=api_key_id)
+            ),
+        )
+
+    # ── invites ─────────────────────────────────────────────────────────────────────────────
+    def add_invite(
+        self,
+        conn,
+        *,
+        digest: str,
+        secret: str,
+        handle: str,
+        home: str | None,
+        roles: list,
+        by: str,
+        hours: int,
+        user_id=None,
+    ):
+        """Issue an invite, revoking any earlier pending one for the same handle and home, so
+        only the newest works. Its roles are stored here and applied when it is redeemed; its
+        secret is kept, retrievable, only while pending. -> its expiry."""
+        conn.execute(
+            "UPDATE invites SET revoked = now(), secret = NULL WHERE handle = %s "
+            "AND home IS NOT DISTINCT FROM %s AND used IS NULL AND revoked IS NULL",
+            (handle, home),
+        )
         return conn.execute(
-            "SELECT handle, secret, expires FROM invites WHERE community = %s "
-            "AND used IS NULL AND revoked IS NULL AND expires > now() AND secret IS NOT NULL "
-            "ORDER BY handle",
-            (community,),
+            "INSERT INTO invites (hash, secret, handle, home, roles, user_id, created_by, "
+            "expires) VALUES (%s, %s, %s, %s, %s, %s, %s, now() + %s * interval '1 hour') "
+            "RETURNING expires",
+            (digest, secret, handle, home, json.dumps(roles), user_id, by, hours),
+        ).fetchone()["expires"]
+
+    def pending_invites(self, conn, home: str | None) -> list:
+        return conn.execute(
+            "SELECT handle, home, roles, secret, expires FROM invites "
+            "WHERE home IS NOT DISTINCT FROM %s AND used IS NULL AND revoked IS NULL "
+            "AND expires > now() AND secret IS NOT NULL ORDER BY handle",
+            (home,),
         ).fetchall()
 
-    def consume_invite(self, conn, digest: str, community: str, handle: str) -> bool:
-        """Spend an invite: valid only once, for its own handle and community, before expiry
-        and unless revoked. Its secret is erased as it is used."""
-        row = conn.execute(
-            "UPDATE invites SET used = now(), secret = NULL WHERE hash = %s AND community = %s "
-            "AND handle = %s AND used IS NULL AND revoked IS NULL AND expires > now() "
-            "RETURNING hash",
-            (digest, community, handle),
+    def pending_invite(self, conn, digest: str, handle: str):
+        """The usable invite with this secret for this handle, without spending it."""
+        return conn.execute(
+            "SELECT * FROM invites WHERE hash = %s AND handle = %s AND used IS NULL "
+            "AND revoked IS NULL AND expires > now()",
+            (digest, handle),
         ).fetchone()
-        return row is not None
+
+    def take_invite(self, conn, digest: str, handle: str):
+        """Spend an invite: valid once, for its own handle, before expiry and unless revoked.
+        Its secret is erased as it is used. -> its row, or None."""
+        return conn.execute(
+            "UPDATE invites SET used = now(), secret = NULL WHERE hash = %s AND handle = %s "
+            "AND used IS NULL AND revoked IS NULL AND expires > now() RETURNING *",
+            (digest, handle),
+        ).fetchone()
 
     def forget_expired_invites(self, conn) -> int:
         """The janitor erases the secret of every invite that expired unused."""
@@ -345,54 +546,25 @@ class Records:
             "UPDATE invites SET secret = NULL WHERE secret IS NOT NULL AND expires <= now()"
         ).rowcount
 
-    def register(self, conn, community: str, handle: str, kid: str, jwk: dict):
+    # ── sign-in challenges ──────────────────────────────────────────────────────────────────
+    def add_challenge(
+        self, conn, home: str | None, handle: str, nonce: str, ttl: int = 300
+    ):
+        conn.execute("DELETE FROM challenges WHERE expires < now()")
         conn.execute(
-            "INSERT INTO owners (community, handle) VALUES (%s, %s) "
-            "ON CONFLICT (community, handle) DO UPDATE SET reserved = false",
-            (community, handle),
-        )
-        conn.execute(
-            "INSERT INTO owner_keys (community, kid, handle, jwk) VALUES (%s, %s, %s, %s)",
-            (community, kid, handle, json.dumps(jwk)),
-        )
-
-    def retire_keys(self, conn, community: str, handle: str) -> int:
-        """Retire every active key of a handle; retired keys stay on record for attribution."""
-        return conn.execute(
-            "UPDATE owner_keys SET active = false, retired = now() "
-            "WHERE community = %s AND handle = %s AND active",
-            (community, handle),
-        ).rowcount
-
-    def rotate(self, conn, community: str, handle: str, kid: str, jwk: dict):
-        self.retire_keys(conn, community, handle)
-        conn.execute(
-            "INSERT INTO owner_keys (community, kid, handle, jwk) VALUES (%s, %s, %s, %s)",
-            (community, kid, handle, json.dumps(jwk)),
+            "INSERT INTO challenges (nonce, home, handle, expires) "
+            "VALUES (%s, %s, %s, now() + %s * interval '1 second')",
+            (nonce, home, handle, ttl),
         )
 
-    def key_on_record(self, conn, community: str, kid: str) -> bool:
+    def take_challenge(self, conn, home: str | None, handle: str, nonce: str) -> bool:
+        """Consume a challenge: true only once, for its own home and handle, before expiry."""
         row = conn.execute(
-            "SELECT 1 FROM owner_keys WHERE community = %s AND kid = %s",
-            (community, kid),
+            "DELETE FROM challenges WHERE nonce = %s AND handle = %s "
+            "AND home IS NOT DISTINCT FROM %s RETURNING expires > now() AS live",
+            (nonce, handle, home),
         ).fetchone()
-        return row is not None
-
-    def owner(self, conn, community: str, handle: str):
-        return conn.execute(
-            "SELECT handle, reserved, suspect_after FROM owners "
-            "WHERE community = %s AND handle = %s",
-            (community, handle),
-        ).fetchone()
-
-    def set_suspect_after(self, conn, community: str, handle: str, instant) -> bool:
-        return (
-            conn.execute(
-                "UPDATE owners SET suspect_after = %s WHERE community = %s AND handle = %s",
-                (instant, community, handle),
-            ).rowcount
-            == 1
-        )
+        return bool(row and row["live"])
 
     # ── collections and the per-collection clock ────────────────────────────────────────────
     def ensure_collections(self, conn, community: str, owner: str):
@@ -442,22 +614,12 @@ class Records:
         return row["seq"], row["last_created"]
 
     # ── access to collections ───────────────────────────────────────────────────────────────
-    def is_admin(self, conn, handle: str | None) -> bool:
-        return handle is not None and handle == self.config(conn, "admin")
-
-    def has_grant(self, conn, community, collection, who: Principal, perm) -> bool:
-        if who.api_key_id is not None:
-            column, value = "api_key_id", who.api_key_id
-        elif who.handle is not None:
-            column, value = "handle", who.handle
-        else:
-            return False
-        row = conn.execute(
-            f"SELECT 1 FROM grants WHERE community = %s AND collection = %s AND {column} = %s "
-            "AND perm = %s",
-            (community, collection, value, perm),
-        ).fetchone()
-        return row is not None
+    def collection_ref(
+        self, conn, community: str, collection: str
+    ) -> rbac.CollectionRef:
+        """What an access check takes for one collection; NotFound when it does not exist."""
+        row = self.collection_row(conn, community, collection)
+        return rbac.CollectionRef(row["name"], row["owner"])
 
     def collection_row(self, conn, community: str, collection: str):
         row = conn.execute(
@@ -475,123 +637,124 @@ class Records:
             and self.collection_row(conn, community, collection)["public"]
         )
 
-    def owns(self, conn, who: Principal, community, collection) -> bool:
-        """The collection's owner, while they are still on the community's roster."""
-        if who.handle is None:
+    def allows(self, conn, ctx, grant: str, community: str, collection: str) -> bool:
+        """`ctx.allowsRequest` for a collection named by community and name."""
+        if ctx is None:
             return False
-        row = conn.execute(
-            "SELECT owner FROM collections WHERE community = %s AND name = %s",
-            (community, collection),
-        ).fetchone()
-        return (
-            row is not None
-            and row["owner"] == who.handle
-            and self.on_roster(conn, community, who.handle)
+        return ctx.allowsRequest(
+            grant, community, self.collection_ref(conn, community, collection)
         )
 
-    def can_create(self, conn, who: Principal, community, collection) -> bool:
-        """New files in a collection: the admin, its owner, or a Member granted write. A
-        non-member key never writes."""
-        if who.handle is None:
+    def can_create(self, conn, ctx, community: str, collection: str, metadata) -> bool:
+        """A new file. In `inbox`: a submission takes `publish`, a reply takes `gate`, and
+        nothing else goes in. Elsewhere: `write` on the collection."""
+        if ctx is None:
             return False
-        return (
-            self.is_admin(conn, who.handle)
-            or self.owns(conn, who, community, collection)
-            or self.has_grant(conn, community, collection, who, "write")
-        )
+        if collection == rbac.INBOX:
+            metadata = metadata or {}
+            if metadata.get(SUBMISSION_MARK) is True and not metadata.get(REPLY_MARK):
+                return ctx.allowsRequest(rbac.PUBLISH, community)
+            if metadata.get(REPLY_MARK) is True and not metadata.get(SUBMISSION_MARK):
+                return ctx.allowsRequest(rbac.GATE, community)
+            return False
+        if collection == rbac.RECORD:
+            return False
+        return self.allows(conn, ctx, rbac.WRITE, community, collection)
 
-    def can_manage(self, conn, who: Principal, community, collection) -> bool:
-        """Grants and public visibility: the owner or the admin."""
-        return self.is_admin(conn, who.handle) or self.owns(
-            conn, who, community, collection
-        )
-
-    def can_modify(self, conn, who: Principal, file_row) -> bool:
-        """New versions and tombstones: the file's creator (while they can still write to the
-        collection) or the admin. Members cannot change each other's files."""
-        if self.is_admin(conn, who.handle):
+    def can_modify(self, conn, ctx, file_row) -> bool:
+        """New versions and tombstones: `manage` on the collection, or the file's first writer
+        while it can still write there. Nothing in `inbox` or `record` changes."""
+        community, collection = file_row["community"], file_row["collection"]
+        if collection in (rbac.INBOX, rbac.RECORD):
+            return False
+        if self.allows(conn, ctx, rbac.MANAGE, community, collection):
             return True
-        creator = self.first_writer(conn, file_row["id"])
         return (
-            who.handle is not None
-            and creator == who.handle
-            and self.can_create(
-                conn, who, file_row["community"], file_row["collection"]
-            )
+            ctx is not None
+            and self.first_writer(conn, file_row["id"]) == ctx.principal_name
+            and self.allows(conn, ctx, rbac.WRITE, community, collection)
         )
 
-    def can_read(self, conn, who: Principal, row) -> bool:
-        """One version: readable in a public collection, by the admin, by the collection's
-        owner, or with a read grant. In `inbox`, a submission is also readable by its submitter
-        and by the recipients named on it."""
+    def can_read(self, conn, ctx, row) -> bool:
+        """One version. In a public collection, anyone. In `inbox`, `gate` reads every item and
+        `publish` the items its holder wrote and the replies naming it. Elsewhere, `read`."""
         community, collection = row["community"], row["collection"]
         if self.is_public(conn, community, collection):
             return True
-        if self.is_admin(conn, who.handle) or self.owns(
-            conn, who, community, collection
-        ):
-            return True
-        if self.has_grant(conn, community, collection, who, "read"):
-            return True
-        if collection == "inbox" and who.handle is not None:
-            return who.handle == self.first_writer(conn, row["file_id"]) or (
-                who.handle in (row["metadata"] or {}).get("recipients", [])
+        if ctx is None:
+            return False
+        if collection == rbac.INBOX:
+            if ctx.allowsRequest(rbac.GATE, community):
+                return True
+            if not ctx.allowsRequest(rbac.PUBLISH, community):
+                return False
+            return ctx.principal_name == self.first_writer(conn, row["file_id"]) or (
+                ctx.principal_name in (row["metadata"] or {}).get("recipients", [])
             )
-        return False
+        return self.allows(conn, ctx, rbac.READ, community, collection)
 
-    def can_read_collection(self, conn, who: Principal, community, collection) -> bool:
+    def can_read_collection(self, conn, ctx, community, collection) -> bool:
         """Listing a collection (changes, find, query). Each listed row is still checked with
-        can_read: a Member listing `inbox` sees only the rows addressed to it."""
+        can_read: a member listing `inbox` sees only its own items and replies."""
         if self.is_public(conn, community, collection):
             return True
-        if collection == "inbox" and who.handle is not None:
-            if self.on_roster(conn, community, who.handle):
-                return True
-        return (
-            self.is_admin(conn, who.handle)
-            or self.owns(conn, who, community, collection)
-            or self.has_grant(conn, community, collection, who, "read")
-        )
+        if ctx is None:
+            return False
+        if collection == rbac.INBOX:
+            return ctx.allowsRequest(rbac.GATE, community) or ctx.allowsRequest(
+                rbac.PUBLISH, community
+            )
+        return self.allows(conn, ctx, rbac.READ, community, collection)
 
-    # ── collections and sharing ─────────────────────────────────────────────────────────────
-    def readable_collections(self, conn, who: Principal, community: str) -> list:
-        """The community's collections `who` may use, by name, each with what `who` may do
-        there: `read`, `write` and `manage`, as they apply."""
+    def readable_collections(self, conn, ctx, community: str) -> list:
+        """The community's collections `ctx` may use, by name, each with what it may do there:
+        `read`, `write` and `manage`, as they apply."""
         rows = conn.execute(
-            "SELECT name, owner, public FROM collections WHERE community = %s ORDER BY name",
+            "SELECT c.name, c.owner, c.public, u.handle AS owner_handle FROM collections c "
+            "LEFT JOIN users u ON u.id = c.owner WHERE c.community = %s ORDER BY c.name",
             (community,),
         ).fetchall()
         out = []
         for row in rows:
-            name = row["name"]
-            access = [
-                perm
-                for perm, allowed in (
-                    ("read", self.can_read_collection),
-                    ("write", self.can_create),
-                    ("manage", self.can_manage),
+            ref = rbac.CollectionRef(row["name"], row["owner"])
+            public = row["public"] and row["name"] != rbac.INBOX
+            if row["name"] == rbac.INBOX:
+                access = (
+                    ["read"]
+                    if self.can_read_collection(conn, ctx, community, rbac.INBOX)
+                    else []
                 )
-                if allowed(conn, who, community, name)
-            ]
+            else:
+                access = [
+                    perm
+                    for perm, grant in (
+                        ("read", rbac.READ),
+                        ("write", rbac.WRITE),
+                        ("manage", rbac.MANAGE),
+                    )
+                    if ctx is not None and ctx.allowsRequest(grant, community, ref)
+                ]
+                if public and "read" not in access:
+                    access.insert(0, "read")
             if not access:
                 continue
             out.append(
                 {
                     "community": community,
-                    "name": name,
-                    "owner": row["owner"],
-                    "public": self.is_public(conn, community, name),
+                    "name": row["name"],
+                    "owner": row["owner_handle"],
+                    "public": public,
                     "access": access,
                 }
             )
         return out
 
-    def create_collection(self, conn, community: str, name: str, owner: str):
+    def create_collection(self, conn, community: str, name: str, owner_id):
         try:
             with conn.transaction():
                 conn.execute(
                     "INSERT INTO collections (community, name, owner) VALUES (%s, %s, %s)",
-                    (community, name, owner),
+                    (community, name, owner_id),
                 )
         except psycopg.errors.UniqueViolation:
             raise Conflict(f"collection {community}/{name} already exists") from None
@@ -603,65 +766,6 @@ class Records:
             "UPDATE collections SET public = %s WHERE community = %s AND name = %s",
             (public, community, collection),
         )
-
-    def set_grant(
-        self,
-        conn,
-        community,
-        collection,
-        perm: str,
-        granted: bool,
-        *,
-        handle: str | None = None,
-        api_key_id=None,
-    ):
-        """Grant or withdraw `perm` for a roster Member (`handle`) or a non-member API key
-        (`api_key_id`). A key is granted `read` only."""
-        if (handle is None) == (api_key_id is None):
-            raise Invalid("name either a handle or an api_key_id")
-        if api_key_id is not None:
-            column, value = "api_key_id", api_key_id
-            if granted:
-                if perm != "read":
-                    raise Invalid("a non-member key is granted read only")
-                key = conn.execute(
-                    "SELECT role FROM api_keys WHERE id = %s AND community = %s "
-                    "AND kind = 'issued' AND revoked IS NULL "
-                    "AND (expires IS NULL OR expires > now())",
-                    (api_key_id, community),
-                ).fetchone()
-                if key is None:
-                    raise Invalid(f"no live API key {api_key_id} in {community}")
-                if key["role"] != "non-member":
-                    raise Invalid(
-                        "a member key acts with its Member's grants; grant the Member"
-                    )
-        else:
-            column, value = "handle", handle
-            if granted and not self.on_roster(conn, community, handle):
-                raise Forbidden(f"'{handle}' is not on the {community} roster")
-        if granted:
-            conn.execute(
-                f"INSERT INTO grants (community, collection, {column}, perm) "
-                "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
-                (community, collection, value, perm),
-            )
-        else:
-            conn.execute(
-                f"DELETE FROM grants WHERE community = %s AND collection = %s "
-                f"AND {column} = %s AND perm = %s",
-                (community, collection, value, perm),
-            )
-
-    def key_grants(self, conn, community: str, api_key_id) -> list:
-        return [
-            (r["collection"], r["perm"])
-            for r in conn.execute(
-                "SELECT collection, perm FROM grants WHERE community = %s AND api_key_id = %s "
-                "ORDER BY collection, perm",
-                (community, api_key_id),
-            ).fetchall()
-        ]
 
     # ── payloads ────────────────────────────────────────────────────────────────────────────
     def begin_payload(self, conn, community: str, owner: str):
@@ -719,10 +823,10 @@ class Records:
             return self.commit_payload(conn, pid, community, sha, size, owner, quota)
 
     def lock_owner(self, conn, community: str, owner: str):
-        """Writers take the owner's row before the collection's clock, always in that order,
-        so concurrent writes never deadlock. The server admin has no owner row and no quota."""
+        """Writers take their user row before the collection's clock, always in that order,
+        so concurrent writes never deadlock. A server-level user has no quota."""
         conn.execute(
-            "SELECT 1 FROM owners WHERE community = %s AND handle = %s FOR UPDATE",
+            "SELECT 1 FROM users WHERE home = %s AND handle = %s FOR UPDATE",
             (community, owner),
         )
 
@@ -934,7 +1038,7 @@ class Records:
         "SELECT v.*, p.sha256, p.size, p.s3_key, p.state AS payload_state, p.scrub_ok, "
         "f.name, f.community, f.collection, o.suspect_after "
         "FROM versions v JOIN payloads p ON p.id = v.payload_id JOIN files f ON f.id = v.file_id "
-        "LEFT JOIN owners o ON o.community = f.community AND o.handle = v.created_by "
+        "LEFT JOIN users o ON o.home = f.community AND o.handle = v.created_by "
     )
     _VERSION = _ROWS + "WHERE v.file_id = %s AND f.community = %s "
 

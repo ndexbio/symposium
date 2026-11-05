@@ -68,10 +68,10 @@ class AdminKeyFile:
                     )
                 files[handle] = path
         with self.db.connection() as conn:
-            bound = self.records.config(conn, "admin")
-            if bound is None:
+            root = self.records.root_user(conn)
+            if root is None:
                 return self.first_bind(conn, files)
-            return self.established(conn, bound, files)
+            return self.established(conn, root, files)
 
     def where(self) -> str:
         return " or ".join(str(place) for place in self.places)
@@ -94,13 +94,14 @@ class AdminKeyFile:
         except InvalidKey as e:
             return self.non_operational(INVALID, str(e))
         kid = self.keys.thumbprint(jwk)
-        self.records.bind_admin(conn, handle, kid, jwk)
+        self.records.bind_root(conn, handle, kid, jwk)
         self.save_backup(handle, jwk)
         log.warning("admin '%s' bound, fingerprint %s", handle, kid)
         return AdminMode(True, action="bound", handle=handle, fingerprint=kid)
 
     # ── initialized ─────────────────────────────────────────────────────────────────────────
-    def established(self, conn, bound: str, files: dict) -> AdminMode:
+    def established(self, conn, root, files: dict) -> AdminMode:
+        bound = root["handle"]
         for handle, path in files.items():
             if handle != bound:
                 log.error(
@@ -115,7 +116,7 @@ class AdminKeyFile:
                 jwk = self.read_key(bound, files[bound])
             except InvalidKey as e:
                 return self.non_operational(INVALID, str(e))
-            mode = self.use_key(conn, bound, jwk, "unchanged")
+            mode = self.use_key(conn, root, jwk, "unchanged")
             self.save_backup(bound, jwk)
             return mode
         jwk = self.read_backup(bound)
@@ -129,13 +130,17 @@ class AdminKeyFile:
             "admin_pub_%s.key is missing: running from the backup of the admin's key",
             bound,
         )
-        return self.use_key(conn, bound, jwk, "backup")
+        return self.use_key(conn, root, jwk, "backup")
 
-    def use_key(self, conn, handle: str, jwk: dict, action: str) -> AdminMode:
-        """Make `jwk` the admin's one active key, rebinding when it is not already."""
+    def use_key(self, conn, root, jwk: dict, action: str) -> AdminMode:
+        """Make `jwk` the root user's one active key, rebinding when it is not already. No
+        other user's keys change."""
+        handle = root["handle"]
         kid = self.keys.thumbprint(jwk)
-        if kid not in {row["kid"] for row in self.records.admin_keys(conn)}:
-            self.records.rebind_admin(conn, handle, kid, jwk)
+        if kid not in {
+            row["kid"] for row in self.records.active_keys(conn, root["id"])
+        }:
+            self.records.add_key(conn, root["id"], kid, jwk)
             log.warning(
                 "admin '%s' rebound to a new key, fingerprint %s; the old keys are retired",
                 handle,

@@ -42,10 +42,9 @@ HEADER_ADDRESSES = {
 
 
 def members_of(conn, records, community: str, published: set) -> set:
-    """Member names as the gate counts them: the roster, the admin, and every publisher."""
-    roster = {r["handle"] for r in records.roster(conn, community)}
-    admin = records.config(conn, "admin")
-    return roster | published | ({admin} if admin else set())
+    """Member names as the gate counts them: every handle known in the community (its users,
+    removed ones included, and every server-level user) and every publisher."""
+    return records.known_handles(conn, community) | published
 
 
 def prose(value):

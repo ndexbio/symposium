@@ -1047,6 +1047,15 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   .lg.filter.off {{ opacity:.35; text-decoration:line-through; }}
   .lg.filter:hover {{ background:#eef1f5; }}
   .lg.filter:focus-visible {{ outline:2px solid var(--accent); outline-offset:1px; }}
+  /* the artifact types: one row each, the node's shape beside what the type is */
+  .lg.trow {{ display:flex; align-items:flex-start; gap:8px; width:100%; margin:0 0 2px; padding:4px 6px; }}
+  .lg.trow .shpbox {{ flex:none; width:29px; display:flex; justify-content:center; margin-top:1px; }}
+  .lg.trow .tbody {{ display:block; min-width:0; }}
+  .lg.trow .tname {{ display:block; font-size:12px; color:var(--ink); }}
+  .lg.trow .tmean {{ display:block; color:var(--muted); line-height:1.35; margin-top:1px; }}
+  .lg.trow .tev {{ display:inline-block; font-size:10px; padding:0 5px; border-radius:7px; margin-left:3px;
+                   border:1px solid #86efac; color:#166534; background:#f0fdf4; vertical-align:1px; }}
+  .lg.trow .tev.no {{ border-color:#d1d5db; color:#4b5563; background:#f3f4f6; }}
   /* Says how many links the current filter leaves out, with the one click that restores
      them: hiding `cites` can hide the only link between two artifacts. */
   .ctxnote {{ position:absolute; left:8px; bottom:8px; z-index:10; display:none; align-items:center; gap:8px;
@@ -1468,9 +1477,42 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   html+='<div class="hint" style="margin:0 0 4px">columns = citation depth (cited &larr; left) &middot; shape = type'
     +(c.time_span ? ' &middot; published '+esc(c.time_span) : '')
     +' &middot; '+c.sessions+(c.sessions==1?' session':' sessions')+'</div>';
-  html+='<b>Artifact types ('+c.artifacts+') — click to filter</b>';
-  Object.keys(c.by_type||{{}}).sort().forEach(function(cl){{
-    html+=chip('type', cl, '', esc(cl)+' <b style="display:inline;color:var(--ink)">'+c.by_type[cl]+'</b>');
+  // One row per type: the node's shape, the type and its count, what it is, and whether it can
+  // be evidence. The shapes are drawn from Cytoscape's own polygon definitions, so the icon is
+  // the node; colour on the graph is the Member, so the icons are grey.
+  function ngon(n, rot){{
+    var inc=2*Math.PI/n, a0=(n%2===0 ? Math.PI/2+inc/2 : Math.PI/2)+(rot||0), p=[];
+    for(var i=0;i<n;i++){{ p.push(Math.cos(a0+i*inc), -Math.sin(a0+i*inc)); }}
+    return p;
+  }}
+  function fit(p){{
+    var xs=p.filter(function(_,i){{ return i%2===0; }}), ys=p.filter(function(_,i){{ return i%2===1; }});
+    var x0=Math.min.apply(null,xs), x1=Math.max.apply(null,xs), y0=Math.min.apply(null,ys), y1=Math.max.apply(null,ys);
+    return p.map(function(v,i){{ return i%2===0 ? -1+2*(v-x0)/(x1-x0) : -1+2*(v-y0)/(y1-y0); }});
+  }}
+  function starPts(){{
+    var o=ngon(5,0), q=ngon(5,Math.PI/5), r=0.5*(3-Math.sqrt(5)), p=[];
+    for(var i=0;i<5;i++){{ p.push(o[2*i],o[2*i+1],q[2*i]*r,q[2*i+1]*r); }}
+    return fit(p);
+  }}
+  var SHAPE_PTS={{ 'diamond':[0,-1,1,0,0,1,-1,0], 'tag':[-1,-1,.25,-1,1,0,.25,1,-1,1],
+    'rhomboid':[-1,-1,.333,-1,1,1,-.333,1], 'right-rhomboid':[-.333,-1,1,-1,.333,1,-1,1],
+    'vee':[-1,-1,0,-.333,1,-1,0,1], 'concave-hexagon':[-1,-.95,-.75,0,-1,.95,1,.95,.75,0,1,-.95],
+    'triangle':fit(ngon(3)), 'pentagon':fit(ngon(5)), 'hexagon':fit(ngon(6)),
+    'heptagon':fit(ngon(7)), 'octagon':fit(ngon(8)), 'star':starPts() }};
+  function shapeIcon(shape, wide){{
+    var paint=' fill="#cbd5e1" stroke="#475569" stroke-width="1.3" vector-effect="non-scaling-stroke"', body;
+    if(SHAPE_PTS[shape]) body='<polygon points="'+SHAPE_PTS[shape].map(function(v){{ return v.toFixed(3); }}).join(' ')+'"'+paint+'/>';
+    else if(shape==='rectangle' || shape==='round-rectangle') body='<rect x="-1" y="-1" width="2" height="2" rx="'+(shape==='rectangle'?0:0.3)+'"'+paint+'/>';
+    else body='<ellipse cx="0" cy="0" rx="1" ry="1"'+paint+'/>';
+    return '<span class="shpbox"><svg class="shp" width="'+(wide?29:23)+'" height="18" viewBox="-1.15 -1.15 2.3 2.3" preserveAspectRatio="none" aria-hidden="true">'+body+'</svg></span>';
+  }}
+  html+='<b>Artifact types ('+c.artifacts+') — shape on the graph · click to filter</b>';
+  (DATA.meta.types||[]).forEach(function(t){{
+    html+=chip('type', t.type, shapeIcon(t.shape, t.type==='Argument'),
+      '<span class="tbody"><span class="tname">'+esc(t.type)+' <b style="display:inline;color:var(--ink)">'+t.count+'</b>'
+      +(t.evidence ? ' <span class="tev'+(t.evidence==='never evidence'?' no':'')+'">'+esc(t.evidence)+'</span>' : '')+'</span>'
+      +'<span class="tmean">'+esc(t.meaning)+'</span></span>').replace('class="lg filter"','class="lg filter trow"');
   }});
   html+='<b>Cross-artifact edges ('+c.cross_edges+') — click to filter</b>';
   Object.keys(relCount).sort().forEach(function(r){{
@@ -1621,15 +1663,22 @@ def render_claim_html(elements, meta, cytoscape_rel_path, intro_html="", reading
 #: The header link to the Rounds page, on the pages that link to it: only when the record has
 #: a ResearchGoal, because a community without goals has no rounds to show (plan, risks).
 ROUNDS_LINK = '<a class="uplink" href="rounds.html">rounds &rarr;</a> &middot; '
+#: The header link to the Lineage page: only when the record has an Argument (R5).
+LINEAGE_LINK = '<a class="uplink" href="lineage.html">lineage &rarr;</a> &middot; '
+
+
+def nav_links(has_rounds=False, has_lineage=False):
+    """The header links to the Rounds and Lineage pages, for the pages that exist."""
+    return (ROUNDS_LINK if has_rounds else "") + (LINEAGE_LINK if has_lineage else "")
 
 
 def render_overview_html(elements, meta, cytoscape_rel_path, corpus_title="community record",
-                         has_rounds=False):
+                         has_rounds=False, has_lineage=False):
     return OVERVIEW_TEMPLATE.format(
         cyto_src=_html.escape(cytoscape_rel_path),
         corpus_title=_html.escape(corpus_title),
         uplink='<a class="uplink" href="contents.html">contents &rarr;</a> &middot; ',
-        exlink=ROUNDS_LINK if has_rounds else "",
+        exlink=nav_links(has_rounds, has_lineage),
         graph_json=_json.dumps({"elements": elements, "meta": meta}, ensure_ascii=False),
     )
 
@@ -1639,7 +1688,7 @@ CONTENTS_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Symposium community — contents</title>
+<title>Symposium community — {corpus_title} — contents</title>
 <style>
   :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
   * {{ box-sizing:border-box; }}
@@ -1652,7 +1701,24 @@ CONTENTS_TEMPLATE = """<!doctype html>
   main {{ max-width:1000px; margin:0 auto; padding:18px 16px 60px; }}
   h2 {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
         margin:26px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px; }}
-  h2:first-of-type {{ margin-top:6px; }}
+  details.sec:first-of-type > summary h2 {{ margin-top:6px; }}
+  /* A type's section folds; its marker is a character, not a colour (N6). */
+  details.sec > summary {{ list-style:none; cursor:pointer; }}
+  details.sec > summary::-webkit-details-marker {{ display:none; }}
+  details.sec > summary h2::before {{ content:"\\25B8  "; }}
+  details.sec[open] > summary h2::before {{ content:"\\25BE  "; }}
+  .tools {{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin-top:9px; }}
+  .tools input[type=search] {{ flex:1 1 280px; max-width:440px; font:inherit; font-size:13px;
+                               padding:5px 9px; border:1px solid var(--line); border-radius:6px; }}
+  .chip {{ font:inherit; font-size:12px; padding:3px 10px; border:1px solid var(--line);
+           border-radius:12px; background:var(--panel); color:var(--ink); cursor:pointer; }}
+  .chip .n {{ color:var(--muted); }}
+  .chip[aria-pressed="true"]::before {{ content:"\\2713  "; }}
+  .chip[aria-pressed="false"] {{ text-decoration:line-through; color:var(--muted);
+                                 background:transparent; }}
+  .chip:focus-visible, .tools input:focus-visible, details.sec > summary:focus-visible {{
+    outline:2px solid var(--accent); outline-offset:2px; }}
+  #shown {{ font-size:12px; color:var(--muted); }}
   .item {{ background:var(--panel); border:1px solid var(--line); border-radius:8px;
            padding:10px 13px; margin-bottom:7px; }}
   .item a {{ color:var(--accent); text-decoration:none; font-weight:600; line-height:1.35; }}
@@ -1669,12 +1735,83 @@ CONTENTS_TEMPLATE = """<!doctype html>
 <header>
   <h1>Symposium community &middot; {corpus_title}</h1>
   <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
-  {roundslink}Everything in the record, newest first within each type. An <b>Argument</b> is where a claim is
-  made and judged; its verdict opens below it. <b>Data</b> and <b>Model</b> hold what an Argument
-  can stand on. <b>Analysis</b>, <b>Message</b> and <b>NonGroundable</b> are non-groundable by
-  type: they may be read and cited in prose and may never be used as evidence.</div>
+  {roundslink}Everything in the record, newest first within each type.{hidden_note} An
+  <b>Argument</b> is where a claim is made and judged; its verdict opens below it. <b>Data</b> and
+  <b>Model</b> hold what an Argument can stand on. <b>Analysis</b>, <b>Message</b> and
+  <b>NonGroundable</b> are non-groundable by type: they may be read and cited in prose and may
+  never be used as evidence.</div>
+  <div class="tools" role="search">
+    <input type="search" id="q" autocomplete="off" spellcheck="false"
+           placeholder="Search titles, names, verdicts and claims"
+           aria-label="Search titles, names, verdicts and claims">
+    <span role="group" aria-label="Types shown">{chips}</span>
+    <span id="shown" role="status" aria-live="polite"></span>
+  </div>
 </header>
 <main>{sections}</main>
+<script type="application/json" id="search-index">{index}</script>
+<script>
+/* Type chips and search over the list above (R9, R12). Some types start hidden; a chip shows
+   or hides its type, and the reader's own choices are kept in this browser (N5) and win over
+   the defaults. A search looks through every type, hidden or not, so nothing is missed for a
+   chip left off. The index holds, for each artifact, its title, name, whole verdict and
+   Assertion claims; nothing is fetched (N1). Punctuation is ignored on both sides, so
+   "IMR-90" also finds "IMR90". */
+(function () {{
+  var KEY = 'symposium.contents.types';
+  var DEFAULT_HIDDEN = {defaults};
+  var index = {{}}, chosen = {{}}, text = {{}};
+  try {{ index = JSON.parse(document.getElementById('search-index').textContent) || {{}}; }} catch (e) {{ index = {{}}; }}
+  try {{ chosen = JSON.parse(localStorage.getItem(KEY) || '{{}}') || {{}}; }} catch (e) {{ chosen = {{}}; }}
+  function isHidden(t) {{ return t in chosen ? !!chosen[t] : !!DEFAULT_HIDDEN[t]; }}
+  function norm(s) {{ return String(s || '').toLowerCase().replace(/[^\\p{{L}}\\p{{N}}\\s]+/gu, ''); }}
+  Object.keys(index).forEach(function (k) {{ text[k] = norm(index[k]); }});
+  var q = document.getElementById('q'), shown = document.getElementById('shown');
+  var chips = [].slice.call(document.querySelectorAll('.chip'));
+  var secs = [].slice.call(document.querySelectorAll('details.sec'));
+  var searching = false;
+  secs.forEach(function (s) {{
+    s._open = s.open;   // the reader's own choice, restored when a search ends
+    s.querySelector('summary').addEventListener('click', function () {{
+      if (!searching) s._open = !s.open;
+    }});
+  }});
+  function apply() {{
+    var terms = norm(q.value).split(/\\s+/).filter(Boolean);
+    var shownN = 0, total = 0, off = 0;
+    searching = terms.length > 0;
+    secs.forEach(function (s) {{
+      var on = !isHidden(s.dataset.type), n = 0;
+      if (!on) off += 1;
+      [].forEach.call(s.querySelectorAll('.item'), function (it) {{
+        var t = text[it.dataset.name] || '';
+        var hit = searching ? terms.every(function (w) {{ return t.indexOf(w) >= 0; }}) : on;
+        it.hidden = !hit;
+        total += 1;
+        if (hit) n += 1;
+      }});
+      shownN += n;
+      s.hidden = searching ? n === 0 : !on;
+      s.open = searching ? n > 0 : s._open;
+    }});
+    chips.forEach(function (c) {{
+      c.setAttribute('aria-pressed', isHidden(c.dataset.type) ? 'false' : 'true');
+    }});
+    shown.textContent = searching ? shownN + ' of ' + total + ' match, in every type'
+      : (off ? shownN + ' of ' + total + ' shown' : '');
+  }}
+  chips.forEach(function (c) {{
+    c.addEventListener('click', function () {{
+      var t = c.dataset.type;
+      chosen[t] = !isHidden(t);
+      try {{ localStorage.setItem(KEY, JSON.stringify(chosen)); }} catch (e) {{ /* not kept */ }}
+      apply();
+    }});
+  }});
+  q.addEventListener('input', apply);
+  apply();
+}})();
+</script>
 </body>
 </html>
 """
@@ -1768,7 +1905,14 @@ def render_reading_html(title, byline, map_href, body):
         map_href=_html.escape(map_href), body=body, cited_css=CITED_CSS)
 
 
-def render_contents_html(entries, corpus_title="community record", has_rounds=False):
+#: The types Contents starts with hidden (R9, as the user chose it on 2026-11-04): the talk
+#: (22 of c037_2's 74 artifacts are Messages), the plans and goals the Rounds page shows, and
+#: the Data the Arguments are read for. A chip shows each; a search looks through all of them.
+CONTENTS_HIDDEN = ("Message", "AnalysisPlan", "ResearchGoal", "Data")
+
+
+def render_contents_html(entries, corpus_title="community record", has_rounds=False,
+                         has_lineage=False):
     """A plain reading list of the record.
 
     The overview is a reference graph, which answers "how does this record hang together"
@@ -1779,20 +1923,20 @@ def render_contents_html(entries, corpus_title="community record", has_rounds=Fa
     likely to be wanted."""
     order = ["Argument", "Data", "Model", "ScientificPublication",
              "Analysis", "Message", "NonGroundable"]
-    seen, out = set(), []
+    out, chips, index = [], [], {}
     types = order + sorted({e["type"] for e in entries} - set(order))
     for t in types:
         rows = [e for e in entries if e["type"] == t]
         if not rows:
             continue
-        seen.add(t)
         items = []
         for e in sorted(rows, key=lambda x: x["created"], reverse=True):
+            index[e["name"]] = e.get("search") or f'{e["title"]} {e["name"]}'
             verdict = (f'<div class="verdict">{_html.escape(e["verdict"])}</div>'
                        if e.get("verdict") else "")
             extra = f' &middot; {_html.escape(e["extra"])}' if e.get("extra") else ""
             items.append(
-                '<div class="item"><a href="{href}">{title}</a>'
+                '<div class="item" data-name="{name}"><a href="{href}">{title}</a>'
                 '<div class="meta"><span class="mbadge" style="background:{color}"></span>'
                 '{member} &middot; {created}{extra} &middot; <code>{name}</code></div>'
                 '{verdict}</div>'.format(
@@ -1800,10 +1944,28 @@ def render_contents_html(entries, corpus_title="community record", has_rounds=Fa
                     color=_html.escape(e.get("color", "#9ca3af")),
                     member=_html.escape(e["member"]), created=_html.escape(e["created"][:16]),
                     extra=extra, name=_html.escape(e["name"]), verdict=verdict))
-        out.append(f"<h2>{_html.escape(t)} ({len(rows)})</h2>" + "".join(items))
+        tq = _html.escape(t)
+        out.append(f'<details class="sec" data-type="{tq}" open><summary>'
+                   f"<h2>{tq} ({len(rows)})</h2></summary>" + "".join(items) + "</details>")
+        pressed = "false" if t in CONTENTS_HIDDEN else "true"
+        chips.append(f'<button type="button" class="chip" data-type="{tq}" '
+                     f'aria-pressed="{pressed}">'
+                     f'{tq} <span class="n">{len(rows)}</span></button>')
+    # inside a <script>: "<", ">" and "&" become JSON escapes, so no title can end the element
+    # early or open a comment in it, and JSON.parse reads them back unchanged
+    data = (_json.dumps(index, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+    present = [t for t in types if t in CONTENTS_HIDDEN and any(e["type"] == t for e in entries)]
+    named = [f"<b>{_html.escape(t)}</b>" for t in present]
+    hidden_note = (" " + (", ".join(named[:-1]) + " and " + named[-1] if len(named) > 1
+                          else named[0] if named else "")
+                   + " start hidden: a chip shows a type, and a search looks through every type."
+                   ) if named else ""
     return CONTENTS_TEMPLATE.format(corpus_title=_html.escape(corpus_title),
-                                    sections="".join(out),
-                                    roundslink=ROUNDS_LINK if has_rounds else "")
+                                    sections="".join(out), chips="".join(chips), index=data,
+                                    roundslink=nav_links(has_rounds, has_lineage),
+                                    hidden_note=hidden_note,
+                                    defaults=_json.dumps({t: True for t in CONTENTS_HIDDEN}))
 
 
 #: The grouping of a Rounds column and of a goal page's "Serving this goal": the goal, the
@@ -1869,7 +2031,7 @@ ROUNDS_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Symposium community — rounds</title>
+<title>Symposium community — {corpus_title} — rounds</title>
 <style>
   :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
   * {{ box-sizing:border-box; }}
@@ -1903,7 +2065,7 @@ ROUNDS_TEMPLATE = """<!doctype html>
 <header>
   <h1>Symposium community &middot; {corpus_title} &middot; rounds</h1>
   <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
-  <a class="uplink" href="contents.html">contents</a> &middot;
+  <a class="uplink" href="contents.html">contents</a> &middot; {lineagelink}
   One column per <b>ResearchGoal</b>, oldest first, holding the artifacts whose
   <code>serves_goals</code> name it, grouped by type. An artifact naming several goals is in each
   of their columns, marked <span class="shared">shared</span>. The first column holds what names
@@ -1915,7 +2077,7 @@ ROUNDS_TEMPLATE = """<!doctype html>
 """
 
 
-def render_rounds_html(columns, corpus_title="community record"):
+def render_rounds_html(columns, corpus_title="community record", has_lineage=False):
     """The Rounds page (R3): `columns` = [{label, title, href, count, entries, corpus}]."""
     out = []
     for c in columns:
@@ -1929,7 +2091,207 @@ def render_rounds_html(columns, corpus_title="community record"):
             f'{(" &middot; " + _html.escape(c["created"][:16])) if c.get("created") else ""}</div>'
             + grouped_entries_html(c["entries"]) + "</section>")
     return ROUNDS_TEMPLATE.format(corpus_title=_html.escape(corpus_title),
-                                  columns="".join(out), round_css=ROUND_CSS)
+                                  columns="".join(out), round_css=ROUND_CSS,
+                                  lineagelink=LINEAGE_LINK if has_lineage else "")
+
+
+LINEAGE_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symposium community — {corpus_title} — lineage</title>
+<style>
+  :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
+  * {{ box-sizing:border-box; }}
+  html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+               color:var(--ink); background:var(--bg); font-size:14px; }}
+  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
+  header .sub {{ font-size:12px; color:var(--muted); line-height:1.5; }}
+  a.uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
+  .legend {{ display:flex; flex-wrap:wrap; gap:4px 18px; margin-top:7px; font-size:12px; color:var(--ink); }}
+  .legend span {{ display:inline-flex; align-items:center; gap:6px; }}
+  .graphwrap {{ overflow-x:auto; padding:0 16px; }}
+  .graph {{ position:relative; margin:8px 0 4px; }}
+  .graph svg {{ position:absolute; left:0; top:0; pointer-events:none; }}
+  .graph svg path {{ pointer-events:stroke; fill:none; }}
+  .lane {{ position:absolute; font-size:11px; font-weight:650; color:var(--muted);
+           text-transform:uppercase; letter-spacing:.05em; }}
+  a.lnode {{ position:absolute; display:block; overflow:hidden; background:var(--panel);
+             border:1px solid var(--line); border-radius:8px; padding:8px 10px; color:var(--ink);
+             text-decoration:none; box-shadow:0 1px 2px rgba(0,0,0,.05); }}
+  a.lnode:hover {{ border-color:var(--accent); }}
+  a.lnode:focus-visible {{ outline:2px solid var(--accent); outline-offset:2px; }}
+  .lnode .t {{ font-size:12px; font-weight:650; line-height:1.3; color:var(--accent);
+               display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }}
+  .lnode .o {{ font-size:11.5px; line-height:1.35; margin-top:5px; color:#374151;
+               display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; }}
+  .lnode .m, .lines .meta {{ font-size:11px; color:var(--muted); }}
+  .lnode .m {{ position:absolute; left:10px; right:10px; bottom:7px; white-space:nowrap;
+               overflow:hidden; text-overflow:ellipsis; line-height:1.45; }}
+  .mbadge {{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px;
+             vertical-align:middle; border:1px solid rgba(0,0,0,.15); }}
+  path.lk-supersedes {{ stroke:#1d4ed8; stroke-width:2.6; }}
+  path.lk-ground {{ stroke:#15803d; stroke-width:2.2; stroke-dasharray:10 3 2 3; }}
+  path.lk-cites {{ stroke:#6b7280; stroke-width:1.6; stroke-dasharray:5 4; }}
+  path.cross {{ opacity:.8; }}
+  main.lines {{ max-width:960px; margin:0 auto; padding:6px 16px 60px; }}
+  .lines h2 {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+               margin:24px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px; }}
+  .lines h2 span {{ text-transform:none; letter-spacing:0; font-weight:400; }}
+  .lines ol {{ margin:0; padding-left:22px; }}
+  .lines li {{ background:var(--panel); border:1px solid var(--line); border-radius:8px;
+               padding:9px 12px; margin:0 0 7px; }}
+  .lines li > a {{ color:var(--accent); font-weight:600; text-decoration:none; }}
+  .lines .opening {{ font-size:13px; line-height:1.45; margin-top:5px; padding-left:10px;
+                     border-left:3px solid var(--line); color:#374151; }}
+  .lines .follows {{ font-size:12px; margin-top:4px; color:var(--ink); line-height:1.5; }}
+  .lines .follows:first-of-type {{ margin-top:7px; }}
+  .lines .follows a {{ color:var(--accent); }}
+  .lines li:target {{ border-color:#d97706; box-shadow:0 0 0 2px #fde68a; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>Symposium community &middot; {corpus_title} &middot; lineage</h1>
+  <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
+  <a class="uplink" href="contents.html">contents</a> &middot; {roundslink}{summary} Each line
+  is a chain of <b>Arguments</b>, oldest on the left, each following the earlier one it
+  supersedes, rests a Ground under its primary Assertion on, or cites in prose. A line never
+  branches: a second follower starts a line of its own, and the link between the two lines is
+  drawn. A prose citation is context, not evidence (spec &sect;2.2.5): a dashed link says one
+  Argument mentions another, not that it rests on it. A link a longer chain already implies is
+  not drawn; every link is listed under the graph.</div>
+  <div class="legend" aria-label="Kinds of link">{legend}</div>
+</header>
+<div class="graphwrap"><div class="graph" style="width:{width}px;height:{height}px">
+<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" aria-hidden="true">
+<defs>{markers}</defs>{edges}</svg>
+{lanes}{nodes}
+</div></div>
+<main class="lines">{lines}</main>
+</body>
+</html>
+"""
+
+#: How each kind of Lineage link is drawn and said, strongest first (browse.LINEAGE_KINDS).
+#: Each has its own dash pattern and its own words, so colour is never the only sign (N6).
+LINEAGE_LOOK = {
+    "supersedes": ("#1d4ed8", "", "supersedes", "which it supersedes"),
+    "ground": ("#15803d", "10 3 2 3", "a Ground under its primary Assertion cites",
+               "which a Ground under its primary Assertion cites"),
+    "cites": ("#6b7280", "5 4", "cites in prose (context, not evidence)",
+              "which it cites in prose (context, not evidence)"),
+}
+LINEAGE_NODE = (170, 164)        # a node's width and height, px
+LINEAGE_GAP = (26, 46)           # between columns, and between lines (room for a line's label)
+LINEAGE_PAD = 8
+
+
+def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=False):
+    """The Lineage page (F3): every Argument once, one lane per line, placed left to right
+    by publication time, with every drawn link; then, per line, its Arguments in
+    publication order with their verdict openings and every link each one states."""
+    esc = _html.escape
+    (nw, nh), (gx, gy), pad = LINEAGE_NODE, LINEAGE_GAP, LINEAGE_PAD
+    col = {n: i for i, n in enumerate(lin["args"])}
+    line_of = lin["line_of"]
+    width = pad * 2 + max(1, len(col)) * (nw + gx) - gx
+    height = pad + len(lin["lines"]) * (nh + gy)
+    xy = {n: (pad + col[n] * (nw + gx), gy - 6 + line_of[n] * (nh + gy)) for n in col}
+    anchor = {n: "a-" + _re.sub(r"[^A-Za-z0-9_-]", "_", n) for n in col}
+    rank = {k: i for i, k in enumerate(LINEAGE_LOOK)}
+
+    def strongest(kinds):
+        return min(kinds, key=lambda k: rank[k])
+
+    def ordered(kinds):
+        return sorted(kinds, key=lambda k: rank[k])
+
+    def said(kinds):                 # "which it supersedes and which it cites in prose …"
+        return " and ".join(LINEAGE_LOOK[k][3] for k in ordered(kinds))
+
+    def named(kinds):                # "supersedes; cites in prose …", for a link's tooltip
+        return "; ".join(LINEAGE_LOOK[k][2] for k in ordered(kinds))
+
+    follows = {}                     # an Argument -> the one before it in its line
+    for line in lin["lines"]:
+        for a, b in zip(line, line[1:]):
+            follows[b] = a
+    edges = []
+    for later, earlier in sorted(lin["drawn"], key=lambda e: (col[e[0]], col[e[1]])):
+        kinds = lin["links"][(later, earlier)]
+        (x1, y1), (x2, y2) = xy[earlier], xy[later]
+        x1, y1, y2 = x1 + nw, y1 + nh / 2, y2 + nh / 2
+        dx = max(24, (x2 - x1) / 2)
+        cross = "" if follows.get(later) == earlier else " cross"
+        tip = f'{nodes[later]["title"]} — {named(kinds)} — {nodes[earlier]["title"]}'
+        edges.append(f'<path data-from="{esc(earlier)}" data-to="{esc(later)}" '
+                     f'class="lk-{strongest(kinds)}{cross}" marker-end="url(#ah-'
+                     f'{strongest(kinds)})" d="M{x1:.0f},{y1:.0f} C{x1 + dx:.0f},{y1:.0f} '
+                     f'{x2 - dx:.0f},{y2:.0f} {x2 - 2:.0f},{y2:.0f}"><title>{esc(tip)}</title></path>')
+    markers = "".join(
+        f'<marker id="ah-{k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
+        f'markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
+        f'fill="{c}"/></marker>' for k, (c, _d, _s, _l) in LINEAGE_LOOK.items())
+    lanes = "".join(
+        f'<div class="lane" style="left:{pad}px;top:{gy - 24 + i * (nh + gy)}px">Line {i + 1}'
+        f' &middot; {len(line)} Argument{"" if len(line) == 1 else "s"}</div>'
+        for i, line in enumerate(lin["lines"]))
+    boxes = []
+    for n in lin["args"]:
+        d, (x, y) = nodes[n], xy[n]
+        tests = (f'{d["tests"]} test{"" if d["tests"] == 1 else "s"} &middot; '
+                 f'{d["grounds"]} Ground{"" if d["grounds"] == 1 else "s"}')
+        boxes.append(
+            f'<a class="lnode" href="{esc(d["href"])}" style="left:{x}px;top:{y}px;'
+            f'width:{nw}px;height:{nh}px" title="{esc(d["title"])}">'
+            f'<div class="t">{esc(d["title"])}</div>'
+            f'<div class="o">{esc(d["opening"])}</div>'
+            f'<div class="m">{tests}<br><span class="mbadge" style="background:'
+            f'{esc(d["color"])}"></span>{esc(d["member"])} &middot; {esc(d["created"][:10])}'
+            f'</div></a>')
+    legend = "".join(
+        f'<span><svg width="34" height="8" aria-hidden="true"><line x1="0" y1="4" x2="34" '
+        f'y2="4" stroke="{c}" stroke-width="2.4" stroke-dasharray="{dash}"/></svg>{esc(word)}'
+        f'</span>' for (c, dash, word, _w) in LINEAGE_LOOK.values())
+
+    sections = []
+    for i, line in enumerate(lin["lines"]):
+        items = []
+        for n in line:
+            d = nodes[n]
+            stated = sorted(((e, k) for (b, e), k in lin["links"].items() if b == n),
+                            key=lambda x: col[x[0]])
+            said_here = []
+            for e, kinds in stated:
+                where = "" if line_of[e] == i else f" (line {line_of[e] + 1})"
+                lead = "Follows" if follows.get(n) == e else "Also links to"
+                said_here.append(f'{lead} <a href="#{anchor[e]}">{esc(nodes[e]["title"])}</a>'
+                                 f'{where}, {esc(said(kinds))}.')
+            said_here.sort(key=lambda x: not x.startswith("Follows"))
+            items.append(
+                f'<li id="{anchor[n]}"><a href="{esc(d["href"])}">{esc(d["title"])}</a>'
+                f'<div class="meta"><span class="mbadge" style="background:{esc(d["color"])}">'
+                f'</span>{esc(d["member"])} &middot; {esc(d["created"][:16])} &middot; '
+                f'{d["grounds"]} Ground(s), {d["tests"]} offered as a test &middot; '
+                f'<a href="{esc(d["map"])}">claim map</a></div>'
+                + (f'<div class="opening">{esc(d["opening"])}</div>' if d["opening"] else "")
+                + "".join(f'<div class="follows">{x}</div>' for x in said_here)
+                + "</li>")
+        first, last = nodes[line[0]]["created"][:10], nodes[line[-1]]["created"][:10]
+        span = first if first == last else f"{first} to {last}"
+        sections.append(f'<h2>Line {i + 1} <span>&middot; {len(line)} Argument'
+                        f'{"" if len(line) == 1 else "s"}, {span}</span></h2>'
+                        f'<ol>{"".join(items)}</ol>')
+    n_args, n_lines = len(lin["args"]), len(lin["lines"])
+    summary = (f'{n_args} Argument{"" if n_args == 1 else "s"} in {n_lines} '
+               f'line{"" if n_lines == 1 else "s"}.')
+    return LINEAGE_TEMPLATE.format(
+        corpus_title=esc(corpus_title), roundslink=ROUNDS_LINK if has_rounds else "",
+        summary=summary, legend=legend, width=width, height=height, markers=markers,
+        edges="".join(edges), lanes=lanes, nodes="".join(boxes), lines="".join(sections))
 
 
 # --------------------------------------------------------------------------- #
@@ -2074,7 +2436,14 @@ def csv_table(text, max_rows=None, method="csv", cited=None):
 
     Rows and columns carry ids too, `<method>.row=<key>` and `<method>.col=<name>`, because a
     Ground may address a whole row or column. `cited` (anchor -> the Grounds addressing it)
-    marks each cell, row and column a Ground on the page's "Cited by" list cites."""
+    marks each cell, row and column a Ground on the page's "Cited by" list cites.
+
+    A wide table is read from its key and the columns its Grounds cite (R11). So the row key
+    comes first and stays in view as the table scrolls sideways, the columns a Ground cites,
+    whole or by a cell, come next, and the rest follow in their stored order; a button puts
+    the stored order back, and a table of more than 12 columns offers a column picker.
+    Addresses name columns, never positions, so no order breaks a link. Every cell carries
+    `data-c`, its column's place in the stored order, which is what the page script sorts by."""
     src = (text or "").replace("\r\n", "\n")
     try:
         rows = [r for r in _csv.reader(_io.StringIO(src)) if any(c.strip() for c in r)]
@@ -2084,22 +2453,25 @@ def csv_table(text, max_rows=None, method="csv", cited=None):
         return "<p class='hint'>(empty)</p>"
     hdr = [c.strip() for c in rows[0]]
     key = hdr[0] if hdr else "row"
+    order = column_order(hdr, method, cited)
     body = []
     limit = len(rows) - 1 if max_rows is None else max_rows
     for r in rows[1:limit + 1]:
         cells = [c.strip() for c in r]
         rk = cells[0] if cells else ""
         row_cls, row_badge = _cited_cell(f"{method}.row={rk}", cited)
-        tds = []
+        tds = {}
         for i, c in enumerate(cells):
             anchor = f"{method}.row={rk}&col={hdr[i]}" if i < len(hdr) else ""
             cls, badge = _cited_cell(anchor, cited)
             if i == 0:
                 badge += row_badge
             cell_id, value = _html.escape(anchor), _html.escape(c)
-            tds.append(f'<td id="{cell_id}"{cls}>{value}{badge}</td>')
+            tds[i] = f'<td data-c="{i}" id="{cell_id}"{cls}>{value}{badge}</td>'
+        placed = [tds[i] for i in order if i in tds]
+        placed += [tds[i] for i in sorted(tds) if i not in order]   # a ragged row's extras
         body.append('<tr id="{}"{}>{}</tr>'.format(
-            _html.escape(f"{method}.row={rk}"), row_cls, "".join(tds)))
+            _html.escape(f"{method}.row={rk}"), row_cls, "".join(placed)))
     # Every row is rendered by default. A truncated table silently breaks the one thing
     # these ids exist for: a Ground addressing row 400 of a 714-row table would resolve in
     # the validator and land the reader at the top of the page. What bounds the size here
@@ -2108,15 +2480,61 @@ def csv_table(text, max_rows=None, method="csv", cited=None):
             "not shown; an address into them will not resolve on this page</td></tr>"
             ) if len(rows) - 1 > limit else ""
     head = ""
-    for c in hdr:
+    for i in order:
+        c = hdr[i]
         cls, badge = _cited_cell(f"{method}.col={c}", cited)
-        head += '<th id="{}"{}>{}{}</th>'.format(
-            _html.escape(f"{method}.col={c}"), cls, _html.escape(c), badge)
+        head += '<th data-c="{}" id="{}"{}>{}{}</th>'.format(
+            i, _html.escape(f"{method}.col={c}"), cls, _html.escape(c), badge)
     return (f"<p class='hint'>Addressed as <code>#{_html.escape(method)}"
             f".row=&lt;{_html.escape(key)}&gt;"
             f"&amp;col=&lt;column&gt;</code></p>"
-            f"<div class='tablewrap'><table class='data'><tr>{head}</tr>"
+            + table_tools(hdr, order, method, cited)
+            + f"<div class='tablewrap'><table class='data' id='{_html.escape('tbl-' + method)}' "
+            f"data-order='{','.join(map(str, order))}'><tr>{head}</tr>"
             + "".join(body) + more + "</table></div>")
+
+
+#: A table with more columns than this offers a column picker (R11).
+COLUMN_PICKER_OVER = 12
+
+
+def cited_columns(hdr, method, cited):
+    """Indexes of the columns a Ground on the page cites: the whole column, or a cell in it."""
+    names = set()
+    for anchor in cited or {}:
+        if anchor.startswith(f"{method}.col="):
+            names.add(anchor[len(f"{method}.col="):])
+        elif anchor.startswith(f"{method}.row=") and "&col=" in anchor:
+            names.add(anchor.rsplit("&col=", 1)[1])
+    return [i for i, c in enumerate(hdr) if i > 0 and c in names]
+
+
+def column_order(hdr, method, cited):
+    """The order a table is shown in: its row key, then the columns a Ground cites, then the
+    rest, each group in its stored order."""
+    first = cited_columns(hdr, method, cited)
+    return [0, *first, *(i for i in range(1, len(hdr)) if i not in first)] if hdr else []
+
+
+def table_tools(hdr, order, method, cited):
+    """The controls above a table: "Original column order" when cited columns were moved
+    forward, and a column picker when there are more than COLUMN_PICKER_OVER columns. Both
+    are worked by the page's script; without it the table still reads, cited columns first."""
+    tid = _html.escape("tbl-" + method)
+    parts = []
+    if order != list(range(len(hdr))):
+        named = ", ".join(_html.escape(hdr[i]) for i in cited_columns(hdr, method, cited))
+        parts.append(f'<button type="button" class="colorder" data-for="{tid}" '
+                     f'aria-pressed="false">Original column order</button>'
+                     f'<span class="hint">Columns a Ground cites come first: {named}</span>')
+    if len(hdr) > COLUMN_PICKER_OVER:
+        boxes = "".join(
+            f'<label><input type="checkbox" data-c="{i}" checked> {_html.escape(hdr[i])}</label>'
+            for i in order[1:])
+        parts.append(f'<details class="colpick" data-for="{tid}"><summary>Columns: '
+                     f'<span class="cp-n">{len(hdr)}</span> of {len(hdr)} shown</summary>'
+                     f'<div class="cp-list">{boxes}</div></details>')
+    return f"<div class='tabletools'>{''.join(parts)}</div>" if parts else ""
 
 
 def internal_graph_section(ig, artifact_name, artifact_type):
@@ -2269,6 +2687,10 @@ CITED_CSS = """
   .cmark:hover { background:#166534; }
   .cmark:focus-visible { outline:2px solid #1d4ed8; outline-offset:1px; }
   table.data tr:target > td, h2:target { background:#fef3c7; }
+  /* the fixed key column is opaque (R11); these keep a cited or targeted key cell's tint */
+  table.data tr.cited > td:first-child { background:#f0fdf4; }
+  table.data tr > td.cited:first-child, table.data tr > th.cited:first-child { background:#ecfdf5; }
+  table.data tr:target > td:first-child, table.data td:target:first-child { background:#fef3c7; }
   h3.cbh { font-size:13px; margin:16px 0 2px; color:var(--ink); }
   table.citedby { border-collapse:collapse; width:100%; table-layout:fixed; font-size:13px;
                   background:var(--panel); border:1px solid var(--line); margin:4px 0; }
@@ -2326,7 +2748,24 @@ ARTIFACT_TEMPLATE = """<!doctype html>
   table.data {{ border-collapse:collapse; font-size:13px; width:100%; }}
   table.data th, table.data td {{ padding:5px 10px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }}
   table.data th {{ background:#f1f5f9; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }}
+  /* The row key stays in view while a wide table scrolls sideways (R11); opaque, so the cells
+     passing under it do not show through. */
+  table.data tr > :first-child {{ position:sticky; left:0; z-index:1; background:var(--panel);
+                                  box-shadow:inset -1px 0 0 var(--line); }}
+  table.data tr > th:first-child {{ background:#f1f5f9; z-index:2; }}
   table.data td:target {{ background:#fef3c7; outline:2px solid #d97706; }}
+  .tabletools {{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin:4px 0 6px; }}
+  .tabletools button {{ font:inherit; font-size:12px; padding:3px 9px; border:1px solid var(--line);
+                        border-radius:6px; background:var(--panel); color:var(--ink); cursor:pointer; }}
+  .tabletools button[aria-pressed="true"] {{ background:#e0e7ff; border-color:#6366f1; }}
+  .tabletools button[aria-pressed="true"]::before {{ content:"\\2713  "; }}
+  .tabletools button:focus-visible, .colpick summary:focus-visible,
+  .colpick input:focus-visible {{ outline:2px solid var(--accent); outline-offset:2px; }}
+  .colpick {{ font-size:12px; }}
+  .colpick summary {{ cursor:pointer; color:var(--accent); }}
+  .colpick .cp-list {{ display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:6px; padding:8px 10px;
+                        background:var(--panel); border:1px solid var(--line); border-radius:6px; }}
+  .colpick label {{ white-space:nowrap; }}
   table.methods {{ border-collapse:collapse; font-size:13px; background:var(--panel);
                    border:1px solid var(--line); border-radius:8px; width:100%; }}
   table.methods th, table.methods td {{ padding:6px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }}
@@ -2394,6 +2833,55 @@ ARTIFACT_TEMPLATE = """<!doctype html>
 <script src="{cyto_src}"></script>
 <script src="vendor/cytoscape-svg.js"></script>
 <script>
+/* Wide tables (R11): put the stored column order back, or the cited-first one; hide columns
+   from the picker; and keep a cell a link lands on clear of the fixed key column. Cells are
+   sorted by data-c, their column's place in the stored order. Runs before the header's
+   script below, which re-places a link target with both paddings in force. */
+(function () {{
+  function cells(tr) {{
+    return [].filter.call(tr.children, function (c) {{ return c.hasAttribute('data-c'); }});
+  }}
+  function arrange(table, order) {{
+    var rank = {{}};
+    order.forEach(function (c, i) {{ rank[c] = i; }});
+    function at(c) {{ var r = rank[c.dataset.c]; return r === undefined ? 1e6 + +c.dataset.c : r; }}
+    [].forEach.call(table.rows, function (tr) {{
+      var cs = cells(tr);
+      if (cs.length < 2) return;
+      cs.sort(function (a, b) {{ return at(a) - at(b); }});
+      cs.forEach(function (c) {{ tr.appendChild(c); }});
+    }});
+  }}
+  [].forEach.call(document.querySelectorAll('button.colorder'), function (b) {{
+    var table = document.getElementById(b.dataset.for);
+    if (!table) return;
+    var shown = table.dataset.order.split(',').map(Number);
+    var stored = shown.slice().sort(function (x, y) {{ return x - y; }});
+    b.addEventListener('click', function () {{
+      var original = b.getAttribute('aria-pressed') !== 'true';
+      arrange(table, original ? stored : shown);
+      b.setAttribute('aria-pressed', original ? 'true' : 'false');
+    }});
+  }});
+  [].forEach.call(document.querySelectorAll('details.colpick'), function (d) {{
+    var table = document.getElementById(d.dataset.for), n = d.querySelector('.cp-n');
+    if (!table) return;
+    d.addEventListener('change', function (e) {{
+      var box = e.target;
+      if (!box.matches || !box.matches('input[data-c]')) return;
+      [].forEach.call(table.querySelectorAll('[data-c="' + box.dataset.c + '"]'), function (c) {{
+        c.hidden = !box.checked;
+      }});
+      n.textContent = String(1 + d.querySelectorAll('input[data-c]:checked').length);
+    }});
+  }});
+  [].forEach.call(document.querySelectorAll('.tablewrap'), function (w) {{
+    var key = w.querySelector('table.data tr > :first-child');
+    function pad() {{ if (key) w.style.scrollPaddingLeft = (key.offsetWidth + 8) + 'px'; }}
+    pad();
+    window.addEventListener('resize', pad);
+  }});
+}})();
 /* Keep link targets clear of the sticky header: size the scroll padding to the header, which
    grows when a long title wraps, and re-place a target the page was opened at, since the
    browser scrolled to it before this ran. */

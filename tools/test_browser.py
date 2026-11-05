@@ -206,6 +206,77 @@ def rounds_fixture_record(root):
     return root
 
 
+def lineage_fixture_record(root):
+    """Two lines of Arguments shaped like c037_2's R1 and R2 (F3): prose citations that skip a
+    generation (R1″ cites R1 beside R1′) and one that crosses lines (R2″ cites R1″). Then what
+    c037_2 has none of: a successor that supersedes, which outranks a prose citation; a Ground
+    under the primary Assertion, which links; and a Ground under another Assertion, which
+    does not."""
+    def arg(name, t, rationale="", **props):
+        objs = props.pop("objects", [])
+        rels = props.pop("relationships", [])
+        return {"artifact": {"name": name, "type": "Argument", "specification_version": "1.0",
+                             "published_by": "@lx", "title": f"Fixture {name}",
+                             "created": f"2026-03-01T00:{t:02d}:00+00:00",
+                             "primary_assertion": "a_primary", "purpose": "Lineage.",
+                             "verdict": f"{name} holds. More follows.", "rationale": rationale,
+                             **props},
+                "objects": [{"name": "a_primary", "type": "Assertion",
+                             "claim": f"Claim made by {name}.", "scope": "The fixture."}, *objs],
+                "relationships": rels}
+
+    data = {"artifact": {"name": "lx_data", "type": "Data", "specification_version": "1.0",
+                         "published_by": "@lx", "title": "Fixture lx_data",
+                         "created": "2026-03-01T00:01:00+00:00",
+                         "import_method": "Written for the tests.", "measures": "key,a\nk1,1"},
+            "objects": [{"name": "measures_csv", "type": "Content", "groundable": True,
+                         "description": "The table in `measures`.",
+                         "addressing_method": "`row=<key>&col=<column>`."}],
+            "relationships": []}
+    docs = [
+        data,
+        arg("lx_r1", 2, "Opens line one.",
+            objects=[{"name": "g_data", "type": "Ground", "criterion": "Against if a <= 0.",
+                      "citation": "@lx_data.measures#measures_csv.row=k1",
+                      "rationale": "The row."}],
+            relationships=[{"rel": "grounded_by", "source": "a_primary", "target": "g_data"}]),
+        arg("lx_r2", 3, "Opens line two."),
+        arg("lx_r1p", 4, "Narrows [R1](@lx_r1)."),
+        arg("lx_r2p", 5, "Re-runs [R2](@lx_r2)."),
+        arg("lx_r1pp", 6, "Tests [R1](@lx_r1) and [R1 prime](@lx_r1p)."),
+        arg("lx_r2pp", 7, "From [R2](@lx_r2), [R2 prime](@lx_r2p) and [R1 second](@lx_r1pp)."),
+        arg("lx_r1ppp", 8, "Checks [R1 second](@lx_r1pp).",
+            objects=[{"name": "a_side", "type": "Assertion", "claim": "A side remark.",
+                      "scope": "The fixture."},
+                     {"name": "g_side", "type": "Ground", "citation": "@lx_r2pp.a_primary",
+                      "rationale": "Under the side Assertion, not the primary."}],
+            relationships=[{"rel": "grounded_by", "source": "a_side", "target": "g_side"}]),
+        arg("lx_r3", 9, "Also see [R1 third](@lx_r1ppp).", supersedes=["@lx_r2pp"],
+            supersedes_rationale="Narrows it."),
+        arg("lx_r4", 10, "Rests on the third.",
+            objects=[{"name": "g_prior", "type": "Ground", "citation": "@lx_r1ppp.a_primary",
+                      "rationale": "Testimony, under the primary Assertion."}],
+            relationships=[{"rel": "grounded_by", "source": "a_primary", "target": "g_prior"}]),
+    ]
+    root.mkdir(parents=True, exist_ok=True)
+    for doc in docs:
+        (root / f'{doc["artifact"]["name"]}.json').write_text(json.dumps(doc, indent=1))
+    return root
+
+
+#: The lines lineage_fixture_record's Arguments make, and the links drawn between them:
+#: (earlier, later) -> the kind it is drawn as. R1″ -> R1 and R2″ -> R2 are implied by a longer
+#: chain and not drawn; R1‴'s Ground under a side Assertion is no link at all.
+LINEAGE_EXPECTED = [["lx_r1", "lx_r1p", "lx_r1pp", "lx_r1ppp", "lx_r4"],
+                    ["lx_r2", "lx_r2p", "lx_r2pp", "lx_r3"]]
+LINEAGE_DRAWN = {
+    ("lx_r1", "lx_r1p"): "cites", ("lx_r1p", "lx_r1pp"): "cites",
+    ("lx_r1pp", "lx_r1ppp"): "cites", ("lx_r1ppp", "lx_r4"): "ground",
+    ("lx_r2", "lx_r2p"): "cites", ("lx_r2p", "lx_r2pp"): "cites", ("lx_r2pp", "lx_r3"): "supersedes",
+    ("lx_r1pp", "lx_r2pp"): "cites", ("lx_r1ppp", "lx_r3"): "cites",
+}
+
+
 def renamed_copy(src, dst):
     """The same record with every artifact given an opaque name, every address rewritten to
     match. Everything derived from addresses must come out the same; anything that differs
@@ -246,7 +317,8 @@ def anchored(p):
 def compile_all(tmp):
     out = {}
     for rec in RECORDS + [fixture_record(tmp / "_fixture_record"),
-                          rounds_fixture_record(tmp / "_rounds_record")]:
+                          rounds_fixture_record(tmp / "_rounds_record"),
+                          lineage_fixture_record(tmp / "_lineage_record")]:
         d = tmp / ("build_" + rec.name)
         browse.compile_record(str(rec), str(d), quiet=True)
         out[rec] = d
@@ -904,6 +976,214 @@ def case_r_link_targets_clear_the_sticky_header(dists):
     return (not bad, f"{checked} page(s) with a sticky header keep link targets below it", bad)
 
 
+def _lines(text, back=None):
+    """Lineage page -> [[artifact name, ...] for each line], read from its list."""
+    main = text[text.index('<main class="lines">'):]
+    return [[(back or {}).get(i, i) for i in re.findall(r'<li id="a-([^"]+)">', sec)]
+            for sec in main.split("<h2>Line ")[1:]]
+
+
+def _drawn(text, back=None):
+    """Lineage page -> {(earlier, later): the kind the link is drawn as}."""
+    b = back or {}
+    return {(b.get(f, f), b.get(t, t)): k for f, t, k in re.findall(
+        r'<path data-from="([^"]+)" data-to="([^"]+)" class="lk-(\w+)', text)}
+
+
+def case_s_lineage_lines_come_from_addresses(dists):
+    """The Lineage page groups Arguments into lines through the links their addresses state,
+    and only those (R5, F3): supersedes before a Ground under the primary Assertion before a
+    prose citation; a Ground under another Assertion is no link; a prose link a longer chain
+    implies is listed, not drawn; links between lines are drawn. Renaming every artifact
+    changes nothing (N4). A record with no Argument gets no Lineage page and no link to one."""
+    bad = []
+    for rec, dist in dists.items():
+        has_arg = any(d["artifact"]["type"] == "Argument" for d in _docs(rec))
+        exists = (dist / "lineage.html").is_file()
+        linked = 'href="lineage.html"' in (dist / "index.html").read_text()
+        if has_arg != exists or has_arg != linked:
+            bad.append(f"{rec.name}: Argument={has_arg}, lineage.html={exists}, linked={linked}")
+    rec, dist = next((k, v) for k, v in dists.items() if k.name == "_lineage_record")
+    text = (dist / "lineage.html").read_text()
+    if _lines(text) != LINEAGE_EXPECTED:
+        bad.append(f"lines {_lines(text)}, want {LINEAGE_EXPECTED}")
+    if _drawn(text) != LINEAGE_DRAWN:
+        bad.append(f"drawn {sorted(_drawn(text).items())}, want {sorted(LINEAGE_DRAWN.items())}")
+    item = re.search(r'<li id="a-lx_r1ppp">.*?</li>', text, re.S).group(0)
+    if "#a-lx_r2pp" in item:
+        bad.append("a Ground under a side Assertion was taken for a link")
+    item = re.search(r'<li id="a-lx_r1pp">.*?</li>', text, re.S).group(0)
+    if 'Also links to <a href="#a-lx_r1">' not in item:
+        bad.append("a link a longer chain implies is not listed under the graph")
+    if "context, not evidence" not in text:
+        bad.append("the page does not say a prose citation is context, not evidence")
+
+    renamed_rec = dist.parent / "_lineage_renamed"
+    new = renamed_copy(rec, renamed_rec)
+    back = {v: k for k, v in new.items()}
+    renamed_dist = dist.parent / "build__lineage_renamed"
+    browse.compile_record(str(renamed_rec), str(renamed_dist), quiet=True)
+    text2 = (renamed_dist / "lineage.html").read_text()
+    if _lines(text2, back) != LINEAGE_EXPECTED or _drawn(text2, back) != LINEAGE_DRAWN:
+        bad.append(f"after renaming: lines {_lines(text2, back)}, drawn {_drawn(text2, back)}")
+    return (not bad, "Lineage lines and links come from addresses: the same under any names",
+            bad)
+
+
+def case_t_contents_filters_and_searches(dists):
+    """Contents has a chip per type and starts with Messages, AnalysisPlans, ResearchGoals and
+    Data hidden, each a chip away; it searches an index holding each artifact's title, name,
+    whole verdict and every Assertion's claim, across every type, hidden ones too (R9, R12).
+    Its stored choices are read and written inside a try (N5)."""
+    bad, checked = [], 0
+    for rec, dist in dists.items():
+        text = (dist / "contents.html").read_text()
+        m = re.search(r'<script type="application/json" id="search-index">(.*?)</script>',
+                      text, re.S)
+        index = json.loads(m.group(1)) if m else {}
+        docs = _docs(rec)
+        for t in sorted({d["artifact"]["type"] for d in docs}):
+            if f'<details class="sec" data-type="{t}" open>' not in text:
+                bad.append(f"{rec.name}: no {t} section, or it starts folded")
+            pressed = "false" if t in T.CONTENTS_HIDDEN else "true"
+            if f'class="chip" data-type="{t}" aria-pressed="{pressed}"' not in text:
+                bad.append(f"{rec.name}: the {t} chip does not start "
+                           f"{'off' if pressed == 'false' else 'on'}")
+        defaults = re.search(r"var DEFAULT_HIDDEN = (\{[^}]*\});", text)
+        if not defaults or set(json.loads(defaults.group(1))) != set(T.CONTENTS_HIDDEN):
+            bad.append(f"{rec.name}: the page does not start with {T.CONTENTS_HIDDEN} hidden")
+        if "searching ? terms.every" not in text:
+            bad.append(f"{rec.name}: a search does not look through hidden types")
+        for d in docs:
+            h = d["artifact"]
+            want = [h.get("title") or h["name"], h["name"]]
+            if h["type"] == "Argument":
+                want += [h.get("verdict") or ""]
+                want += [o.get("claim") or "" for o in d.get("objects", [])
+                         if o.get("type") == "Assertion"]
+            missing = [w for w in want if w and w not in index.get(h["name"], "")]
+            checked += 1
+            if missing:
+                bad.append(f"{rec.name}/{h['name']}: the search index lacks {missing[0][:50]!r}")
+        bad += [f"{rec.name}: unwrapped storage access: {ln[:80]}"
+                for ln in _storage_unwrapped(text)]
+    return (not bad, f"{checked} artifact(s) searchable by title, name, verdict and claims; "
+            f"{', '.join(T.CONTENTS_HIDDEN)} start hidden", bad)
+
+
+def case_u_wide_tables_put_cited_columns_first(dists):
+    """A table shows its row key, then the columns a Ground cites (whole or by a cell), then
+    the rest; every cell keeps its id and value; "Original column order" puts the stored
+    order back; more than 12 columns brings a column picker; and the key column stays fixed
+    as the table scrolls (R11, F7)."""
+    bad = []
+    hdr = ["key"] + [f"c{i}" for i in range(1, 14)]
+    rows = [",".join(hdr)] + [",".join([k] + [f"{k}v{i}" for i in range(1, 14)])
+                              for k in ("k1", "k2")]
+    cited = {"t.col=c9": [("cb-a", "A · g_col")], "t.row=k2&col=c4": [("cb-b", "A · g_cell")]}
+    out = T.csv_table("\n".join(rows), method="t", cited=cited)
+    want = [0, 4, 9, 1, 2, 3, 5, 6, 7, 8, 10, 11, 12, 13]
+    for tr in re.findall(r"<tr[^>]*>(.*?)</tr>", out, re.S):
+        got = [int(c) for c in re.findall(r'data-c="(\d+)"', tr)]
+        if got != want:
+            bad.append(f"a row is in order {got}, want {want}")
+    for k in ("k1", "k2"):
+        for i in range(1, 14):
+            if f'id="t.row={k}&amp;col=c{i}"' not in out or not re.search(
+                    f'id="t.row={k}&amp;col=c{i}"[^>]*>{k}v{i}<', out):
+                bad.append(f"cell {k}/c{i} lost its id or value")
+    if "Columns a Ground cites come first: c4, c9" not in out:
+        bad.append("the cited columns are not named above the table")
+    if 'class="colorder" data-for="tbl-t" aria-pressed="false"' not in out:
+        bad.append("no Original column order control")
+    if out.count('<input type="checkbox" data-c=') != 13:
+        bad.append("a 14-column table has no picker for its 13 non-key columns")
+    small = T.csv_table("key,a,b\nk1,1,2", method="s")
+    if "tabletools" in small:
+        bad.append("an uncited table of 3 columns grew controls")
+    checked = 0
+    for dist in dists.values():
+        for p in dist.glob("*.html"):
+            page = p.read_text()
+            if "<table class='data'" not in page:
+                continue
+            checked += 1
+            sticky = any("table.data tr > :first-child" in sels and _STICKY.search(body)
+                         for sels, body in _rules(page))
+            if not sticky or "scrollPaddingLeft" not in page:
+                bad.append(f"{p.name}: the key column is not fixed, or a cell link lands under it")
+                break
+    return (not bad, f"cited columns first, ids kept, picker over 12; {checked} page(s) with a "
+            "table keep its key in view", bad)
+
+
+def case_v_title_is_the_community(dists):
+    """The pages are titled with the community of the session whose record copy they show,
+    read from the context beside it; `--title` overrides it, and a record directory that is
+    no session's copy keeps the generic title (R13)."""
+    bad = []
+    tmp = pathlib.Path(tempfile.mkdtemp(prefix="symposium-title-"))
+    try:
+        session = tmp / "session"
+        (session / ".symposium").mkdir(parents=True)
+        (session / ".symposium" / "context.json").write_text(
+            json.dumps({"community": "c_demo", "handle": "lyra"}))
+        rec = rounds_fixture_record(session / "record")
+        if browse.community_name(rec) != "c_demo":
+            bad.append(f"community_name read {browse.community_name(rec)!r}, want 'c_demo'")
+        if browse.community_name(RECORDS[0]) is not None:
+            bad.append("a record directory with no session context was given a community")
+        for title, want in ((None, "c_demo"), ("Other", "Other")):
+            out = tmp / f"dist-{want}"
+            browse.main([str(rec), "--out", str(out), "--quiet",
+                         *(["--title", title] if title else [])])
+            for page in ("index.html", "contents.html", "rounds.html", "lineage.html"):
+                h1 = re.search(r"<h1>(.*?)</h1>", (out / page).read_text(), re.S).group(1)
+                if want not in h1:
+                    bad.append(f"{page} (--title {title}): header {h1!r} lacks {want!r}")
+        serve_src = (HERE / "serve.py").read_text()
+        if "browse.community_name(record)" not in serve_src:
+            bad.append("serve does not default its title to the community")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return (not bad, "pages are titled with the session's community, --title overrides", bad)
+
+
+def case_w_overview_legend_says_what_each_type_is(dists):
+    """The overview's legend gives every artifact type in the record its own shape, the shape
+    its nodes are drawn with, and says what the type is and whether it can be evidence: the
+    specification's and the profile's types in their own words, any other type as one neither
+    defines."""
+    bad, rows = [], 0
+    for rec, dist in dists.items():
+        arts = browse.load_record(str(rec))
+        index = browse.build_index(arts)
+        pages = {a["artifact"]["name"]: browse.page_name(a["artifact"]["name"]) for a in arts}
+        els, meta = browse.build_overview(arts, index, browse.member_colors(arts), pages, {})
+        legend = {t["type"]: t for t in meta["types"]}
+        present = {a["artifact"]["type"] for a in arts}
+        if set(legend) != present:
+            bad.append(f"{rec.name}: legend types {sorted(legend)}, record types {sorted(present)}")
+        shapes = [t["shape"] for t in meta["types"]]
+        if len(set(shapes)) != len(shapes):
+            bad.append(f"{rec.name}: two types share a shape: {shapes}")
+        for n in els["nodes"]:
+            t = legend.get(n["data"].get("ntype"))
+            if t and n["data"]["shape"] != t["shape"]:
+                bad.append(f"{rec.name}: {n['data']['id']} is drawn {n['data']['shape']}, its "
+                           f"type's legend says {t['shape']}")
+                break
+        for t in meta["types"]:
+            rows += 1
+            want = browse.TYPE_MEANING.get(t["type"], browse.UNDEFINED_TYPE_MEANING)
+            if (t["meaning"], t["evidence"]) != want or not t["meaning"]:
+                bad.append(f"{rec.name}: {t['type']} is described as {t['meaning']!r}")
+        page = (dist / "index.html").read_text()
+        if "shapeIcon(t.shape" not in page or '"types": [' not in page:
+            bad.append(f"{rec.name}: the overview does not draw a row per type")
+    return (not bad, f"{rows} type row(s), each with its own shape and what the type is", bad)
+
+
 CASES = [
     ("every Ground lands on the content it names", case_a_grounds_land),
     ("an Argument's prose is readable, not letterboxed", case_f_argument_is_readable),
@@ -923,6 +1203,12 @@ CASES = [
     ("Rounds come from serves_goals addresses, not names", case_p_rounds_come_from_addresses),
     ("only a record with a goal has a Rounds page", case_q_no_goals_no_rounds_page),
     ("a link target lands below the sticky header", case_r_link_targets_clear_the_sticky_header),
+    ("Lineage lines come from addresses, not names", case_s_lineage_lines_come_from_addresses),
+    ("Contents hides four types at first, and searches every type",
+     case_t_contents_filters_and_searches),
+    ("wide tables show cited columns first, key fixed", case_u_wide_tables_put_cited_columns_first),
+    ("pages are titled with the session's community", case_v_title_is_the_community),
+    ("the overview's legend says what each type is", case_w_overview_legend_says_what_each_type_is),
 ]
 
 

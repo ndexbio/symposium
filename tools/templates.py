@@ -149,6 +149,17 @@ HTML_TEMPLATE = r"""<!doctype html>
      so it has to be readable and its links have to work. */
   #intro {{ flex:none; padding:8px 16px; background:#fbfcfd; border-bottom:1px solid var(--line);
             font-size:13px; line-height:1.5; }}
+  /* The verdict pane's lower edge: drag it, or use the arrow keys on it, to give the claim map
+     more room. Every page opens with the pane at its full height, so the whole verdict shows
+     until a reader chooses otherwise (F6); a pane made shorter scrolls inside. */
+  #intro.sized {{ overflow-y:auto; }}
+  #introsplit {{ flex:none; height:10px; margin:-5px 0 -5px; position:relative; z-index:3;
+                 cursor:row-resize; touch-action:none; }}
+  #introsplit::after {{ content:""; position:absolute; left:50%; top:3px; width:48px; height:4px;
+                        margin-left:-24px; border-radius:2px; background:#cbd5e1; }}
+  #introsplit:hover::after, #introsplit.dragging::after, #introsplit:focus-visible::after {{
+    background:var(--accent); }}
+  #introsplit:focus-visible {{ outline:2px solid var(--accent); outline-offset:-1px; }}
   #intro p {{ margin:0 0 6px; }} #intro p:last-child {{ margin-bottom:0; }}
   #intro a {{ color:var(--accent); }}
   #intro .cite-dead {{ border-bottom:1px dotted var(--muted); color:var(--muted); cursor:help; }}
@@ -244,14 +255,15 @@ HTML_TEMPLATE = r"""<!doctype html>
           'label': 'data(label)', 'font-size': 9, 'color': '#111827',
           'text-wrap': 'wrap', 'text-max-width': 110, 'text-valign': 'bottom',
           'text-margin-y': 3, 'width': 22, 'height': 22,
-          'border-width': 1, 'border-color': 'rgba(0,0,0,0.25)'
+          // black at a quarter strength, given as an opacity so the legend reads it back
+          'border-width': 1, 'border-color': '#000000', 'border-opacity': 0.25
       }} }},
       // Assertion = the claim node. It is the PRIMARY backbone,
       // so it is the largest/boldest. A colored border encodes the folded verdict.
       {{ selector: 'node[ntype="Assertion"]', style: {{
           'shape': 'round-rectangle', 'background-color': 'data(owner_color)',
           'width': 46, 'height': 30, 'font-weight': 600, 'font-size': 10,
-          'text-max-width': 150, 'border-width': 4, 'border-color': '#9ca3af' }} }},
+          'text-max-width': 150, 'border-width': 4, 'border-opacity': 1, 'border-color': '#9ca3af' }} }},
       // A claim that lives in ANOTHER artifact (cross-artifact assess / accept):
       // faded owner-colored fill so it reads as "not authored here".
       {{ selector: 'node[ntype="Assertion"][?external]', style: {{
@@ -267,7 +279,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       // name (e.g. "Fig 1C") drawn beside it.
       {{ selector: 'node[ntype="Source"]', style: {{
           'shape': 'cut-rectangle', 'background-color': '#e2e8f0', 'background-opacity': 0.95,
-          'border-color': '#94a3b8', 'border-style': 'solid', 'border-width': 1.2,
+          'border-opacity': 1, 'border-color': '#94a3b8', 'border-style': 'solid', 'border-width': 1.2,
           'color': '#475569', 'width': 30, 'height': 18, 'font-size': 8,
           'text-max-width': 120 }} }},
       // Content the author could NOT address, and asks the community to grant. It is
@@ -275,7 +287,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       // looking for, and hiding it to tidy the picture would defeat the whole exercise.
       {{ selector: 'node[ntype="Assumption"]', style: {{
           'shape': 'vee', 'background-color': '#d97706', 'background-opacity': 0.85,
-          'border-color': '#b45309', 'border-width': 1.5,
+          'border-opacity': 1, 'border-color': '#b45309', 'border-width': 1.5,
           'width': 24, 'height': 22, 'font-size': 8, 'color': '#7c2d12',
           'text-max-width': 130 }} }},
       // (Full-graph mode) the Ground gets its own encoding.
@@ -286,12 +298,15 @@ HTML_TEMPLATE = r"""<!doctype html>
       // peer's conclusion is testimony, and it should not look like a measurement.
       {{ selector: 'node[ntype="External"]', style: {{
           'shape': 'round-rectangle', 'background-color': '#e5e7eb', 'background-opacity': 0.9,
-          'border-color': '#9ca3af', 'border-style': 'dashed', 'border-width': 1.5,
+          'border-opacity': 1, 'border-color': '#9ca3af', 'border-style': 'dashed', 'border-width': 1.5,
           'color': '#4b5563', 'width': 40, 'height': 26, 'text-max-width': 140 }} }},
       // Addressed content the gate could not machine-verify (a `rest` or `download`
       // method): the exact point where verification becomes trust, marked as such.
       {{ selector: 'node[?unverifiable]', style: {{
-          'border-color': '#b45309', 'border-width': 2.5, 'border-style': 'dotted' }} }},
+          'border-opacity': 1, 'border-color': '#b45309', 'border-width': 2.5, 'border-style': 'dotted' }} }},
+      // A claim a checker finding is on: an orange border, so the finding the legend counts
+      // can be found on the graph, then read by clicking the claim.
+      {{ selector: 'node[?flagged]', style: {{ 'border-opacity': 1, 'border-color': '#d97706' }} }},
 
       {{ selector: 'edge', style: {{
           'width': 1.4, 'curve-style': 'bezier', 'line-color': '#94a3b8',
@@ -338,11 +353,11 @@ HTML_TEMPLATE = r"""<!doctype html>
           'label': 'testimony', 'line-style': 'dashed' }} }},
 
       {{ selector: '.faded', style: {{ 'opacity': 0.15 }} }},
-      {{ selector: '.hi', style: {{ 'border-width': 3, 'border-color': '#111827' }} }},
+      {{ selector: '.hi', style: {{ 'border-width': 3, 'border-opacity': 1, 'border-color': '#111827' }} }},
       // a node a person placed by hand, so the reader can tell their arrangement from the
       // computed one
       {{ selector: 'node.moved', style: {{
-          'border-width': 2, 'border-color': '#0f766e', 'border-style': 'dashed' }} }},
+          'border-width': 2, 'border-opacity': 1, 'border-color': '#0f766e', 'border-style': 'dashed' }} }},
       // a highlighted edge wins over the flow-mode dimming (listed last)
       {{ selector: 'edge.hi', style: {{ 'width': 3.2, 'opacity': 1 }} }}
     ],
@@ -785,6 +800,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     node.addClass('moved');
     savePos(_savedPos);
     updatePosUI();
+    buildLegend(_layoutMode);
   }});
 
   function runLayout(mode) {{
@@ -805,6 +821,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       // frames what the reader will actually see rather than the computed arrangement.
       applySavedPos(mode);
       updatePosUI();
+      buildLegend(mode);
       cy.fit(undefined, 30);
     }});
     lay.run();
@@ -838,94 +855,136 @@ HTML_TEMPLATE = r"""<!doctype html>
   var c = DATA.meta.counts;
   var legend = document.getElementById('legend');
 
-  function liveTypeCounts() {{
-    var m = {{}};
-    cy.nodes().forEach(function (n) {{
-      var t = n.data('ntype');
-      if (t && t !== 'Annotation' && t !== 'TimeTick') m[t] = (m[t] || 0) + 1;
+  // Every row is read from the graph as drawn: its swatch from the style of an element it
+  // describes, its count from how many there are. A row appears only for what is on the
+  // graph, and anything no row describes is listed as such, so the legend can neither give a
+  // colour the graph does not draw nor leave a mark unexplained. (It once showed claims in a
+  // fixed blue, one Member's colour, while each claim was drawn in its author's.)
+  var NODE_ROWS = [
+    ['node[ntype="Assertion"][!external]', 'Assertion — a claim, in its author\'s colour'],
+    ['node[ntype="Assertion"][?external]', 'Assertion from another artifact — faded, in its author\'s colour'],
+    ['node[ntype="Ground"]', 'Ground — material offered as bearing on a claim'],
+    ['node[ntype="Source"]', 'Addressed content — what a Ground points at'],
+    ['node[ntype="Assumption"]', 'Assumption — granted, not addressed'],
+    ['node[ntype="External"]', 'External — an assertion in another Argument']
+  ];
+  var EDGE_ROWS = [
+    ['edge[rel="depends_on"]', 'depends_on — assertion dependency (backbone)'],
+    ['edge[rel="grounded_by"][kind="test"][!testimony]', 'grounded_by, with a criterion — offered as a TEST'],
+    ['edge[rel="grounded_by"][kind="evidential"][!testimony]', 'grounded_by, no criterion — material built on'],
+    ['edge[rel="grounded_by"][?testimony]', 'grounded_by another Argument\'s assertion — testimony'],
+    ['edge[rel="addresses"]', 'addresses — Ground &rarr; the content it names'],
+    ['edge[rel="assumes"]', 'assumes — rests on something not addressable'],
+    ['edge[rel="cites"]', 'cites — prose citation, never evidence (de-emphasised)']
+  ];
+  function onGraph(e) {{ var t = e.data('ntype'); return t !== 'Annotation' && t !== 'TimeTick'; }}
+  function shapeSvg(shape, fill, op, stroke, sw, dash, sop) {{
+    var pts = {{ 'vee': '-1,-1 0,-.333 1,-1 0,1', 'diamond': '0,-1 1,0 0,1 -1,0',
+      'cut-rectangle': '-.62,-1 .62,-1 1,-.62 1,.62 .62,1 -.62,1 -1,.62 -1,-.62',
+      'tag': '-1,-1 .25,-1 1,0 .25,1 -1,1' }};
+    var paint = ' fill="' + fill + '" fill-opacity="' + op + '" stroke="' + stroke + '" stroke-opacity="'
+      + (sop == null ? 1 : sop) + '" stroke-width="' + sw + '"' + (dash ? ' stroke-dasharray="' + dash + '"' : '')
+      + ' vector-effect="non-scaling-stroke"';
+    var body = pts[shape] ? '<polygon points="' + pts[shape] + '"' + paint + '/>'
+      : shape === 'ellipse' ? '<ellipse cx="0" cy="0" rx="1" ry="1"' + paint + '/>'
+      : '<rect x="-1" y="-1" width="2" height="2" rx="' + (shape === 'round-rectangle' ? 0.4 : 0) + '"' + paint + '/>';
+    return '<svg class="sws" width="22" height="15" viewBox="-1.3 -1.3 2.6 2.6" preserveAspectRatio="none" aria-hidden="true">' + body + '</svg>';
+  }}
+  function nodeSwatch(n) {{
+    var bs = n.style('border-style');
+    return shapeSvg(n.style('shape'), n.style('background-color'), n.style('background-opacity'),
+      n.style('border-color'), Math.max(1, Math.min(3, parseFloat(n.style('border-width')) || 1)),
+      bs === 'dashed' ? '3 2' : bs === 'dotted' ? '1 1.5' : '', n.style('border-opacity'));
+  }}
+  function edgeSwatch(e) {{
+    return '<span class="swl" style="border-top-color:' + e.style('line-color') + ';border-top-style:'
+      + e.style('line-style') + ';border-top-width:' + Math.max(1.5, Math.min(3, parseFloat(e.style('width')) || 1.5))
+      + 'px"></span>';
+  }}
+  // the element a row's swatch is read from: one showing no transient or marker state
+  function sample(els, plain) {{
+    var calm = els.filter(function (e) {{
+      return !e.hasClass('hi') && !e.hasClass('faded') && (!plain || (!e.hasClass('moved') && !e.data('flagged')));
     }});
-    return m;
+    return (calm.length ? calm : els).first();
+  }}
+  function rows(defs, all, isNode) {{
+    var html = '', seen = cy.collection();
+    defs.forEach(function (d) {{
+      var els = cy.$(d[0]).filter(onGraph);
+      seen = seen.union(els);
+      if (!els.length) return;
+      var one = sample(els, true);
+      html += '<span class="lg">' + (isNode ? nodeSwatch(one) : edgeSwatch(one)) + d[1] + ' (' + els.length + ')</span>';
+    }});
+    var rest = all.difference(seen), kinds = {{}};
+    rest.forEach(function (e) {{
+      var k = isNode ? (e.data('ntype') || 'node') : (e.data('rel') || 'edge');
+      (kinds[k] = kinds[k] || []).push(e);
+    }});
+    Object.keys(kinds).sort().forEach(function (k) {{
+      var one = cy.collection(kinds[k]).first();
+      html += '<span class="lg">' + (isNode ? nodeSwatch(one) : edgeSwatch(one)) + esc(k) + ' ('
+        + kinds[k].length + ')</span>';
+    }});
+    return html;
   }}
   function markersLegend() {{
-    var s = '<b>Markers</b>'
-      + '<span class="lg"><span class="sw" style="background:#e2e8f0;border:2.5px dotted #b45309"></span>not machine-verifiable (' + (c.unverifiable||0) + ')</span>';
-    if (c.findings) {{
-      s += '<span class="lg"><span class="sw" style="background:#fff7ed;border-left:3px solid #d97706"></span>'
-        + c.findings + ' checker finding' + (c.findings > 1 ? 's' : '') + ' &mdash; click a claim to read</span>';
-    }}
-    return s;
+    var s = '', flagged = cy.nodes('[?flagged]'), onClaims = 0;
+    flagged.forEach(function (n) {{ onClaims += (n.data('findings') || []).length; }});
+    var marks = [
+      [flagged, 'orange border — ' + onClaims + ' checker finding' + (onClaims === 1 ? '' : 's') + ' on '
+        + flagged.length + ' claim' + (flagged.length === 1 ? '' : 's') + '; click a claim to read'],
+      [cy.nodes('[?unverifiable]'), 'dotted border — not machine-verifiable: content outside the record'],
+      [cy.nodes('[?navigable]'), 'dashed border — has a page of its own; click to go there'],
+      [cy.nodes('.moved'), 'teal dashed border — a node you moved; Reset positions puts it back']
+    ];
+    marks.forEach(function (m) {{
+      var els = m[0].filter(onGraph);
+      if (els.length) s += '<span class="lg">' + nodeSwatch(sample(els, false)) + m[1] + ' (' + els.length + ')</span>';
+    }});
+    var loose = (c.findings || 0) - onClaims;
+    if (loose > 0) s += '<span class="lg">' + loose + ' checker finding' + (loose === 1 ? '' : 's')
+      + ' on the Argument as a whole, not on one claim</span>';
+    return s ? '<b>Markers</b>' + s : '';
   }}
-  function claimLegend() {{
-    return '<b>Nodes (' + c.nodes_total + ')</b>'
-      + lgNode('#2563eb','round-rectangle','Assertion — a claim (' + (c.nodes_by_type.Assertion||0) + ')')
-      + lgNode('#94a3b8','source','Addressed content — what a Ground points at (' + (c.source_nodes||0) + ')')
-      + lgNode('#d97706','vee','Assumption — granted, not addressed (' + (c.nodes_by_type.Assumption||0) + ')')
-      + lgNode('#9ca3af','round-rectangle','External — an assertion in another Argument (' + (c.nodes_by_type.External||0) + ')')
-      + '<b>Edges (' + c.edges_total + ')</b>'
-      + lgLine('#dc2626','solid','depends_on — assertion dependency (backbone)')
-      + lgLine('#16a34a','solid','grounded_by, with a criterion — offered as a TEST')
-      + lgLine('#64748b','dashed','grounded_by, no criterion — material built on')
-      + lgLine('#7c3aed','dashed','grounded_by another Argument\'s assertion — testimony')
-      + lgLine('#d97706','dotted','assumes — rests on something not addressable')
-      + lgLine('#475569','dotted','cites — prose citation, never evidence (de-emphasised)')
-      + markersLegend()
-      + memberLegend()
-      + '<div class="hint" style="margin-top:6px">'
-        + (c.folded_grounds||0)
-        + ' Ground(s) are folded into the claim and its edges. '
-        + (c.shared_source_count||0) + ' address(es) carry &ge;2 Grounds &mdash; agreement '
-        + 'between them is not independent corroboration. '
-        + ((DATA.meta.navigable_nodes||0) > 0
-            ? (DATA.meta.navigable_nodes + ' node(s) have a page of their own (dashed) &mdash; click to navigate. ')
-            : '')
-        + 'Use <i>Full graph</i> to see the Grounds uncollapsed.</div>';
+  function graphLegend(mode) {{
+    var nodes = cy.nodes().filter(onGraph), edges = cy.edges();
+    var hint = (mode === 'full')
+      ? 'Nothing is folded: a Ground sits directly on the assertion it bears on. Use <i>Claim map</i> to fold the Grounds back in.'
+      : (c.folded_grounds || 0) + ' Ground(s) are folded into the claim and its edges. '
+        + (c.shared_source_count || 0) + ' address(es) carry &ge;2 Grounds &mdash; agreement between them is not '
+        + 'independent corroboration. Use <i>Full graph</i> to see the Grounds uncollapsed.';
+    return '<b>Nodes (' + nodes.length + ')</b>' + rows(NODE_ROWS, nodes, true)
+      + '<b>Edges (' + edges.length + ')</b>' + rows(EDGE_ROWS, edges, false)
+      + markersLegend() + memberLegend()
+      + '<div class="hint" style="margin-top:6px">' + hint + '</div>';
   }}
-  function fullLegend() {{
-    var tc = liveTypeCounts();
-    return '<b>Nodes — every Object as authored (' + cy.nodes().length + ')</b>'
-      + lgNode('#9ca3af','round-rectangle','Assertion — a claim (' + (tc.Assertion||0) + ')')
-      + lgNode('#0d9488','ellipse','Ground — material offered as bearing on a claim (' + (tc.Ground||0) + ')')
-      + lgNode('#d97706','vee','Assumption — granted, not addressed (' + (tc.Assumption||0) + ')')
-      + lgNode('#94a3b8','source','Addressed content (' + (tc.Source||0) + ')')
-      + lgNode('#9ca3af','round-rectangle','External — an assertion elsewhere (' + (tc.External||0) + ')')
-      + '<b>Edges (' + cy.edges().length + ')</b>'
-      + lgLine('#16a34a','solid','grounded_by — assertion &rarr; Ground')
-      + lgLine('#0d9488','dashed','addresses — Ground &rarr; the content it names')
-      + lgLine('#d97706','dotted','assumes — assertion &rarr; assumption')
-      + lgLine('#dc2626','solid','depends_on')
-      + lgLine('#475569','dotted','cites')
-      + markersLegend()
-      + memberLegend()
-      + '<div class="hint" style="margin-top:6px">Nothing is folded. Little is hidden: '
-        + 'there is no Bearing layer, and a Ground sits directly on the assertion it bears on. '
-        + 'Use <i>Claim map</i> to fold the Grounds back in.</div>';
-  }}
-  function buildLegend(mode) {{ legend.innerHTML = (mode === 'full') ? fullLegend() : claimLegend(); }}
-  buildLegend('claim');
+  function buildLegend(mode) {{ legend.innerHTML = graphLegend(mode); }}
 
-  // Members present on this page: the review's author + owners of any external node.
+  // The Members whose colour is on the graph: the author of each node drawn in its author's
+  // colour. A node only recording whose artifact it points into (addressed content, drawn
+  // grey) puts no Member's colour on the graph, so it is not counted.
+  function rgb(hex) {{
+    var m = /^#?([0-9a-f]{{2}})([0-9a-f]{{2}})([0-9a-f]{{2}})$/i.exec(hex || '');
+    return m ? 'rgb(' + parseInt(m[1], 16) + ',' + parseInt(m[2], 16) + ',' + parseInt(m[3], 16) + ')' : '';
+  }}
   function memberLegend() {{
-    var mem = DATA.meta.members || {{}};
-    var keys = Object.keys(mem);
+    var mem = DATA.meta.members || {{}}, n = {{}};
+    cy.nodes().filter(onGraph).forEach(function (x) {{
+      var o = x.data('owner'), drawn = String(x.style('background-color')).replace(/\s+/g, '');
+      if (o && x.data('owner_color') && drawn === rgb(x.data('owner_color'))) n[o] = (n[o] || 0) + 1;
+    }});
+    var keys = Object.keys(n).sort();
     if (!keys.length) return '';
     var s = '<b>Members (' + keys.length + ')</b>';
-    keys.sort().forEach(function (h) {{
-      s += '<span class="lg"><span class="sw" style="border-radius:50%;background:' + mem[h] + '"></span>' + h + '</span>';
+    keys.forEach(function (h) {{
+      s += '<span class="lg"><span class="sw" style="border-radius:50%;background:' + (mem[h] || '#9ca3af')
+        + '"></span>' + esc(h) + ' (' + n[h] + ')</span>';
     }});
     return s;
   }}
-
-  function lgNode(color, shape, text) {{
-    var br = shape === 'ellipse' ? '50%' : '3px';
-    var extra = shape === 'source' ? 'border:1.2px solid #94a3b8;background:#e2e8f0;' : '';
-    return '<span class="lg"><span class="sw" style="background:' + color + ';border-radius:' + br + ';' + extra + '"></span>' + text + '</span>';
-  }}
-  function lgBorder(color, text) {{
-    return '<span class="lg"><span class="sw" style="background:#2563eb;border:3px solid ' + color + '"></span>' + text + '</span>';
-  }}
-  function lgLine(color, style, text) {{
-    return '<span class="lg"><span class="swl" style="border-top-color:' + color + ';border-top-style:' + style + '"></span>' + text + '</span>';
-  }}
+  buildLegend('claim');
 
   // ---- cross-artifact navigation ----
   // A "Go to" button (in the detail panel) deep-links to the target artifact's
@@ -990,6 +1049,60 @@ HTML_TEMPLATE = r"""<!doctype html>
     setExpanded(saved === '1', false);
     btn.addEventListener('click', function () {{
       setExpanded(!document.body.classList.contains('intro-expanded'), true);
+    }});
+  }})();
+
+  // The verdict pane's height, set by dragging its lower edge or with the arrow keys on it.
+  // Not remembered: verdicts differ in length, and a height kept from a short one would cut a
+  // long one short, so every page opens with the whole verdict shown (F6). Expand, and a
+  // double-click on the edge, put the pane back at its full height.
+  (function () {{
+    var pane = document.getElementById('intro'), bar = document.getElementById('introsplit');
+    if (!pane || !bar) {{ return; }}
+    var MIN = 40;
+    function current() {{ return Math.round(pane.getBoundingClientRect().height); }}
+    function setHeight(h) {{
+      if (h === null || h >= pane.scrollHeight - 1) {{
+        pane.style.maxHeight = '';
+        pane.classList.remove('sized');
+      }} else {{
+        pane.style.maxHeight = Math.max(MIN, Math.round(h)) + 'px';
+        pane.classList.add('sized');
+      }}
+      bar.setAttribute('aria-valuenow', String(current()));
+      bar.setAttribute('aria-valuemax', String(pane.scrollHeight));
+      requestAnimationFrame(function () {{ cy.resize(); }});
+    }}
+    bar.setAttribute('aria-valuemin', String(MIN));
+    bar.setAttribute('aria-valuenow', String(current()));
+    bar.setAttribute('aria-valuemax', String(pane.scrollHeight));
+    var startY = 0, startH = 0;
+    bar.addEventListener('pointerdown', function (e) {{
+      startY = e.clientY;
+      startH = current();
+      bar.classList.add('dragging');
+      if (bar.setPointerCapture) bar.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    }});
+    bar.addEventListener('pointermove', function (e) {{
+      if (bar.classList.contains('dragging')) setHeight(startH + (e.clientY - startY));
+    }});
+    function stop() {{ bar.classList.remove('dragging'); }}
+    bar.addEventListener('pointerup', stop);
+    bar.addEventListener('pointercancel', stop);
+    bar.addEventListener('dblclick', function () {{ setHeight(null); }});
+    bar.addEventListener('keydown', function (e) {{
+      var step = e.shiftKey ? 120 : 30;
+      if (e.key === 'ArrowUp') setHeight(current() - step);
+      else if (e.key === 'ArrowDown') setHeight(current() + step);
+      else if (e.key === 'Home') setHeight(MIN);
+      else if (e.key === 'End') setHeight(null);
+      else return;
+      e.preventDefault();
+    }});
+    var expand = document.getElementById('btn-intro');
+    if (expand) expand.addEventListener('click', function () {{
+      if (document.body.classList.contains('intro-expanded')) setHeight(null);
     }});
   }})();
   window.__cy = cy; // expose for headless/console verification
@@ -1639,6 +1752,14 @@ def _verdict_panel(meta, reading_href=None, has_prose=False):
     return "".join(out)
 
 
+#: The verdict pane's resize handle: a separator a reader drags, or moves with the arrow keys
+#: (Shift for bigger steps, Home for the smallest, End or a double-click for full height).
+INTRO_SPLIT = ('<div id="introsplit" role="separator" tabindex="0" aria-orientation="horizontal" '
+               'aria-controls="intro" aria-label="Height of the verdict pane: drag, or use the '
+               'arrow keys" title="Drag to resize the verdict pane; arrow keys work too; '
+               'double-click for full height"></div>')
+
+
 def render_claim_html(elements, meta, cytoscape_rel_path, intro_html="", reading_href=None):
     """`intro_html` is the Argument's own framing prose (its `description` and `text`);
     `reading_href` is its reading page, linked from the verdict pane."""
@@ -1656,7 +1777,7 @@ def render_claim_html(elements, meta, cytoscape_rel_path, intro_html="", reading
         created=_html.escape(meta["created"]),
         cyto_src=_html.escape(cytoscape_rel_path),
         graph_json=_json.dumps(payload, ensure_ascii=False),
-        intro_html=(f'<div id="intro">{intro_html}</div>' if intro_html else ''),
+        intro_html=(f'<div id="intro">{intro_html}</div>{INTRO_SPLIT}' if intro_html else ''),
     )
 
 

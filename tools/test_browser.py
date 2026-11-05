@@ -1017,6 +1017,14 @@ def case_s_lineage_lines_come_from_addresses(dists):
         bad.append("a link a longer chain implies is not listed under the graph")
     if "context, not evidence" not in text:
         bad.append("the page does not say a prose citation is context, not evidence")
+    # an arrowhead is a path inside <defs>; a rule hiding the links' fill must not reach it
+    for sels, body in _rules(text):
+        if any(re.search(r"svg\s+path", sel) for sel in sels) and "fill:none" in body.replace(" ", ""):
+            bad.append(f"'{', '.join(sorted(sels))}' hides the arrowheads' fill")
+    markers = re.findall(r'<marker id="ah-\w+"[^>]*><path [^>]*fill="(#[0-9a-f]{6})"', text)
+    if len(markers) != 3:
+        bad.append(f"the arrowhead markers are missing or have no fill: {markers}")
+    bad += _lineage_link_past_a_card()
 
     renamed_rec = dist.parent / "_lineage_renamed"
     new = renamed_copy(rec, renamed_rec)
@@ -1028,6 +1036,35 @@ def case_s_lineage_lines_come_from_addresses(dists):
         bad.append(f"after renaming: lines {_lines(text2, back)}, drawn {_drawn(text2, back)}")
     return (not bad, "Lineage lines and links come from addresses: the same under any names",
             bad)
+
+
+def _lineage_link_past_a_card():
+    """B cites A; C supersedes A and cites B. C follows B, and A -> C passes B in one lane,
+    so it must arc below the lane, not run behind B where it reads as A -> B -> C. E, a line
+    of its own, cites A: A -> E must leave through the gap between the lanes, not run behind
+    B and C."""
+    def art(n):
+        return {"artifact": {"name": n, "type": "Argument"}, "objects": [], "relationships": []}
+    links = {"B": [{"target": "A", "rel": "cites"}],
+             "C": [{"target": "A", "rel": "supersedes"}, {"target": "B", "rel": "cites"}],
+             "E": [{"target": "A", "rel": "cites"}]}
+    lin = browse.lineage([art(n) for n in "ABCE"], links)
+    nodes = {n: {"name": n, "title": f"Arg {n}", "opening": "", "grounds": 0, "tests": 0,
+                 "created": "", "member": "m", "color": "#999", "href": f"{n}.html",
+                 "map": f"{n}.html"} for n in "ABCE"}
+    page = T.render_lineage_html(lin, nodes)
+    bad = []
+    if lin["lines"] != [["A", "B", "C"], ["E"]]:
+        bad.append(f"a link past a card: lines {lin['lines']}, want [['A', 'B', 'C'], ['E']]")
+    if not re.search(r'<path data-from="A" data-to="E" [^>]*data-route="between"', page):
+        bad.append("A -> E, between lanes past B and C, does not leave through the gap")
+    below = re.search(r'<path data-from="A" data-to="C" [^>]*data-route="below"[^>]* d="M[\d.]+,'
+                      r'([\d.]+) C[\d.]+,([\d.]+)', page)
+    if not below or float(below.group(2)) <= float(below.group(1)):
+        bad.append("A -> C, past B in one lane, does not arc below the lane")
+    if re.search(r'<path data-from="(A" data-to="B|B" data-to="C)"[^>]*data-route', page):
+        bad.append("a link between neighbouring cards was routed over the lane")
+    return bad
 
 
 def case_t_contents_filters_and_searches(dists):
@@ -1101,6 +1138,13 @@ def case_u_wide_tables_put_cited_columns_first(dists):
     small = T.csv_table("key,a,b\nk1,1,2", method="s")
     if "tabletools" in small:
         bad.append("an uncited table of 3 columns grew controls")
+    # two tables under one Content method share an id, so each control must find its own
+    # table by position: the controls sit right before their table's wrapper
+    two = out + T.csv_table("\n".join(rows), method="t", cited=cited)
+    if two.count("<div class='tabletools'>") != 2 or len(re.findall(
+            r"<div class='tabletools'>.*?</div></details></div><div class='tablewrap'>", two,
+            re.S)) != 2:
+        bad.append("a table's controls do not sit right before its own table")
     checked = 0
     for dist in dists.values():
         for p in dist.glob("*.html"):
@@ -1112,6 +1156,9 @@ def case_u_wide_tables_put_cited_columns_first(dists):
                          for sels, body in _rules(page))
             if not sticky or "scrollPaddingLeft" not in page:
                 bad.append(f"{p.name}: the key column is not fixed, or a cell link lands under it")
+                break
+            if "tableAfter(b)" not in page or "getElementById(b.dataset.for)" in page:
+                bad.append(f"{p.name}: a table control finds its table by an id two may share")
                 break
     return (not bad, f"cited columns first, ids kept, picker over 12; {checked} page(s) with a "
             "table keep its key in view", bad)

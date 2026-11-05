@@ -2115,7 +2115,8 @@ LINEAGE_TEMPLATE = """<!doctype html>
   .graphwrap {{ overflow-x:auto; padding:0 16px; }}
   .graph {{ position:relative; margin:8px 0 4px; }}
   .graph svg {{ position:absolute; left:0; top:0; pointer-events:none; }}
-  .graph svg path {{ pointer-events:stroke; fill:none; }}
+  /* the links only: an arrowhead is a path too, inside <defs>, and must keep its fill */
+  .graph svg > path {{ pointer-events:stroke; fill:none; }}
   .lane {{ position:absolute; font-size:11px; font-weight:650; color:var(--muted);
            text-transform:uppercase; letter-spacing:.05em; }}
   a.lnode {{ position:absolute; display:block; overflow:hidden; background:var(--panel);
@@ -2198,7 +2199,7 @@ def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=
     col = {n: i for i, n in enumerate(lin["args"])}
     line_of = lin["line_of"]
     width = pad * 2 + max(1, len(col)) * (nw + gx) - gx
-    height = pad + len(lin["lines"]) * (nh + gy)
+    height = pad + len(lin["lines"]) * (nh + gy) + 16     # room for an arc under the last lane
     xy = {n: (pad + col[n] * (nw + gx), gy - 6 + line_of[n] * (nh + gy)) for n in col}
     anchor = {n: "a-" + _re.sub(r"[^A-Za-z0-9_-]", "_", n) for n in col}
     rank = {k: i for i, k in enumerate(LINEAGE_LOOK)}
@@ -2222,15 +2223,38 @@ def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=
     edges = []
     for later, earlier in sorted(lin["drawn"], key=lambda e: (col[e[0]], col[e[1]])):
         kinds = lin["links"][(later, earlier)]
-        (x1, y1), (x2, y2) = xy[earlier], xy[later]
-        x1, y1, y2 = x1 + nw, y1 + nh / 2, y2 + nh / 2
-        dx = max(24, (x2 - x1) / 2)
+        (ax, ay), (bx, by) = xy[earlier], xy[later]
+        lane = line_of[later]
+        # A link drawn straight across from card side to card side would run behind any card
+        # of its lanes in the columns between, and read as links through it. Within one lane
+        # it arcs below the lane instead, card bottom to card bottom, clear of the next lane's
+        # label; between lanes it leaves through the gap, from the facing edges of its cards.
+        passed = any(line_of[n] in (line_of[earlier], lane)
+                     for n in col if col[earlier] < col[n] < col[later])
+        below = passed and line_of[earlier] == lane
+        between = passed and not below
+        if below:
+            x1, x2, low = ax + nw / 2, bx + nw / 2, ay + nh + (gy - 18)
+            d = (f"M{x1:.0f},{ay + nh:.0f} C{x1:.0f},{low:.0f} {x2:.0f},{low:.0f} "
+                 f"{x2:.0f},{by + nh + 2:.0f}")
+        elif between:
+            down = lane > line_of[earlier]
+            x1, x2 = ax + nw / 2, bx + nw / 2
+            y1, y2 = (ay + nh, by - 2) if down else (ay, by + nh + 2)
+            mid = (y1 + y2) / 2
+            d = f"M{x1:.0f},{y1:.0f} C{x1:.0f},{mid:.0f} {x2:.0f},{mid:.0f} {x2:.0f},{y2:.0f}"
+        else:
+            x1, y1, x2, y2 = ax + nw, ay + nh / 2, bx, by + nh / 2
+            dx = max(24, (x2 - x1) / 2)
+            d = (f"M{x1:.0f},{y1:.0f} C{x1 + dx:.0f},{y1:.0f} {x2 - dx:.0f},{y2:.0f} "
+                 f"{x2 - 2:.0f},{y2:.0f}")
         cross = "" if follows.get(later) == earlier else " cross"
+        route = ' data-route="below"' if below else ' data-route="between"' if between else ""
         tip = f'{nodes[later]["title"]} — {named(kinds)} — {nodes[earlier]["title"]}'
         edges.append(f'<path data-from="{esc(earlier)}" data-to="{esc(later)}" '
-                     f'class="lk-{strongest(kinds)}{cross}" marker-end="url(#ah-'
-                     f'{strongest(kinds)})" d="M{x1:.0f},{y1:.0f} C{x1 + dx:.0f},{y1:.0f} '
-                     f'{x2 - dx:.0f},{y2:.0f} {x2 - 2:.0f},{y2:.0f}"><title>{esc(tip)}</title></path>')
+                     f'class="lk-{strongest(kinds)}{cross}"{route} '
+                     f'marker-end="url(#ah-{strongest(kinds)})" d="{d}">'
+                     f'<title>{esc(tip)}</title></path>')
     markers = "".join(
         f'<marker id="ah-{k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
         f'markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
@@ -2852,8 +2876,14 @@ ARTIFACT_TEMPLATE = """<!doctype html>
       cs.forEach(function (c) {{ tr.appendChild(c); }});
     }});
   }}
+  // A control's table is the one right after it. Two tables share an id when properties
+  // share one Content method, so the id cannot be trusted to find the right one.
+  function tableAfter(el) {{
+    var tools = el.closest('.tabletools'), wrap = tools && tools.nextElementSibling;
+    return wrap ? wrap.querySelector('table.data') : null;
+  }}
   [].forEach.call(document.querySelectorAll('button.colorder'), function (b) {{
-    var table = document.getElementById(b.dataset.for);
+    var table = tableAfter(b);
     if (!table) return;
     var shown = table.dataset.order.split(',').map(Number);
     var stored = shown.slice().sort(function (x, y) {{ return x - y; }});
@@ -2864,7 +2894,7 @@ ARTIFACT_TEMPLATE = """<!doctype html>
     }});
   }});
   [].forEach.call(document.querySelectorAll('details.colpick'), function (d) {{
-    var table = document.getElementById(d.dataset.for), n = d.querySelector('.cp-n');
+    var table = tableAfter(d), n = d.querySelector('.cp-n');
     if (!table) return;
     d.addEventListener('change', function (e) {{
       var box = e.target;

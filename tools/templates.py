@@ -1574,6 +1574,9 @@ def _verdict_panel(meta, reading_href=None, has_prose=False):
         out.append(f'<a href="{_html.escape(reading_href)}"><b>Read this Argument as a document '
                    '&rarr;</b></a><span class="hint">verdict, purpose, rationale and every Ground '
                    'in one place</span>')
+        n = meta.get("cited_by")
+        if n:
+            out.append(f'<a href="{_html.escape(reading_href)}#cited-by">cited by {n}</a>')
     if purpose or rationale or has_prose:
         out.append('<button type="button" id="btn-intro" aria-expanded="false" aria-controls="intro" '
                    'title="Open every section and show this pane at its full height">Expand</button>')
@@ -1615,12 +1618,18 @@ def render_claim_html(elements, meta, cytoscape_rel_path, intro_html="", reading
     )
 
 
-def render_overview_html(elements, meta, cytoscape_rel_path, corpus_title="community record"):
+#: The header link to the Rounds page, on the pages that link to it: only when the record has
+#: a ResearchGoal, because a community without goals has no rounds to show (plan, risks).
+ROUNDS_LINK = '<a class="uplink" href="rounds.html">rounds &rarr;</a> &middot; '
+
+
+def render_overview_html(elements, meta, cytoscape_rel_path, corpus_title="community record",
+                         has_rounds=False):
     return OVERVIEW_TEMPLATE.format(
         cyto_src=_html.escape(cytoscape_rel_path),
         corpus_title=_html.escape(corpus_title),
         uplink='<a class="uplink" href="contents.html">contents &rarr;</a> &middot; ',
-        exlink="",
+        exlink=ROUNDS_LINK if has_rounds else "",
         graph_json=_json.dumps({"elements": elements, "meta": meta}, ensure_ascii=False),
     )
 
@@ -1660,7 +1669,7 @@ CONTENTS_TEMPLATE = """<!doctype html>
 <header>
   <h1>Symposium community &middot; {corpus_title}</h1>
   <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
-  Everything in the record, newest first within each type. An <b>Argument</b> is where a claim is
+  {roundslink}Everything in the record, newest first within each type. An <b>Argument</b> is where a claim is
   made and judged; its verdict opens below it. <b>Data</b> and <b>Model</b> hold what an Argument
   can stand on. <b>Analysis</b>, <b>Message</b> and <b>NonGroundable</b> are non-groundable by
   type: they may be read and cited in prose and may never be used as evidence.</div>
@@ -1726,6 +1735,10 @@ READING_TEMPLATE = """<!doctype html>
   h3.evh {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
             margin:28px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px;
             font-weight:650; }}
+  main > h2#cited-by {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em;
+                        color:var(--muted); margin:28px 0 8px; border-bottom:1px solid var(--line);
+                        padding-bottom:5px; }}
+{cited_css}
 </style>
 </head>
 <body>
@@ -1752,10 +1765,10 @@ def render_reading_html(title, byline, map_href, body):
     a scientist came to read and needs a page that simply scrolls."""
     return READING_TEMPLATE.format(
         title=_html.escape(title), byline=_html.escape(byline),
-        map_href=_html.escape(map_href), body=body)
+        map_href=_html.escape(map_href), body=body, cited_css=CITED_CSS)
 
 
-def render_contents_html(entries, corpus_title="community record"):
+def render_contents_html(entries, corpus_title="community record", has_rounds=False):
     """A plain reading list of the record.
 
     The overview is a reference graph, which answers "how does this record hang together"
@@ -1789,7 +1802,134 @@ def render_contents_html(entries, corpus_title="community record"):
                     extra=extra, name=_html.escape(e["name"]), verdict=verdict))
         out.append(f"<h2>{_html.escape(t)} ({len(rows)})</h2>" + "".join(items))
     return CONTENTS_TEMPLATE.format(corpus_title=_html.escape(corpus_title),
-                                    sections="".join(out))
+                                    sections="".join(out),
+                                    roundslink=ROUNDS_LINK if has_rounds else "")
+
+
+#: The grouping of a Rounds column and of a goal page's "Serving this goal": the goal, the
+#: plan, the material, the work, what the work produced, the judgment, the talk. A Data
+#: artifact whose `produced_by` names something is a result; one without is imported material.
+ROUND_GROUPS = [("ResearchGoal", "Goals"), ("AnalysisPlan", "Plans"),
+                ("ScientificPublication", "Publications"), ("Data", "Data"),
+                ("Analysis", "Analyses"), ("result", "Results"), ("Model", "Models"),
+                ("Argument", "Arguments"), ("Message", "Messages")]
+
+
+def grouped_entries_html(entries):
+    """A goal's artifacts as groups of entries, in ROUND_GROUPS order, then any other type by
+    name. Each entry: {group, title, href, member, color, created, verdict, shared}."""
+    known = [g for g, _ in ROUND_GROUPS]
+    labels = dict(ROUND_GROUPS)
+    order = known + sorted({e["group"] for e in entries} - set(known))
+    out = []
+    for g in order:
+        rows = [e for e in entries if e["group"] == g]
+        if not rows:
+            continue
+        items = []
+        for e in rows:
+            shared = ""
+            if e.get("shared"):
+                also = ", ".join(e["shared"])
+                shared = (f' &middot; <span class="shared" title="also serves {_html.escape(also)}">'
+                          f'shared &middot; also {_html.escape(also)}</span>')
+            verdict = (f'<div class="rverdict">{_html.escape(e["verdict"])}</div>'
+                       if e.get("verdict") else "")
+            items.append(
+                '<li class="ritem"><a href="{href}">{title}</a><div class="rmeta">'
+                '<span class="mbadge" style="background:{color}"></span>{member} &middot; '
+                '{created}{shared}</div>{verdict}</li>'.format(
+                    href=_html.escape(e["href"]), title=_html.escape(e["title"]),
+                    color=_html.escape(e.get("color", "#9ca3af")),
+                    member=_html.escape(e["member"]), created=_html.escape(e["created"][:16]),
+                    shared=shared, verdict=verdict))
+        out.append(f'<div class="rgroup"><h3>{_html.escape(labels.get(g, g))} ({len(rows)})</h3>'
+                   f'<ul>{"".join(items)}</ul></div>')
+    return "".join(out) or '<p class="hint">Nothing in the record names it yet.</p>'
+
+
+#: Entries in a Rounds column and on a goal page, shared by both pages.
+ROUND_CSS = """
+  .rgroup h3 { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+               margin:12px 0 4px; font-weight:650; }
+  .rgroup ul { list-style:none; margin:0; padding:0; }
+  .ritem { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+           padding:7px 10px; margin-bottom:5px; font-size:13px; line-height:1.35; }
+  .ritem a { color:var(--accent); text-decoration:none; font-weight:600; }
+  .ritem a:hover { text-decoration:underline; }
+  .rmeta { font-size:11px; color:var(--muted); margin-top:3px; }
+  .rverdict { font-size:12px; line-height:1.45; margin-top:5px; padding-left:8px;
+              border-left:3px solid var(--line); color:#374151; }
+  .shared { font-weight:650; color:#7c3aed; }
+"""
+
+
+ROUNDS_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symposium community — rounds</title>
+<style>
+  :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
+  * {{ box-sizing:border-box; }}
+  html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+               color:var(--ink); background:var(--bg); font-size:14px; }}
+  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
+  header .sub {{ font-size:12px; color:var(--muted); line-height:1.5; }}
+  a.uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
+  .mbadge {{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px;
+             vertical-align:middle; border:1px solid rgba(0,0,0,.15); }}
+  .hint {{ font-size:12px; color:var(--muted); }}
+  /* One column per goal, side by side, scrolled sideways when they do not fit: the point of the
+     page is to read the rounds against each other. Focusable so the keyboard can scroll it. */
+  .rounds {{ display:grid; grid-auto-flow:column; grid-auto-columns:minmax(260px, 1fr);
+             gap:14px; padding:14px 16px 40px; overflow-x:auto; align-items:start; }}
+  .rounds:focus-visible {{ outline:2px solid var(--accent); outline-offset:-2px; }}
+  .rcol {{ min-width:0; }}
+  .rcol > h2 {{ font-size:14px; margin:0; line-height:1.35; }}
+  .rcol > h2 a {{ color:var(--ink); text-decoration:none; }}
+  .rcol > h2 a:hover {{ text-decoration:underline; }}
+  .rnum {{ display:block; font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+           color:var(--muted); font-weight:650; margin-bottom:2px; }}
+  .rcol.corpus > h2 {{ color:var(--muted); }}
+  .rcount {{ font-size:12px; color:var(--muted); margin:3px 0 6px;
+             border-bottom:1px solid var(--line); padding-bottom:6px; }}
+{round_css}
+</style>
+</head>
+<body>
+<header>
+  <h1>Symposium community &middot; {corpus_title} &middot; rounds</h1>
+  <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
+  <a class="uplink" href="contents.html">contents</a> &middot;
+  One column per <b>ResearchGoal</b>, oldest first, holding the artifacts whose
+  <code>serves_goals</code> name it, grouped by type. An artifact naming several goals is in each
+  of their columns, marked <span class="shared">shared</span>. The first column holds what names
+  no goal: the corpus the rounds draw on, the goals themselves, and anything unassigned.</div>
+</header>
+<main class="rounds" tabindex="0" aria-label="Research rounds, one column per goal">{columns}</main>
+</body>
+</html>
+"""
+
+
+def render_rounds_html(columns, corpus_title="community record"):
+    """The Rounds page (R3): `columns` = [{label, title, href, count, entries, corpus}]."""
+    out = []
+    for c in columns:
+        head = (f'<a href="{_html.escape(c["href"])}">{_html.escape(c["title"])}</a>'
+                if c.get("href") else _html.escape(c["title"]))
+        out.append(
+            f'<section class="rcol{" corpus" if c.get("corpus") else ""}" '
+            f'aria-label="{_html.escape(c["label"])}"><h2><span class="rnum">'
+            f'{_html.escape(c["label"])}</span>{head}</h2>'
+            f'<div class="rcount">{c["count"]} artifact{"" if c["count"] == 1 else "s"}'
+            f'{(" &middot; " + _html.escape(c["created"][:16])) if c.get("created") else ""}</div>'
+            + grouped_entries_html(c["entries"]) + "</section>")
+    return ROUNDS_TEMPLATE.format(corpus_title=_html.escape(corpus_title),
+                                  columns="".join(out), round_css=ROUND_CSS)
 
 
 # --------------------------------------------------------------------------- #
@@ -1840,14 +1980,18 @@ def _mark_grounded(escaped, spans):
     `text_span` address resolves to. Two things fall out of this that are worth
     having: a Ground deep-links to the exact sentence, and an imported source shows
     at a glance which of it is load-bearing and which was never used."""
-    for quote, citer in spans or []:
+    for item in spans or []:
+        # (quote, citers) or, from the compiler, (quote, citers, row id in "Cited by", count)
+        quote, citer = item[0], item[1]
+        href, count = (item[2], item[3]) if len(item) > 3 else (None, 1)
         needle = _html.escape(quote)
         if needle and needle in escaped:
             anchor = _html.escape(f'text_span.quote="{quote}"')
+            tip = _html.escape(f"Cited by {citer}")
+            badge = (f'<a class="cmark" href="#{_html.escape(href)}" title="{tip}" '
+                     f'aria-label="{tip}">{count}</a>' if href else "")
             escaped = escaped.replace(
-                needle,
-                f'<mark id="{anchor}" title="grounded on by {_html.escape(citer)}">'
-                f'{needle}</mark>', 1)
+                needle, f'<mark id="{anchor}" title="{tip}">{needle}</mark>{badge}', 1)
     return escaped
 
 
@@ -1905,7 +2049,19 @@ def md_to_html(md, pages=None, spans=None):
     return "".join(out)
 
 
-def csv_table(text, max_rows=None, method="csv"):
+def _cited_cell(anchor, cited):
+    """(class attribute, badge) for an element whose id is `anchor`: a mark when a Ground on
+    this page's "Cited by" list addresses it, else nothing."""
+    entries = (cited or {}).get(anchor)
+    if not entries:
+        return "", ""
+    tip = _html.escape("Cited by " + "; ".join(t for _i, t in entries))
+    return (' class="cited"',
+            f'<a class="cmark" href="#{_html.escape(entries[0][0])}" title="{tip}" '
+            f'aria-label="{tip}">{len(entries)}</a>')
+
+
+def csv_table(text, max_rows=None, method="csv", cited=None):
     """Render an embedded CSV property as a table, with each cell carrying the id a
     `csv` address resolves to — so a Ground's reference deep-links straight to the cell
     it names, and a reader can check the quote against the number.
@@ -1914,7 +2070,11 @@ def csv_table(text, max_rows=None, method="csv"):
     ordinary in these imports — `"19113 genes per arm, identifier sets identical bar one"`
     is one cell of one survey — and splitting it in two shifts every cell to its right by a
     column, so the anchors this function writes would deep-link a Ground to the wrong
-    value while looking perfectly correct."""
+    value while looking perfectly correct.
+
+    Rows and columns carry ids too, `<method>.row=<key>` and `<method>.col=<name>`, because a
+    Ground may address a whole row or column. `cited` (anchor -> the Grounds addressing it)
+    marks each cell, row and column a Ground on the page's "Cited by" list cites."""
     src = (text or "").replace("\r\n", "\n")
     try:
         rows = [r for r in _csv.reader(_io.StringIO(src)) if any(c.strip() for c in r)]
@@ -1929,12 +2089,17 @@ def csv_table(text, max_rows=None, method="csv"):
     for r in rows[1:limit + 1]:
         cells = [c.strip() for c in r]
         rk = cells[0] if cells else ""
-        tds = "".join(
-            '<td id="{}">{}</td>'.format(
-                _html.escape(f"{method}.row={rk}&col={hdr[i]}" if i < len(hdr) else ""),
-                _html.escape(c))
-            for i, c in enumerate(cells))
-        body.append(f"<tr>{tds}</tr>")
+        row_cls, row_badge = _cited_cell(f"{method}.row={rk}", cited)
+        tds = []
+        for i, c in enumerate(cells):
+            anchor = f"{method}.row={rk}&col={hdr[i]}" if i < len(hdr) else ""
+            cls, badge = _cited_cell(anchor, cited)
+            if i == 0:
+                badge += row_badge
+            cell_id, value = _html.escape(anchor), _html.escape(c)
+            tds.append(f'<td id="{cell_id}"{cls}>{value}{badge}</td>')
+        body.append('<tr id="{}"{}>{}</tr>'.format(
+            _html.escape(f"{method}.row={rk}"), row_cls, "".join(tds)))
     # Every row is rendered by default. A truncated table silently breaks the one thing
     # these ids exist for: a Ground addressing row 400 of a 714-row table would resolve in
     # the validator and land the reader at the top of the page. What bounds the size here
@@ -1942,7 +2107,11 @@ def csv_table(text, max_rows=None, method="csv"):
     more = (f"<tr><td colspan='{len(hdr)}' class='hint'>… {len(rows) - 1 - limit} further row(s) "
             "not shown; an address into them will not resolve on this page</td></tr>"
             ) if len(rows) - 1 > limit else ""
-    head = "".join(f"<th>{_html.escape(c)}</th>" for c in hdr)
+    head = ""
+    for c in hdr:
+        cls, badge = _cited_cell(f"{method}.col={c}", cited)
+        head += '<th id="{}"{}>{}{}</th>'.format(
+            _html.escape(f"{method}.col={c}"), cls, _html.escape(c), badge)
     return (f"<p class='hint'>Addressed as <code>#{_html.escape(method)}"
             f".row=&lt;{_html.escape(key)}&gt;"
             f"&amp;col=&lt;column&gt;</code></p>"
@@ -2088,6 +2257,38 @@ another artifact. <b>Click a node or an edge</b> for every property its author w
 </script>"""
 
 
+#: "Cited by" and the marks on cited content (R1, R2), shared by artifact and reading pages. A
+#: cited cell is tinted AND carries a numbered link, so colour is never the only sign (N6).
+CITED_CSS = """
+  td.cited, th.cited { background:#ecfdf5; box-shadow:inset 0 -2px 0 #16a34a; }
+  tr.cited > td { background:#f0fdf4; }
+  h2.cited { color:#166534; }
+  .cmark { display:inline-block; margin-left:5px; padding:0 6px; border-radius:8px; font-size:10px;
+           font-weight:650; line-height:15px; color:#fff; background:#15803d; text-decoration:none;
+           vertical-align:1px; text-transform:none; letter-spacing:0; white-space:nowrap; }
+  .cmark:hover { background:#166534; }
+  .cmark:focus-visible { outline:2px solid #1d4ed8; outline-offset:1px; }
+  table.data tr:target > td, h2:target { background:#fef3c7; }
+  h3.cbh { font-size:13px; margin:16px 0 2px; color:var(--ink); }
+  table.citedby { border-collapse:collapse; width:100%; table-layout:fixed; font-size:13px;
+                  background:var(--panel); border:1px solid var(--line); margin:4px 0; }
+  table.citedby th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+                     color:var(--muted); padding:6px 10px; border-bottom:1px solid var(--line); }
+  table.citedby td { vertical-align:top; padding:7px 10px; border-bottom:1px solid var(--line);
+                     overflow-wrap:anywhere; line-height:1.45; }
+  table.citedby th:nth-child(1) { width:30%; }
+  table.citedby th:nth-child(3) { width:22%; }
+  table.citedby th:nth-child(4) { width:12%; }
+  table.citedby tr:target td { background:#fef9c3; }
+  ul.citedby { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+               padding:8px 12px 8px 30px; margin:4px 0; font-size:13px; line-height:1.45; }
+  ul.citedby li { margin:5px 0; }
+  .badge { display:inline-block; font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+           border:1px solid var(--line); border-radius:9px; padding:0 7px; color:var(--muted); }
+  .badge.test { border-color:#16a34a; color:#166534; background:#f0fdf4; font-weight:650; }
+"""
+
+
 ARTIFACT_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
@@ -2100,6 +2301,10 @@ ARTIFACT_TEMPLATE = """<!doctype html>
   html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
                color:var(--ink); background:var(--bg); }}
   header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }}
+  /* The header is sticky, so a link to a place on this page (a Ground's row or cell, Cited by,
+     a mark's badge) would land under it. This keeps the target below a one-line header; the
+     page script below sizes it to the header as it stands. */
+  html {{ scroll-padding-top:68px; }}
   header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
   header .sub {{ font-size:12px; color:var(--muted); }}
   .uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
@@ -2171,6 +2376,8 @@ ARTIFACT_TEMPLATE = """<!doctype html>
   mark {{ background:#dcfce7; border-bottom:2px solid #16a34a; padding:1px 0; }}
   mark:target {{ background:#fef08a; border-bottom-color:#d97706; }}
   ul {{ padding-left:20px; }}
+{cited_css}
+{round_css}
 </style>
 </head>
 <body>
@@ -2187,6 +2394,19 @@ ARTIFACT_TEMPLATE = """<!doctype html>
 <script src="{cyto_src}"></script>
 <script src="vendor/cytoscape-svg.js"></script>
 <script>
+/* Keep link targets clear of the sticky header: size the scroll padding to the header, which
+   grows when a long title wraps, and re-place a target the page was opened at, since the
+   browser scrolled to it before this ran. */
+(function () {{
+  var header = document.querySelector('header'), root = document.documentElement;
+  function pad() {{ root.style.scrollPaddingTop = (header.offsetHeight + 12) + 'px'; }}
+  pad();
+  window.addEventListener('resize', pad);
+  var id = null;
+  try {{ id = decodeURIComponent(location.hash.slice(1)); }} catch (e) {{ /* malformed */ }}
+  var target = id && document.getElementById(id);
+  if (target) target.scrollIntoView();
+}})();
 /* Live reload while the record is growing. serve.py answers /__build with the current
    build number; a static host does not, and the fetch simply fails and stops. Nothing
    about the page depends on this — the compiled HTML is complete on its own. */

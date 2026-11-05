@@ -9,8 +9,9 @@ every data interaction runs the `symposium-data` CLI (R-I1).
     publish [--role <role>] <artifact.json>
                                            submit an artifact to the gate (`--check`: validate only)
     validate <artifact.json>               validate only: `publish --check`
-    sync [--watch]                         bring ./record, this session's copy of the record, up to date;
+    sync [--watch|--messages]              bring ./record, this session's copy of the record, up to date;
                                            list the gate's replies and the Messages addressed to you
+                                           (`--messages`: all of them, newest first)
     gate [--dry-run|--verify|--rebuild|--watch]
                                            admins: decide the submissions waiting in inbox
     serve [<record dir>] [--port N]        browse ./record (or a record dir), rebuilt as it changes

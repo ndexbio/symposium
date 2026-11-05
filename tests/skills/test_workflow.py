@@ -289,6 +289,23 @@ def test_setup_and_publish_list_a_message_waiting_for_you(suite, admin_dir, cli,
     assert code == 0 and "message for you" not in out, out
 
 
+def test_sync_messages_lists_every_message_to_you_newest_first(suite, admin_dir, cli):
+    # `sync --messages` lists them all again, the one already listed included, and marks
+    # `new` only the one no command had listed yet
+    lyra = enroll(cli, admin_dir, "lyra")
+    vega = enroll(cli, admin_dir, "vega")
+    send(suite, cli, admin_dir, lyra, message(lyra, "lyra", "first", ["@vega"]))
+    assert tool(suite, vega, "sync.py")[0] == 0  # lists the first
+    send(suite, cli, admin_dir, lyra, message(lyra, "lyra", "second", ["@vega"]))
+
+    code, out = tool(suite, vega, "sync.py", "--messages")
+    assert code == 0, out
+    lines = [line.strip() for line in out.splitlines() if "from @lyra" in line]
+    assert len(lines) == 2, out
+    assert lines[0].startswith("new") and "(@lyra_msg_second_v1)" in lines[0], out
+    assert not lines[1].startswith("new") and "(@lyra_msg_first_v1)" in lines[1], out
+
+
 def test_an_address_to_a_member_who_has_not_published_resolves(suite, admin_dir, cli):
     # vega is on the roster and invited, but has never published or even joined: `@vega` must
     # still resolve in `publish --check`, through the live roster, as it will at the gate

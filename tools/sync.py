@@ -16,8 +16,9 @@ Two things make this simple, and both come from the specification:
 Run it as `/symposium sync`, in the session's working directory: the context there says which
 community, and `./record` beside it is the copy it keeps.
 
-  python sync.py            # one pass
-  python sync.py --watch    # a pass every SYMPOSIUM_POLL seconds (default 30)
+  python sync.py              # one pass
+  python sync.py --messages   # one pass, then every Message addressed to you, newest first
+  python sync.py --watch      # a pass every SYMPOSIUM_POLL seconds (default 30)
 
 `--watch` runs until stopped, with no time limit of its own: run it in the background. ctrl-c,
 SIGTERM or (Windows) CTRL_BREAK stops it within a second, with exit code 0, even mid-pass. A restart
@@ -38,6 +39,9 @@ publish runs nothing but `setup` and `publish`; when those two synced without li
 Message waiting for it reached its copy of the record and was never shown to it. The gate's
 pass is the one that lists nothing: it applies a Message and leaves it for the member's next
 listing. `.sync_state.json` keeps the names already listed, so a restart lists nothing twice.
+
+`sync --messages` lists them all again, newest first, marking `new` each one not listed before:
+a Message is an artifact in the record, so it can be found again long after it was first shown.
 
 Writes `manifest.json` into the copy: a build counter plus the dirty set, recording what
 changed on each pass.
@@ -148,6 +152,8 @@ class Sync:
         # `publish` and `setup`, quiet about everything else, which list the pass's `messages`
         # themselves. Only what is listed is marked; the gate's pass lists nothing.
         self.lists_messages = (not quiet) if lists_messages is None else lists_messages
+        # and whether the pass prints them itself: only when the caller left it to the pass
+        self.prints_messages = lists_messages is None and not quiet
         self.members = set()  # fetched live on every pass
         self.handle = None  # this session's own handle, read once from its context
 
@@ -304,8 +310,9 @@ class Sync:
                      f"{len(dirty | {'index'})} page(s) dirty")
         # last, so the lines that ask something of this member are the ones left on screen
         messages = self.messages(held, state)
-        for m in messages:
-            self.say(f"  {message_line(m)}")
+        if self.prints_messages:
+            for m in messages:
+                self.say(f"  {message_line(m)}")
         self.mirror.write_state(STATE, state)
         return {
             "added": added,
@@ -316,14 +323,49 @@ class Sync:
         }
 
 
+def list_messages(sync):
+    """`sync --messages`: a pass, then every Message addressed to you, newest first, each one
+    not listed to you before marked `new`. -> exit code (1 when the server could not be reached;
+    the list is then read from your copy as it stands).
+
+    The plain pass lists a Message once and never again, which is right for noticing one and
+    wrong for finding it a week later. This lists them all, from the copy, which holds every
+    one: Messages are artifacts in the record, not notifications that expire."""
+    before = set(sync.load_state()["messages"])
+    result = sync.once()
+    mine = messages_for(sync.mirror.load(), sync.me())
+    if result is None:
+        print("  Listing the Messages in your copy as it stands.")
+    if not mine:
+        print("  no Message in your copy of the record is addressed to you")
+        return 1 if result is None else 0
+    fresh = sum(1 for h in mine if h.get("name") not in before)
+    print(f"  {len(mine)} Message(s) addressed to you, newest first"
+          + (f"; {fresh} new since they were last listed:" if fresh else ":"))
+    for h in reversed(mine):
+        mark = "new" if h.get("name") not in before else "   "
+        when = (h.get("created") or "")[:16].replace("T", " ")
+        m = {"name": h["name"], "from": h.get("published_by") or "?",
+             "title": h.get("title") or "(untitled)"}
+        print(f"  {mark}  {when}  {message_line(m)[len('message for you '):]}")
+    return 1 if result is None else 0
+
+
 def main(argv):
-    sync = Sync()
+    if "--messages" in argv and "--watch" in argv:
+        print("! --messages lists once; run `/symposium sync --watch` on its own to keep watching")
+        return 2
+    # with --messages this command lists the Messages itself, all of them, after the pass
+    sync = Sync(lists_messages=True if "--messages" in argv else None)
     try:
         sync.data.context()  # local: with none, the CLI's message names setup and bootstrap
     except DataError as e:
         print(f"! {e}")
         return 1
     sync.mirror.root.mkdir(parents=True, exist_ok=True)
+
+    if "--messages" in argv:
+        return list_messages(sync)
 
     if "--watch" not in argv:
         result = sync.once()

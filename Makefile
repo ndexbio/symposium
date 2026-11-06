@@ -82,8 +82,12 @@ build: lint
 
 # Installs from the built zip, not the working copy, so what runs locally is what ships. It
 # removes before extracting, so a file dropped from the bundle does not live on in the install.
-deploy-local: build
+# The build's checks print only when one fails, and then nothing is installed.
+deploy-local:
 	@test -n "$(SKILLS)" || { echo "deploy-local: SKILLS is empty; refusing"; exit 1; }
+	@log=$$(mktemp) && trap 'rm -f "$$log"' EXIT && \
+		$(MAKE) --no-print-directory build > "$$log" 2>&1 || \
+		{ cat "$$log"; echo "deploy-local: the checks failed; the skill was not installed"; exit 1; }
 	@staging=$$(mktemp -d) && trap 'rm -rf "$$staging"' EXIT && \
 		python3 -m zipfile -e $(BUNDLE) "$$staging" && \
 		rm -rf "$(SKILLS)/symposium" && \

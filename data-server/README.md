@@ -74,7 +74,7 @@ A 0.1.x server upgrades in place. Run the 0.2.0 image on the same `/apps` volume
 **What each side does:**
 
 - **Operator:** move the deployment to the 0.2.0 image. For a Podman Quadlet unit, set `Image=docker.io/ndexbio/symposium-data:0.2.0` and restart the unit; for Helm, run `helm upgrade` with the chart that deploys 0.2.0 (`RUNBOOK.md` §5.4). `/v1/status` then answers `version: 0.2.0` and `root: <the admin's handle>`.
-- **Skill users:** install skill 0.2.0. Keys and sessions carry over, and access is read from the server on the next command. A skill of another version reports the version the server needs.
+- **Skill users:** install skill 0.2.0. Keys and sessions carry over as they are: the first command in each session completes its settings for 0.2.0, and access is read from the server on the next command. A skill of another version reports the version the server needs.
 - **The admin:** start `gate --watch` again with skill 0.2.0. Publishing takes a member account, since administrative roles hold no `publish`.
 
 **Rolling back:** restore the backup inside the running 0.2.0 container, then return the deployment to the 0.1.x image on the same volume. Files and their content stay in place; anything written after the upgrade is left out of the restored database.

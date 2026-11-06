@@ -36,7 +36,7 @@ is sent twice.
                               SIGTERM or (Windows) CTRL_BREAK stops it within a second, with
                               exit code 0, even mid-pass. A restart resumes where it left off,
                               and takes over from a gate still watching this session, which it
-                              stops.
+                              stops. A pass that finds `gate` unassigned stops it, exit code 1.
 
 Everything goes through the `symposium-data` CLI. Exit 0 = the pass ran; 1 = no context
 in this directory (the message names `/symposium setup` and `bootstrap`), the data server could
@@ -156,6 +156,7 @@ class Gate:
         self.mirror = mirror or Mirror()
         self.dry = dry
         self.decided = 0  # submissions accepted or rejected since the last look
+        self.refused = False  # a pass found the session without `gate`
 
     # ── state: a cache of what the server says ────────────────────────────────────────────
     def load_state(self):
@@ -190,6 +191,7 @@ class Gate:
             self.data.require(rbac.GATE, "the gate")
         except DataError as e:
             print(f"! {e}")
+            self.refused = True
             return 1
         sync = Sync(self.data, self.mirror, quiet=True)
         if sync.once() is None:
@@ -399,6 +401,13 @@ class Gate:
                 report = io.StringIO()
                 with contextlib.redirect_stdout(report):
                     code = self.once()
+                if self.refused:
+                    # the grant is gone: watching on would decide nothing
+                    print(report.getvalue().rstrip(), flush=True)
+                    print("stopped: `gate` was unassigned from this session; to resume, a "
+                          "community admin assigns gate-keeper again and the gate is started "
+                          "again", flush=True)
+                    return 1
                 if code:
                     misses += 1
                     if misses in (1, 5) or misses % 20 == 0:

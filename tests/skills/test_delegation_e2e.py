@@ -50,17 +50,17 @@ def root(people, server) -> Actor:
 
 def server_admin(root: Actor, people, handle: str) -> Actor:
     """Root delegates a server admin, who joins on their own machine."""
-    admin = people(handle)
-    admin.join(root.invite(handle, "server-admin"))
-    return admin
+    delegate = people(handle)
+    delegate.join(root.invite(handle, "server-admin"))
+    return delegate
 
 
 def community(
-    server, admin: Actor, people, name="demo", first_admin="steward"
+    server, creator: Actor, people, name="demo", first_admin="steward"
 ) -> Actor:
     """A server admin bootstraps a community; its first community admin joins."""
-    spec = community_file(admin.work, server, name, first_admin=first_admin)
-    files = admin.ok("bootstrap", "--community-file", spec)["invite_files"]
+    spec = community_file(creator.work, server, name, first_admin=first_admin)
+    files = creator.ok("bootstrap", "--community-file", spec)["invite_files"]
     [invite] = [Path(f) for f in files if f.endswith(f"{name}-{first_admin}.invite")]
     steward = people(first_admin)
     steward.join(invite)
@@ -376,13 +376,15 @@ def test_s8_unassigning_gate_keeper_stops_a_watching_gate(demo, people):
         publish(lyra, "first")
         output.wait_for("ACCEPTED")
         steward.ok("unassign", "--handle", "gwen", "--access", "gate-keeper")
-        output.wait_for("nothing is being decided")
         publish(lyra, "second")
-        time.sleep(3)  # three more passes, each refused
+        code = watching.wait(MAX_WAIT)  # its next pass finds `gate` gone, and it stops
     finally:
-        watching.send_signal(signal.SIGINT)
-        watching.wait(MAX_WAIT)
-    output.end()
+        if watching.poll() is None:
+            watching.send_signal(signal.SIGINT)
+            watching.wait(MAX_WAIT)
+    out = output.end()
+    assert code == 1, out
+    assert "stopped: `gate` was unassigned from this session" in out, out
     names = [
         i["name"]
         for i in steward.ok("data", "changes", "--collection", "record")["items"]
@@ -563,10 +565,10 @@ def test_s13_root_creates_two_server_admins_and_removes_one(server, root, people
     ana = server_admin(root, people, "ana")
     ben = server_admin(root, people, "ben")
     listed = root.ok("users", "list", "--server")["users"]
-    admins = {
+    server_admins = {
         u["handle"] for u in listed if "server-admin" in [r["role"] for r in u["roles"]]
     }
-    assert admins == {"ana", "ben"}
+    assert server_admins == {"ana", "ben"}
     community(server, ana, people, "alpha", "astrid")
     community(server, ben, people, "beta", "bruno")
     refused(

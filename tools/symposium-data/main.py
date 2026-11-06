@@ -554,7 +554,22 @@ class Context:
     def load(self) -> dict:
         if not self.PATH.exists():
             raise CommandError(NO_CONTEXT)
-        return json.loads(self.PATH.read_text())
+        context = json.loads(self.PATH.read_text())
+        if "home" not in context:
+            context = self.upgraded(context)
+            self.save(context)
+        return context
+
+    @staticmethod
+    def upgraded(context: dict) -> dict:
+        """A context the 0.1 skill wrote names its user's `role` instead of its home: a
+        member's home is the community it works in, and the user bound from the key file is
+        root, a server-level user. Written back once, so the session needs no step of its own."""
+        out = {k: v for k, v in context.items() if k != "role"}
+        out["home"] = (
+            context.get("community") if context.get("role") == "member" else None
+        )
+        return out
 
     def save(self, context: dict):
         self.PATH.parent.mkdir(exist_ok=True)

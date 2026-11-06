@@ -179,11 +179,16 @@ class Sessions:
             held = json.loads((directory / ".symposium" / "context.json").read_text())
         except (OSError, ValueError):
             return None
+        # a session the 0.1 skill made names no home until the CLI's next command writes it:
+        # a member's session sits under member/, in its home community
+        home = held.get("home")
+        if "home" not in held and held.get("role") == "member":
+            home = held.get("community")
         return Session(
             directory,
             held.get("community") or "",
             held.get("handle", ""),
-            held.get("home") or "",
+            home or "",
             held.get("access") or {},
         )
 

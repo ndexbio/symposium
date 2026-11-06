@@ -14,15 +14,16 @@ Bootstrap:
   2. checks that the data server answers and is operational, then sets this directory's
      context: the session of this machine's server-level user for the community;
   3. creates the community with its first community admin, if it does not exist yet. The
-     admin joins with its invite and from then on runs the community: invites, roles, the gate;
+     community admin joins with its invite and from then on runs the community: invites,
+     roles, the gate;
   4. invites every handle in `handles`, and every user of the community holding no key yet
      (the authors a port brought in), that has not joined and is not invited yet, then writes
-     every pending invite, the admin's included, into the directory it runs in (the server
-     admin's session, `~/.symposium/admin/<community>/`, when the skill runs it) as
+     every pending invite, the community admin's included, into the directory it runs in (the
+     server admin's session, `~/.symposium/admin/<community>/`, when the skill runs it) as
      `<community>-<handle>.invite` (0600), and prints each full path. Hand each one over out of
      band. A lost file is recovered by running it again.
 
-It is idempotent. Every step runs the `symposium-data` CLI (R-I1), signed in as this machine's
+It is idempotent. Every step runs the `symposium-data` CLI, signed in as this machine's
 server-level user, which needs the `communities` grant (root or a server admin); this script
 never contacts the data server itself. It prints one JSON object.
 """
@@ -39,10 +40,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from data_io import DataError, SymposiumData  # noqa: E402
 
-# The data server's rules (R-G8, R-D): a community name is a slug, not a route segment; a handle
-# is a plain name.
+# The data server's rules: a community name is a slug, and `admin` is a privileged name; a
+# handle is a plain name.
 COMMUNITY = re.compile(r"^[A-Za-z0-9_]{1,20}$")
-RESERVED = {"status", "communities", "admin", "auth", "users", "invites", "roles", "assignments"}
+PRIVILEGED = "admin"
 HANDLE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 
@@ -74,9 +75,10 @@ class Bootstrap:
             )
 
         context = self.data.run("context", "set", "--community-file", community_file)["context"]
-        community, admin = context["community"], spec["admin"]
-        made = self.data.run("communities", "create", "--name", community, "--admin", admin,
-                             "--out", Path(f"{community}-{admin}.invite"))
+        community, first_admin = context["community"], spec["admin"]
+        made = self.data.run("communities", "create", "--name", community,
+                             "--admin", first_admin,
+                             "--out", Path(f"{community}-{first_admin}.invite"))
         community = made.get("name", community)
         self.data.run("access")  # the session knows what it may do
         users = self.data.run("users", "list")["users"]
@@ -87,7 +89,7 @@ class Bootstrap:
                    for i in self.data.run("invite", "list", "--out-dir", Path.cwd())["invites"]}
         invited = []
         for handle in [*(spec.get("handles") or []), *keyless]:
-            if handle in joined or handle in pending or handle == admin:
+            if handle in joined or handle in pending or handle == first_admin:
                 continue
             pending.add(handle)
             self.data.run("invite", "--handle", handle, "--access", "community-member:*",
@@ -98,7 +100,7 @@ class Bootstrap:
         return {
             "community": community,
             "data-server-url": context["data-server-url"],
-            "admin": admin,
+            "admin": first_admin,
             "created": made.get("created", False),
             "invited": invited,
             "invite_files": [invite["invite_file"] for invite in written],
@@ -120,20 +122,18 @@ class Bootstrap:
         community = spec.get("community")
         if community is None:
             problems.append("community: missing (the community's name)")
-        elif (
-            not isinstance(community, str)
-            or not COMMUNITY.match(community)
-            or community.lower() in RESERVED
-        ):
+        elif not isinstance(community, str) or not COMMUNITY.match(community):
             problems.append(
                 f"community: '{community}' is not a community name: 1-20 letters, digits or "
-                f"underscores, and not one of {', '.join(sorted(RESERVED))}"
+                "underscores"
             )
-        admin = spec.get("admin")
-        if admin is None:
-            problems.append("admin: missing (the handle of the community's first admin)")
-        elif not isinstance(admin, str) or not HANDLE.match(admin):
-            problems.append(f"admin: '{admin}' is not a valid handle")
+        elif community.lower() == PRIVILEGED:
+            problems.append("community: 'admin' is a privileged name and not allowed")
+        first_admin = spec.get("admin")
+        if first_admin is None:
+            problems.append("admin: missing (the handle of the community's first community admin)")
+        elif not isinstance(first_admin, str) or not HANDLE.match(first_admin):
+            problems.append(f"admin: '{first_admin}' is not a valid handle")
         handles = spec.get("handles")
         if handles is not None and not isinstance(handles, list):
             problems.append("handles: not a list")

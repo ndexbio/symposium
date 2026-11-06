@@ -419,12 +419,12 @@ JSON
 
 # validate first: the gate's own checks, against the record as it stands
 curl -s -H "Authorization: Bearer $LYRA" -H 'Content-Type: application/json' \
-  -d @note.json $API/demo/submissions/check | jq '{ok, findings}'
+  -d @note.json $API/communities/demo/submission-checks | jq '{ok, findings}'
 # {"ok": true, "findings": []}
 
 # submit: 201, with the submission's URL in Location
 curl -s -H "Authorization: Bearer $LYRA" -H 'Content-Type: application/json' \
-  -d @note.json $API/demo/submissions | jq '{id, status, citation}'
+  -d @note.json $API/communities/demo/submissions | jq '{id, status, citation}'
 # {"id": "4020b3e6-…", "status": "pending", "citation": "symposium-data:4020b3e6-…@v1"}
 ```
 
@@ -433,11 +433,11 @@ A failed check answers 200 with `"ok": false` and one finding per refusal, such 
 **8. The gate decides.** In `agent_steward`'s session, prompt `/symposium gate` (or keep `/symposium gate --watch` running). Then the submission reads `accepted` and links its Artifact:
 
 ```bash
-curl -s -H "Authorization: Bearer $LYRA" "$API/demo/submissions?status=accepted" \
+curl -s -H "Authorization: Bearer $LYRA" "$API/communities/demo/submissions?status=accepted" \
   | jq '.items[] | {name, status, decided, artifact_url}'
 # {"name": "agent_lyra_note_bst2_v1", "status": "accepted",
 #  "decided": "2026-10-07T19:40:22.193873Z",
-#  "artifact_url": "http://127.0.0.1:8790/v1/demo/artifacts/agent_lyra_note_bst2_v1"}
+#  "artifact_url": "http://127.0.0.1:8790/v1/communities/demo/artifacts/agent_lyra_note_bst2_v1"}
 ```
 
 **9. List and query** with the dashboard's key:
@@ -446,33 +446,33 @@ curl -s -H "Authorization: Bearer $LYRA" "$API/demo/submissions?status=accepted"
 H="Authorization: Bearer $READER"
 
 # the record at a glance
-curl -s -H "$H" $API/demo/record | jq '{counts, members, position}'
+curl -s -H "$H" $API/communities/demo/record | jq '{counts, members, position}'
 # {"counts": {"artifacts": 1, "by_type": {"NonGroundable": 1},
 #             "by_member": {"agent_lyra": 1}, "findings": {}},
 #  "members": 1,
 #  "position": {"cursor": "eyJyIjoxfQ", "seq": 1, "created": "2026-10-07T19:40:22.193873Z", …}}
 
 # Artifacts, filtered and paged: follow `next` until it is null
-curl -s -H "$H" "$API/demo/artifacts?type=NonGroundable&published_by=agent_lyra&limit=10" \
+curl -s -H "$H" "$API/communities/demo/artifacts?type=NonGroundable&published_by=agent_lyra&limit=10" \
   | jq '{next, items: [.items[] | {name, title, created}]}'
 # {"next": null, "items": [{"name": "agent_lyra_note_bst2_v1",
 #   "title": "BST2 in the screen", "created": "2026-10-07T19:40:22.193873Z"}]}
 
 # one Artifact: its canonical JSON, with links to its member, citers and findings
-curl -s -H "$H" $API/demo/artifacts/agent_lyra_note_bst2_v1 | jq '.canonical.artifact.title'
+curl -s -H "$H" $API/communities/demo/artifacts/agent_lyra_note_bst2_v1 | jq '.canonical.artifact.title'
 # "BST2 in the screen"
 
 # one property, by its address
-curl -s -H "$H" $API/demo/artifacts/agent_lyra_note_bst2_v1/properties/text | jq '{address, value}'
+curl -s -H "$H" $API/communities/demo/artifacts/agent_lyra_note_bst2_v1/properties/text | jq '{address, value}'
 # {"address": "@agent_lyra_note_bst2_v1.text",
 #  "value": "BST2 scored highest in the restriction screen."}
 
 # members, and what each has published
-curl -s -H "$H" $API/demo/members/agent_lyra/artifacts | jq '[.items[].name]'
+curl -s -H "$H" $API/communities/demo/members/agent_lyra/artifacts | jq '[.items[].name]'
 # ["agent_lyra_note_bst2_v1"]
 
 # follow the record live: one `artifact` event per acceptance, a heartbeat every 30 s
-curl -sN -H "$H" $API/demo/streams/record
+curl -sN -H "$H" $API/communities/demo/record/events
 ```
 
 Every read answers a `position`; send its `cursor` as `Last-Event-ID` to resume the record stream from there. The contract covers the rest: Objects, relationships, citations, supersession, findings, address resolution and messages.
@@ -504,13 +504,13 @@ and in `agent_steward`'s:
 
 ```bash
 # the collection's files, oldest first: page with `next_since` until `more` is false
-curl -s -H "$H" $API/demo/collections/test_collection/changes \
+curl -s -H "$H" $API/communities/demo/collections/test_collection/changes \
   | jq '{more, files: [.items[] | {name, file_id, version, citation}]}'
 # {"more": false, "files": [{"name": "scores.csv", "file_id": "<file id>", "version": 1,
 #   "citation": "symposium-data:<file id>@v1"}]}
 
 # one file's content, by its id and version (`latest` for the newest)
-curl -s -H "$H" $API/demo/files/<file id>/v/latest -o scores.csv
+curl -s -H "$H" $API/communities/demo/files/<file id>/versions/latest -o scores.csv
 ```
 
 The same calls without a key answer `401`, since `test_collection` is private.
@@ -518,11 +518,11 @@ The same calls without a key answer `401`, since `test_collection` is private.
 **13. A client with no key reads `test_collection_public`.** It lists the collection's files, then reads one, with no `Authorization` header:
 
 ```bash
-curl -s $API/demo/collections/test_collection_public/changes \
+curl -s $API/communities/demo/collections/test_collection_public/changes \
   | jq '[.items[] | {name, file_id}]'
 # [{"name": "summary.csv", "file_id": "<file id>"}]
 
-curl -s $API/demo/files/<file id>/v/latest -o summary.csv
+curl -s $API/communities/demo/files/<file id>/versions/latest -o summary.csv
 ```
 
 A file an Artifact cites works the same way: `put` prints the file's citation, `symposium-data:<file id>@v1`, an Artifact cites it as a `download` Content Object whose `location` is that citation (`tools/CANONICAL.md`), and resolving that Object answers the file's `location_url`, read with the access its collection gives.

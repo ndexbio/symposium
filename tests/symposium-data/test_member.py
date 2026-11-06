@@ -1,6 +1,6 @@
 """The CLI's member side against a real data server, with every setup step done through
-the CLI's own commands: joining by invite (R-D1, R-D5), files and versions (R-A, R-B),
-collections, sharing by access role and API keys (R-E), lookups, verify and promote (R-G),
+the CLI's own commands: joining by invite, files and versions,
+collections, sharing by access role and API keys, lookups, verify and promote,
 and what rebind-key and suspect-after do to a registered member."""
 
 import hashlib
@@ -17,8 +17,8 @@ def write(directory: Path, name: str, content: bytes) -> Path:
     return path
 
 
-def test_registration_by_invite_file_is_idempotent(admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra")
+def test_registration_by_invite_file_is_idempotent(root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
     again = cli.ok(lyra, "owner", "register")
     assert (
         again["registered"] is False
@@ -30,7 +30,7 @@ def test_registration_by_invite_file_is_idempotent(admin_dir, cli):
     assert me["context"]["grants"]["publish"] is None
     pubkey = cli.ok(lyra, "owner", "pubkey")
     assert pubkey["fingerprint"] == me["kid"] == again["fingerprint"]
-    roster = cli.ok(admin_dir, "users", "list")["users"]
+    roster = cli.ok(root_dir, "users", "list")["users"]
     assert [(m["handle"], m["registered"], m["removed"]) for m in roster] == [
         ("lyra", True, None)
     ]
@@ -38,17 +38,17 @@ def test_registration_by_invite_file_is_idempotent(admin_dir, cli):
 
 
 def test_each_command_takes_its_grant_and_a_context_without_invite_joins_none(
-    admin_dir, cli
+    root_dir, cli
 ):
-    lyra = enroll(cli, admin_dir, "lyra")
+    lyra = enroll(cli, root_dir, "lyra")
     code, out = cli(lyra, "communities", "list")
     assert code == 1 and out["status"] == 403  # communities: server admins
-    code, out = cli(admin_dir, "owner", "register")
+    code, out = cli(root_dir, "owner", "register")
     assert code == 1 and "without an invite" in out["error"]
 
 
-def test_files_and_versions(admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra")
+def test_files_and_versions(root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
     v1 = cli.ok(
         lyra,
         "put",
@@ -105,9 +105,9 @@ def test_files_and_versions(admin_dir, cli):
     assert code == 1 and "JSON object" in bad["error"]
 
 
-def test_collections_sharing_and_lookups(admin_dir, cli, tmp_path):
-    lyra = enroll(cli, admin_dir, "lyra")
-    vega = enroll(cli, admin_dir, "vega", "community-observer:files")
+def test_collections_sharing_and_lookups(root_dir, cli, tmp_path):
+    lyra = enroll(cli, root_dir, "lyra")
+    vega = enroll(cli, root_dir, "vega", "community-observer:files")
     assert (
         cli.ok(lyra, "collection", "create", "--name", "project")["name"] == "project"
     )
@@ -172,9 +172,9 @@ def test_collections_sharing_and_lookups(admin_dir, cli, tmp_path):
 
 
 def test_an_application_key_reads_its_collections_with_no_context(
-    admin_dir, cli, tmp_path
+    root_dir, cli, tmp_path
 ):
-    lyra = enroll(cli, admin_dir, "lyra")
+    lyra = enroll(cli, root_dir, "lyra")
     cli.ok(lyra, "collection", "create", "--name", "project")
     put = cli.ok(
         lyra,
@@ -254,10 +254,8 @@ def test_an_application_key_reads_its_collections_with_no_context(
     assert cli.ok(lyra, "list-api-keys")["keys"] == []
 
 
-def test_a_public_collection_is_read_by_a_key_it_names_nowhere(
-    admin_dir, cli, tmp_path
-):
-    lyra = enroll(cli, admin_dir, "lyra")
+def test_a_public_collection_is_read_by_a_key_it_names_nowhere(root_dir, cli, tmp_path):
+    lyra = enroll(cli, root_dir, "lyra")
     cli.ok(lyra, "collection", "create", "--name", "open")
     put = cli.ok(
         lyra,
@@ -304,8 +302,8 @@ def test_a_public_collection_is_read_by_a_key_it_names_nowhere(
     assert read("private-again.txt")[1]["status"] == 403
 
 
-def test_a_member_submission_is_promoted_by_the_gate(admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra")
+def test_a_member_submission_is_promoted_by_the_gate(root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
     goal = json.dumps({"artifact": {"name": "goal", "created": None}}).encode()
     submitted = cli.ok(
         lyra,
@@ -324,7 +322,7 @@ def test_a_member_submission_is_promoted_by_the_gate(admin_dir, cli):
     assert code == 1 and out["status"] == 403  # promoting into record takes gate
 
     promoted = cli.ok(
-        admin_dir,
+        root_dir,
         "promote",
         submitted["citation"],
         "--collection",
@@ -335,20 +333,20 @@ def test_a_member_submission_is_promoted_by_the_gate(admin_dir, cli):
         "/artifact/created",
     )
     assert promoted["created_by"] == "lyra"  # credited to the submitter
-    record = cli.ok(admin_dir, "changes", "--collection", "record")["items"]
+    record = cli.ok(root_dir, "changes", "--collection", "record")["items"]
     assert [i["name"] for i in record] == ["goal.json"]
     stamped = cli.ok(
-        admin_dir, "get", promoted["citation"], "--out", admin_dir / "goal.json"
+        root_dir, "get", promoted["citation"], "--out", root_dir / "goal.json"
     )
     assert (
-        json.loads((admin_dir / "goal.json").read_text())["artifact"]["created"]
+        json.loads((root_dir / "goal.json").read_text())["artifact"]["created"]
         == promoted["created"]
     )
     assert stamped["citation"] == promoted["citation"]
 
 
-def test_a_rotated_key_replaces_the_old_one(admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra")
+def test_a_rotated_key_replaces_the_old_one(root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
     before = cli.ok(lyra, "owner", "pubkey")["fingerprint"]
     rotated = cli.ok(lyra, "owner", "rotate")
     assert rotated["fingerprint"] != before
@@ -356,13 +354,13 @@ def test_a_rotated_key_replaces_the_old_one(admin_dir, cli):
 
 
 def test_after_rebind_key_the_old_key_is_refused_and_the_fresh_invite_registers(
-    admin_dir, cli
+    root_dir, cli
 ):
-    lyra = enroll(cli, admin_dir, "lyra")
+    lyra = enroll(cli, root_dir, "lyra")
     old = cli.ok(lyra, "owner", "pubkey")["fingerprint"]
-    fresh = admin_dir / "lyra-fresh.invite"
+    fresh = root_dir / "lyra-fresh.invite"
     assert (
-        cli.ok(admin_dir, "rebind-key", "--handle", "lyra", "--out", fresh)[
+        cli.ok(root_dir, "rebind-key", "--handle", "lyra", "--out", fresh)[
             "retired_keys"
         ]
         == 1
@@ -378,8 +376,8 @@ def test_after_rebind_key_the_old_key_is_refused_and_the_fresh_invite_registers(
     assert cli.ok(lyra, "owner", "whoami")["kid"] == registered["fingerprint"]
 
 
-def test_after_suspect_after_a_members_writes_are_flagged(admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra")
+def test_after_suspect_after_a_members_writes_are_flagged(root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
     early = cli.ok(
         lyra,
         "put",
@@ -390,7 +388,7 @@ def test_after_suspect_after_a_members_writes_are_flagged(admin_dir, cli):
         "early.txt",
     )
     flagged = cli.ok(
-        admin_dir, "suspect-after", "--handle", "lyra", "--at", early["created"]
+        root_dir, "suspect-after", "--handle", "lyra", "--at", early["created"]
     )
     assert flagged["handle"] == "lyra"
     late = cli.ok(
@@ -409,8 +407,8 @@ def test_after_suspect_after_a_members_writes_are_flagged(admin_dir, cli):
     )
 
 
-def test_changes_all_pages_through_the_whole_feed(admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra")
+def test_changes_all_pages_through_the_whole_feed(root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
     for i in range(3):
         cli.ok(
             lyra,
@@ -438,9 +436,9 @@ def test_changes_all_pages_through_the_whole_feed(admin_dir, cli):
     assert later["items"] == []
 
 
-def test_an_owner_shares_read_access_and_withdraws_it(admin_dir, cli, tmp_path):
-    lyra = enroll(cli, admin_dir, "lyra")
-    vega = enroll(cli, admin_dir, "vega", "community-observer:files")
+def test_an_owner_shares_read_access_and_withdraws_it(root_dir, cli, tmp_path):
+    lyra = enroll(cli, root_dir, "lyra")
+    vega = enroll(cli, root_dir, "vega", "community-observer:files")
     cli.ok(lyra, "collection", "create", "--name", "shared")
     put = cli.ok(
         lyra,
@@ -468,8 +466,8 @@ def test_an_owner_shares_read_access_and_withdraws_it(admin_dir, cli, tmp_path):
     assert read("withdrawn.txt")[1]["status"] == 403  # from the very next request
 
 
-def test_a_members_holder_revokes_any_key_of_the_community(admin_dir, cli, tmp_path):
-    lyra = enroll(cli, admin_dir, "lyra")
+def test_a_members_holder_revokes_any_key_of_the_community(root_dir, cli, tmp_path):
+    lyra = enroll(cli, root_dir, "lyra")
     cli.ok(lyra, "collection", "create", "--name", "dash")
     issued = cli.ok(
         lyra,
@@ -479,9 +477,9 @@ def test_a_members_holder_revokes_any_key_of_the_community(admin_dir, cli, tmp_p
         "--access",
         "community-observer:dash",
     )
-    seen = {k["id"]: k for k in cli.ok(admin_dir, "list-api-keys")["keys"]}
+    seen = {k["id"]: k for k in cli.ok(root_dir, "list-api-keys")["keys"]}
     assert seen[issued["id"]]["member_key"] is False
-    cli.ok(admin_dir, "revoke-api-key", issued["id"])
+    cli.ok(root_dir, "revoke-api-key", issued["id"])
     assert cli.ok(lyra, "list-api-keys")["keys"] == []
     code, out = cli(
         tmp_path,
@@ -495,8 +493,8 @@ def test_a_members_holder_revokes_any_key_of_the_community(admin_dir, cli, tmp_p
     assert code == 1 and out["status"] == 401  # deleted: refused from the next request
 
 
-def test_a_purged_version_reports_410_with_its_metadata(admin_dir, cli, tmp_path):
-    lyra = enroll(cli, admin_dir, "lyra")
+def test_a_purged_version_reports_410_with_its_metadata(root_dir, cli, tmp_path):
+    lyra = enroll(cli, root_dir, "lyra")
     put = cli.ok(
         lyra,
         "put",
@@ -506,7 +504,7 @@ def test_a_purged_version_reports_410_with_its_metadata(admin_dir, cli, tmp_path
         "--name",
         "p.txt",
     )
-    cli.ok(admin_dir, "purge", "--cite", put["citation"])
+    cli.ok(root_dir, "purge", "--cite", put["citation"])
     code, out = cli(lyra, "get", put["citation"], "--out", tmp_path / "gone.txt")
     assert code == 1 and out["status"] == 410
     assert out["error"] == "the version's content was purged"

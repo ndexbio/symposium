@@ -1,5 +1,5 @@
-"""What the CLI reports when the server is not the one it speaks to (R-I5), runs another
-release, or is not operational (R-D4), against a small local server that answers like one; and
+"""What the CLI reports when the server is not the one it speaks to, runs another
+release, or is not operational, against a small local server that answers like one; and
 the CLI's own pieces: keys, citations, secret files, `--access` and the generated reference."""
 
 import json

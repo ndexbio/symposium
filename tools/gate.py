@@ -1,7 +1,7 @@
 """The gate: discover the members' submissions, validate them, accept or reject.
 
-Run it as `/symposium gate`, in the session of a user holding the `gate` grant (a community
-admin or a gate-keeper): the context there says which community, and `./record` beside it is
+Run it as `/symposium gate`, in the session of a user holding the `gate` grant (a community admin
+or a gate-keeper): the context there says which community, and `./record` beside it is
 the gate's copy of the record. Each pass first checks the grant, so a gate whose `gate` is
 unassigned stops deciding at its next pass. One pass per run:
 
@@ -38,7 +38,7 @@ is sent twice.
                               and takes over from a gate still watching this session, which it
                               stops.
 
-Everything goes through the `symposium-data` CLI (R-I1). Exit 0 = the pass ran; 1 = no context
+Everything goes through the `symposium-data` CLI. Exit 0 = the pass ran; 1 = no context
 in this directory (the message names `/symposium setup` and `bootstrap`), the data server could
 not be reached, or the copy differs from the record (`--verify`); 2 = `--watch` given with
 `--verify` or `--rebuild`.
@@ -93,11 +93,8 @@ def order_submissions(subs, record_names):
     decides only the ORDER in which a pass considers what is pending, so that an artifact is
     stamped after anything it addresses.
 
-    Bundling used to live here. It is gone because it created the one thing spec 1.9 says
-    cannot happen — two artifacts with an identical `created`, which are therefore not
-    earlier than one another and cannot refer to each other. Making that publishable at all
-    required an ordering exemption on `produced_by`, and the exemption then suppressed the
-    ordering check on the very property most in need of it.
+    Two artifacts never share a `created` (spec 1.9), so each one is strictly earlier or
+    later than every other, and `produced_by` is ordered like every other address.
 
     An output names its Analysis with `produced_by` and that address must resolve (spec 2.5).
     An output whose Analysis is neither in the record nor pending in this pass is DEFERRED

@@ -2,9 +2,9 @@
 
 Symposium is a specification and toolchain for a community record: an append-only graph in which
 the members of a scientific community publish immutable artifacts. The record and its files
-live on a **Symposium Data server**. This skill is how every person works with it: root, server
-admins, community admins and members alike run `/symposium <command>`, and the skill does the rest through the
-`symposium-data` CLI. Nobody runs a tool script or a CLI command by hand, and nobody needs a
+live on a **Symposium Data server**. This skill is how every person works with it: root,
+server admins, community admins and members alike run `/symposium <command>`, and the skill
+does the rest through the `symposium-data` CLI. Nobody runs a tool script or a CLI command by hand, and nobody needs a
 shell on the server.
 
 **Install** the skill from the Symposium bundle: `make deploy-local` from a clone of the
@@ -20,8 +20,8 @@ session reuses it.
 ## 1. Using the skill
 
 `setup` is the key command: everyone joins with an invite file, and the server assigns the
-**access roles** the invite carries. Root starts with `admin-config` instead, and a server
-admin opens a community with `bootstrap` or `use-community`. Every other command works in the
+**access roles** the invite carries. Root starts with `admin-config` instead, and a server admin
+opens a community with `bootstrap` or `use-community`. Every other command works in the
 session one of these makes, and a command run before any says which one to run.
 
 **Access roles** decide what each person may do: `server-root` and `server-admin` run the
@@ -192,7 +192,7 @@ access, back-ups, and tearing it down.
 
 - **Drain the gate first:** run it until nothing is waiting. A submission it has not decided is not ported.
 - **The order:** a server admin's `bootstrap` creates the community and sets the context; `port` ports into it; `bootstrap` again writes the invites for the authors and reply recipients the port added as users.
-- **The credentials file** holds the source's admin account as JSON `{"username": ..., "password": ...}`, mode 0600, for port-ndex. It is sent only to the data server, which holds it in memory for the length of the port; the data server itself connects to the source, so it needs outbound access to it (port-ndex).
+- **The credentials file** holds the NDEx community admin's account as JSON `{"username": ..., "password": ...}`, mode 0600, for port-ndex. It is sent only to the data server, which holds it in memory for the length of the port; the data server itself connects to the source, so it needs outbound access to it (port-ndex).
 - **What is ported** (port-ndex): the record and the gate's replies, with their exact bytes, names, original times and authors; not undecided submissions, accounts or passwords.
 - **Members afterwards** join with the invite files from the second `bootstrap`, as in any community.
 

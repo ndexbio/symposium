@@ -1,8 +1,8 @@
-"""The admin key file (R-D4): who the server admin is, decided at every start-up from
+"""The admin key file: who root is, decided at every start-up from
 `admin_pub_<handle>.key`, in `/apps/` or in `/apps/admin-key/` (where the Helm chart mounts it
-from a Secret), and the backup of the established admin.
+from a Secret), and the backup of the established root.
 
-Nobody has a shell on the server, so the key file is the only way the admin's key is given or
+Nobody has a shell on the server, so the key file is the only way root's key is given or
 changed. The API reads it when it starts and never writes to the apps directory itself; the
 backup lives under data/config, which the service owns.
 """
@@ -34,7 +34,7 @@ MISSING = "admin key missing"
 
 @dataclass(frozen=True)
 class AdminMode:
-    """The outcome of a start-up: operational with the admin's handle and fingerprint and the
+    """The outcome of a start-up: operational with root's handle and fingerprint and the
     action taken (bound, unchanged, rebound, backup), or non-operational with a reason."""
 
     operational: bool
@@ -105,8 +105,8 @@ class AdminKeyFile:
         for handle, path in files.items():
             if handle != bound:
                 log.error(
-                    "ignored %s: it names '%s', but this server's admin is '%s'; "
-                    "the admin handle never changes",
+                    "ignored %s: it names '%s', but this server's root is '%s'; "
+                    "root's handle never changes",
                     path.name,
                     handle,
                     bound,
@@ -123,11 +123,11 @@ class AdminKeyFile:
         if jwk is None:
             return self.non_operational(
                 MISSING,
-                f"admin_pub_{bound}.key is missing and there is no backup of the admin's "
+                f"admin_pub_{bound}.key is missing and there is no backup of root's "
                 f"key; place admin_pub_{bound}.key in {self.where()}",
             )
         log.warning(
-            "admin_pub_%s.key is missing: running from the backup of the admin's key",
+            "admin_pub_%s.key is missing: running from the backup of root's key",
             bound,
         )
         return self.use_key(conn, root, jwk, "backup")
@@ -142,7 +142,7 @@ class AdminKeyFile:
         }:
             self.records.add_key(conn, root["id"], kid, jwk)
             log.warning(
-                "admin '%s' rebound to a new key, fingerprint %s; the old keys are retired",
+                "root '%s' rebound to a new key, fingerprint %s; the old keys are retired",
                 handle,
                 kid,
             )

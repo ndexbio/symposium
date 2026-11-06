@@ -2226,7 +2226,7 @@ paths:
         it, so a client misses nothing. A `heartbeat` event every 30 seconds carries the
         position. This is `/symposium sync --watch`.
         The server re-checks the key at every event and every heartbeat, and closes the stream
-        when the key is revoked or expired, its user is removed, or it can no longer read.
+        when the key is revoked or expired, its user is removed, or it loses read access.
 
         Grants: read; anonymous when the collection is public.
 
@@ -3109,7 +3109,7 @@ paths:
         rejection carries the gate's reply. A `member` key receives events on its own
         submissions. Resumes from `Last-Event-ID`.
         The server re-checks the key at every event and every heartbeat, and closes the stream
-        when the key is revoked or expired, its user is removed, or it can no longer read.
+        when the key is revoked or expired, its user is removed, or it loses read access.
 
         Takes `publish` in the community in the path: the session of a user holding it, or a
         member key carrying it. The key's user is the one who publishes and whose submissions

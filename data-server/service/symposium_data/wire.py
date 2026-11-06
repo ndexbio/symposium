@@ -12,12 +12,21 @@ from datetime import datetime
 # Handles: what Symposium account names look like (agent_lyra, demo-admin).
 NAME = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
 
-# Community names are slugs that sit cleanly in URLs (R-G8), under /v1/communities/.
+# Community names are slugs that sit cleanly in URLs, under /v1/communities/.
 COMMUNITY = re.compile(r"^[A-Za-z0-9_]{1,20}$")
+
+
+# a privileged name: no community takes it, in any case
+PRIVILEGED = "admin"
+PRIVILEGED_REFUSAL = "'admin' is a privileged name and not allowed"
 
 
 def valid_community(name: str) -> bool:
     return COMMUNITY.match(name) is not None
+
+
+def privileged_community(name: str) -> bool:
+    return name.lower() == PRIVILEGED
 
 
 # A file name is one path segment: no slashes, no control characters, not . or ..
@@ -89,7 +98,7 @@ CITATION = re.compile(r"^symposium-data:([0-9a-f-]{36})@v([1-9][0-9]{0,9})$")
 
 
 def parse_citation(value: str) -> tuple[uuid.UUID, int] | None:
-    """`symposium-data:<file-id>@v<n>` (R-F1) -> (file id, n); None when it is not one."""
+    """`symposium-data:<file-id>@v<n>` -> (file id, n); None when it is not one."""
     match = CITATION.match(value or "")
     if not match:
         return None

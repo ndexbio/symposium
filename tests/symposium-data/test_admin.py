@@ -1,4 +1,4 @@
-"""The CLI's administration against a real data server: root's key (R-D4), the context (R-I3),
+"""The CLI's administration against a real data server: root's key, the context,
 communities with their first community admin, invites carrying access roles, `access`,
 `assign`/`unassign`, users, rebind-key and suspect-after."""
 
@@ -6,7 +6,7 @@ import json
 import stat
 from pathlib import Path
 
-from suite import ADMIN, community_file, enroll, place_admin_key
+from suite import ROOT, community_file, enroll, place_root_key
 
 
 def mode(path) -> int:
@@ -17,7 +17,7 @@ def test_admin_config_reuses_its_key_and_only_new_key_replaces_it(
     server, cli, tmp_path
 ):
     first = cli.ok(
-        tmp_path, "admin-config", "--handle", ADMIN, "--data-server-url", server.url
+        tmp_path, "admin-config", "--handle", ROOT, "--data-server-url", server.url
     )
     assert first["created"] is False  # the session's key, reused
     assert first["fingerprint"] == server.status()["fingerprint"]
@@ -28,7 +28,7 @@ def test_admin_config_reuses_its_key_and_only_new_key_replaces_it(
     # root's server-wide context, here
     context = cli.ok(tmp_path, "context", "show")["context"]
     assert (context["handle"], context["home"], context["community"]) == (
-        ADMIN,
+        ROOT,
         None,
         None,
     )
@@ -36,20 +36,20 @@ def test_admin_config_reuses_its_key_and_only_new_key_replaces_it(
     code, other = cli(
         tmp_path, "admin-config", "--handle", "someone", "--data-server-url", server.url
     )
-    assert code == 1 and ADMIN in other["error"]
+    assert code == 1 and ROOT in other["error"]
 
     new = cli.ok(
         tmp_path,
         "admin-config",
         "--handle",
-        ADMIN,
+        ROOT,
         "--data-server-url",
         server.url,
         "--new-key",
     )
     assert new["created"] is True and "rebinds" in new["warning"]
     assert new["fingerprint"] != first["fingerprint"]
-    place_admin_key(server, Path(new["public_key_file"]), new["fingerprint"])
+    place_root_key(server, Path(new["public_key_file"]), new["fingerprint"])
     # the CLI signs in with the new key; the rest of the session keeps it
     assert cli.ok(tmp_path, "communities", "list") == {"communities": []}
 
@@ -67,12 +67,12 @@ def test_without_a_context_every_command_names_setup(cli, tmp_path):
 
 def test_status_and_the_context(server, cli, tmp_path):
     status = cli.ok(tmp_path, "status", "--data-server-url", server.url)
-    assert status["mode"] == "operational" and status["root"] == ADMIN
+    assert status["mode"] == "operational" and status["root"] == ROOT
     context = cli.ok(
         tmp_path, "context", "set", "--community-file", community_file(tmp_path, server)
     )
     held = context["context"]
-    assert (held["handle"], held["home"], held["community"]) == (ADMIN, None, "demo")
+    assert (held["handle"], held["home"], held["community"]) == (ROOT, None, "demo")
     assert cli.ok(tmp_path, "context", "show") == context
     assert cli.ok(tmp_path, "status")["server_id"] == status["server_id"]
 
@@ -108,7 +108,7 @@ def test_a_community_is_created_with_its_first_admin_invite(server, cli, tmp_pat
     assert code == 1 and out["status"] == 400
     names = [c["name"] for c in cli.ok(tmp_path, "communities", "list")["communities"]]
     assert names == ["demo"]
-    # the admin joins with its invite and holds community-admin
+    # the community admin joins with its invite and holds community-admin
     steward = tmp_path / "steward"
     steward.mkdir()
     cli.ok(steward, "context", "set", "--invite-file", invite)
@@ -123,11 +123,11 @@ def test_a_community_is_created_with_its_first_admin_invite(server, cli, tmp_pat
 
 
 def test_invites_carry_access_and_are_files_never_printed(
-    server, admin_dir, cli, tmp_path
+    server, root_dir, cli, tmp_path
 ):
-    out = admin_dir / "lyra.invite"
+    out = root_dir / "lyra.invite"
     issued = cli.ok(
-        admin_dir,
+        root_dir,
         "invite",
         "--handle",
         "lyra",
@@ -153,11 +153,11 @@ def test_invites_carry_access_and_are_files_never_printed(
 
     for bad in ("community-member", "community-member:x:y:*", "nobody"):
         code, refused = cli(
-            admin_dir, "invite", "--handle", "m", "--access", bad, "--out", "m.invite"
+            root_dir, "invite", "--handle", "m", "--access", bad, "--out", "m.invite"
         )
         assert code == 1 and "error" in refused, bad
     code, refused = cli(
-        admin_dir, "invite", "--handle", "m", "--access", "community-member"
+        root_dir, "invite", "--handle", "m", "--access", "community-member"
     )
     assert (
         code == 1
@@ -185,9 +185,9 @@ def test_invites_carry_access_and_are_files_never_printed(
 
 
 def test_pending_invites_are_written_one_file_per_community_and_handle(
-    server, admin_dir, cli
+    server, root_dir, cli
 ):
-    other = admin_dir / "other"
+    other = root_dir / "other"
     other.mkdir()
     cli.ok(
         other,
@@ -197,8 +197,8 @@ def test_pending_invites_are_written_one_file_per_community_and_handle(
         community_file(other, server, "other"),
     )
     cli.ok(other, "communities", "create", "--name", "other", "--admin", "boss")
-    invites = admin_dir / "invites"
-    for directory in (admin_dir, other):
+    invites = root_dir / "invites"
+    for directory in (root_dir, other):
         cli.ok(
             directory,
             "invite",
@@ -224,11 +224,11 @@ def test_pending_invites_are_written_one_file_per_community_and_handle(
         assert json.loads(path.read_text())["community"] == path.name.split("-")[0]
 
 
-def test_assign_unassign_and_users(admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra", "community-observer:files")
-    cli.ok(admin_dir, "collection", "create", "--name", "c1")
+def test_assign_unassign_and_users(root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra", "community-observer:files")
+    cli.ok(root_dir, "collection", "create", "--name", "c1")
     cli.ok(
-        admin_dir,
+        root_dir,
         "assign",
         "--handle",
         "lyra",
@@ -240,37 +240,37 @@ def test_assign_unassign_and_users(admin_dir, cli):
         ("community-observer", ["c1", "files"])
     ]
     cli.ok(
-        admin_dir,
+        root_dir,
         "unassign",
         "--handle",
         "lyra",
         "--access",
         "community-observer:files",
     )
-    cli.ok(admin_dir, "assign", "--handle", "lyra", "--access", "community-member:*")
-    cli.ok(admin_dir, "unassign", "--handle", "lyra", "--access", "community-observer")
+    cli.ok(root_dir, "assign", "--handle", "lyra", "--access", "community-member:*")
+    cli.ok(root_dir, "unassign", "--handle", "lyra", "--access", "community-observer")
     held = cli.ok(lyra, "access")["roles"]
     assert held == [{"role": "community-member", "collections": ["*"]}]
 
-    users = cli.ok(admin_dir, "users", "list")["users"]
+    users = cli.ok(root_dir, "users", "list")["users"]
     assert {u["handle"] for u in users} == {"lyra"}  # steward has not joined yet
-    removed = cli.ok(admin_dir, "users", "remove", "--handle", "lyra")
+    removed = cli.ok(root_dir, "users", "remove", "--handle", "lyra")
     assert removed["removed"]
     code, out = cli(lyra, "users", "list")
     assert code == 1 and out["status"] == 401 and "removed from demo" in out["error"]
-    roster = cli.ok(admin_dir, "users", "list")
-    assert roster["users"][0]["removed"] and ADMIN in roster["server_users"]
+    roster = cli.ok(root_dir, "users", "list")
+    assert roster["users"][0]["removed"] and ROOT in roster["server_users"]
 
 
 def test_a_server_admin_joins_by_invite_and_works_in_any_community(
-    admin_dir, cli, tmp_path
+    root_dir, cli, tmp_path
 ):
     # ana's own machine: a HOME of its own
     home = tmp_path / "ana-home"
     env = {**cli.env, "HOME": str(home)}
     invite = tmp_path / "ana.invite"
     issued = cli.ok(
-        admin_dir,
+        root_dir,
         "invite",
         "--handle",
         "ana",
@@ -303,22 +303,22 @@ def test_a_server_admin_joins_by_invite_and_works_in_any_community(
         env=env,
     )
     assert code == 1 and refused["status"] == 403
-    users = cli.ok(admin_dir, "users", "list", "--server")["users"]
-    assert {u["handle"] for u in users} == {ADMIN, "ana"}
+    users = cli.ok(root_dir, "users", "list", "--server")["users"]
+    assert {u["handle"] for u in users} == {ROOT, "ana"}
 
 
-def test_rebind_key_and_suspect_after(admin_dir, cli):
-    enroll(cli, admin_dir, "lyra")
-    out = admin_dir / "lyra-rebound.invite"
-    rebound = cli.ok(admin_dir, "rebind-key", "--handle", "lyra", "--out", out)
+def test_rebind_key_and_suspect_after(root_dir, cli):
+    enroll(cli, root_dir, "lyra")
+    out = root_dir / "lyra-rebound.invite"
+    rebound = cli.ok(root_dir, "rebind-key", "--handle", "lyra", "--out", out)
     assert rebound["retired_keys"] == 1 and mode(out) == 0o600
     assert json.loads(out.read_text())["invite"].startswith("sdi_")
     code, nobody = cli(
-        admin_dir, "rebind-key", "--handle", "mallory", "--out", admin_dir / "m"
+        root_dir, "rebind-key", "--handle", "mallory", "--out", root_dir / "m"
     )
     assert code == 1 and nobody["status"] == 404
     flagged = cli.ok(
-        admin_dir,
+        root_dir,
         "suspect-after",
         "--handle",
         "lyra",
@@ -327,6 +327,6 @@ def test_rebind_key_and_suspect_after(admin_dir, cli):
     )
     assert flagged["suspect_after"].startswith("2026-10-01T12:00:00")
     code, out = cli(
-        admin_dir, "suspect-after", "--handle", "lyra", "--at", "2026-10-01T12:00:00"
+        root_dir, "suspect-after", "--handle", "lyra", "--at", "2026-10-01T12:00:00"
     )
     assert code == 1 and out["status"] == 400 and "timezone" in out["error"]

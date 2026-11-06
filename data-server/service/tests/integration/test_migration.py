@@ -6,7 +6,7 @@ every collection keeps its owner, and a member taken off the roster stays as a t
 import os
 
 import pytest
-from conftest import ADMIN, EVERY, Admin, Owner, OwnerKey, file_headers, place_key
+from conftest import EVERY, ROOT, Owner, OwnerKey, ServerUser, file_headers, place_key
 from harness import HTTP, TEST_ENV, Server
 
 # the last published release
@@ -92,7 +92,7 @@ def previous(tmp_path):
     """A server of the previous release, its admin's key file in place."""
     server = Server(TEST_ENV)
     server.admin_key = OwnerKey()
-    key_file = place_key(tmp_path, ADMIN, server.admin_key)
+    key_file = place_key(tmp_path, ROOT, server.admin_key)
     try:
         server.start(key_file, image=PREVIOUS)
         yield server
@@ -110,7 +110,7 @@ def seed(server) -> tuple[dict, dict]:
     """A community as the previous release leaves it: members who joined by invite, one of
     them narrowed to reading and one to writing without publishing, one taken off the roster
     after it wrote; a collection a member owns and shares. -> ({handle: Previous}, file ids)."""
-    admin = Previous(server, ADMIN, server.admin_key, admin=True)
+    admin = Previous(server, ROOT, server.admin_key, admin=True)
     r = HTTP.post(
         f"{server.url}/v1/communities", json={"name": "demo"}, headers=admin.headers()
     )
@@ -151,7 +151,7 @@ def test_a_previous_release_upgrades_in_place_on_first_start(previous):
 
     # backed up first, then upgraded
     status = server.status()
-    assert status["mode"] == "operational" and status["root"] == ADMIN
+    assert status["mode"] == "operational" and status["root"] == ROOT
     backups = server.exec("ls", "/apps/data/backups").stdout.split()
     assert len(backups) == 1 and backups[0].startswith(f"schema-{before}-"), backups
     dump = server.exec("sh", "-c", f"gunzip -c /apps/data/backups/{backups[0]}").stdout
@@ -161,7 +161,7 @@ def test_a_previous_release_upgrades_in_place_on_first_start(previous):
         assert psql(server, f"SELECT to_regclass('{table}')") == "", table
 
     # the admin is root, and every member signs in with the key it joined with
-    root = Admin(server, ADMIN, server.admin_key)
+    root = ServerUser(server, ROOT, server.admin_key)
     assert root.sign_in().status_code == 200
     users = {h: Owner(server, h, p.key) for h, p in people.items()}
     member = [{"role": "community-member", "collections": EVERY}]

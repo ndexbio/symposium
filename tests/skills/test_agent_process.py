@@ -1,4 +1,4 @@
-"""The agent process (R-I3): the long-lived process that starts the shell each `/symposium`
+"""The agent process: the long-lived process that starts the shell each `/symposium`
 command runs in, found by walking up from the skill's parent past shells and plain wrappers.
 On an injected process table on any OS, then against this test's own real process tree: through
 `ps` on macOS and Linux, through the Windows API on Windows."""

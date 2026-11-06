@@ -112,7 +112,7 @@ def message_line(m):
     """The one line that lists a Message to this member, wherever it is listed. Its sender,
     title and name are each what a Member wrote, and an agent is asked to relay this line,
     so each is put on one line first: a title cannot add a line that seems to come from the
-    admin or the gate."""
+    gate."""
     return (f"message for you from {one_line(m['from'])}: {one_line(m['title'])} "
             f"(@{one_line(m['name'])})")
 

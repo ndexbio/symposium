@@ -7,8 +7,8 @@ import itertools
 
 from conftest import (
     EVERY,
-    Admin,
     Owner,
+    ServerUser,
     community_with,
     create_community,
     enroll,
@@ -114,7 +114,7 @@ def world(server) -> tuple[dict, str]:
     assert made.status_code == 201, made.text
     fid = lyra.put("demo", "c1", "a.csv", b"lyra's").json()["file_id"]
     issued = root.invite("ana", SERVER_ADMIN)
-    ana = Admin(server, "ana")
+    ana = ServerUser(server, "ana")
     assert ana.register(issued.json()["invite"]).status_code == 201
     create_community(server, root, "other")
 
@@ -167,7 +167,9 @@ def test_a_caller_without_a_key_reaches_nothing_private(server):
 def test_the_roster_names_every_known_handle_to_any_principal(server):
     root, owners = community_with(server, members=("lyra", "vega"))
     issued = root.invite("ana", SERVER_ADMIN)
-    assert Admin(server, "ana").register(issued.json()["invite"]).status_code == 201
+    assert (
+        ServerUser(server, "ana").register(issued.json()["invite"]).status_code == 201
+    )
     observer = as_member(
         root, server, "olive", [{"role": "community-observer", "collections": EVERY}]
     )

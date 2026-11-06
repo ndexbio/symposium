@@ -203,7 +203,7 @@ The link text carries *why* you are citing. A bare `@name` in prose cannot be va
 
 **A thing outside the record is not cited, it is named.** A toolchain file or any filesystem path goes in backticks — `` `tools/policy/import-fidelity.md` `` — because it has no address and the record cannot resolve one. A web resource takes an ordinary markdown link to its URL, which carries no `@` and so is not scanned. **Never invent a target to satisfy the link form**: a link that resolves to nothing reads as a citation and is worse than the plain prose it replaced. [CANONICAL.md §3.1](CANONICAL.md) has the table.
 
-**Watch a hyphenated account name.** The bare-address scan stops at the hyphen, so `@symposium-admin` in prose is read as `@symposium` and draws a REVIEW pointing at an Artifact nobody can find. Write `[the admin](@symposium-admin)`.
+**Watch a hyphenated account name.** The bare-address scan stops at the hyphen, so `@symposium-admin` in prose is read as `@symposium` and draws a REVIEW pointing at an Artifact nobody can find. Write `[the steward](@symposium-admin)`.
 
 ## 7.1 Where a result lives — the rule this community actually broke
 

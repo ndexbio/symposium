@@ -518,8 +518,8 @@ Server-Sent Events on three streams, each `text/event-stream`:
   live.
 - **The key and its access are re-checked at every event and every heartbeat**, by the same
   checks a request runs (§3.2, §4.5). A stream whose key is deleted or expires, whose user is
-  removed, or whose caller can no longer read the collection it follows (an unassigned role,
-  a record made private), closes within 30 seconds. Revocation reaches an open stream
+  removed, or whose caller loses read access to the collection it follows (an unassigned
+  role, a record made private), closes within 30 seconds. Revocation reaches an open stream
   as surely as a new request.
 - The client's cursor holds the stream's position, and the server's one row per open
   stream (§10.5) lives in PostgreSQL, so no worker keeps a client's state in memory. Any
@@ -530,7 +530,7 @@ Server-Sent Events on three streams, each `text/event-stream`:
 
 | Guarantee | How the API keeps it |
 |---|---|
-| Nothing enters the record without the gate | `submitArtifact` writes only to `inbox`, as `publish.py` does: the file `{name}@{when}`, metadata `{"symposium_submission": true}`, `created_by` the key's Member. The API never writes to `record`. Only the gate, run from the admin's skill, promotes. |
+| Nothing enters the record without the gate | `submitArtifact` writes only to `inbox`, as `publish.py` does: the file `{name}@{when}`, metadata `{"symposium_submission": true}`, `created_by` the key's Member. The API never writes to `record`. Only the gate, run by a holder of `gate` (a community admin or a gate-keeper), promotes. |
 | The gate's checks, before submitting | `checkSubmission` and `submitArtifact` run, in order: the naming rule (`<handle>_` prefix, the key's Member); the 250 KB limit on embedded payload (`EMBED_REFUSE`); then `tools/validate.py`, the validator the gate runs, against the record as it stands. Any refusal answers 422 with every finding. Nothing is stored. The skill's publishing roles (`--role`) are limits an agent session sets on itself, and stay in the skill. |
 | Serial `created` order | One Artifact per call. `created` must be null, and the gate stamps it at promote. The gate orders the submissions it decides, as it does today. |
 | Attribution | `published_by` must be `@<handle>`, the key's user, and `name` must carry its prefix, so the gate's own check (the inbox name prefix is the submitter's handle, and the submitter is an active member) passes for the same reason. |
@@ -554,15 +554,15 @@ collections and files share `/v1`, one process and one access model.
 
 | Credential | How a caller gets it | Where it works |
 |---|---|---|
-| private key file | made on the Member's or the admin's own machine (an Ed25519 key); the server holds its public key | signs the session management challenge |
-| session key `sak_…` | the session management routes, with a private key file | every route of `/v1`, in its community (the admin's: every community) |
+| private key file | made on the user's own machine (an Ed25519 key); the server holds its public key | signs the session management challenge |
+| session key `sak_…` | the session management routes, with a private key file | every route of `/v1`, in its community (a server-level user's: every community) |
 | issued key `sak_…` | issued with a session key, for an application | every route of `/v1` but those that change access, keys or the server, in its community |
 | no key | — | the contract, `/v1/status`, session management and registration, and reads of a public collection |
 
 What a key may read and write is its collection's to decide: the owner's grants, and whether
 the collection is public. A member issued key reads what the Member may, a non-member issued key what it
 is granted, and nobody reads another Member's `inbox` files, because the `inbox` visibility
-rule (the first writer, the admin, and `metadata.recipients`) applies to every key.
+rule (the first writer, holders of `gate`, and `metadata.recipients`) applies to every key.
 
 ## 8. Errors, versioning and limits
 

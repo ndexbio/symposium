@@ -9,7 +9,7 @@ from conftest import (
     OwnerKey,
     community_with,
     create_community,
-    init_admin,
+    init_root,
     invite,
     psql,
     steward_of,
@@ -22,9 +22,9 @@ OBSERVER = [{"role": "community-observer", "collections": EVERY}]
 
 @pytest.fixture
 def demo(server):
-    admin = init_admin(server)
-    create_community(server, admin, "demo")
-    return server, admin
+    root = init_root(server)
+    create_community(server, root, "demo")
+    return server, root
 
 
 def roles_of(owner):
@@ -34,8 +34,8 @@ def roles_of(owner):
 
 
 def test_joining_applies_exactly_the_roles_the_server_stored(demo):
-    server, admin = demo
-    issued = invite(admin, "demo", "olive", roles=OBSERVER)
+    server, root = demo
+    issued = invite(root, "demo", "olive", roles=OBSERVER)
     assert issued.status_code == 201, issued.text
     body = issued.json()
     assert body["roles"] == OBSERVER and body["community"] == "demo"
@@ -48,8 +48,8 @@ def test_joining_applies_exactly_the_roles_the_server_stored(demo):
 
 
 def test_a_redemption_naming_roles_or_a_home_is_refused(demo):
-    server, admin = demo
-    secret = invite(admin, "demo", "olive", roles=OBSERVER).json()["invite"]
+    server, root = demo
+    secret = invite(root, "demo", "olive", roles=OBSERVER).json()["invite"]
     olive = Owner(server, "olive")
     assert olive.register(secret, roles=MEMBER).status_code == 400
     assert olive.register(secret, community="other").status_code == 400
@@ -58,8 +58,8 @@ def test_a_redemption_naming_roles_or_a_home_is_refused(demo):
 
 
 def test_an_invite_works_once_for_its_own_handle(demo):
-    server, admin = demo
-    secret = invite(admin, "demo", "lyra").json()["invite"]
+    server, root = demo
+    secret = invite(root, "demo", "lyra").json()["invite"]
     assert Owner(server, "vega").register(secret).status_code == 403  # edited handle
     assert Owner(server, "lyra").register("sdi_" + "A" * 43).status_code == 403
     assert Owner(server, "lyra").register(secret).status_code == 201
@@ -70,9 +70,9 @@ def test_an_invite_works_once_for_its_own_handle(demo):
 
 
 def test_an_expired_or_replaced_invite_is_refused(demo):
-    server, admin = demo
-    first = invite(admin, "demo", "lyra").json()["invite"]
-    second = invite(admin, "demo", "lyra").json()["invite"]
+    server, root = demo
+    first = invite(root, "demo", "lyra").json()["invite"]
+    second = invite(root, "demo", "lyra").json()["invite"]
     assert (
         Owner(server, "lyra").register(first).status_code == 403
     )  # revoked by the second
@@ -83,12 +83,12 @@ def test_an_expired_or_replaced_invite_is_refused(demo):
 
 
 def test_pending_invites_are_listed_with_their_roles_until_used(demo):
-    server, admin = demo
-    invite(admin, "demo", "lyra")
-    invite(admin, "demo", "olive", roles=OBSERVER)
+    server, root = demo
+    invite(root, "demo", "lyra")
+    invite(root, "demo", "olive", roles=OBSERVER)
     listed = HTTP.get(
         f"{server.url}/v1/communities/demo/invites",
-        headers=admin.headers(),
+        headers=root.headers(),
     ).json()["invites"]
     handles = {i["handle"]: i for i in listed}
     assert set(handles) == {"lyra", "olive", "steward"}
@@ -96,56 +96,56 @@ def test_pending_invites_are_listed_with_their_roles_until_used(demo):
     Owner(server, "lyra").register(handles["lyra"]["invite"])
     again = HTTP.get(
         f"{server.url}/v1/communities/demo/invites",
-        headers=admin.headers(),
+        headers=root.headers(),
     ).json()["invites"]
     assert {i["handle"] for i in again} == {"olive", "steward"}
 
 
 def test_an_invite_is_read_and_revoked_by_its_id(demo):
-    server, admin = demo
-    issued = invite(admin, "demo", "lyra")
+    server, root = demo
+    issued = invite(root, "demo", "lyra")
     assert issued.status_code == 201
     url = issued.headers["Location"]
     assert url.endswith(f"/v1/communities/demo/invites/{issued.json()['id']}")
-    read = HTTP.get(url, headers=admin.headers())
+    read = HTTP.get(url, headers=root.headers())
     assert read.status_code == 200 and read.json()["invite"] == issued.json()["invite"]
-    assert HTTP.delete(url, headers=admin.headers()).status_code == 200
-    assert HTTP.get(url, headers=admin.headers()).status_code == 404
+    assert HTTP.delete(url, headers=root.headers()).status_code == 200
+    assert HTTP.get(url, headers=root.headers()).status_code == 404
     assert Owner(server, "lyra").register(issued.json()["invite"]).status_code == 403
 
 
 def test_a_missing_collection_value_is_refused(demo):
-    _, admin = demo
-    bare = invite(admin, "demo", "lyra", roles=[{"role": "community-member"}])
+    _, root = demo
+    bare = invite(root, "demo", "lyra", roles=[{"role": "community-member"}])
     assert bare.status_code == 400
     extra = invite(
-        admin, "demo", "lyra", roles=[{"role": "gate-keeper", "collections": []}]
+        root, "demo", "lyra", roles=[{"role": "gate-keeper", "collections": []}]
     )
     assert extra.status_code == 400
 
 
 def test_creating_an_invite_takes_the_authority_to_assign_its_roles(server):
-    admin, owners = community_with(server, members=("lyra",))
+    root, owners = community_with(server, members=("lyra",))
     lyra = owners["lyra"]
     steward = steward_of(server)
     assert invite(lyra, "demo", "mallory").status_code == 403  # members
     assert invite(steward, "demo", "mallory").status_code == 201
     server_admin = [{"role": "server-admin", "collections": None}]
     assert steward.invite("ana", server_admin).status_code == 403  # delegate
-    assert admin.invite("ana", server_admin).status_code == 201
-    root = [{"role": "server-root", "collections": None}]
-    assert admin.invite("eve", root).status_code == 403  # never assignable
+    assert root.invite("ana", server_admin).status_code == 201
+    server_root = [{"role": "server-root", "collections": None}]
+    assert root.invite("eve", server_root).status_code == 403  # never assignable
     # a homed caller invites into its own community only
-    create_community(server, admin, "other")
+    create_community(server, root, "other")
     assert invite(steward, "other", "mallory").status_code == 403
 
 
 def test_rebind_retires_keys_and_only_the_fresh_invite_works(server):
-    admin, owners = community_with(server, members=("lyra",))
+    root, owners = community_with(server, members=("lyra",))
     lyra = owners["lyra"]
     old_session = lyra.session_key()
     rebound = HTTP.post(
-        admin.user_url("lyra", "demo") + "/invites", headers=admin.headers()
+        root.user_url("lyra", "demo") + "/invites", headers=root.headers()
     )
     assert rebound.status_code == 201, rebound.text
     assert rebound.json()["retired_keys"] == 1
@@ -162,15 +162,15 @@ def test_rebind_retires_keys_and_only_the_fresh_invite_works(server):
 
 
 def test_a_ported_author_claims_its_handle_by_invite(demo):
-    server, admin = demo
+    server, root = demo
     psql(
         server,
         "INSERT INTO users (handle, home) VALUES ('author', 'demo'); "
         "INSERT INTO role_assignments (user_id, role_id, collections, created_by) "
         "SELECT id, 'community-member', '{*}', 'port' FROM users WHERE handle = 'author'",
     )
-    secret = invite(admin, "demo", "author").json()["invite"]
+    secret = invite(root, "demo", "author").json()["invite"]
     author = Owner(server, "author")
     assert author.register(secret).status_code == 201
     assert roles_of(author) == MEMBER
-    assert invite(admin, "demo", "author").status_code == 409
+    assert invite(root, "demo", "author").status_code == 409

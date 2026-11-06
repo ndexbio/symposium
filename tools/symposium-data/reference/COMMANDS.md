@@ -30,7 +30,7 @@ symposium-data context show [-h]
 
 ## `admin-config`
 
-make root's key and its public key file, and set root's server-level context (R-D4)
+make root's key and its public key file, and set root's server-level context
 
 ```
 symposium-data admin-config [-h] --handle HANDLE --data-server-url DATA_SERVER_URL
@@ -39,10 +39,10 @@ symposium-data admin-config [-h] --handle HANDLE --data-server-url DATA_SERVER_U
 
 ## `communities create`
 
-create a community with its first community admin, and write that admin's invite file (0600)
+create a community with its first community admin, and write its invite file (0600)
 
 ```
-symposium-data communities create [-h] --name NAME --admin ADMIN [--out OUT]
+symposium-data communities create [-h] --name NAME --admin HANDLE [--out OUT]
 ```
 
 ## `communities list`
@@ -325,7 +325,7 @@ symposium-data find meta [-h] --collection COLLECTION --contains CONTAINS [--sin
 
 ## `verify`
 
-check a citation (R-G9)
+check a citation
 
 ```
 symposium-data verify [-h] --cite CITE [--before BEFORE] [--sha256 SHA256]

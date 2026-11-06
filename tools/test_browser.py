@@ -460,8 +460,7 @@ def case_g_citation_edges_span_columns(dists):
 def case_h_pins_survive_a_rebuild(dists):
     """A hand-placed node stays where it was put, and a bad pin file cannot break the build.
 
-    Manual arrangement used to be lost on every rebuild. The sidecar is also hand-editable,
-    so the malformed case is part of the contract: a typo in a viewing preference must cost
+    The sidecar is hand-editable, so the malformed case is part of the contract: a typo in a viewing preference must cost
     the arrangement and nothing else.
     """
     bad = []

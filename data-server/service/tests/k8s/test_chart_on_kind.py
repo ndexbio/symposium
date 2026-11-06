@@ -257,7 +257,7 @@ def test_the_chart_installs_takes_its_admin_key_and_keeps_its_data(cluster, tmp_
     ).stdout
     assert pvc == "Bound"
 
-    # installed again, without the key: the same server, its admin bound from the volume
+    # installed again, without the key: the same server, its root bound from the volume
     values.pop("adminKey")
     values_file.write_text(yaml.safe_dump(values))
     cluster.helm("install", RELEASE, CHART, *install)

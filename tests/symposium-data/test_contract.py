@@ -75,7 +75,7 @@ ARGUMENTS = {
     "before": None,
     "sha256": "0" * 64,
     "home": "demo",
-    "admin": "steward",
+    "first_admin": "steward",
     "user_id": "5779183b-bb3d-439f-bdbf-d042c2e58306",
     "principal": "/v1/communities/demo/users/lyra",
     "role": "community-observer",
@@ -160,7 +160,7 @@ def test_every_call_the_cli_makes_is_an_operation_of_the_contract(monkeypatch):
 
 
 def test_every_method_of_the_client_reaches_the_server(monkeypatch):
-    """A client method that no longer calls the server is dead code: it fails here."""
+    """A client method that calls no server route is dead code: it fails here."""
     calls = recorded_calls(monkeypatch)
     methods = {
         name

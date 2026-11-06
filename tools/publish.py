@@ -141,12 +141,9 @@ def main(argv):
         return 2
     # ONE ARTIFACT PER SUBMISSION. Publication is strictly serial: the gate stamps one
     # `created` per artifact and validates each against the record as it stands at that
-    # moment (spec 1.9). Submitting several at once used to be allowed and is not, because
-    # it made the member's local ordering and the gate's stamped ordering two different
-    # things — a citation between two artifacts in the same call passed `--check`, which
-    # stamped them a second apart in argument order, and was then refused by the gate,
-    # which stamped them as one act. An Analysis and its outputs are published one at a
-    # time, the Analysis first, each waiting for acceptance (spec 2.5).
+    # moment (spec 1.9). One call submits one artifact, so the member's local ordering and
+    # the gate's stamped ordering are the same thing. An Analysis and its outputs are
+    # published one at a time, the Analysis first, each waiting for acceptance (spec 2.5).
     if len(paths) > 1:
         print(f"! {len(paths)} artifacts given; publication is strictly serial and takes one.\n"
               f"  Publish them one at a time, in the order their addresses require, waiting for\n"
@@ -339,7 +336,7 @@ def main(argv):
         a["artifact"]["created"] = None            # the gate owns the timestamp
         name = a["artifact"]["name"]
         # A submission is a file in the community's `inbox`, readable by its submitter and the
-        # admin. Its name carries the moment of submission, so a resubmission after a
+        # gate. Its name carries the moment of submission, so a resubmission after a
         # rejection is a new file; the gate finds it by its mark.
         when = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         try:

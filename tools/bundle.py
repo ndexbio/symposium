@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the Symposium bundle, dist/Symposium_skill.zip (R-I8): `make build` runs this.
+"""Build the Symposium bundle, dist/Symposium_skill.zip: `make build` runs this.
 
     python3 tools/bundle.py dist/Symposium_skill.zip
 
@@ -12,7 +12,7 @@ The zip holds:
                              a clone: spec/, tools/ (the workflow tools, the docs, roles, policies
                              and SOPs, the conformance suite and record checkers, and the CLI in
                              tools/symposium-data/, stamped with compat.json: the data-server
-                             version this bundle was built for, R-I5), server/, examples/, and
+                             version this bundle was built for), server/, examples/, and
                              the data server's operator docs (its top-level *.md but its
                              developer README) and its Helm chart, data-server/helm/
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fixtures.ndex_port.stub import CREDENTIALS, FIXTURES, NdexStub, attributes
 from harness import MAX_WAIT
-from suite import ADMIN, SKILL, community_file
+from suite import ROOT, SKILL, community_file
 
 
 def credentials_file(directory: Path) -> Path:
@@ -81,7 +81,7 @@ def test_a_port_while_another_runs_is_refused(server, skill, tmp_path):
         directory.mkdir()
         bootstrap(skill, directory, server, community)
     stub = NdexStub(hold=True)
-    skill.ok(first_dir, "use", "demo", ADMIN)
+    skill.ok(first_dir, "use", "demo", ROOT)
     first = subprocess.Popen(
         [
             sys.executable,
@@ -98,13 +98,13 @@ def test_a_port_while_another_runs_is_refused(server, skill, tmp_path):
     try:
         assert stub.held.wait(MAX_WAIT), "the first port never reached the listing"
         # switching now changes only the commands after it: the running port keeps demo's
-        skill.ok(other_dir, "use", "other", ADMIN)
+        skill.ok(other_dir, "use", "other", ROOT)
         code, out = skill(other_dir, "port", credentials_file(other_dir), stub.url)
         assert code == 1 and out["status"] == 409
         stub.released.set()
         stdout, _ = first.communicate(timeout=MAX_WAIT)
         ported = json.loads(stdout)
-        assert ported["state"] == "ok" and ported["session"] == f"demo/{ADMIN}"
+        assert ported["state"] == "ok" and ported["session"] == f"demo/{ROOT}"
     finally:
         stub.close()
         first.kill()

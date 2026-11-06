@@ -3,16 +3,16 @@ API keys, collections and files. Every byte is streamed by this service; S3 is n
 The record's routes are generated from the contract and mounted beside these by
 `symposium_server`.
 
-Communities are tenants (R-G8): every community-dependent route is under /v1/{community}/...,
-with collection-scoped routes under collections/{collection}/ and file routes under files/{id}/.
-Sign-in (/v1/auth/...), users, invites, roles, assignments, communities and /v1/status are
-server-wide.
+Communities are tenants: every community-dependent route is under
+/v1/communities/{community}/..., with collection-scoped routes under collections/{collection}/
+and file routes under files/{file_id}/. Sign-in (/v1/challenges, /v1/sessions), registrations,
+/v1/me, server-level users, invites, roles and /v1/status are server-wide.
 
 Every request presents one API key or none (`access`), and is decided by its caller's
 `UserContext`: the operation's grants at the door, then each collection it touches here.
 
-Nobody has a shell on the server (R-D7): every administrative operation is a route, and the root
-user's key comes from the key file on the volume (R-D4). Without a usable one the server is
+Nobody has a shell on the server: every administrative operation is a route, and the root
+user's key comes from the key file on the volume. Without a usable one the server is
 non-operational: every route but /v1/status answers 501.
 """
 
@@ -63,6 +63,7 @@ from .records import (
 from .runtime import Database, MultipartWriter, PayloadStore, Settings
 from .wire import (
     NAME,
+    PRIVILEGED_REFUSAL,
     WireError,
     digest_header,
     etag,
@@ -71,6 +72,7 @@ from .wire import (
     parse_if_match,
     parse_instant,
     parse_metadata,
+    privileged_community,
     stamp,
     valid_community,
     valid_file_name,
@@ -123,7 +125,7 @@ STATUS = "/v1/status"
 
 @app.middleware("http")
 async def operational_only(request: Request, call_next):
-    """Non-operational mode (R-D4): only /v1/status answers, so a readiness probe sees why;
+    """Non-operational mode: only /v1/status answers, so a readiness probe sees why;
     the jobs keep running."""
     if not admin_mode.operational and request.url.path != STATUS:
         return JSONResponse(
@@ -374,7 +376,7 @@ def refuse(status: int, message: str, conn=None):
 
 def community_of(conn, name: str) -> str:
     """The community a path names, as it was created; 404 for a non-slug or unknown name,
-    without touching the database for a non-slug (R-G8)."""
+    without touching the database for a non-slug."""
     if not valid_community(name):
         refuse(404, f"no community '{name}'")
     found = records.community_name(conn, name)
@@ -481,7 +483,7 @@ def register(
     body: RegisterIn,
     response: Response,
 ):
-    """Join with an invite: register a key generated on the invitee's machine (R-D1, R-D5).
+    """Join with an invite: register a key generated on the invitee's machine.
     The invite, held by the server, says the home and the roles; the request names neither."""
     if body.model_extra:
         refuse(
@@ -1431,8 +1433,8 @@ async def create_community(
     request: Request,
     response: Response,
 ):
-    """Create a community, its default collections, and the invite of its first community
-    admin (R-G8), from `{name, admin}`; or, from an archive (`application/x-tar`), import
+    """Create a community, its default collections, and the invite of its first
+    community admin, from `{name, admin}`; or, from an archive (`application/x-tar`), import
     one. Creating is idempotent: the exact existing name answers 200 and changes nothing."""
     media = request.headers.get("content-type", "").split(";")[0].strip()
     if media == "application/x-tar":
@@ -1451,6 +1453,8 @@ def create_community_from(
 ) -> dict:
     if not valid_community(body.name):
         refuse(400, "a community name is 1-20 letters, digits or underscores")
+    if privileged_community(body.name):
+        refuse(400, PRIVILEGED_REFUSAL)
     with db.connection() as conn:
         root = records.root_user(conn)
         try:
@@ -1686,7 +1690,7 @@ def revoke_api_key(
         return out
 
 
-# ── export and import (R-J6) ────────────────────────────────────────────────────────────────
+# ── export and import ────────────────────────────────────────────────────────────────
 def pipe() -> tuple:
     reader, writer = os.pipe()
     return os.fdopen(reader, "rb"), os.fdopen(writer, "wb")
@@ -1737,7 +1741,7 @@ def export(
 
 
 async def import_archive(caller: Caller, request: Request, response: Response):
-    """Create a community from its archive, in one transaction (R-J6): refused if the
+    """Create a community from its archive, in one transaction: refused if the
     community exists here (there is no merge), and nothing is written on any failure. What the
     exported root owned becomes this server's root's."""
     reader, writer = pipe()
@@ -1778,7 +1782,7 @@ def wire(call, *args):
 
 class Upload:
     """One streamed, verified, still-pending payload. It becomes durable only inside the
-    commit transaction that references it (R-A6); otherwise discard() removes it, bytes first
+    commit transaction that references it; otherwise discard() removes it, bytes first
     and row second, leaving the row for the janitor if S3 refuses."""
 
     def __init__(self, pid, sha: str, size: int):
@@ -1789,7 +1793,7 @@ class Upload:
 
 
 def quota_for(caller: Caller) -> int:
-    """The per-owner quota; a holder of `communities` writes without one (R-H2)."""
+    """The per-owner quota; a holder of `communities` writes without one."""
     return 0 if caller.allows(rbac.COMMUNITIES, None) else settings.quota()
 
 
@@ -1872,7 +1876,7 @@ def written(
 def commit_version(
     conn, community, file_id, upload, head, metadata, content_type, handle, kid, quota
 ) -> tuple:
-    """The atomic step (R-A6): quota under the owner's lock, the payload turned ready (or an
+    """The atomic step: quota under the owner's lock, the payload turned ready (or an
     identical one reused), and the version inserted, all in the caller's transaction.
     -> (version number, s3 key to delete after commit or None)."""
     if upload is None:
@@ -1998,9 +2002,9 @@ async def put_version(
     file_id: uuid.UUID,
     request: Request,
 ):
-    """Append a version: new content, new metadata, or both (R-A2). A metadata-only version
+    """Append a version: new content, new metadata, or both. A metadata-only version
     reuses the payload; a content-only version keeps the file's metadata. With If-Match the
-    write applies only if the head is still the version the client built on (R-A6)."""
+    write applies only if the head is still the version the client built on."""
     metadata = wire(parse_metadata, request.headers.get("x-data-metadata"))
     expected = wire(parse_if_match, request.headers.get("if-match"))
     metadata_only = request.headers.get("x-data-metadata-only") == "1"
@@ -2072,7 +2076,7 @@ def delete_file(
     request: Request,
     reason: str | None = None,
 ):
-    """Soft delete (R-B1): append a tombstone version. The file still answers, serving the
+    """Soft delete: append a tombstone version. The file still answers, serving the
     previous content with `X-Data-Deleted: true`; a later version restores it."""
     expected = wire(parse_if_match, request.headers.get("if-match"))
     with db.connection() as conn:
@@ -2105,7 +2109,7 @@ def purge(
     file_id: uuid.UUID,
     ref: str,
 ):
-    """Free one version's content (`manage` on its collection; R-B3). The version stays
+    """Free one version's content (`manage` on its collection). The version stays
     addressable and answers 410 with its metadata; the bytes go only when no other live version
     shares them. When S3 refuses, the payload stays purging and the janitor finishes the job."""
     n = version_number(ref)
@@ -2173,7 +2177,7 @@ async def content(
     ref: str,
     request: Request,
 ):
-    """Stream one version (R-E5): the service authorizes and streams every byte itself."""
+    """Stream one version: the service authorizes and streams every byte itself."""
     community, info, key = await run_in_threadpool(
         readable, caller, community, file_id, ref
     )
@@ -2265,7 +2269,7 @@ def create_collection(
     body: CollectionIn,
     response: Response,
 ):
-    """Create a collection, owned by the caller's user (R-D3), who reaches it through the
+    """Create a collection, owned by the caller's user, who reaches it through the
     owner allowance. It takes `write` in the community, with any collection value."""
     with db.connection() as conn:
         community = community_of(conn, community)
@@ -2319,7 +2323,7 @@ def update_collection(
         return {"community": community, "collection": collection, "public": body.public}
 
 
-# ── parity: the change feed, lookups, promote and verify (R-G) ──────────────────────────────
+# ── parity: the change feed, lookups, promote and verify ──────────────────────────────
 MAX_PAGE = 1000
 
 
@@ -2370,7 +2374,7 @@ def changes(
     since: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=MAX_PAGE),
 ):
-    """Every version written into the collection after seq `since`, in seq order (R-G3)."""
+    """Every version written into the collection after seq `since`, in seq order."""
     with db.connection() as conn:
         community = community_of(conn, community)
         who = lister(conn, caller, community, collection)
@@ -2385,7 +2389,7 @@ def query(
     collection: str,
     body: QueryIn,
 ):
-    """Versions whose metadata contains `contains`, paged like changes (R-G6)."""
+    """Versions whose metadata contains `contains`, paged like changes."""
     with db.connection() as conn:
         community = community_of(conn, community)
         who = lister(conn, caller, community, collection)
@@ -2405,7 +2409,7 @@ def list_files(
     limit: int = Query(default=100, ge=1, le=MAX_PAGE),
 ):
     """The collection's files, each at its newest version, tombstone or not (a deleted file
-    still holds its name), ordered by name. With `name`, the file holding it (R-G1)."""
+    still holds its name), ordered by name. With `name`, the file holding it."""
     after = ""
     if cursor is not None:
         try:
@@ -2443,7 +2447,7 @@ def by_hash(
     community: str,
     sha: str = Query(alias="sha256"),
 ):
-    """Every version of this community the caller may read that holds this content (R-F2)."""
+    """Every version of this community the caller may read that holds this content."""
     if not valid_sha256(sha):
         refuse(400, "a sha256 is 64 lowercase hex characters")
     with db.connection() as conn:
@@ -2466,13 +2470,13 @@ def promote(
     body: PromoteIn,
 ):
     """Copy one version, named by its citation in `from`, into the collection as a new file,
-    atomically (R-G4). Into `record` this is the gate's accept and takes `gate`; into any
+    atomically. Into `record` this is the gate's accept and takes `gate`; into any
     other collection, `manage` on it.
 
     With `stamp_json_pointer` the content is a JSON document, and the server writes the new
     version's own `created` at that pointer: the clock is the server's, never the caller's.
     The stamped bytes are a pending payload until the one transaction that allocates
-    `created`, creates the file and inserts its version (R-A6). They are re-serialized the
+    `created`, creates the file and inserts its version. They are re-serialized the
     way Symposium serializes canonical JSON: json.dumps defaults. The new version is
     credited to the source version's creator, with no key id."""
     name = body.name
@@ -2548,7 +2552,7 @@ def promote(
                 payload,
                 metadata,
                 source["content_type"],
-                # credited to the submitter, like a ported record (R-G4, R-M2); the
+                # credited to the submitter, like a ported record; the
                 # promoter's session only authorizes it
                 source["created_by"],
                 None,
@@ -2576,7 +2580,7 @@ def verify(
     before: str | None = None,
     sha256: str | None = None,
 ):
-    """The gate's check of a cited download (R-G9): the citation
+    """The gate's check of a cited download: the citation
     `symposium-data:<file id>@v<n>` names this version. A version the caller cannot read
     answers exactly like one that never existed, so the check reveals nothing the caller may
     not read."""
@@ -2595,9 +2599,9 @@ def verify(
         return records.verify(row, when, sha256)
 
 
-# ── the port (R-M1, see PORT_NDEX.md) ──────────────────────────────────────────────────────────
+# ── the port (see PORT_NDEX.md) ──────────────────────────────────────────────────────────
 class PortCredentials(BaseModel):
-    """The source's admin account for a port-ndex: a bound pair, held in memory only."""
+    """The NDEx account a port-ndex reads from: a bound pair, held in memory only."""
 
     username: str
     password: str
@@ -2635,13 +2639,12 @@ def start_port(
 
     with db.connection() as conn:
         community = community_of(conn, community)
-        admin = caller.handle
         if records.holds_files(conn, community):
             refuse(
                 400, f"community '{community}' holds files; a port-ndex needs it empty"
             )
         source = body.ndex_url.rstrip("/")  # the port-ndex source
-        port_id = records.start_port(conn, community, admin, source)
+        port_id = records.start_port(conn, community, caller.handle, source)
     run = port_ndex.Port(
         db,
         store,

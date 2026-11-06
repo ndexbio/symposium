@@ -5,7 +5,7 @@
     python browse.py <record dir> --out dist
 
 The record defaults to `./record`, the copy beside the session's context that sync (and the
-gate, on the admin's machine) keeps; it stops with an error when that is missing.
+gate, in the gate runner's session) keeps; it stops with an error when that is missing.
 
 This file produces the element sets the page templates consume; the presentation itself
 lives in `templates.py`.
@@ -766,8 +766,8 @@ _FULL_ORDER = {"Source": 0, "External": 0, "Ground": 1, "Assumption": 1,
 
 def _layout_full(nodes, edges):
     """Layered by Object type: addressed content, then the Objects that reach it, then
-    the Assertions. Three columns —
-    the judgment is no longer an Object, so it is no longer a column."""
+    the Assertions. Three columns: the judgment is a property of the Argument, not an
+    Object, so it has no column."""
     by_id = {n["data"]["id"]: n["data"] for n in nodes}
     col = defaultdict(list)
     for i, d in by_id.items():
@@ -816,13 +816,7 @@ _SUB_DX, _COL_GAP = 190.0, 150.0
 # Overview layout: layered by citation depth, not by clock
 # --------------------------------------------------------------------------- #
 #
-# The overview used to place a node at x = its publication session and y = its type band.
-# Nothing about what an artifact CITED entered the calculation, so a round's whole output
-# shared one x and the citation edges inside that round ran vertically through a stack of
-# nodes. A reader could see that an edge left one node and arrived at another only by
-# tracing a line that passed behind four unrelated boxes on the way.
-#
-# The rule this enforces instead: a citing artifact is never in the same column as one it
+# The rule: a citing artifact is never in the same column as one it
 # cites, and every derived edge therefore spans at least _MIN_DX horizontally.
 #
 # That rule is cheap to satisfy here because the record is a DAG by construction. Publication
@@ -895,7 +889,7 @@ def _layout_overview(nodes, edges, order_hint):
 
     `order_hint` maps node id -> a tiebreak key (publication index), so that within a layer
     the original reading order is preserved wherever the crossing heuristic is indifferent.
-    Time is still legible in the picture; it is simply no longer the thing that decides x.
+    Time stays legible in the picture; citation depth decides x.
     """
     by_id = {n["data"]["id"]: n["data"] for n in nodes}
     if not by_id:
@@ -1287,11 +1281,9 @@ def table_method_for(prop, methods):
 def looks_tabular(value, declares_table, max_header=60):
     """Is this property value an embedded table, rather than prose that has commas in it?
 
-    This used to be `"\\n" in v and "," in v.split("\\n")[0]`, which is true of almost every
-    long prose property anyone writes. It rendered every `import_method` in the record as a
-    table, and that is not a cosmetic fault: splitting prose on commas broke `4,364,823
-    bytes` into three cells and `19,113 data rows` into two, so the page displayed numbers
-    the artifact does not contain.
+    A newline and a comma in the first line are true of almost every long prose property, and
+    splitting prose on commas breaks `4,364,823 bytes` into three cells, so the page would
+    display numbers the artifact does not contain.
 
     Three conditions, all necessary. The artifact must DECLARE a row/column Content, because
     a table nobody can address is not what this section is for. The value must parse as
@@ -1490,10 +1482,8 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, cited=None,
         layout_internal(ig)
         parts.append(T.internal_graph_section(ig, name, typ))
 
-    # Spec §1.8.1 calls this Object type `Content`. It was `AddressingMethod` in an earlier
-    # draft, and reading the old name here meant this table matched nothing and never
-    # rendered — so every artifact page in the record silently omitted the one section that
-    # says what may be cited and how to write the address.
+    # Spec §1.8.1 calls this Object type `Content`: the section that says what may be cited
+    # and how to write the address.
     methods = [o for o in doc.get("objects", []) if o.get("type") == "Content"]
     if methods:
         rows = "".join(
@@ -1986,7 +1976,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if not pathlib.Path(args.record_dir).is_dir():
         raise SystemExit(f"ERROR: no record copy at {args.record_dir}/: run `/symposium sync` "
-                         f"here first\n  (on the admin's machine, `/symposium gate` writes the "
+                         f"here first\n  (in the gate runner's session, `/symposium gate` writes the "
                          f"gate's copy)")
     compile_record(args.record_dir, args.out, title=args.title, quiet=args.quiet,
                    figures_dir=args.figures)

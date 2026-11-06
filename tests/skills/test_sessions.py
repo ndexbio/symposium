@@ -1,4 +1,4 @@
-"""The skill's sessions (R-I3, R-I7): every agent session's directory is kept under
+"""The skill's sessions: every agent session's directory is kept under
 `~/.symposium/`; `/symposium use` chooses this agent session's current one, kept per agent
 process (its PID and start time); each command finds its session; the paths a caller gives stay
 the caller's. On a temporary `~/.symposium/` and an injected process table, with no server."""
@@ -55,7 +55,7 @@ def agent_session(root, caller, table, shell: int) -> Sessions:
 
 
 MEMBER = {"publish": None, "read": ["*"], "write": ["*"], "manage": []}
-ADMIN = {"gate": None, "members": None, "export": None, "communities": None}
+ROOT_GRANTS = {"gate": None, "members": None, "export": None, "communities": None}
 
 
 def session(root: Path, *parts, handle: str, grants=None) -> Path:
@@ -117,7 +117,7 @@ def test_with_no_choice_the_machines_only_session_is_used(root, caller, table):
 
 
 def test_several_sessions_need_a_choice(root, caller, table):
-    session(root, "admin", "demo", handle="demo-admin", grants=ADMIN)
+    session(root, "admin", "demo", handle="demo-admin", grants=ROOT_GRANTS)
     session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     with pytest.raises(SessionError) as several:
         agent_session(root, caller, table, 300).place("sync", [])
@@ -129,16 +129,18 @@ def test_several_sessions_need_a_choice(root, caller, table):
 
 
 def test_use_switches_this_agent_session_only(root, caller, table):
-    admin = session(root, "admin", "demo", handle="demo-admin", grants=ADMIN)
+    root_session = session(
+        root, "admin", "demo", handle="demo-admin", grants=ROOT_GRANTS
+    )
     lyra = session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     first = agent_session(root, caller, table, 300)  # agent 200
     second = agent_session(root, caller, table, 500)  # agent 400
     assert first.use(["demo", "lyra"])["directory"] == str(lyra)
     assert second.use(["demo", "demo-admin"])["server_level"] is True
     assert first.place("sync", [])[0] == lyra  # unchanged by the other agent's choice
-    assert second.place("gate", [])[0] == admin
+    assert second.place("gate", [])[0] == root_session
     first.use(["demo", "demo-admin"])
-    assert first.place("gate", [])[0] == admin
+    assert first.place("gate", [])[0] == root_session
     records = sorted(p.name for p in (root / "current").glob("*.json"))
     assert records == ["200.json", "400.json"]
 
@@ -146,7 +148,7 @@ def test_use_switches_this_agent_session_only(root, caller, table):
 def test_use_with_no_arguments_or_no_such_session_lists_them_and_changes_nothing(
     root, caller, table
 ):
-    session(root, "admin", "demo", handle="demo-admin", grants=ADMIN)
+    session(root, "admin", "demo", handle="demo-admin", grants=ROOT_GRANTS)
     sessions = agent_session(root, caller, table, 300)
     for args in ([], ["demo", "nobody"]):
         with pytest.raises(SessionError) as refused:
@@ -165,7 +167,7 @@ def test_no_session_names_setup_and_admin_config(root, caller, table):
 
 
 def test_a_command_is_refused_where_its_grant_is_not_held(root, caller, table):
-    session(root, "admin", "demo", handle="demo-admin", grants=ADMIN)
+    session(root, "admin", "demo", handle="demo-admin", grants=ROOT_GRANTS)
     session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     sessions = agent_session(root, caller, table, 300)
     sessions.use(["demo", "lyra"])
@@ -176,9 +178,9 @@ def test_a_command_is_refused_where_its_grant_is_not_held(root, caller, table):
     assert sessions.refusal("publish", lyra) is None
     assert sessions.refusal("users", lyra) is None  # any member reads it
     sessions.use(["demo", "demo-admin"])
-    _, admin, _ = sessions.place("gate", [])
-    assert sessions.refusal("gate", admin) is None
-    assert "`publish`" in sessions.refusal("publish", admin)["error"]
+    _, root_session, _ = sessions.place("gate", [])
+    assert sessions.refusal("gate", root_session) is None
+    assert "`publish`" in sessions.refusal("publish", root_session)["error"]
 
 
 def test_with_nothing_cached_the_server_decides(root, caller, table):
@@ -191,7 +193,7 @@ def test_with_nothing_cached_the_server_decides(root, caller, table):
 def test_a_server_wide_session_runs_server_commands_and_no_community_ones(
     root, caller, table
 ):
-    server = session(root, "admin", handle="demo-admin", grants=ADMIN)
+    server = session(root, "admin", handle="demo-admin", grants=ROOT_GRANTS)
     sessions = agent_session(root, caller, table, 300)
     assert sessions.use(["demo-admin"])["use"] == "/symposium use demo-admin"
     assert sessions.place("invite", ["--handle", "ana"])[0] == server
@@ -201,7 +203,7 @@ def test_a_server_wide_session_runs_server_commands_and_no_community_ones(
 
 
 def test_a_reused_pid_is_a_new_agent_session(root, caller, table):
-    session(root, "admin", "demo", handle="demo-admin", grants=ADMIN)
+    session(root, "admin", "demo", handle="demo-admin", grants=ROOT_GRANTS)
     session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     agent_session(root, caller, table, 300).use(["demo", "lyra"])
     # agent 200 ends, and a new process gets its PID: it has not chosen anything

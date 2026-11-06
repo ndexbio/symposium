@@ -1,4 +1,4 @@
-"""The skill's Python runtime for the symposium-data CLI (R-I7).
+"""The skill's Python runtime for the symposium-data CLI.
 
 The skill's own scripts and the toolchain's tools use only the standard library and run with the
 interpreter running the skill. The CLI needs its packages (`requirements.txt`), so it runs in the

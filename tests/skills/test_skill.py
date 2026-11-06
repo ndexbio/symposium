@@ -1,4 +1,4 @@
-"""The `symposium` skill as people use it (R-I7): `/symposium bootstrap` (server admins) and
+"""The `symposium` skill as people use it: `/symposium bootstrap` (server admins) and
 `/symposium setup` (anyone invited) over the CLI, the sessions they make under `~/.symposium/`,
 what the skill says when something is missing or a grant is not held; and the workflow
 commands (`publish`, `validate`, `sync`, `gate`, `serve`) through the skill, run from any
@@ -16,14 +16,14 @@ from pathlib import Path
 import httpx
 from harness import HTTP, MAX_WAIT, Output
 from skills.test_workflow import note, tool
-from suite import ADMIN, REPO, SKILL, Cli, community_file
+from suite import REPO, ROOT, SKILL, Cli, community_file
 
 
 def invite_files(directory: Path) -> list:
     return sorted(p.name for p in directory.glob("*.invite"))
 
 
-def admin_session(suite, community: str) -> Path:
+def root_session(suite, community: str) -> Path:
     return suite.home / ".symposium" / "admin" / community
 
 
@@ -122,7 +122,7 @@ def test_serve_without_a_record_copy_says_to_sync(server, skill, suite, tmp_path
     )
     code, out = report(suite, tmp_path, "serve")
     assert code == 1 and "no record copy at" in out and "/symposium sync" in out
-    assert str(admin_session(suite, "demo") / "record") in out  # the session's own copy
+    assert str(root_session(suite, "demo") / "record") in out  # the session's own copy
 
 
 def test_the_workflow_through_the_skill_from_any_directory(
@@ -172,21 +172,21 @@ def test_use_lists_switches_and_refuses_what_a_session_does_not_hold(
         tmp_path, "invite", "--handle", "vega", "--access", "community-member:*"
     )
     assert code == 1 and "`members` or `delegate`" in out["error"]
-    assert [s["use"] for s in out["sessions"]] == [f"/symposium use demo {ADMIN}"]
+    assert [s["use"] for s in out["sessions"]] == [f"/symposium use demo {ROOT}"]
     code, out = skill(
         tmp_path, "use"
     )  # alone: every session, with the command for each
     assert code == 1 and sorted(s["use"] for s in out["sessions"]) == [
-        f"/symposium use demo {ADMIN}",
+        f"/symposium use demo {ROOT}",
         "/symposium use demo lyra",
     ]
     code, out = skill(tmp_path, "use", "demo", "nobody")
     assert code == 1 and "no session for nobody in demo" in out["error"]
-    chosen = skill.ok(tmp_path, "use", "demo", ADMIN)
+    chosen = skill.ok(tmp_path, "use", "demo", ROOT)
     assert chosen["server_level"] is True and chosen["current"] is True
     roster = skill.ok(tmp_path, "users", "list")
     assert [m["handle"] for m in roster["users"]] == ["lyra"]
-    assert roster["session"] == f"demo/{ADMIN}"
+    assert roster["session"] == f"demo/{ROOT}"
     access = skill.ok(tmp_path, "access")
     assert [r["role"] for r in access["roles"]] == ["server-root"]
 
@@ -211,7 +211,7 @@ def test_bootstrap_reports_every_invalid_field(server, skill, tmp_path):
         json.dumps(
             {
                 "community": "not ok!",
-                "admin": "bad admin!",
+                "admin": "bad steward!",
                 "handles": ["lyra", "bad handle"],
                 "data-server-url": server.url,
             }
@@ -222,8 +222,15 @@ def test_bootstrap_reports_every_invalid_field(server, skill, tmp_path):
     problems = "\n".join(out["problems"])
     assert "'not ok!' is not a community name" in problems
     assert "'bad handle' is not a valid handle" in problems
-    assert "admin: 'bad admin!' is not a valid handle" in problems
+    assert "admin: 'bad steward!' is not a valid handle" in problems
     assert "'lyra'" not in problems
+
+
+def test_bootstrap_refuses_the_privileged_name(server, skill, tmp_path):
+    spec = community_file(tmp_path, server, "Admin", ["lyra"])
+    code, out = skill(tmp_path, "bootstrap", "--community-file", spec)
+    assert code == 1
+    assert "community: 'admin' is a privileged name and not allowed" in out["problems"]
 
 
 def test_bootstrap_writes_invite_files_and_only_adds(server, skill, suite, tmp_path):
@@ -231,7 +238,7 @@ def test_bootstrap_writes_invite_files_and_only_adds(server, skill, suite, tmp_p
     first = skill.ok(tmp_path, "bootstrap", "--community-file", spec)
     assert first["created"] is True and first["invited"] == ["lyra", "vega"]
     assert first["admin"] == "steward"
-    session = admin_session(suite, "demo")  # the server admin's session holds the files
+    session = root_session(suite, "demo")  # the server admin's session holds the files
     assert invite_files(session) == [
         "demo-lyra.invite",
         "demo-steward.invite",
@@ -265,7 +272,7 @@ def test_bootstrap_writes_invite_files_and_only_adds(server, skill, suite, tmp_p
     # bootstrap again invites nobody twice, and writes the invites still waiting
     for path in session.glob("*.invite"):
         path.unlink()
-    skill.ok(tmp_path, "use", "demo", ADMIN)
+    skill.ok(tmp_path, "use", "demo", ROOT)
     second = skill.ok(tmp_path, "bootstrap", "--community-file", spec)
     assert second["created"] is False and second["invited"] == []
     assert invite_files(session) == ["demo-vega.invite"]
@@ -284,8 +291,8 @@ def test_one_handle_in_two_communities_gets_two_invite_files(
         spec = community_file(tmp_path, server, community, ["lyra"])
         skill.ok(tmp_path, "bootstrap", "--community-file", spec)
     files = [
-        admin_session(suite, "demo") / "demo-lyra.invite",
-        admin_session(suite, "other") / "other-lyra.invite",
+        root_session(suite, "demo") / "demo-lyra.invite",
+        root_session(suite, "other") / "other-lyra.invite",
     ]
     contents = [json.loads(f.read_text()) for f in files]
     assert [c["community"] for c in contents] == ["demo", "other"]
@@ -297,7 +304,7 @@ def test_bootstrap_takes_a_key_the_server_knows(server, skill, suite, tmp_path):
     other = Cli(skill.program, {**skill.env, "HOME": str(tmp_path / "other-home")})
     (tmp_path / "other-home").mkdir()
     config = other.ok(
-        tmp_path, "admin-config", "--handle", ADMIN, "--data-server-url", server.url
+        tmp_path, "admin-config", "--handle", ROOT, "--data-server-url", server.url
     )
     assert (
         config["created"] is True
@@ -442,7 +449,7 @@ def test_keys_sharing_and_public_collections_through_the_skill(
     assert HTTP.get(content, headers=bearer).status_code == 401
     assert skill.ok(tmp_path, "list-api-keys")["keys"] == []
 
-    skill.ok(tmp_path, "use", "demo", ADMIN)
+    skill.ok(tmp_path, "use", "demo", ROOT)
     roots = skill.ok(
         tmp_path,
         "gen-api-key",
@@ -451,5 +458,5 @@ def test_keys_sharing_and_public_collections_through_the_skill(
         "--access",
         "community-observer:*",
     )
-    assert roots["session"] == f"demo/{ADMIN}" and roots["member_key"] is False
+    assert roots["session"] == f"demo/{ROOT}" and roots["member_key"] is False
     skill.ok(tmp_path, "revoke-api-key", roots["id"])

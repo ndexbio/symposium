@@ -24,8 +24,8 @@ SUBMITTED = {"symposium_submission": True}
 
 @pytest.fixture
 def demo(server):
-    admin, owners = community_with(server)
-    return server, admin, owners
+    root, owners = community_with(server)
+    return server, root, owners
 
 
 def changes(server, headers, collection, since=0, limit=100, community="demo"):
@@ -56,11 +56,11 @@ def query(server, headers, collection, contains, since=0, limit=100):
     )
 
 
-def promote(admin, file_id, n, collection="record", **body):
+def promote(caller, file_id, n, collection="record", **body):
     return HTTP.post(
-        admin.url(f"/collections/{collection}/files"),
+        caller.url(f"/collections/{collection}/files"),
         json={"from": f"symposium-data:{file_id}@v{n}", **body},
-        headers=admin.headers(),
+        headers=caller.headers(),
     )
 
 
@@ -82,7 +82,7 @@ def submission(name="goal", created=None) -> bytes:
 
 
 def test_changes_pages_through_every_version_once_in_seq_order(demo):
-    server, admin, owners = demo
+    server, root, owners = demo
     lyra = owners["lyra"]
     ids = [
         lyra.put("demo", "files", f"f{i}.csv", f"row {i}".encode()).json()["file_id"]
@@ -107,13 +107,13 @@ def test_changes_pages_through_every_version_once_in_seq_order(demo):
 
 
 def test_a_member_lists_only_their_own_inbox_entries(demo):
-    server, admin, owners = demo
+    server, root, owners = demo
     lyra, vega = owners["lyra"], owners["vega"]
     mine = lyra.put("demo", "inbox", "lyra.json", submission(), SUBMITTED).json()[
         "file_id"
     ]
     vega.put("demo", "inbox", "vega.json", submission(), SUBMITTED)
-    reply = admin.put(
+    reply = root.put(
         "demo",
         "inbox",
         "reply.json",
@@ -123,11 +123,11 @@ def test_a_member_lists_only_their_own_inbox_entries(demo):
 
     seen = every_change(server, lyra.headers(), "inbox", limit=2)
     assert {i["file_id"] for i in seen} == {mine, reply}
-    assert len(every_change(server, admin.headers(), "inbox")) == 3
+    assert len(every_change(server, root.headers(), "inbox")) == 3
 
 
 def test_find_and_query_by_metadata(demo):
-    server, admin, owners = demo
+    server, root, owners = demo
     lyra = owners["lyra"]
     for i in range(3):
         lyra.put(
@@ -175,22 +175,22 @@ def test_find_and_query_by_metadata(demo):
 
 
 def test_hash_lookup_finds_every_readable_copy(demo):
-    server, admin, owners = demo
+    server, root, owners = demo
     lyra, vega = owners["lyra"], owners["vega"]
     content = b"the same bytes"
     sha = hashlib.sha256(content).hexdigest()
     lyra.put("demo", "files", "one.csv", content)
     vega.put("demo", "files", "two.csv", content)
-    create_community(server, admin, "other")
+    create_community(server, root, "other")
     bob = Owner(server, "bob", community="other")
-    assert enroll(admin.at("other"), bob, "other").status_code == 201
+    assert enroll(root.at("other"), bob, "other").status_code == 201
     bob.put("other", "files", "three.csv", content)
 
     url = f"{server.url}/v1/communities/demo/versions?sha256={sha}"
     seen = HTTP.get(url, headers=lyra.headers()).json()["items"]
     assert sorted(i["name"] for i in seen) == ["one.csv", "two.csv"]
-    # hash lookup stays inside its community, even for the admin
-    assert len(HTTP.get(url, headers=admin.headers()).json()["items"]) == 2
+    # hash lookup stays inside its community, even for root
+    assert len(HTTP.get(url, headers=root.headers()).json()["items"]) == 2
     elsewhere = HTTP.get(
         f"{server.url}/v1/communities/other/versions?sha256={sha}",
         headers=bob.headers(),
@@ -207,7 +207,7 @@ def test_hash_lookup_finds_every_readable_copy(demo):
 
 
 def test_promote_stamps_the_server_clock_into_the_record(demo):
-    server, admin, owners = demo
+    server, root, owners = demo
     lyra, vega = owners["lyra"], owners["vega"]
     source = lyra.put(
         "demo",
@@ -219,7 +219,7 @@ def test_promote_stamps_the_server_clock_into_the_record(demo):
     ).json()
 
     promoted = promote(
-        admin,
+        root,
         source["file_id"],
         1,
         name="ResearchGoal_goal.json",
@@ -236,7 +236,7 @@ def test_promote_stamps_the_server_clock_into_the_record(demo):
         "accepted": True,
     }
     assert record["content_type"] == "application/json"
-    # credited to its submitter (R-G4)
+    # credited to its submitter
     assert record["created_by"] == "lyra" and record["key_id"] is None
     assert promote(lyra, source["file_id"], 1, name="mine.json").status_code == 403
 
@@ -251,7 +251,7 @@ def test_promote_stamps_the_server_clock_into_the_record(demo):
         ).encode()
     )
 
-    plain = promote(admin, source["file_id"], 1, name="copy.json")
+    plain = promote(root, source["file_id"], 1, name="copy.json")
     assert plain.status_code == 201
     assert plain.json()["sha256"] == source["sha256"]  # no stamp: the payload is reused
     assert_consistent(server)
@@ -259,7 +259,7 @@ def test_promote_stamps_the_server_clock_into_the_record(demo):
 
 def test_a_failing_promote_leaves_nothing_behind(demo):
     content = submission()
-    server, admin, owners = demo
+    server, root, owners = demo
     lyra = owners["lyra"]
     fid = lyra.put("demo", "inbox", "goal.json", content, SUBMITTED).json()["file_id"]
     text = lyra.put("demo", "inbox", "note.txt", b"plain", SUBMITTED).json()["file_id"]
@@ -277,62 +277,62 @@ def test_a_failing_promote_leaves_nothing_behind(demo):
         "VALUES (gen_random_uuid(), 'demo', 'record', 'goal.json', 'reserved', 'vega', "
         "now())",
     )
-    assert promote(admin, fid, 1, **pointer).status_code == 409
+    assert promote(root, fid, 1, **pointer).status_code == 409
     assert psql(server, "SELECT count(*) FROM payloads WHERE state = 'pending'") == "0"
     psql(server, "DELETE FROM files WHERE state = 'reserved'")
-    assert promote(admin, fid, 1, stamp_json_pointer="/missing/x").status_code == 422
-    assert promote(admin, text, 1, **pointer).status_code == 422
-    assert promote(admin, gone, 2).status_code == 409
-    assert promote(admin, fid, 1, collection="nowhere").status_code == 404
-    assert promote(admin, fid, 1).status_code == 201
-    assert promote(admin, fid, 1).status_code == 409  # the name is taken
-    assert purge(admin, text, 1).status_code == 200
-    assert promote(admin, text, 1).status_code == 410
+    assert promote(root, fid, 1, stamp_json_pointer="/missing/x").status_code == 422
+    assert promote(root, text, 1, **pointer).status_code == 422
+    assert promote(root, gone, 2).status_code == 409
+    assert promote(root, fid, 1, collection="nowhere").status_code == 404
+    assert promote(root, fid, 1).status_code == 201
+    assert promote(root, fid, 1).status_code == 409  # the name is taken
+    assert purge(root, text, 1).status_code == 200
+    assert promote(root, text, 1).status_code == 410
 
-    record = every_change(server, admin.headers(), "record")
+    record = every_change(server, root.headers(), "record")
     assert [i["name"] for i in record] == ["goal.json"]
     assert_consistent(server)
 
 
 def test_verify_checks_existence_hash_and_strict_ordering(demo):
-    server, admin, owners = demo
+    server, root, owners = demo
     lyra = owners["lyra"]
     data = lyra.put("demo", "files", "table.csv", b"a,b\n1,2\n").json()
     goal = lyra.put("demo", "inbox", "goal.json", submission(), SUBMITTED).json()
     record = promote(
-        admin, goal["file_id"], 1, stamp_json_pointer="/artifact/created"
+        root, goal["file_id"], 1, stamp_json_pointer="/artifact/created"
     ).json()
     cite = data["citation"]
 
-    ok = verify(admin, cite, before=record["created"], sha256=data["sha256"]).json()
+    ok = verify(root, cite, before=record["created"], sha256=data["sha256"]).json()
     assert ok["ok"] and ok["exists"] and ok["created"] == data["created"]
-    wrong = verify(admin, cite, sha256="0" * 64).json()
+    wrong = verify(root, cite, sha256="0" * 64).json()
     assert not wrong["ok"] and wrong["reason"] == "sha256 does not match"
-    late = verify(admin, cite, before=data["created"]).json()
+    late = verify(root, cite, before=data["created"]).json()
     assert not late["ok"] and "not strictly earlier" in late["reason"]
 
-    create_community(server, admin, "other")
+    create_community(server, root, "other")
     bob = Owner(server, "bob", community="other")
-    enroll(admin.at("other"), bob, "other")
+    enroll(root.at("other"), bob, "other")
     hidden = verify(bob, cite).json()
     unknown = verify(bob, "symposium-data:00000000-0000-0000-0000-000000000000@v1")
     assert hidden == unknown.json() and not hidden["exists"]
-    assert verify(admin, cite, before="yesterday").status_code == 400
+    assert verify(root, cite, before="yesterday").status_code == 400
     # a caller with no key verifies only what it may read: here, nothing
-    anonymous = HTTP.get(verification_url(admin, cite))
+    anonymous = HTTP.get(verification_url(root, cite))
     assert anonymous.status_code == 200 and anonymous.json() == unknown.json()
 
-    assert purge(admin, data["file_id"], 1).status_code == 200
-    purged = verify(admin, cite).json()
+    assert purge(root, data["file_id"], 1).status_code == 200
+    purged = verify(root, cite).json()
     assert purged["exists"] and not purged["ok"]
     assert purged["reason"] == "content purged"
 
 
 # ── export and import ───────────────────────────────────────────────────────────────────────
-def export(admin, community, path):
+def export(caller, community, path):
     """Stream the community's export through the route into `path`."""
-    url = f"{admin.server.url}/v1/communities/{community}/archive"
-    with HTTP.stream("GET", url, headers=admin.headers()) as r:
+    url = f"{caller.server.url}/v1/communities/{community}/archive"
+    with HTTP.stream("GET", url, headers=caller.headers()) as r:
         assert r.status_code == 200, r.read()
         with open(path, "wb") as out:
             for chunk in r.iter_bytes():
@@ -340,13 +340,13 @@ def export(admin, community, path):
     return path
 
 
-def import_(admin, path):
+def import_(caller, path):
     """Upload an export through the route. -> the response."""
     with open(path, "rb") as source:
         return HTTP.post(
-            f"{admin.server.url}/v1/communities",
+            f"{caller.server.url}/v1/communities",
             content=source.read(),
-            headers={**admin.headers(), "Content-Type": "application/x-tar"},
+            headers={**caller.headers(), "Content-Type": "application/x-tar"},
         )
 
 
@@ -378,22 +378,22 @@ def comparable(items):
 def test_export_import_round_trip_preserves_the_community(server, tmp_path):
     # export, empty the server, import: the one session server plays source and target
     source = target = server
-    admin, owners = community_with(source)
+    root, owners = community_with(source)
     lyra, vega = owners["lyra"], owners["vega"]
     fid = lyra.put("demo", "files", "data.csv", b"1,2,3").json()["file_id"]
     lyra.version(fid, b"1,2,3,4")
     lyra.delete(fid, reason="superseded")
     secret = lyra.put("demo", "files", "secret.csv", b"remove me").json()
     purged = secret["citation"]
-    assert purge(admin, secret["file_id"], 1).status_code == 200
+    assert purge(root, secret["file_id"], 1).status_code == 200
     HTTP.post(
         f"{source.url}/v1/communities/demo/collections",
         json={"name": "project"},
         headers=lyra.headers(),
     )
     # vega is narrowed to `files`, then given read on the project lyra owns
-    assert admin.unassign("community-member", None, "vega", "demo").status_code == 200
-    assert admin.assign("community-member", ["files"], "vega", "demo").status_code in (
+    assert root.unassign("community-member", None, "vega", "demo").status_code == 200
+    assert root.assign("community-member", ["files"], "vega", "demo").status_code in (
         200,
         201,
     )
@@ -406,26 +406,26 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
         roles=[{"role": "community-observer", "collections": ["project"]}],
         non_member=True,
     )
-    removed = HTTP.delete(admin.user_url("rigel", "demo"), headers=admin.headers())
+    removed = HTTP.delete(root.user_url("rigel", "demo"), headers=root.headers())
     assert removed.status_code == 200, removed.text
     goal = lyra.put("demo", "inbox", "goal.json", submission(), SUBMITTED).json()[
         "file_id"
     ]
-    promote(admin, goal, 1, stamp_json_pointer="/artifact/created")
+    promote(root, goal, 1, stamp_json_pointer="/artifact/created")
     before = {
-        c: comparable(every_change(source, admin.headers(), c))
+        c: comparable(every_change(source, root.headers(), c))
         for c in ("files", "inbox", "record", "project")
     }
-    archive = export(admin, "demo", tmp_path / "demo.tar")
+    archive = export(root, "demo", tmp_path / "demo.tar")
 
     target.reset()
     truncated = tmp_path / "truncated.tar"
     truncated.write_bytes(archive.read_bytes()[: archive.stat().st_size // 2])
-    assert import_(admin, truncated).status_code == 400
+    assert import_(root, truncated).status_code == 400
     assert psql(target, "SELECT count(*) FROM collections") == "0"
     assert_consistent(target)
 
-    imported = import_(admin, archive)
+    imported = import_(root, archive)
     assert imported.status_code == 201, imported.text
     results = {r["handle"]: r["result"] for r in imported.json()["handles"]}
     assert results == {
@@ -433,7 +433,7 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
         "vega": "created",
         "rigel": "created",
     }
-    after = {c: comparable(every_change(target, admin.headers(), c)) for c in before}
+    after = {c: comparable(every_change(target, root.headers(), c)) for c in before}
     assert after == before
 
     # members sign in with the keys they already hold, with their roles
@@ -468,7 +468,7 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
     assert new["seq"] == last["seq"] + 1
     assert instant(new["created"]) > instant(last["created"])
 
-    again = import_(admin, archive)
+    again = import_(root, archive)
     assert again.status_code == 409 and "already exists" in again.json()["detail"]
     assert import_(lyra2, archive).status_code == 403  # takes `communities`
     assert_consistent(target)
@@ -476,17 +476,17 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
 
 def test_imported_identities_are_per_community(server, tmp_path):
     source = target = server
-    admin, owners = community_with(source, members=("lyra", "vega"))
+    root, owners = community_with(source, members=("lyra", "vega"))
     lyra = owners["lyra"]
     fid = lyra.put("demo", "files", "data.csv", b"lyra's data").json()["file_id"]
-    archive = export(admin, "demo", tmp_path / "demo.tar")
+    archive = export(root, "demo", tmp_path / "demo.tar")
 
     # emptied, the server then has a lyra, with another key, in another community
     target.reset()
-    create_community(target, admin, "other")
+    create_community(target, root, "other")
     lyra_other = Owner(target, "lyra", community="other")
-    assert enroll(admin.at("other"), lyra_other, "other").status_code == 201
-    imported = import_(admin, archive)
+    assert enroll(root.at("other"), lyra_other, "other").status_code == 201
+    imported = import_(root, archive)
     assert imported.status_code == 201, imported.text
     results = {r["handle"]: r["result"] for r in imported.json()["handles"]}
     assert results == {
@@ -505,19 +505,19 @@ def test_imported_identities_are_per_community(server, tmp_path):
 
 
 def test_an_export_from_another_server_is_owned_by_this_root(server, tmp_path):
-    admin, owners = community_with(server, members=("lyra",))
+    root, owners = community_with(server, members=("lyra",))
     goal = (
         owners["lyra"].put("demo", "inbox", "goal.json", submission(), SUBMITTED).json()
     )
-    promote(admin, goal["file_id"], 1, stamp_json_pointer="/artifact/created")
-    archive = export(admin, "demo", tmp_path / "demo.tar")
+    promote(root, goal["file_id"], 1, stamp_json_pointer="/artifact/created")
+    archive = export(root, "demo", tmp_path / "demo.tar")
     server.reset()
 
-    # the same community, exported from a server whose root is old-admin
+    # the same community, exported from a server whose root has another handle
     elsewhere = rewritten(
         archive, tmp_path / "elsewhere.tar", ('"demo-admin"', '"old-admin"')
     )
-    imported = import_(admin, elsewhere)
+    imported = import_(root, elsewhere)
     assert imported.status_code == 201, imported.text
     owners_now = psql(
         server,
@@ -533,7 +533,7 @@ def test_an_export_from_another_server_is_owned_by_this_root(server, tmp_path):
         ('"demo-admin"', '"old-admin"'),
         ('"lyra"', '"demo-admin"'),
     )
-    refused = import_(admin, collision)
+    refused = import_(root, collision)
     assert refused.status_code == 409 and "handle collision" in refused.json()["detail"]
     assert psql(server, "SELECT count(*) FROM communities") == "0"
     assert_consistent(server)

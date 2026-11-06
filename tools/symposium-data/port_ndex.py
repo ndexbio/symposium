@@ -1,4 +1,4 @@
-"""The `port-ndex` command (R-M1): all of the CLI's NDEx code, argument parsing included (R-S1).
+"""The `port-ndex` command: all of the CLI's NDEx code, argument parsing included.
 
 It copies a Symposium community's record from an NDEx server into the context's community,
 which must exist and hold no files. The data server does the work in the background; this

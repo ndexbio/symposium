@@ -9,7 +9,7 @@ from conftest import (
     community_with,
     create_community,
     enroll,
-    init_admin,
+    init_root,
     invite,
     psql,
 )
@@ -18,9 +18,9 @@ from harness import HTTP
 
 @pytest.fixture
 def community(server):
-    admin = init_admin(server)
-    create_community(server, admin, "demo")
-    return server, admin
+    root = init_root(server)
+    create_community(server, root, "demo")
+    return server, root
 
 
 def me(owner, headers=None):
@@ -31,9 +31,9 @@ def me(owner, headers=None):
 
 
 def test_joining_requires_proof_of_possession(community):
-    server, admin = community
+    server, root = community
     lyra = Owner(server, "lyra")
-    secret = invite(admin, "demo", "lyra").json()["invite"]
+    secret = invite(root, "demo", "lyra").json()["invite"]
     nonce = lyra.challenge()
     body = {
         "handle": "lyra",
@@ -51,9 +51,9 @@ def test_joining_requires_proof_of_possession(community):
 
 
 def test_sign_in_needs_the_registered_key_and_a_fresh_challenge(community):
-    server, admin = community
+    server, root = community
     lyra = Owner(server, "lyra")
-    enroll(admin, lyra, "demo")
+    enroll(root, lyra, "demo")
 
     assert lyra.sign_in(key=OwnerKey()).status_code == 401
     nonce = lyra.challenge()
@@ -89,9 +89,9 @@ def test_sign_in_needs_the_registered_key_and_a_fresh_challenge(community):
 
 
 def test_a_session_ends_when_it_expires(community):
-    server, admin = community
+    server, root = community
     lyra = Owner(server, "lyra")
-    enroll(admin, lyra, "demo")
+    enroll(root, lyra, "demo")
     session = lyra.session_key()
     assert me(lyra, lyra.headers(session)).status_code == 200
     lyras = "kind = 'session' AND handle = 'lyra'"
@@ -106,9 +106,9 @@ def test_a_session_ends_when_it_expires(community):
 
 
 def test_key_rotation_retires_the_old_key(community):
-    server, admin = community
+    server, root = community
     lyra = Owner(server, "lyra")
-    enroll(admin, lyra, "demo")
+    enroll(root, lyra, "demo")
     old_session = lyra.session_key()
 
     new_key = OwnerKey()
@@ -141,14 +141,14 @@ def test_key_rotation_retires_the_old_key(community):
 
 
 def test_suspect_after_is_recorded_and_reported(server):
-    admin, owners = community_with(server, members=("lyra",))
+    root, owners = community_with(server, members=("lyra",))
     lyra = owners["lyra"]
-    user = admin.user_url("lyra", "demo")
+    user = root.user_url("lyra", "demo")
     at = "2026-10-01T12:00:00+00:00"
     flagged = HTTP.patch(
         user,
         json={"suspect_after": at},
-        headers=admin.headers(),
+        headers=root.headers(),
     )
     assert flagged.status_code == 200, flagged.text
     assert flagged.json()["suspect_after"].startswith("2026-10-01T12:00:00")
@@ -156,7 +156,7 @@ def test_suspect_after_is_recorded_and_reported(server):
     naive = HTTP.patch(
         user,
         json={"suspect_after": "2026-10-01T12:00:00"},
-        headers=admin.headers(),
+        headers=root.headers(),
     )
     assert naive.status_code == 400
     refused = HTTP.patch(
@@ -168,8 +168,8 @@ def test_suspect_after_is_recorded_and_reported(server):
 
 
 def test_a_server_level_user_signs_in_without_a_community(community):
-    server, admin = community
-    session = admin.sign_in()
+    server, root = community
+    session = root.sign_in()
     assert session.status_code == 200
-    as_member = Owner(server, admin.handle, key=admin.key, community="demo")
+    as_member = Owner(server, root.handle, key=root.key, community="demo")
     assert as_member.sign_in().status_code == 401  # no such user homed in demo

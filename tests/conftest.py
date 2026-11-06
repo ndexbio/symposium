@@ -82,7 +82,7 @@ def clean_slate(suite):
 
 
 @pytest.fixture
-def admin_dir(tmp_path, server, cli) -> Path:
+def root_dir(tmp_path, server, cli) -> Path:
     """A working directory whose context is root's session for an existing `demo`
     community, whose first community admin, `steward`, is invited."""
     cli.ok(

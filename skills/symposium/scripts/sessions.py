@@ -1,4 +1,4 @@
-"""The skill's sessions (R-I3, R-I7): where each agent session's state lives, and which session a
+"""The skill's sessions: where each agent session's state lives, and which session a
 command works in. Nobody creates or enters a session directory; the skill keeps them under
 `~/.symposium/`, beside the keystore:
 
@@ -43,7 +43,7 @@ NO_SESSION = (
     "no Symposium session on this machine: run `/symposium setup --invite-file <file>` (with "
     "an invite) or, as root, `/symposium admin-config` first"
 )
-# names that may name a session directory: a community (a slug, R-G8) and a handle
+# names that may name a session directory: a community (a slug) and a handle
 COMMUNITY = re.compile(r"^[A-Za-z0-9_]{1,20}$")
 HANDLE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 # commands that name their own session, from their own arguments

@@ -1,5 +1,5 @@
 """The server's records: configuration, communities, users and their role assignments, invites,
-files and versions. Every community-dependent record is scoped by its community (R-G8).
+files and versions. Every community-dependent record is scoped by its community.
 
 Used by the HTTP service, its jobs, export and import, and the port, so every invariant has one
 implementation.
@@ -112,7 +112,7 @@ class Records:
         ).fetchone()
         return row is not None
 
-    # ── ports (R-M1) ────────────────────────────────────────────────────────────────────────
+    # ── ports ────────────────────────────────────────────────────────────────────────
     def start_port(
         self, conn, community: str, requested_by: str, source: str
     ) -> uuid.UUID:
@@ -248,7 +248,7 @@ class Records:
             self.lock_community(conn, found["home"])
             if self.last_members_holder(conn, found["home"], user_id):
                 raise Conflict(
-                    "this is the community's last admin; appoint another one first"
+                    "this is the community's last community admin; appoint another one first"
                 )
         conn.execute(
             "UPDATE users SET removed = now(), removed_by = %s WHERE id = %s",
@@ -458,7 +458,7 @@ class Records:
                     role_id
                 ).grants and self.last_members_holder(conn, found["home"], user_id):
                     raise Conflict(
-                        "this is the community's last admin; appoint another one first"
+                        "this is the community's last community admin; appoint another one first"
                     )
             conn.execute(
                 "UPDATE role_assignments SET revoked = now(), revoked_by = %s WHERE id = %s",
@@ -671,7 +671,7 @@ class Records:
 
     def allocate_at(self, conn, community: str, collection: str, created: datetime):
         """-> (seq, created) for an instant the caller supplies. Only the port does
-        this (R-M2): each instant must be strictly later than the collection's last one, so
+        this: each instant must be strictly later than the collection's last one, so
         the clock still never runs backwards, and later writes continue after it."""
         row = conn.execute(
             "UPDATE collections SET seq = seq + 1, last_created = %s "
@@ -1147,7 +1147,7 @@ class Records:
         return row
 
     def changes(self, conn, community, collection, since: int, limit: int) -> list:
-        """Versions written into a collection after `since`, in seq order (R-G3). seq is
+        """Versions written into a collection after `since`, in seq order. seq is
         allocated under the collection's lock and committed in order, so a reader paging by
         seq never skips a version."""
         return conn.execute(
@@ -1160,7 +1160,7 @@ class Records:
         self, conn, community, collection, contains: dict, since: int, limit: int
     ):
         """Versions whose metadata contains `contains` (JSONB @>, GIN-indexed), paged by seq
-        like changes (R-G6)."""
+        like changes."""
         return conn.execute(
             self._ROWS + "WHERE f.community = %s AND f.collection = %s AND v.seq > %s "
             "AND v.metadata @> %s::jsonb ORDER BY v.seq LIMIT %s",
@@ -1168,7 +1168,7 @@ class Records:
         ).fetchall()
 
     def by_hash(self, conn, community: str, sha: str) -> list:
-        """Every version holding this content, in any collection of the community (R-F2)."""
+        """Every version holding this content, in any collection of the community."""
         return conn.execute(
             self._ROWS
             + "WHERE f.community = %s AND p.sha256 = %s ORDER BY f.collection, v.seq",
@@ -1176,7 +1176,7 @@ class Records:
         ).fetchall()
 
     def verify(self, row, before: datetime | None, sha: str | None) -> dict:
-        """The gate's check of a cited version (R-G9): its content is still there, its sha256
+        """The gate's check of a cited version: its content is still there, its sha256
         is the one cited, and it was created strictly before `before`."""
         out = {
             "ok": True,
@@ -1251,7 +1251,7 @@ class Records:
 
     # ── purge, janitor and scrub ────────────────────────────────────────────────────────────
     def purge(self, conn, file_id, n: int):
-        """Mark a version purged (R-B3). When no live version uses its payload any more, the
+        """Mark a version purged. When no live version uses its payload any more, the
         payload moves to 'purging': the intent to free its bytes is recorded before they are
         touched. -> that payload's id, or None while it is still shared. The rows stay."""
         row = conn.execute(

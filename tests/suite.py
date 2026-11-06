@@ -25,7 +25,7 @@ CLI_DIR = REPO / "tools" / "symposium-data"
 # the CLI's Python entry, run with the suite's interpreter, which has the CLI's packages
 CLI = CLI_DIR / "cli.py"
 SKILL = REPO / "skills" / "symposium" / "scripts" / "main.py"
-ADMIN = "demo-admin"  # root, bound from the key file
+ROOT = "demo-admin"  # root, bound from the key file
 
 
 class Cli:
@@ -92,11 +92,11 @@ class Suite:
             self.operator,
             "admin-config",
             "--handle",
-            ADMIN,
+            ROOT,
             "--data-server-url",
             self.server.url,
         )
-        place_admin_key(
+        place_root_key(
             self.server, Path(config["public_key_file"]), config["fingerprint"]
         )
 
@@ -108,7 +108,7 @@ class Suite:
         shutil.rmtree(self.root, ignore_errors=True)
 
 
-def place_admin_key(server: Server, key_file: Path, fingerprint: str):
+def place_root_key(server: Server, key_file: Path, fingerprint: str):
     """What the operator does with `admin-config`'s file: copy it in, restart the server."""
     docker("cp", str(key_file), f"{server.name}:/apps/{key_file.name}")
     status = server.restarted()
@@ -120,14 +120,14 @@ def community_file(
     server: Server,
     community: str = "demo",
     handles=(),
-    admin: str = "steward",
+    first_admin: str = "steward",
 ) -> Path:
     path = directory / f"{community}.json"
     path.write_text(
         json.dumps(
             {
                 "community": community,
-                "admin": admin,
+                "admin": first_admin,
                 "handles": list(handles),
                 "data-server-url": server.url,
             }
@@ -137,14 +137,14 @@ def community_file(
 
 
 def enroll(
-    cli: Cli, admin_dir: Path, handle: str, access: str = "community-member:*"
+    cli: Cli, root_dir: Path, handle: str, access: str = "community-member:*"
 ) -> Path:
     """A user, entirely through the CLI: an inviter (root's session for the community, or a
     community admin's) writes its invite file carrying `access`; the user sets its context
     from the file, in its own directory, and joins."""
-    invite = admin_dir / f"{handle}.invite"
-    cli.ok(admin_dir, "invite", "--handle", handle, "--access", access, "--out", invite)
-    member = admin_dir / handle
+    invite = root_dir / f"{handle}.invite"
+    cli.ok(root_dir, "invite", "--handle", handle, "--access", access, "--out", invite)
+    member = root_dir / handle
     member.mkdir()
     cli.ok(member, "context", "set", "--invite-file", invite)
     assert cli.ok(member, "owner", "register")["registered"] is True

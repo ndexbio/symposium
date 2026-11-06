@@ -232,15 +232,15 @@ def tool(suite, cwd: Path, script: str, *args) -> tuple[int, str]:
     return result.returncode, result.stdout + result.stderr
 
 
-def gate(suite, admin_dir: Path) -> str:
-    code, out = tool(suite, admin_dir, "gate.py")
+def gate(suite, root_dir: Path) -> str:
+    code, out = tool(suite, root_dir, "gate.py")
     assert code == 0, out
     return out
 
 
-def admin_session(suite, admin_dir: Path) -> str:
+def root_session(suite, root_dir: Path) -> str:
     """Root's session key, signed in the way the CLI signs in."""
-    return session_key(suite, admin_dir)
+    return session_key(suite, root_dir)
 
 
 def session_key(suite, directory: Path) -> str:
@@ -287,19 +287,19 @@ def key_value(cli_output: dict) -> str:
     return json.loads(Path(cli_output["key_file"]).read_text())["key"]
 
 
-def share_record(cli, admin_dir: Path, key_id: str, shared: bool = True):
+def share_record(cli, root_dir: Path, key_id: str, shared: bool = True):
     """Root assigns a key `community-observer` on `record`, or unassigns it."""
     how = "assign" if shared else "unassign"
-    cli.ok(admin_dir, how, "--api-key", key_id, "--access", "community-observer:record")
+    cli.ok(root_dir, how, "--api-key", key_id, "--access", "community-observer:record")
 
 
 @pytest.fixture
-def world(suite, server, cli, admin_dir):
+def world(suite, server, cli, root_dir):
     """The `demo` community: members lyra and vega, each with a member key it made for itself
     in its own session, carrying `community-member` on every collection; two non-member keys
     root made for apps, one reading `record` and one reading only `files`; and the six
     artifacts of RECORD published through the API and accepted by the gate."""
-    sessions = {handle: enroll(cli, admin_dir, handle) for handle in ("lyra", "vega")}
+    sessions = {handle: enroll(cli, root_dir, handle) for handle in ("lyra", "vega")}
     keys = {
         handle: key_value(
             cli.ok(directory, "gen-api-key", "laptop", "--access", "community-member:*")
@@ -307,7 +307,7 @@ def world(suite, server, cli, admin_dir):
         for handle, directory in sessions.items()
     }
     viewer = cli.ok(
-        admin_dir,
+        root_dir,
         "gen-api-key",
         "viewer app",
         "--non-member",
@@ -318,7 +318,7 @@ def world(suite, server, cli, admin_dir):
     keys["non-member"] = key_value(viewer)
     keys["ungranted"] = key_value(
         cli.ok(
-            admin_dir,
+            root_dir,
             "gen-api-key",
             "ungranted app",
             "--non-member",
@@ -335,12 +335,12 @@ def world(suite, server, cli, admin_dir):
                 "POST", "/communities/demo/submissions", keys[publisher], doc
             )
             assert response.status_code == 201, response.text
-        gate(suite, admin_dir)
+        gate(suite, root_dir)
     return {
         "api": api,
         "keys": keys,
-        "admin_session": admin_session(suite, admin_dir),
-        "admin_dir": admin_dir,
+        "root_session": root_session(suite, root_dir),
+        "admin_dir": root_dir,
         "sessions": sessions,
     }
 
@@ -359,7 +359,7 @@ def test_the_contract_is_served_anonymously(server):
 
 # ── every operation, live, against the contract ────────────────────────────────────────────
 def test_every_operation_answers_as_the_contract_says(world, suite, server):
-    api, keys, admin = world["api"], world["keys"], world["admin_session"]
+    api, keys, root = world["api"], world["keys"], world["root_session"]
     lyra = keys["lyra"]
     called = set()
 
@@ -509,7 +509,7 @@ def test_every_operation_answers_as_the_contract_says(world, suite, server):
 
     # a path the contract does not name answers 404, whoever asks
     for method, body in (("GET", None), ("POST", {"label": "x"})):
-        assert api.call(method, "/admin/api-keys", admin, body).status_code == 404
+        assert api.call(method, "/admin/api-keys", root, body).status_code == 404
 
     for operation_id, path in (
         ("streamRecord", "/communities/demo/record/events"),
@@ -571,10 +571,10 @@ def test_every_caller_gets_exactly_the_access_its_grants_give(world, cli):
     An operation naming no grant answers any key of the community; one naming `read` answers
     a caller who reads `record` (by its roles, or because it is public); one naming `publish`
     answers a holder of `publish`."""
-    keys, admin = world["keys"], world["admin_session"]
+    keys, root = world["keys"], world["root_session"]
     # caller -> (credential, the grants it holds in demo, whether it reads `record`)
     callers = {
-        "root session": (admin, {"read", "write", "manage", "gate", "members"}, True),
+        "root session": (root, {"read", "write", "manage", "gate", "members"}, True),
         "member key": (keys["lyra"], {"read", "write", "manage", "publish"}, True),
         "non-member key reading the record": (keys["non-member"], {"read"}, True),
         "non-member key reading files": (keys["ungranted"], {"read"}, False),
@@ -672,7 +672,7 @@ def follow(
 
 
 def test_api_keys_work_end_to_end(world, suite, server, cli):
-    api, admin_dir, sessions = world["api"], world["admin_dir"], world["sessions"]
+    api, root_dir, sessions = world["api"], world["admin_dir"], world["sessions"]
     lyra_dir = sessions["lyra"]
     member = ["--access", "community-member:*"]
 
@@ -728,11 +728,11 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     assert sealed and all(key not in row[0] for row in sealed)
 
     # a `members` holder (root) sees a member's keys, never their values
-    admin = world["admin_session"]
-    seen = api.control("GET", "/communities/demo/api-keys", admin).json()["items"]
+    root = world["root_session"]
+    seen = api.control("GET", "/communities/demo/api-keys", root).json()["items"]
     assert any(k["handle"] == "lyra" for k in seen)
     assert all(k["key"] is None for k in seen if k["handle"] is not None)
-    one = api.control("GET", f"/communities/demo/api-keys/{issued['id']}", admin).json()
+    one = api.control("GET", f"/communities/demo/api-keys/{issued['id']}", root).json()
     assert one["handle"] == "lyra" and one["key"] is None
     # another member's session reaches none of them
     vega_session = session_key(suite, sessions["vega"])
@@ -767,7 +767,7 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     assert again.status_code == 201
     # root, a `members` holder, revokes a member's key too
     gone = api.control(
-        "DELETE", f"/communities/demo/api-keys/{again.json()['id']}", admin
+        "DELETE", f"/communities/demo/api-keys/{again.json()['id']}", root
     )
     assert gone.status_code == 200, gone.text
 
@@ -791,7 +791,7 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     vega = world["keys"]["vega"]
     assert api.call("GET", "/me", vega).status_code == 200
     ended = follow(api, vega)
-    removed = cli.ok(admin_dir, "users", "remove", "--handle", "vega")
+    removed = cli.ok(root_dir, "users", "remove", "--handle", "vega")
     assert removed["removed"]
     assert api.call("GET", "/me", vega).status_code == 401
     assert ended.wait(MAX_WAIT), "the stream outlived its user's removal"
@@ -812,17 +812,17 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     made = api.control(
         "POST",
         "/communities/demo/api-keys",
-        admin,
+        root,
         {"label": "kiosk", "non_member": True, "roles": reader},
     )
     assert made.status_code == 201 and made.headers["cache-control"] == "no-store"
     assert (made.json()["member_key"], made.json()["roles"]) == (False, reader)
-    one = api.control("GET", f"/communities/demo/api-keys/{made.json()['id']}", admin)
+    one = api.control("GET", f"/communities/demo/api-keys/{made.json()['id']}", root)
     assert one.status_code == 200 and one.json()["key"] == made.json()["key"]
     kiosk = made.json()["key"]
     assert api.call("GET", "/communities/demo/record", kiosk).status_code == 200
     cli.ok(
-        admin_dir,
+        root_dir,
         "communities",
         "create",
         "--name",
@@ -830,16 +830,16 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
         "--admin",
         "x",
         "--out",
-        admin_dir / "elsewhere-x.invite",
+        root_dir / "elsewhere-x.invite",
     )
     assert (
         api.control(
-            "GET", f"/communities/elsewhere/api-keys/{made.json()['id']}", admin
+            "GET", f"/communities/elsewhere/api-keys/{made.json()['id']}", root
         ).status_code
         == 404
     )
     # root revokes its application key with the skill's command; it stops at once
-    gone = cli.ok(admin_dir, "revoke-api-key", made.json()["id"])
+    gone = cli.ok(root_dir, "revoke-api-key", made.json()["id"])
     assert gone["id"] == made.json()["id"] and gone["member_key"] is False
     refused = api.call("GET", "/communities/demo/record", kiosk)
     assert refused.status_code == 401
@@ -853,13 +853,13 @@ def test_api_keys_work_end_to_end(world, suite, server, cli):
     )
     assert api.control("GET", "/communities/demo/api-keys").status_code == 401
     assert (
-        api.control("POST", "/communities/demo/api-keys", admin, {}).status_code == 422
+        api.control("POST", "/communities/demo/api-keys", root, {}).status_code == 422
     )
 
 
 # ── publishing through the gate ────────────────────────────────────────────────────────────
 def test_publishing_matches_validate_and_the_gate(world, suite, cli, tmp_path):
-    api, keys, admin_dir = world["api"], world["keys"], world["admin_dir"]
+    api, keys, root_dir = world["api"], world["keys"], world["admin_dir"]
     lyra = keys["lyra"]
 
     # refused by the API exactly where `/symposium validate` refuses
@@ -871,7 +871,7 @@ def test_publishing_matches_validate_and_the_gate(world, suite, cli, tmp_path):
     assert refused.json()["code"] == "validation_failed"
     path = tmp_path / "bad.json"
     path.write_text(json.dumps(bad))
-    member_dir = admin_dir / "lyra"
+    member_dir = root_dir / "lyra"
     code, out = tool(suite, member_dir, "publish.py", "--check", path)
     assert code != 0 and "FAIL" in out
     checked = api.call("POST", "/communities/demo/submission-checks", lyra, bad).json()
@@ -892,7 +892,7 @@ def test_publishing_matches_validate_and_the_gate(world, suite, cli, tmp_path):
         "POST", "/communities/demo/submissions", lyra, note("lyra", "good")
     ).json()
     assert made["status"] == "pending"
-    gate(suite, admin_dir)
+    gate(suite, root_dir)
     decided = api.call(
         "GET", f"/communities/demo/submissions/{made['id']}", lyra
     ).json()
@@ -919,7 +919,7 @@ def test_publishing_matches_validate_and_the_gate(world, suite, cli, tmp_path):
         "--content-type",
         "application/json",
     )
-    gate(suite, admin_dir)
+    gate(suite, root_dir)
     rejected = [
         s
         for s in api.call(
@@ -976,7 +976,7 @@ def seen(*events):
 
 
 def test_streams_deliver_resume_and_cap(world, suite, cli):
-    api, keys, admin_dir = world["api"], world["keys"], world["admin_dir"]
+    api, keys, root_dir = world["api"], world["keys"], world["admin_dir"]
     lyra = keys["lyra"]
     auth = {"Authorization": f"Bearer {lyra}"}
     url = api.base + "/communities/demo/record/events"
@@ -986,7 +986,7 @@ def test_streams_deliver_resume_and_cap(world, suite, cli):
             "POST", "/communities/demo/submissions", lyra, note("lyra", topic)
         )
         assert response.status_code == 201
-        gate(suite, admin_dir)
+        gate(suite, root_dir)
 
     # the server fixes where a stream starts before it answers: what is published once the
     # stream has answered reaches it
@@ -1043,7 +1043,7 @@ def test_streams_deliver_resume_and_cap(world, suite, cli):
             stream.__exit__(None, None, None)
 
     # anonymous streams on a public record: 4 per address, then 429
-    cli.ok(admin_dir, "collection", "set-public", "--collection", "record", "--public")
+    cli.ok(root_dir, "collection", "set-public", "--collection", "record", "--public")
     opened = []
     try:
         for _ in range(4):
@@ -1057,11 +1057,11 @@ def test_streams_deliver_resume_and_cap(world, suite, cli):
             stream.__exit__(None, None, None)
 
 
-def test_every_route_of_v1_answers_one_error_body(server, admin_dir, cli):
+def test_every_route_of_v1_answers_one_error_body(server, root_dir, cli):
     """The hand-written routes refuse with the contract's Error body, as the generated ones do."""
     status = HTTP.get(server.url + "/v1/status").json()
     assert status["mode"] == "operational"
-    cli.ok(admin_dir, "communities", "create", "--name", "demo", "--admin", "steward")
+    cli.ok(root_dir, "communities", "create", "--name", "demo", "--admin", "steward")
     missing = HTTP.get(
         server.url + "/v1/communities/demo/collections/record/files?name=x"
     )
@@ -1122,10 +1122,10 @@ def test_every_stream_cap_reaches_its_429(server):
 
 
 def test_a_key_acts_only_within_its_community_and_standing(world, cli):
-    api, keys, admin = world["api"], world["keys"], world["admin_session"]
-    admin_dir = world["admin_dir"]
+    api, keys, root = world["api"], world["keys"], world["root_session"]
+    root_dir = world["admin_dir"]
     cli.ok(
-        admin_dir,
+        root_dir,
         "communities",
         "create",
         "--name",
@@ -1133,7 +1133,7 @@ def test_a_key_acts_only_within_its_community_and_standing(world, cli):
         "--admin",
         "x",
         "--out",
-        admin_dir / "other-x.invite",
+        root_dir / "other-x.invite",
     )
 
     # every key belongs to one community and is refused in any other
@@ -1147,7 +1147,7 @@ def test_a_key_acts_only_within_its_community_and_standing(world, cli):
     made = api.control(
         "POST",
         "/communities/demo/api-keys",
-        admin,
+        root,
         {
             "label": "newcomer",
             "non_member": True,
@@ -1157,7 +1157,7 @@ def test_a_key_acts_only_within_its_community_and_standing(world, cli):
     assert made.status_code == 201, made.text
     app_key = made.json()["key"]
     assert api.call("GET", "/communities/demo/record", app_key).status_code == 200
-    enroll(cli, admin_dir, "newcomer")
+    enroll(cli, root_dir, "newcomer")
     assert api.call("GET", "/communities/demo/record", app_key).status_code == 200
     # and it publishes nothing: publishing takes `publish`, which an observer lacks
     refused = api.call(
@@ -1174,7 +1174,7 @@ def forged(**fields) -> str:
 
 
 def test_a_forged_cursor_answers_400(world):
-    api, lyra, admin = world["api"], world["keys"]["lyra"], world["admin_session"]
+    api, lyra, root = world["api"], world["keys"]["lyra"], world["root_session"]
     shapes = (
         "not-a-cursor",
         forged(o="7"),
@@ -1203,7 +1203,7 @@ def test_a_forged_cursor_answers_400(world):
         forged(c=5, k=str(uuid.uuid4())),
     ):
         refused = api.control(
-            "GET", f"/communities/demo/api-keys?cursor={cursor}", admin
+            "GET", f"/communities/demo/api-keys?cursor={cursor}", root
         )
         assert refused.status_code == 400, (cursor, refused.text)
 
@@ -1275,10 +1275,10 @@ def test_a_purged_citer_leaves_cited_by_and_supersession(world, cli, server):
 
 
 def test_an_anonymous_stream_ends_when_the_record_turns_private(world, cli):
-    admin_dir = world["admin_dir"]
-    cli.ok(admin_dir, "collection", "set-public", "--collection", "record", "--public")
+    root_dir = world["admin_dir"]
+    cli.ok(root_dir, "collection", "set-public", "--collection", "record", "--public")
     ended = follow(world["api"])
-    cli.ok(admin_dir, "collection", "set-public", "--collection", "record", "--private")
+    cli.ok(root_dir, "collection", "set-public", "--collection", "record", "--private")
     assert ended.wait(MAX_WAIT), (
         "the anonymous stream outlived its record turning private"
     )
@@ -1372,7 +1372,7 @@ def goal(handle: str, topic: str, **extra) -> dict:
 
 
 def test_the_api_checks_a_research_goal_as_validate_does(world, suite, tmp_path):
-    """The server runs the gate's rules, so `POST /submissions/check` judges the profile's
+    """The server runs the gate's rules, so `POST /submission-checks` judges the profile's
     ResearchGoal as `/symposium validate` does: one that declares `groundable: false` draws no
     STRUCT finding, and one that does not draws the REVIEW saying it must. A REVIEW refuses
     nothing, there as here. An image built before the profile's types were recognised flags
@@ -1416,15 +1416,15 @@ def test_an_unassigned_role_is_felt_on_the_next_request_and_by_a_stream(world, c
     """The record's routes read the `record` collection, so a key reads them only while its
     roles reach `record`: a member key narrowed to `files` loses them, and an open stream
     closes within a heartbeat."""
-    api, keys, admin_dir = world["api"], world["keys"], world["admin_dir"]
+    api, keys, root_dir = world["api"], world["keys"], world["admin_dir"]
     lyra = keys["lyra"]
     laptop = key_id(cli, world["sessions"]["lyra"], "laptop")
     assert api.call("GET", "/communities/demo/record", lyra).status_code == 200
     ended = follow(api, lyra)
     # root, a `members` holder, narrows the key: community-member on `files` alone
-    cli.ok(admin_dir, "unassign", "--api-key", laptop, "--access", "community-member")
+    cli.ok(root_dir, "unassign", "--api-key", laptop, "--access", "community-member")
     cli.ok(
-        admin_dir,
+        root_dir,
         "assign",
         "--api-key",
         laptop,
@@ -1443,7 +1443,7 @@ def test_an_unassigned_role_is_felt_on_the_next_request_and_by_a_stream(world, c
     # a non-member key's role, unassigned, closes its stream the same way
     viewer = keys["non-member"]
     ended = follow(api, viewer)
-    share_record(cli, admin_dir, key_id(cli, admin_dir, "viewer app"), shared=False)
+    share_record(cli, root_dir, key_id(cli, root_dir, "viewer app"), shared=False)
     assert api.call("GET", "/communities/demo/record", viewer).status_code in (401, 403)
     assert ended.wait(MAX_WAIT), "the stream outlived its key's role"
 
@@ -1451,7 +1451,7 @@ def test_an_unassigned_role_is_felt_on_the_next_request_and_by_a_stream(world, c
 def test_a_non_member_key_reads_a_private_record_only_when_its_role_names_it(
     world, cli
 ):
-    api, keys, admin_dir = world["api"], world["keys"], world["admin_dir"]
+    api, keys, root_dir = world["api"], world["keys"], world["admin_dir"]
     for path in (
         "/communities/demo/record",
         "/communities/demo/artifacts",
@@ -1468,13 +1468,13 @@ def test_a_non_member_key_reads_a_private_record_only_when_its_role_names_it(
     ) as response:
         assert response.status_code == 403
     # public, the record answers everyone; private again, only the roles that name it
-    cli.ok(admin_dir, "collection", "set-public", "--collection", "record", "--public")
+    cli.ok(root_dir, "collection", "set-public", "--collection", "record", "--public")
     assert (
         api.call("GET", "/communities/demo/record", keys["ungranted"]).status_code
         == 200
     )
     assert api.call("GET", "/communities/demo/record").status_code == 200
-    cli.ok(admin_dir, "collection", "set-public", "--collection", "record", "--private")
+    cli.ok(root_dir, "collection", "set-public", "--collection", "record", "--private")
     assert (
         api.call("GET", "/communities/demo/record", keys["ungranted"]).status_code
         == 403
@@ -1485,8 +1485,8 @@ def test_a_non_member_key_reads_a_private_record_only_when_its_role_names_it(
 def test_publishing_takes_publish(world, cli, server):
     """Submitting, and checking a submission, take `publish`, which `community-member` holds:
     an observer is refused both, and nothing is stored."""
-    api, admin_dir = world["api"], world["admin_dir"]
-    olive_dir = enroll(cli, admin_dir, "olive", "community-observer:*")
+    api, root_dir = world["api"], world["admin_dir"]
+    olive_dir = enroll(cli, root_dir, "olive", "community-observer:*")
     olive = key_value(
         cli.ok(olive_dir, "gen-api-key", "reader", "--access", "community-observer:*")
     )
@@ -1511,7 +1511,7 @@ def test_publishing_takes_publish(world, cli, server):
 
 
 # ── every route of /v1, against the one contract ───────────────────────────────────────────
-def root_signature(suite, admin_dir: Path) -> dict:
+def root_signature(suite, root_dir: Path) -> dict:
     """A fresh challenge for root, signed with root's key from the keystore as the CLI signs
     one: the body of root's sign-in."""
     code = (
@@ -1526,7 +1526,7 @@ def root_signature(suite, admin_dir: Path) -> dict:
     )
     result = subprocess.run(
         [sys.executable, "-c", code],
-        cwd=admin_dir,
+        cwd=root_dir,
         env=suite.env,
         capture_output=True,
         text=True,
@@ -1572,7 +1572,7 @@ def digest_header(data: bytes) -> dict:
 def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cli):
     """Every hand-written operation, called live and validated against the contract, errors
     included; with the record's operations, already called above, every operation in it."""
-    api, keys, admin = world["api"], world["keys"], world["admin_session"]
+    api, keys, root = world["api"], world["keys"], world["root_session"]
     lyra_dir = world["sessions"]["lyra"]
     lyra = session_key(suite, lyra_dir)
     called = set()
@@ -1622,14 +1622,14 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         return key, check("register", "POST", "/registrations", body=body, status=201)
 
     # communities
-    check("listCommunities", "GET", "/communities", admin, status=200)
+    check("listCommunities", "GET", "/communities", root, status=200)
     other = {"name": "other", "admin": "boss"}
-    made = check("createCommunity", "POST", "/communities", admin, other, 201)
+    made = check("createCommunity", "POST", "/communities", root, other, 201)
     assert made.headers["location"].endswith("/v1/communities/other")
     assert made.json()["admin_invite"]["roles"] == [
         {"role": "community-admin", "collections": None}
     ]
-    check("createCommunity", "POST", "/communities", admin, other, 200)
+    check("createCommunity", "POST", "/communities", root, other, 200)
     check(
         "createCommunity",
         "POST",
@@ -1638,17 +1638,17 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         {"name": "mine", "admin": "me"},
         403,
     )
-    check("getCommunity", "GET", "/communities/other", admin, status=200)
+    check("getCommunity", "GET", "/communities/other", root, status=200)
     check("getCommunity", "GET", "/communities/demo", keys["lyra"], status=200)
     check("getCommunity", "GET", "/communities/other", keys["lyra"], status=403)
     exported = check(
-        "exportCommunity", "GET", "/communities/other/archive", admin, status=200
+        "exportCommunity", "GET", "/communities/other/archive", root, status=200
     )
     check(
         "createCommunity",
         "POST",
         "/communities",
-        admin,
+        root,
         status=409,  # an archive of `other`, which exists here already
         content=exported.content,
         headers={"Content-Type": "application/x-tar"},
@@ -1657,7 +1657,7 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "startNdexImport",
         "POST",
         "/communities/other/ndex-imports",
-        admin,
+        root,
         {
             "ndex_url": "http://127.0.0.1:9",
             "credentials": {"username": "u", "password": "p"},
@@ -1671,7 +1671,7 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "getNdexImport",
         "GET",
         f"/communities/other/ndex-imports/{port.json()['id']}",
-        admin,
+        root,
         status=200,
     )
 
@@ -1686,7 +1686,7 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "createServerInvite",
         "POST",
         "/invites",
-        admin,
+        root,
         {"handle": "ana", "roles": server_admin},
         201,
     )
@@ -1703,35 +1703,35 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "createServerInvite",
         "POST",
         "/invites",
-        admin,
+        root,
         {"handle": "ben", "roles": server_admin},
         201,
     ).json()
-    check("listServerInvites", "GET", "/invites", admin, status=200)
-    check("getServerInvite", "GET", f"/invites/{spare['id']}", admin, status=200)
-    check("revokeServerInvite", "DELETE", f"/invites/{spare['id']}", admin, status=200)
-    check("getServerInvite", "GET", f"/invites/{spare['id']}", admin, status=404)
+    check("listServerInvites", "GET", "/invites", root, status=200)
+    check("getServerInvite", "GET", f"/invites/{spare['id']}", root, status=200)
+    check("revokeServerInvite", "DELETE", f"/invites/{spare['id']}", root, status=200)
+    check("getServerInvite", "GET", f"/invites/{spare['id']}", root, status=404)
     join("ana", issued.json()["invite"], community=None)
-    check("listServerUsers", "GET", "/users", admin, status=200)
+    check("listServerUsers", "GET", "/users", root, status=200)
     check("listServerUsers", "GET", "/users", lyra, status=403)
-    check("getServerUser", "GET", "/users/ana", admin, status=200)
+    check("getServerUser", "GET", "/users/ana", root, status=200)
     check(
         "updateServerUser",
         "PATCH",
         "/users/ana",
-        admin,
+        root,
         {"suspect_after": "2026-10-01T12:00:00+00:00"},
         200,
     )
-    check("listServerUserRoles", "GET", "/users/ana/roles", admin, status=200)
+    check("listServerUserRoles", "GET", "/users/ana/roles", root, status=200)
     held = check(
-        "getServerUserRole", "GET", "/users/ana/roles/server-admin", admin, status=200
+        "getServerUserRole", "GET", "/users/ana/roles/server-admin", root, status=200
     )
     check(
         "setServerUserRole",
         "PUT",
         "/users/ana/roles/server-admin",
-        admin,
+        root,
         {},
         200,
         headers={"If-Match": held.headers["etag"]},
@@ -1740,13 +1740,13 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "unsetServerUserRole",
         "DELETE",
         "/users/ana/roles/server-admin",
-        admin,
+        root,
         status=200,
     )
-    check("rebindServerUser", "POST", "/users/ana/invites", admin, status=201)
+    check("rebindServerUser", "POST", "/users/ana/invites", root, status=201)
     root_handle = signed["handle"]
-    check("removeServerUser", "DELETE", f"/users/{root_handle}", admin, status=409)
-    check("removeServerUser", "DELETE", "/users/ana", admin, status=200)
+    check("removeServerUser", "DELETE", f"/users/{root_handle}", root, status=409)
+    check("removeServerUser", "DELETE", "/users/ana", root, status=200)
 
     # a community's user: an invite carrying its roles, joining, sign-in, rotation, roles,
     # rebind and removal
@@ -1755,7 +1755,7 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "createInvite",
         "POST",
         "/communities/demo/invites",
-        admin,
+        root,
         {"handle": "nova", "roles": member},
         201,
     ).json()
@@ -1772,23 +1772,23 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "createInvite",
         "POST",
         "/communities/demo/invites",
-        admin,
+        root,
         {"handle": "zed", "roles": member},
         201,
     ).json()
-    check("listInvites", "GET", "/communities/demo/invites", admin, status=200)
+    check("listInvites", "GET", "/communities/demo/invites", root, status=200)
     check(
         "getInvite",
         "GET",
         f"/communities/demo/invites/{spare['id']}",
-        admin,
+        root,
         status=200,
     )
     check(
         "revokeInvite",
         "DELETE",
         f"/communities/demo/invites/{spare['id']}",
-        admin,
+        root,
         status=200,
     )
     nova, joined = join("nova", invite["invite"])
@@ -1846,7 +1846,7 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "updateUser",
         "PATCH",
         "/communities/demo/users/vega",
-        admin,
+        root,
         {"suspect_after": "2026-10-01T12:00:00+00:00"},
         200,
     )
@@ -1859,19 +1859,17 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         403,
     )
     nova_roles = "/communities/demo/users/nova/roles"
-    check("listUserRoles", "GET", nova_roles, admin, status=200)
+    check("listUserRoles", "GET", nova_roles, root, status=200)
     held = check(
-        "getUserRole", "GET", f"{nova_roles}/community-member", admin, status=200
+        "getUserRole", "GET", f"{nova_roles}/community-member", root, status=200
     )
     everything = {"collections": ["*"]}
-    check(
-        "setUserRole", "PUT", f"{nova_roles}/community-member", admin, everything, 428
-    )
+    check("setUserRole", "PUT", f"{nova_roles}/community-member", root, everything, 428)
     check(
         "setUserRole",
         "PUT",
         f"{nova_roles}/community-member",
-        admin,
+        root,
         everything,
         412,
         headers={"If-Match": '"stale"'},
@@ -1880,40 +1878,40 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "setUserRole",
         "PUT",
         f"{nova_roles}/community-member",
-        admin,
+        root,
         everything,
         200,
         headers={"If-Match": held.headers["etag"]},
     )
     observer = f"{nova_roles}/community-observer"
-    assigned = check("setUserRole", "PUT", observer, admin, everything, 201)
+    assigned = check("setUserRole", "PUT", observer, root, everything, 201)
     assert assigned.headers["location"].endswith(observer)
     check("setUserRole", "PUT", f"{nova_roles}/gate-keeper", lyra, {}, 403)
-    check("unsetUserRole", "DELETE", observer, admin, status=200)
+    check("unsetUserRole", "DELETE", observer, root, status=200)
     check(
         "addUserRoleCollection",
         "PUT",
         f"{observer}/collections/files",
-        admin,
+        root,
         status=200,
     )
     check(
         "removeUserRoleCollection",
         "DELETE",
         f"{observer}/collections/files",
-        admin,
+        root,
         status=200,
     )
     rebound = check(
         "rebindUser",
         "POST",
         "/communities/demo/users/nova/invites",
-        admin,
+        root,
         status=201,
     )
     assert rebound.json()["retired_keys"] == 1
     check("removeUser", "DELETE", "/communities/demo/users/nova", lyra, status=403)
-    check("removeUser", "DELETE", "/communities/demo/users/nova", admin, status=200)
+    check("removeUser", "DELETE", "/communities/demo/users/nova", root, status=200)
 
     # API keys, and their roles
     made = check(
@@ -2001,7 +1999,7 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "PUT",
         f"/communities/demo/api-keys/{viewer_key}/roles/community-observer"
         "/collections/lab",
-        admin,
+        root,
         status=200,
     )
     check(
@@ -2016,7 +2014,7 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "updateCollection",
         "PATCH",
         "/communities/demo/collections/inbox",
-        admin,
+        root,
         {"public": True},
         403,
     )
@@ -2150,7 +2148,7 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         "promoteVersion",
         "POST",
         "/communities/demo/collections/lab/files",
-        admin,
+        root,
         {"from": f"symposium-data:{fid}@v2", "name": "copy.csv"},
         201,
     )
@@ -2162,7 +2160,7 @@ def test_every_route_of_the_server_answers_as_the_contract_says(world, suite, cl
         keys["lyra"],
         status=200,
     )
-    check("purgeVersion", "DELETE", f"{file_url}/versions/1", admin, status=200)
+    check("purgeVersion", "DELETE", f"{file_url}/versions/1", root, status=200)
     gone = check("getFileContent", "GET", f"{file_url}/versions/1", viewer, status=410)
     assert gone.json()["code"] == "gone" and gone.json()["file_id"] == fid
 
@@ -2228,7 +2226,7 @@ def test_every_request_body_is_the_one_the_contract_states(server):
 
 # ── a data file an Artifact cites, read on the same API ────────────────────────────────────
 def test_a_cited_file_is_read_through_its_collections_access(world, suite, cli):
-    api, keys, admin_dir = world["api"], world["keys"], world["admin_dir"]
+    api, keys, root_dir = world["api"], world["keys"], world["admin_dir"]
     lyra_dir = world["sessions"]["lyra"]
     lyra = session_key(suite, lyra_dir)
     api.control("POST", "/communities/demo/collections", lyra, {"name": "lab"})
@@ -2254,7 +2252,7 @@ def test_a_cited_file_is_read_through_its_collections_access(world, suite, cli):
     )
     made = api.call("POST", "/communities/demo/submissions", keys["lyra"], cited)
     assert made.status_code == 201, made.text
-    gate(suite, admin_dir)
+    gate(suite, root_dir)
 
     address = "@lyra_data_e_v1.scores_download"
     resolved = api.call(
@@ -2276,24 +2274,24 @@ def test_a_cited_file_is_read_through_its_collections_access(world, suite, cli):
     dashboard = {"Authorization": f"Bearer {keys['non-member']}"}
     assert api.http.get(url, headers=dashboard).status_code == 403  # `record` only
     share = (
-        f"/communities/demo/api-keys/{viewer_id(cli, admin_dir)}"
+        f"/communities/demo/api-keys/{viewer_id(cli, root_dir)}"
         "/roles/community-observer/collections/lab"
     )
-    admin = world["admin_session"]
-    assert api.control("PUT", share, admin).status_code == 200
+    root = world["root_session"]
+    assert api.control("PUT", share, root).status_code == 200
     fetched = api.http.get(url, headers=dashboard)
     assert fetched.status_code == 200 and fetched.content == data
-    assert api.control("DELETE", share, admin).status_code == 200
+    assert api.control("DELETE", share, root).status_code == 200
     assert api.http.get(url, headers=dashboard).status_code == 403
     assert api.http.get(url).status_code == 401
     api.control("PATCH", "/communities/demo/collections/lab", lyra, {"public": True})
     assert api.http.get(url).content == data
 
 
-def viewer_id(cli, admin_dir) -> str:
+def viewer_id(cli, root_dir) -> str:
     return next(
         k["id"]
-        for k in cli.ok(admin_dir, "list-api-keys")["keys"]
+        for k in cli.ok(root_dir, "list-api-keys")["keys"]
         if k["label"] == "viewer app"
     )
 

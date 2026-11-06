@@ -26,8 +26,8 @@ SIZE = 5 * 1024 * 1024  # 5 MiB, streamed in 1 MiB chunks (below one 8 MiB S3 pa
 
 @pytest.fixture
 def demo(server):
-    admin, owners = community_with(server)
-    return server, admin, owners
+    root, owners = community_with(server)
+    return server, root, owners
 
 
 def test_round_trip_with_headers_and_stat(demo):
@@ -184,14 +184,14 @@ def test_tombstones_keep_every_version_readable(demo):
 
 
 def test_only_the_creator_or_admin_changes_a_file(demo):
-    _, admin, owners = demo
+    _, root, owners = demo
     fid = owners["lyra"].put("demo", "files", "mine.txt", b"lyra's").json()["file_id"]
     vega = owners["vega"]
     assert vega.version(fid, data=b"overwrite").status_code == 403
     assert vega.version(fid, metadata={"x": 1}).status_code == 403
     assert vega.delete(fid).status_code == 403
     assert vega.get(fid).content == b"lyra's"  # still readable by members
-    assert admin.version(fid, metadata={"reviewed": True}).status_code == 201
+    assert root.version(fid, metadata={"reviewed": True}).status_code == 201
 
 
 def test_errors(demo):
@@ -218,21 +218,21 @@ def test_errors(demo):
 def test_inbox_takes_marked_submissions_and_replies_only(demo):
     """`inbox` holds submissions (publish) and the gate's replies (gate): a submission is
     private to its submitter and the gate, a reply to its recipients."""
-    _, admin, owners = demo
+    _, root, owners = demo
     lyra, vega, rigel = owners["lyra"], owners["vega"], owners["rigel"]
     assert lyra.put("demo", "inbox", "plain.json", b"{}").status_code == 403
     fid = lyra.put(
         "demo", "inbox", "sub.json", b"{}", {"symposium_submission": True}
     ).json()["file_id"]
     assert vega.get(fid).status_code == 403
-    assert admin.get(fid).status_code == 200
+    assert root.get(fid).status_code == 200
     assert (
         lyra.put(
             "demo", "inbox", "fake.json", b"{}", {"symposium_reply": True}
         ).status_code
         == 403
     )
-    reply = admin.put(
+    reply = root.put(
         "demo",
         "inbox",
         "reply.json",
@@ -283,14 +283,14 @@ def test_range_requests_return_206(demo):
 
 
 def test_suspect_versions_are_flagged(demo):
-    server, admin, owners = demo
+    server, root, owners = demo
     lyra = owners["lyra"]
     early = lyra.put("demo", "files", "early.txt", b"before").json()
     # suspicion starts after the instant: the early version, created at it, is not suspect
     flagged = HTTP.patch(
-        admin.user_url("lyra", "demo"),
+        root.user_url("lyra", "demo"),
         json={"suspect_after": early["created"]},
-        headers=admin.headers(),
+        headers=root.headers(),
     )
     assert flagged.status_code == 200, flagged.text
     late = lyra.put("demo", "files", "late.txt", b"after").json()
@@ -308,25 +308,25 @@ def test_quota_refuses_with_413(server):
 
 
 def test_purge_answers_410_and_frees_bytes_when_unshared(demo):
-    server, admin, owners = demo
+    server, root, owners = demo
     lyra = owners["lyra"]
     v1 = lyra.put("demo", "files", "secret.txt", b"to be purged", {"k": 1}).json()
     fid = v1["file_id"]
     lyra.version(fid, metadata={"k": 2})  # v2 shares v1's payload
 
-    first = purge(admin, fid, 1)
+    first = purge(root, fid, 1)
     assert first.status_code == 200, first.text
     assert first.json() == {"purged": v1["citation"], "bytes_freed": False}
     gone = lyra.get(fid, 1)
     assert gone.status_code == 410 and gone.json()["metadata"] == {"k": 1}
     assert lyra.get(fid, 2).content == b"to be purged"  # still shared, still served
 
-    second = purge(admin, fid, 2)
+    second = purge(root, fid, 2)
     assert second.status_code == 200 and second.json()["bytes_freed"] is True
     assert lyra.get(fid, 2).status_code == 410
     assert lyra.stat(fid, 2).json()["purged"] is True
-    assert purge(admin, fid, 9).status_code == 404
-    assert purge(lyra, fid, 2).status_code == 403  # admin only
+    assert purge(root, fid, 9).status_code == 404
+    assert purge(lyra, fid, 2).status_code == 403  # needs `manage` on the collection
     assert_consistent(server)
 
 

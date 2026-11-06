@@ -1,4 +1,4 @@
-"""R-D4: who the root user is, decided at start-up from the key file and the backup. One test per
+"""Who the root user is, decided at start-up from the key file and the backup. One test per
 case, on a temporary apps directory with fake records."""
 
 import base64
@@ -47,24 +47,24 @@ class FakeRecords:
     """The root binding: the root user's handle, and each of its keys with whether it is
     active."""
 
-    def __init__(self, admin=None, jwk=None):
-        self.admin, self.keys, self.events = admin, {}, []
+    def __init__(self, root=None, jwk=None):
+        self.root, self.keys, self.events = root, {}, []
         if jwk is not None:
             self.keys[KEYS.thumbprint(jwk)] = True
 
     def root_user(self, _conn):
-        return None if self.admin is None else {"id": "root", "handle": self.admin}
+        return None if self.root is None else {"id": "root", "handle": self.root}
 
     def active_keys(self, _conn, _user_id):
         return [{"kid": kid} for kid, active in self.keys.items() if active]
 
     def bind_root(self, _conn, handle, kid, _jwk):
-        self.admin, self.keys[kid] = handle, True
+        self.root, self.keys[kid] = handle, True
         self.events.append(("bind", handle, kid))
 
     def add_key(self, _conn, _user_id, kid, _jwk):
         self.keys = {k: False for k in self.keys} | {kid: True}
-        self.events.append(("rebind", self.admin, kid))
+        self.events.append(("rebind", self.root, kid))
 
 
 @pytest.fixture
@@ -160,7 +160,7 @@ def test_a_key_file_for_another_handle_is_ignored_with_an_error(apps, caplog):
     records = FakeRecords("lyra", jwk)
     mode = resolve(apps, records)
     assert mode.operational and mode.handle == "lyra" and mode.action == "backup"
-    assert records.events == []  # the admin handle never changes
+    assert records.events == []  # root's handle never changes
     assert "admin_pub_vega.key" in caplog.text and "'lyra'" in caplog.text
 
 
@@ -233,7 +233,7 @@ def test_an_invalid_key_file_is_not_operational(
     bound = new_jwk()
     if initialized:
         place(apps, "lyra", bound)
-        resolve(apps, FakeRecords())  # the established admin and its backup
+        resolve(apps, FakeRecords())  # the established root and its backup
     place(apps, "lyra", content)
     records = FakeRecords("lyra", bound) if initialized else FakeRecords()
     backup = (

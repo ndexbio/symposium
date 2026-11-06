@@ -1,4 +1,4 @@
-"""Write atomicity and concurrency (R-A6). Every racing or failing write either fully
+"""Write atomicity and concurrency. Every racing or failing write either fully
 happens or leaves nothing behind: no pending or unreferenced payload, no orphaned S3 object,
 no open multipart upload and no stale name reservation."""
 
@@ -15,7 +15,7 @@ from conftest import (
     assert_consistent,
     b64u_json,
     community_with,
-    init_admin,
+    init_root,
     psql,
     purge,
     repr_digest,
@@ -28,8 +28,8 @@ from harness import HTTP, MAX_WAIT, TEST_ENV
 
 @pytest.fixture
 def demo(server):
-    admin, owners = community_with(server)
-    return server, admin, owners
+    root, owners = community_with(server)
+    return server, root, owners
 
 
 def gated_body(data: bytes, pieces: int, gates: dict[int, threading.Event]):
@@ -488,7 +488,7 @@ def test_a_purge_whose_bytes_cannot_be_freed_stays_purging_until_the_janitor_fre
     server, owners = faulty
     v1 = owners["lyra"].put("demo", "files", "secret.bin", b"purge me").json()
     s3_deletes_fail(server, True)
-    result = purge(init_admin(server), v1["file_id"], 1)
+    result = purge(init_root(server), v1["file_id"], 1)
     assert result.status_code == 200, result.text
     assert result.json()["bytes_freed"] is False
     assert "janitor will retry" in result.json()["note"]

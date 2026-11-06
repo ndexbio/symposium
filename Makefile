@@ -13,7 +13,7 @@
 #                       MAX_PER_TEST_WAIT (seconds, default 120) is the one limit on any wait
 #                       in any suite: reaching it means something hung
 #   make build          lint, then dist/Symposium_skill.zip: the symposium skill, with the
-#                       symposium-data CLI inside it (R-I8)
+#                       symposium-data CLI inside it
 #   make deploy-local   build, then install the skill from the zip into $(SKILLS)
 # The data server has its own Makefile: make -C data-server test runs its suites alone.
 

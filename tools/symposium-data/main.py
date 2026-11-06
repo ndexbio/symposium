@@ -1,10 +1,10 @@
 """symposium-data: the command-line client of a Symposium Data server, and its only client
-(R-I1). Every command prints one JSON object on stdout, errors included, and exits non-zero on
-an error. Nothing secret is ever printed or taken from the command line (R-I4): keys stay in
+. Every command prints one JSON object on stdout, errors included, and exits non-zero on
+an error. Nothing secret is ever printed or taken from the command line: keys stay in
 the keystore, and invites and API keys move only as files.
 
 Every command but `status`, `admin-config` and `context set` works on the context set in this
-directory (R-I3): `./.symposium/context.json`, written by `context set --invite-file` (any user
+directory: `./.symposium/context.json`, written by `context set --invite-file` (any user
 joining with an invite), `context set --community-file` (a server-level user working in a
 community) or `admin-config` (root's server-level context). The context names the user (its
 handle and home, none for a server-level user) and caches the access the server resolved for
@@ -74,7 +74,7 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 
 def image_version() -> str:
-    """The data-server image this bundle was built for (R-I5), from the build's stamp."""
+    """The data-server image this bundle was built for, from the build's stamp."""
     try:
         return json.loads((HERE / "compat.json").read_text())["data_server_version"]
     except (OSError, ValueError, KeyError):
@@ -92,7 +92,7 @@ def same_release(expected: str, running: str) -> bool | None:
 
 
 def write_secret(path: Path, content: dict):
-    """A file only its owner can read (R-E3): an invite or an API key. Never printed."""
+    """A file only its owner can read: an invite or an API key. Never printed."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -154,7 +154,7 @@ def parse_ref(ref: str, version: str | None) -> tuple[str, str]:
 
 class DataServer:
     """The one client of a data server's REST API. Constructed for a community, so every
-    community route is `/v1/{community}/…` without naming it again; the server-wide calls
+    community route is `/v1/communities/{community}/…` without naming it again; the server-wide calls
     (`status`, sign-in, users, roles, invites, communities) are here too."""
 
     def __init__(self, base_url: str, community: str | None = None):
@@ -319,9 +319,9 @@ class DataServer:
     def communities(self) -> dict:
         return self.request("GET", "/v1/communities")
 
-    def create_community(self, name: str, admin: str) -> dict:
+    def create_community(self, name: str, first_admin: str) -> dict:
         return self.request(
-            "POST", "/v1/communities", body={"name": name, "admin": admin}
+            "POST", "/v1/communities", body={"name": name, "admin": first_admin}
         )
 
     def import_community(self, path: Path) -> dict:
@@ -535,7 +535,7 @@ class DataServer:
     def export(self):
         return self.request("GET", self.c("/archive"), stream=True)
 
-    # ── the port (R-M1) ────────────────────────────────────────────────────────────────────
+    # ── the port ────────────────────────────────────────────────────────────────────
     def start_port(self, body: dict) -> dict:  # port-ndex
         return self.request("POST", self.c("/ndex-imports"), body=body)
 
@@ -684,7 +684,7 @@ class Commands:
 
     # ── root ───────────────────────────────────────────────────────────────────────────────
     def admin_config(self, args) -> dict:
-        """Make root's key (R-D4) and set root's server-level context here: idempotent; a key
+        """Make root's key and set root's server-level context here: idempotent; a key
         pair is generated only when this machine holds none for the server, or with
         --new-key."""
         url = args.data_server_url.rstrip("/")
@@ -736,8 +736,8 @@ class Commands:
 
     # ── communities ────────────────────────────────────────────────────────────────────────
     def communities_create(self, args) -> dict:
-        """Create a community with its first community admin, and write that admin's invite
-        file (0600) when the community is new."""
+        """Create a community with its first community admin, and write that community admin's
+        invite file (0600) when the community is new."""
         server = self.signed_in()
         made = server.create_community(args.name, args.admin)
         issued = made.pop("admin_invite", None)
@@ -1021,7 +1021,7 @@ class Commands:
         return {"exported": server.community, "file": str(out.resolve()), "bytes": size}
 
     def import_(self, args) -> dict:
-        """Create the exported community on this server (R-J6), then set the context: the
+        """Create the exported community on this server, then set the context: the
         server-level user's session for that community."""
         source = Path(args.from_)
         spec = read_json_file(args.community_file, "community file")
@@ -1062,7 +1062,7 @@ class Commands:
 
     # ── this user's identity ───────────────────────────────────────────────────────────────
     def owner_register(self, _args) -> dict:
-        """Join with the context's invite and a key made on this machine (R-D1, R-D5): the
+        """Join with the context's invite and a key made on this machine: the
         server creates the user with the invite's roles. Idempotent: a user already joined
         with this machine's key is reported, not joined again."""
         context = self.context.load()
@@ -1082,7 +1082,7 @@ class Commands:
                 return {**out, "registered": False, "fingerprint": thumbprint(jwk)}
             except CommandError as e:
                 if e.status != 401 or "removed" in str(e):
-                    raise  # 401: this key is not (or no longer) registered; join anew
+                    raise  # 401: this key is unregistered; join anew
         invite = read_json_file(context["invite_file"], "invite file").get("invite")
         jwk = keystore.stage(scope, handle)
         try:
@@ -1219,7 +1219,7 @@ class Commands:
         page = server.changes(args.collection, args.since, args.limit)
         if not args.all:
             return page
-        # every page from --since on, as one object; never silently capped (R-G3)
+        # every page from --since on, as one object; never silently capped
         items = list(page["items"])
         while page["more"]:
             page = server.changes(args.collection, page["next_since"], args.limit)
@@ -1243,7 +1243,7 @@ class Commands:
 
     def with_api_key(self, path) -> DataServer:
         """A client that reads with an API key file, as `gen-api-key` writes one, with no
-        context: what an application holding an issued key does (R-E3)."""
+        context: what an application holding an issued key does."""
         key = read_json_file(path, "API key file")
         missing = [k for k in ("key", "community", "data-server-url") if not key.get(k)]
         if missing:
@@ -1303,7 +1303,7 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     )
     p.add_argument("--data-server-url", help="default: the context's server")
 
-    context = sub.add_parser("context", help="this directory's context (R-I3)")
+    context = sub.add_parser("context", help="this directory's context")
     actions = context.add_subparsers(dest="action", metavar="<action>", required=True)
     p = command(actions, "set", commands.context_set, "set the context from a file")
     which = p.add_mutually_exclusive_group(required=True)
@@ -1329,8 +1329,7 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         sub,
         "admin-config",
         commands.admin_config,
-        "make root's key and its public key file, and set root's server-level context "
-        "(R-D4)",
+        "make root's key and its public key file, and set root's server-level context",
     )
     p.add_argument("--handle", required=True)
     p.add_argument("--data-server-url", required=True)
@@ -1355,13 +1354,18 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         actions,
         "create",
         commands.communities_create,
-        "create a community with its first community admin, and write that admin's invite "
-        "file (0600)",
+        "create a community with its first community admin, and write its invite file (0600)",
     )
     p.add_argument("--name", required=True)
-    p.add_argument("--admin", required=True, help="the first community admin's handle")
     p.add_argument(
-        "--out", help="the admin's invite file; default <community>-<admin>.invite"
+        "--admin",
+        required=True,
+        metavar="HANDLE",
+        help="the first community admin's handle",
+    )
+    p.add_argument(
+        "--out",
+        help="the community admin's invite file; default <community>-<handle>.invite",
     )
     command(actions, "list", commands.communities_list, "list the communities")
 
@@ -1659,7 +1663,7 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     p.add_argument("--since", type=int, default=0)
     p.add_argument("--limit", type=int, default=100)
 
-    p = command(sub, "verify", commands.verify, "check a citation (R-G9)")
+    p = command(sub, "verify", commands.verify, "check a citation")
     p.add_argument("--cite", required=True)
     p.add_argument("--before", help="it must be strictly earlier than this instant")
     p.add_argument("--sha256")

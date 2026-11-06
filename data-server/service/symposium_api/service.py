@@ -1058,7 +1058,7 @@ class ApiService(Service):
         self, caller: Caller, community: str, collection: str | None = None
     ) -> bool:
         """The re-check at every event and heartbeat: a revoked or expired key, or one that
-        lost its standing, loses its stream, and so does a caller who can no longer read the
+        lost its standing, loses its stream, and so does a caller who loses read access to the
         collection the stream follows (a withdrawn grant, a record made private)."""
         with self.connection() as conn:
             if not caller.anonymous:

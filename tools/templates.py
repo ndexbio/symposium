@@ -261,7 +261,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       {{ selector: 'node[?navigable]', style: {{ 'border-style': 'dashed' }} }},
       // No per-claim verdict encoding: one judgment covers the Argument and
       // is stated in the header. Colouring claims here would imply the author
-      // judged each one separately, which the record no longer says.
+      // judged each one separately, which the record does not say.
       // Source = an evidence element (a figure panel, excerpt, or object). Kept
       // lighter / subordinate to claims: a small slate cut-rectangle, its intuitive
       // name (e.g. "Fig 1C") drawn beside it.
@@ -1154,8 +1154,8 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
       // Long edges are the ones that were unreadable: a `cites` edge spanning four columns
       // passes near unrelated nodes however the layer ordering is chosen. Bowing it by an
       // amount proportional to its span separates it from both the straight short edges and
-      // from its own neighbours, so two long edges running between the same columns no longer
-      // lie on top of each other.
+      // from its own neighbours, so two long edges running between the same columns lie
+      // apart.
       {{ selector:'edge[span > 1]', style: {{
         'control-point-distances':'data(cpd)', 'control-point-weights':0.5,
         'line-style':'solid', 'opacity':0.75 }} }},
@@ -1281,8 +1281,7 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 
   // ---- manual arrangement, saved beside the record ----
   //
-  // Dragging a node used to be lost on the next build, because the page held the only copy
-  // of where it had been put. The arrangement is a reading aid, not part of the record, so
+  // A dragged node keeps its place across builds. The arrangement is a reading aid, not part of the record, so
   // it is written to a sidecar file the build reads back rather than into any artifact.
   //
   // The page cannot write to the filesystem, so "Save layout" hands over a download; the

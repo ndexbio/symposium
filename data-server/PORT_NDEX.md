@@ -52,7 +52,7 @@ server.
    a bound pair. The password is held in memory only, for the length of the port, and is never
    stored or logged. `page_size` is optional (default 100). It answers `202` with the
    port-ndex's `id`, `"state": "running"` and `requested_by`, the user who started it.
-3. Poll the `Location` it answers, `GET /v1/communities/<community>/ndex-imports/<id>`, until `state` is no longer `running`:
+3. Poll the `Location` it answers, `GET /v1/communities/<community>/ndex-imports/<id>`, until `state` is `ok` or `failed`:
 
    ```json
    {"id": "…", "community": "demo", "requested_by": "demo-admin",

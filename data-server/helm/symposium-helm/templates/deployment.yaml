@@ -76,7 +76,7 @@ spec:
           {{- end }}
           volumeMounts:
             - {name: storage, mountPath: /apps}
-            # the admin's public key file, read at start-up (R-D4)
+            # root's public key file, read at start-up
             - {name: admin-key, mountPath: /apps/admin-key, readOnly: true}
       volumes:
         - name: storage

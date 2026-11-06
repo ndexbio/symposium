@@ -6,7 +6,7 @@ from conftest import (
     community_with,
     create_community,
     enroll,
-    init_admin,
+    init_root,
 )
 from conftest import Owner as User
 from harness import HTTP
@@ -121,7 +121,7 @@ def test_issued_keys_get_no_owner_allowance_and_sessions_do(server):
     )
     assert mine.status_code == 403
     # the same user, signed in and narrowed to nothing by list, still reaches what it owns
-    root = init_admin(server)
+    root = init_root(server)
     root.unassign("community-member", None, "lyra", "demo")
     root.assign("community-member", [], "lyra", "demo")
     lyra._session = None

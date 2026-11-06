@@ -19,7 +19,7 @@ with are stored on the server with the invite. Setup:
 It is idempotent: run again with the same invite, it reports that you are already registered
 with this machine's key and changes nothing.
 
-Everything goes through the `symposium-data` CLI (R-I1); this script never contacts the data
+Everything goes through the `symposium-data` CLI; this script never contacts the data
 server itself. It prints one JSON object.
 """
 

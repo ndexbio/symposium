@@ -4,11 +4,11 @@ a rebind of root's key file leaves every other user's keys alone."""
 
 from conftest import (
     EVERY,
-    Admin,
     Owner,
+    ServerUser,
     community_with,
     enroll,
-    init_admin,
+    init_root,
     invite,
     psql,
     steward_of,
@@ -18,18 +18,18 @@ from harness import HTTP
 SERVER_ADMIN = [{"role": "server-admin", "collections": None}]
 
 
-def delegate(server, handle="ana") -> Admin:
-    root = init_admin(server)
+def delegate(server, handle="ana") -> ServerUser:
+    root = init_root(server)
     issued = root.invite(handle, SERVER_ADMIN)
     assert issued.status_code == 201, issued.text
     assert issued.json()["community"] is None
-    user = Admin(server, handle)
+    user = ServerUser(server, handle)
     assert user.register(issued.json()["invite"]).status_code == 201
     return user
 
 
 def test_root_delegates_server_admins_who_cannot_delegate(server):
-    root = init_admin(server)
+    root = init_root(server)
     ana, ben = delegate(server, "ana"), delegate(server, "ben")
     me = HTTP.get(f"{server.url}/v1/me", headers=ana.headers())
     assert me.status_code == 200 and me.json()["community"] is None  # server-wide
@@ -66,7 +66,7 @@ def test_root_delegates_server_admins_who_cannot_delegate(server):
 
 def test_a_handle_is_server_level_or_in_communities_never_both(server):
     community_with(server, members=("lyra",))
-    root = init_admin(server)
+    root = init_root(server)
     clash = root.invite("lyra", SERVER_ADMIN)
     assert clash.status_code == 409 and "demo" in clash.json()["detail"]
 

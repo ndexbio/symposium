@@ -169,7 +169,7 @@ class Server:
         self.url = ""
 
     def start(self, key_file: Path | None = None, image: str | None = None, wait=True):
-        """Create the container from `image` (the image under test by default), copy the admin
+        """Create the container from `image` (the image under test by default), copy the root
         key file onto its volume when one is given (as an operator places it), and start it.
         Without a key file it starts non-operational, for a suite that onboards it the way an
         operator does."""
@@ -261,7 +261,7 @@ class Server:
         return result.stdout + result.stderr
 
     def reset(self):
-        """Empty every community, file and payload; the admin binding stays."""
+        """Empty every community, file and payload; root's binding stays."""
         result = self.exec("/opt/venv/bin/python", "-c", RESET)
         assert result.returncode == 0, result.stderr[-2000:]
 

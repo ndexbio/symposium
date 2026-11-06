@@ -242,7 +242,7 @@ When signed in, a user always keeps access to the collections it owns. An API ke
 
 `/symposium access` shows the six roles and the caller's own roles and grants.
 
-### 8.2 From an empty cluster to communities run by their own admins
+### 8.2 From an empty cluster to communities run by their own community admins
 
 Each step says where it runs, who runs it, the commands, and the check that proves it worked. Root takes part in steps 1–3 only.
 
@@ -258,28 +258,28 @@ Each step says where it runs, who runs it, the commands, and the check that prov
 4. **Server admin, own workstation: join.**
    - Run `/symposium setup --invite-file <h>.invite`. The key is generated there, and the server-wide session is set up.
    - Check: `/symposium access` shows `server-admin`, with every collection of every community and no `delegate`; root's `/symposium users list --server` shows `<h>` registered.
-   - Root's part ends here. Only root removes this admin later, with `/symposium users remove --handle <h> --server`.
+   - Root's part ends here. Only root removes this server admin later, with `/symposium users remove --handle <h> --server`.
 5. **Server admin: create each community.**
    - Write `community.json` with `community`, `admin` (the community admin's handle) and `data-server-url: https://<host>` (see `server/community.example.json`), and run `/symposium bootstrap --community-file community.json`. It writes the community admin's invite file under `~/.symposium/admin/<community>/`, to hand over out of band.
-   - Repeat for each further community, each with its own admin.
+   - Repeat for each further community, each with its own community admin.
    - Check: `/symposium data communities list` shows each community, and `/symposium invite list --out-dir <dir>` shows each community admin's pending invite.
 
 Everyone from here on works from their own workstation, with the skill installed (`make deploy-local` from a clone, or the release's `Symposium_skill.zip`). Each receives an invite file out of band, as a file, and keeps it out of any chat.
 
 6. **Community admin: join.**
-   - Run `/symposium setup --invite-file <community>-<handle>.invite`. It generates the admin's key on this machine (encrypted, in the OS keychain, or under `SYMPOSIUM_KEY_PASSPHRASE` on a headless machine), registers it with the server, which assigns `community-admin` from the stored invite, creates the session `~/.symposium/member/<community>/<handle>/` and syncs `record/`.
-   - Check: `/symposium access` shows `community-admin` in `<community>`, with `read`, `write` and `manage` on every collection, and `gate`, `members` and `export`; `/symposium users list` shows the admin registered.
+   - Run `/symposium setup --invite-file <community>-<handle>.invite`. It generates the community admin's key on this machine (encrypted, in the OS keychain, or under `SYMPOSIUM_KEY_PASSPHRASE` on a headless machine), registers it with the server, which assigns `community-admin` from the stored invite, creates the session `~/.symposium/member/<community>/<handle>/` and syncs `record/`.
+   - Check: `/symposium access` shows `community-admin` in `<community>`, with `read`, `write` and `manage` on every collection, and `gate`, `members` and `export`; `/symposium users list` shows the community admin registered.
 7. **Community admin: invite members.**
    - Run `/symposium invite --handle <h> --access community-member:* --out <h>.invite` for each member. Use `--access community-observer:*` for a read-only member, or `--access community-member:` for a member limited to the collections it creates.
    - Hand each file over out of band.
    - Check: `/symposium invite list --out-dir <dir>` lists each pending invite and writes its file again if one is lost.
 8. **Each member: join and publish.**
    - Run `/symposium setup --invite-file <h>.invite`. The key is generated on the member's machine, the server assigns the roles stored on the invite, and the session is created and synced.
-   - Check: `/symposium access` shows the roles invited; the admin's `/symposium users list` shows `<h>` registered.
+   - Check: `/symposium access` shows the roles invited; the community admin's `/symposium users list` shows `<h>` registered.
    - Work: `/symposium sync` brings the record copy up to date; `/symposium validate --role <publishing role> <artifact.json>` runs the gate's own checks; `/symposium publish --role <publishing role> <artifact.json>` submits one artifact to the community's `inbox`. A member holding several sessions picks one with `/symposium use <community> <h>`.
 9. **Community admin: run the gate.**
-   - In the admin's session, start `/symposium gate --watch` as a long-running background process. It polls the community's `inbox` every `SYMPOSIUM_POLL` seconds (default 30), validates each submission against the record, then accepts it (promotes it into `record`) or rejects it (a reply only the submitter reads), printing one line per decision.
-   - It runs while the admin's agent session is open. Started again, it resumes where it left off, and decides each submission once.
+   - In the community admin's session, start `/symposium gate --watch` as a long-running background process. It polls the community's `inbox` every `SYMPOSIUM_POLL` seconds (default 30), validates each submission against the record, then accepts it (promotes it into `record`) or rejects it (a reply only the submitter reads), printing one line per decision.
+   - It runs while the community admin's agent session is open. Started again, it resumes where it left off, and decides each submission once.
    - Use `/symposium gate` for a single pass, and `/symposium gate --verify` to compare the local `record/` with the server.
    - Check: the member's next `/symposium sync` shows the decision.
 10. **Community admin (optional): hand the gate on.**
@@ -367,7 +367,7 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
 
 ## 9. Maintenance
 
-- **Purge** frees one version's content (R-B3), with `manage` on its collection.
+- **Purge** frees one version's content, with `manage` on its collection.
   - **What stays:** the version stays addressable and answers `410` with its metadata.
   - **What goes:** its bytes are deleted only when no other live version shares them. If the file store refuses, the route reports `"bytes_freed": false` and the janitor finishes the job.
 

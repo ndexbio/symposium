@@ -174,13 +174,23 @@ def test_every_operation_states_its_security(spec):
 
 
 def test_the_api_takes_api_keys_alone(spec):
-    """One credential, an API key, and one sign-in for every user: no route under
-    `/admin`."""
+    """One credential, an API key, and one sign-in for every user: a challenge, then a
+    session. Every route sits under one of the server's own resources."""
     assert list(spec["components"]["securitySchemes"]) == ["apiKey"]
-    for path, method, _ in operations(spec):
-        assert not path.startswith("/admin"), (
-            f"{method.upper()} {path} is an admin path"
-        )
+    first = {path.split("/")[1] for path, _, _ in operations(spec)}
+    assert first == {
+        "challenges",
+        "communities",
+        "invites",
+        "me",
+        "openapi.json",
+        "openapi.yaml",
+        "registrations",
+        "roles",
+        "sessions",
+        "status",
+        "users",
+    }
 
 
 def test_changing_access_takes_a_signed_in_user(spec):

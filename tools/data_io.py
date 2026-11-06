@@ -1,7 +1,7 @@
 """The toolchain's one way to the data server, and its local copy of the record.
 
 `SymposiumData` runs the `symposium-data` CLI and reads the one JSON object each command prints
-(R-I1): nothing in the toolchain makes an HTTP request to the server itself. It runs the CLI
+: nothing in the toolchain makes an HTTP request to the server itself. It runs the CLI
 with the command the skill prepared for the session and passed in SYMPOSIUM_DATA_CLI (a JSON
 list: the interpreter of the skill's own environment, then the CLI's `cli.py`). `Mirror` is the
 local copy of the community's record, `./record` beside the context in the session's working

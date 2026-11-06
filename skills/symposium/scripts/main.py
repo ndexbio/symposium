@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """The `symposium` skill's entry point: every person works through `/symposium <command>`, and
-this dispatches it (R-I7). It never contacts a data server itself: every data interaction runs
-the `symposium-data` CLI (R-I1). What a person may run follows from their access roles
+this dispatches it. It never contacts a data server itself: every data interaction runs
+the `symposium-data` CLI. What a person may run follows from their access roles
 (`access` lists them); "who" below names the role that holds what a command takes.
 
     setup --invite-file <file>             anyone invited: join a community, or as a server admin
     admin-config --handle <h> --data-server-url <url>
                                            root: make root's key and its server-wide session
-    bootstrap --community-file <file>      server admins: create a community and its admin's invite
+    bootstrap --community-file <file>      server admins: create a community and its community admin's invite
     use-community <community>              server admins: a session for an existing community
     use [<community>] <handle>             choose this agent session's session; alone, list them
     access                                 your access roles and grants, and the six roles

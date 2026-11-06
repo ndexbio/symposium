@@ -1,6 +1,6 @@
 """The data server's integration fixtures: the session's container (tests/harness.py), started
 with the root user's key file copied onto its volume before it starts, as an operator places it
-(R-D4), and the users acting on it over HTTP: the root, server admins, community admins and
+, and the users acting on it over HTTP: the root, server admins, community admins and
 members, each with its own key and roles.
 """
 
@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from harness import HTTP, IMAGE, MAX_WAIT, TEST_ENV, Server
 
-ADMIN = "demo-admin"  # the root user, bound from the key file
+ROOT = "demo-admin"  # the root user, bound from the key file
 STEWARD = (
     "steward"  # each community's first community admin, unless a test names another
 )
@@ -27,14 +27,14 @@ EVERY = ["*"]
 @pytest.fixture(scope="session")
 def server(tmp_path_factory):
     """The one container, started with the root's key file in place: the root user is bound at
-    its first start (R-D4)."""
+    its first start."""
     if not IMAGE:
         pytest.fail(
             "SYMPOSIUM_DATA_TEST_IMAGE is not set; run through `make -C data-server test`"
         )
     server = Server(TEST_ENV)
     server.admin_key = OwnerKey()
-    key_file = place_key(tmp_path_factory.mktemp("admin"), ADMIN, server.admin_key)
+    key_file = place_key(tmp_path_factory.mktemp("admin"), ROOT, server.admin_key)
     try:
         server.start(key_file)
         yield server
@@ -278,7 +278,7 @@ class Owner:
         )
 
 
-class Admin(Owner):
+class ServerUser(Owner):
     """A server-level user (the root, or a server admin): its home is none, and `community`
     only selects which community's routes it calls."""
 
@@ -286,9 +286,9 @@ class Admin(Owner):
         super().__init__(server, handle, key, community)
         self.home = None
 
-    def at(self, community: str) -> Admin:
+    def at(self, community: str) -> ServerUser:
         """The same user, calling another community's routes."""
-        other = Admin(self.server, self.handle, self.key, community)
+        other = ServerUser(self.server, self.handle, self.key, community)
         other._session = getattr(self, "_session", None)
         return other
 
@@ -321,11 +321,11 @@ def set_quota(server: Server, quota_bytes: int):
     assert result.returncode == 0, result.stderr
 
 
-def purge(admin: Owner, file_id, n: int, community: str = "demo"):
+def purge(caller: Owner, file_id, n: int, community: str = "demo"):
     """A holder of `manage` frees one version's content through the purge route."""
     return HTTP.delete(
-        f"{admin.server.url}/v1/communities/{community}/files/{file_id}/versions/{n}",
-        headers=admin.headers(),
+        f"{caller.server.url}/v1/communities/{community}/files/{file_id}/versions/{n}",
+        headers=caller.headers(),
     )
 
 
@@ -351,56 +351,56 @@ def until_sql(server: Server, query: str, expected: str, message: str):
 def community_with(server: Server, members=("lyra", "vega", "rigel"), community="demo"):
     """An initialized server: the community, each member joined by invite with
     community-member on every collection. -> (root, {handle: Owner})."""
-    admin = init_admin(server)
-    create_community(server, admin, community)
+    root = init_root(server)
+    create_community(server, root, community)
     owners = {}
     for handle in members:
         owner = Owner(server, handle, community=community)
-        r = enroll(admin.at(community), owner, community)
+        r = enroll(root.at(community), owner, community)
         assert r.status_code == 201, r.text
         owners[handle] = owner
-    return admin, owners
+    return root, owners
 
 
-def invite(admin: Owner, community: str, handle: str, hours=None, roles=None):
+def invite(inviter: Owner, community: str, handle: str, hours=None, roles=None):
     """An invite through the API, as bootstrap does: by default community-member on every
     collection. -> the response."""
     roles = roles or [{"role": "community-member", "collections": EVERY}]
-    return admin.invite(handle, roles, community=community, hours=hours)
+    return inviter.invite(handle, roles, community=community, hours=hours)
 
 
-def enroll(admin: Owner, owner: Owner, community: str, roles=None):
+def enroll(inviter: Owner, owner: Owner, community: str, roles=None):
     """Invite a handle and join with that invite: the only way to join."""
-    r = invite(admin, community, owner.handle, roles=roles)
+    r = invite(inviter, community, owner.handle, roles=roles)
     assert r.status_code == 201, r.text
     return owner.register(r.json()["invite"])
 
 
-def init_admin(server: Server) -> Admin:
+def init_root(server: Server) -> ServerUser:
     """The session's root user, bound once when the server started."""
-    return Admin(server, ADMIN, server.admin_key)
+    return ServerUser(server, ROOT, server.admin_key)
 
 
-def create_community(server: Server, admin: Owner, community: str, steward=STEWARD):
+def create_community(server: Server, creator: Owner, community: str, steward=STEWARD):
     """Create `community` with `steward` as its first community admin, invited but not yet
-    joined. -> the response; its admin invite is in `admin_invite`."""
+    joined. -> the response; the community admin's invite is in `admin_invite`."""
     r = HTTP.post(
         f"{server.url}/v1/communities",
         json={"name": community, "admin": steward},
-        headers=admin.headers(),
+        headers=creator.headers(),
     )
     assert r.status_code in (200, 201), r.text
     return r
 
 
 def steward_of(server: Server, community: str = "demo", handle=STEWARD) -> Owner:
-    """The community's first admin, joined: creates the community when it does not exist."""
-    admin = init_admin(server)
-    created = create_community(server, admin, community, handle).json()
+    """The community's first community admin, joined: creates the community when it does not exist."""
+    root = init_root(server)
+    created = create_community(server, root, community, handle).json()
     owner = Owner(server, handle, community=community)
     issued = created.get("admin_invite")
     if issued is None:
-        r = admin.invite(
+        r = root.invite(
             handle,
             [{"role": "community-admin", "collections": None}],
             community=community,
@@ -441,7 +441,7 @@ def untracked_objects(server: Server) -> int:
 
 
 def consistency(server: Server) -> dict:
-    """The R-A6 invariants, as numbers that must all be zero (or equal)."""
+    """The atomicity invariants, as numbers that must all be zero (or equal)."""
     ready = int(psql(server, "SELECT count(*) FROM payloads WHERE state = 'ready'"))
     objects, uploads = store_counts(server)
     return {

@@ -1,4 +1,4 @@
-"""Export and import of one community (R-J6): a tar stream of its rows, as JSON lines, and the
+"""Export and import of one community: a tar stream of its rows, as JSON lines, and the
 bytes of every payload it stores. For backups and for moving a community to another server.
 
     manifest.json       format, community, root handle, counts
@@ -12,7 +12,7 @@ API keys, and their roles, stay on the server that issued them: an imported comm
 applications are issued new keys there.
 
 The rows come first, so an import can refuse before any bytes move. Bytes are hashed as they
-stream in and stay pending until one transaction writes every row (R-A6); if anything fails,
+stream in and stay pending until one transaction writes every row; if anything fails,
 they are removed again, bytes first and row second.
 """
 
@@ -29,7 +29,12 @@ import psycopg
 from .cleanup import Cleanup, PendingBatch
 from .records import Records
 from .runtime import Database, MultipartWriter, PayloadStore
-from .wire import valid_community, valid_sha256
+from .wire import (
+    PRIVILEGED_REFUSAL,
+    privileged_community,
+    valid_community,
+    valid_sha256,
+)
 
 FORMAT = "symposium-data-export"
 FORMAT_VERSION = 3
@@ -221,8 +226,10 @@ class Archive:
         if not valid_community(str(manifest.get("community", ""))):
             raise Malformed(
                 f"'{manifest.get('community')}' is not a community name: 1-20 letters, "
-                "digits or underscores, and not a server-wide route name"
+                "digits or underscores"
             )
+        if privileged_community(manifest["community"]):
+            raise Malformed(PRIVILEGED_REFUSAL)
         return manifest
 
     def check_target(self, conn, manifest: dict):
@@ -300,7 +307,7 @@ class Archive:
 
     def create_user(self, conn, community: str, user: dict, ids: dict) -> dict:
         """Recreate one exported user in the new community, with its keys, tombstones
-        included (R-J6). The community is new, so there is nothing to merge."""
+        included. The community is new, so there is nothing to merge."""
         row = conn.execute(
             "INSERT INTO users (handle, home, created, suspect_after, removed, removed_by) "
             "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",

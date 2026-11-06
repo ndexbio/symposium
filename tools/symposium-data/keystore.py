@@ -5,7 +5,7 @@
     … each with <handle>.pub.jwk beside it (the public JWK, not a secret)
 
 Keys are keyed by the server's id, not its URL: a server reached through a new address is the
-same identity domain. `admin` is never a community name (it is reserved), so a server-level
+same identity domain. `admin` is a privileged name no community takes, so a server-level
 user's key and a community user's key never share a directory. Private keys are encrypted PKCS#8, mode 0600. The passphrase comes
 from SYMPOSIUM_KEY_PASSPHRASE when it is set, otherwise from the OS keychain through the
 optional `keyring` package. Nothing here prints a private key or a passphrase.
@@ -53,7 +53,7 @@ class Passphrase:
 
     def keyring(self):
         try:
-            import keyring  # optional (R-I6)
+            import keyring  # optional
         except ImportError:
             return None
         return keyring

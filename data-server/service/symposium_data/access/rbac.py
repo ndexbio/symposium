@@ -47,7 +47,8 @@ PRINCIPAL_KINDS = frozenset({SERVER_USER, HOMED_USER, MEMBER_KEY, NON_MEMBER_KEY
 # a role's grant takes the assignment's own collection value
 VALUE = object()
 
-# the roles the server itself assigns: the key file's root user, a new community's first admin,
+# the roles the server itself assigns: the key file's root user, a new community's first
+# community admin,
 # and a ported community's authors
 SERVER_ROOT = "server-root"
 COMMUNITY_ADMIN = "community-admin"

@@ -112,8 +112,8 @@ runs and the skill it needs.
 - The routes `/v1/admin/challenge`, `/v1/admin/token`, `/v1/{community}/auth/*`,
   `/v1/{community}/owners*`, `/v1/{community}/roster[/{handle}]`, `/v1/{community}/invites`,
   `/v1/communities/import` and `/v1/{community}/collections/{collection}/grants` are retired;
-  sharing a collection is an assignment of `community-observer`, and no community name is
-  reserved.
+  sharing a collection is an assignment of `community-observer`, and the route names are no
+  longer reserved as community names; `admin` alone is refused, as a privileged name.
 
 ## [Data Server 0.1.3] - Unreleased
 

@@ -1,4 +1,4 @@
-"""The NDEx port as a route (R-M1), against recorded NDEx 3.0.0 responses
+"""The NDEx port as a route, against recorded NDEx 3.0.0 responses
 served by a stub on this machine. Every port runs on the shared session container, into an
 empty community, and is polled until it finishes.
 """
@@ -21,7 +21,7 @@ from conftest import (
     assert_consistent,
     create_community,
     enroll,
-    init_admin,
+    init_root,
     invite,
     psql,
     store_counts,
@@ -42,10 +42,10 @@ def stub():
 
 @pytest.fixture
 def demo(server):
-    """The admin and an empty `demo` community."""
-    admin = init_admin(server)
-    create_community(server, admin, "demo")
-    return server, admin
+    """Root and an empty `demo` community."""
+    root = init_root(server)
+    create_community(server, root, "demo")
+    return server, root
 
 
 def recorded_artifacts() -> list:
@@ -74,13 +74,13 @@ def start_port(server, headers, url, community="demo"):
     )
 
 
-def port_outcome(server, admin, port_id, community="demo") -> dict:
-    """Poll the port until it is no longer running. -> its view."""
+def port_outcome(server, root, port_id, community="demo") -> dict:
+    """Poll the port until it stops running. -> its view."""
     deadline = time.monotonic() + MAX_WAIT
     while True:
         view = HTTP.get(
             f"{server.url}/v1/communities/{community}/ndex-imports/{port_id}",
-            headers=admin.headers(),
+            headers=root.headers(),
         ).json()
         if view["state"] != "running":
             return view
@@ -88,12 +88,12 @@ def port_outcome(server, admin, port_id, community="demo") -> dict:
         time.sleep(0.2)
 
 
-def run_port(server, admin, url, community="demo") -> dict:
-    started = start_port(server, admin.headers(), url, community)
+def run_port(server, root, url, community="demo") -> dict:
+    started = start_port(server, root.headers(), url, community)
     assert started.status_code == 202, started.text
     assert started.json()["state"] in ("running", "ok", "failed")
-    assert started.json()["requested_by"] == admin.handle
-    return port_outcome(server, admin, started.json()["id"], community)
+    assert started.json()["requested_by"] == root.handle
+    return port_outcome(server, root, started.json()["id"], community)
 
 
 def everything(server, headers, collection) -> list:
@@ -111,8 +111,8 @@ def everything(server, headers, collection) -> list:
 
 
 def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
-    server, admin = demo
-    outcome = run_port(server, admin, stub.url)
+    server, root = demo
+    outcome = run_port(server, root, stub.url)
     assert outcome["state"] == "ok", outcome["result"]
     result = outcome["result"]
     assert (result["networks"], result["record"], result["replies"]) == (10, 9, 1)
@@ -120,11 +120,11 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
         result["pages"] == 3 and stub.listing_pages == 3
     )  # 10 networks at page size 4
     assert result["authors"] == ["lyra", "vega"]
-    assert result["root"] == admin.handle and result["source"] == stub.url
+    assert result["root"] == root.handle and result["source"] == stub.url
 
     recorded = recorded_artifacts()
     records = [r for r in recorded if r[3].get("symposium_record") is True]
-    ported = everything(server, admin.headers(), "record")
+    ported = everything(server, root.headers(), "record")
     assert [i["name"] for i in ported] == [r[1] for r in records]
     assert [i["seq"] for i in ported] == list(range(1, 10))
     for item, (created, _name, raw, _na) in zip(ported, records, strict=True):
@@ -135,38 +135,38 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
         author = json.loads(raw)["artifact"]["published_by"].lstrip("@")
         assert item["created_by"] == author and item["key_id"] is None
         assert item["metadata"] == {"symposium_record": True}
-        assert admin.get(item["file_id"]).content == raw
+        assert root.get(item["file_id"]).content == raw
 
-    [reply] = everything(server, admin.headers(), "inbox")
+    [reply] = everything(server, root.headers(), "inbox")
     assert reply["metadata"] == {
         "symposium_reply": True,
         "symposium_in_reply_to": "lyra_note_bad_v1",
         "recipients": ["lyra"],
     }
     assert (
-        reply["created_by"] == admin.handle
-    )  # the NDEx admin account maps to the server's admin
+        reply["created_by"] == root.handle
+    )  # the NDEx account maps to the server's root
 
     # the authors and the recipient are users of the community, and claim their handles by
     # invite
     lyra, vega = Owner(server, "lyra"), Owner(server, "vega")
-    assert enroll(admin, lyra, "demo").status_code == 201
-    assert enroll(admin, vega, "demo").status_code == 201
-    assert invite(admin, "demo", "lyra").status_code == 409  # claimed once
+    assert enroll(root, lyra, "demo").status_code == 201
+    assert enroll(root, vega, "demo").status_code == 201
+    assert invite(root, "demo", "lyra").status_code == 409  # claimed once
     assert lyra.get(reply["file_id"]).status_code == 200
     assert (
         vega.get(reply["file_id"]).status_code == 403
     )  # only its recipient reads a reply
     assert vega.get(ported[0]["file_id"]).status_code == 200
     vegas = next(i for i in ported if i["created_by"] == "vega")
-    assert vegas["created_by"] == "vega"  # credited to its author (R-M2)
+    assert vegas["created_by"] == "vega"  # credited to its author
 
-    # R-M4: the ported record, fetched into a directory, re-validates with Symposium's validator
+    # the ported record, fetched into a directory, re-validates with Symposium's validator
     record_dir = tmp_path / "record"
     record_dir.mkdir()
     for item in ported:
         (record_dir / f"{item['name']}.json").write_bytes(
-            admin.get(item["file_id"]).content
+            root.get(item["file_id"]).content
         )
     validated = subprocess.run(
         [sys.executable, "validate_record.py", str(record_dir)],
@@ -181,9 +181,9 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
     # the record's clock continues after the last ported instant: the next accept takes it
     sub = lyra.put("demo", "inbox", "after.json", b"{}", {"symposium_submission": True})
     after = HTTP.post(
-        admin.url("/collections/record/files"),
+        root.url("/collections/record/files"),
         json={"from": f"symposium-data:{sub.json()['file_id']}@v1"},
-        headers=admin.headers(),
+        headers=root.headers(),
     ).json()
     assert after["seq"] == 10
     assert datetime.fromisoformat(after["created"]) > records[-1][0]
@@ -191,15 +191,15 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
 
     # never again: the community holds files, whatever the source
     for url in (stub.url, "http://elsewhere.example:8080"):
-        again = start_port(server, admin.headers(), url)
+        again = start_port(server, root.headers(), url)
         assert again.status_code == 400 and "holds files" in again.json()["detail"]
-    assert len(everything(server, admin.headers(), "record")) == 10
+    assert len(everything(server, root.headers(), "record")) == 10
 
 
 def test_a_failing_port_writes_nothing(demo):
     # an eleventh network repeats a record's name: it fails inside the commit transaction,
     # after every payload was uploaded
-    server, admin = demo
+    server, root = demo
     records = [r for r in recorded_artifacts() if r[3].get("symposium_record") is True]
     _created, name, raw, na = records[0]
     artifact = json.loads(raw)
@@ -207,7 +207,7 @@ def test_a_failing_port_writes_nothing(demo):
     copy = {**na, "symposium_canonical": json.dumps(artifact)}
     stub = NdexStub(extra_networks={"duplicate-name": [{"networkAttributes": [copy]}]})
     try:
-        outcome = run_port(server, admin, stub.url)
+        outcome = run_port(server, root, stub.url)
     finally:
         stub.close()
     assert outcome["state"] == "failed", outcome
@@ -225,27 +225,27 @@ def test_a_failing_port_writes_nothing(demo):
     # nothing was written, so the community can still be ported
     stub = NdexStub()
     try:
-        assert run_port(server, admin, stub.url)["state"] == "ok"
+        assert run_port(server, root, stub.url)["state"] == "ok"
     finally:
         stub.close()
 
 
 def test_an_author_with_the_admins_handle_fails_the_port(demo):
-    # a record published by an NDEx account named like this server's admin, which is not
-    # the NDEx admin account: known only once NDEx is read, so reported in the port's status
-    server, admin = demo
+    # a record published by an NDEx account named like this server's root, which is not
+    # the NDEx account running the port: known only once NDEx is read, so reported in the port's status
+    server, root = demo
     records = [r for r in recorded_artifacts() if r[3].get("symposium_record") is True]
     _created, _name, raw, na = records[0]
     artifact = json.loads(raw)
     artifact["artifact"].update(
         name="admin_handle_note_v1",
         created="2026-10-02T23:00:00+00:00",
-        published_by=f"@{admin.handle}",
+        published_by=f"@{root.handle}",
     )
     copy = {**na, "symposium_canonical": json.dumps(artifact)}
     stub = NdexStub(extra_networks={"admin-handle": [{"networkAttributes": [copy]}]})
     try:
-        outcome = run_port(server, admin, stub.url)
+        outcome = run_port(server, root, stub.url)
     finally:
         stub.close()
     assert outcome["state"] == "failed", outcome
@@ -257,16 +257,16 @@ def test_an_author_with_the_admins_handle_fails_the_port(demo):
 
 
 def test_a_file_that_lands_while_the_port_runs_fails_it(demo):
-    server, admin = demo
+    server, root = demo
     stub = NdexStub(hold=True)
     try:
-        started = start_port(server, admin.headers(), stub.url)
+        started = start_port(server, root.headers(), stub.url)
         assert started.status_code == 202, started.text
         assert stub.held.wait(MAX_WAIT), "the port never reached the listing"
-        landed = admin.put("demo", "files", "landed.csv", b"written mid-port")
+        landed = root.put("demo", "files", "landed.csv", b"written mid-port")
         assert landed.status_code == 201, landed.text
         stub.released.set()
-        outcome = port_outcome(server, admin, started.json()["id"])
+        outcome = port_outcome(server, root, started.json()["id"])
     finally:
         stub.close()
     assert outcome["state"] == "failed" and "holds files" in outcome["result"]["reason"]
@@ -281,7 +281,7 @@ def test_a_port_cut_off_by_a_restart_leaves_no_bytes(demo, stub):
     # a second session holds a lock on the community's collections, as a member's write does,
     # so the real port uploads every payload and then waits at its commit; the API process is
     # killed there. The session holds the lock until the test ends it, never by itself.
-    server, admin = demo
+    server, root = demo
     lock = subprocess.Popen(
         ["docker", "exec", "-e", "PGAPPNAME=port-lock", server.name]
         + ["gosu", "postgres", "psql", "-d", "symposium_data", "-c"]
@@ -298,7 +298,7 @@ def test_a_port_cut_off_by_a_restart_leaves_no_bytes(demo, stub):
             "WHERE application_name = 'port-lock' AND wait_event = 'PgSleep'"
         )
         poll_until(lambda: psql(server, waiting) == "1", "the lock was never taken")
-        started = start_port(server, admin.headers(), stub.url)
+        started = start_port(server, root.headers(), stub.url)
         assert started.status_code == 202, started.text
         blocked = "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
         poll_until(
@@ -310,7 +310,7 @@ def test_a_port_cut_off_by_a_restart_leaves_no_bytes(demo, stub):
 
         server.restart_api("KILL")
         view = poll_until(
-            lambda: port_view_after_restart(server, admin, started.json()["id"]),
+            lambda: port_view_after_restart(server, root, started.json()["id"]),
             "the restarted service never marked the port",
         )
         assert view["state"] == "failed" and "restarted" in view["result"]["reason"]
@@ -342,12 +342,12 @@ def poll_until(probe, message):
         time.sleep(0.2)
 
 
-def port_view_after_restart(server, admin, port_id) -> dict | None:
-    """The port's view once it is no longer running; None while the API restarts."""
+def port_view_after_restart(server, root, port_id) -> dict | None:
+    """The port's view once it stops running; None while the API restarts."""
     try:
         view = HTTP.get(
             f"{server.url}/v1/communities/demo/ndex-imports/{port_id}",
-            headers=admin.headers(),
+            headers=root.headers(),
         ).json()
     except httpx.HTTPError:
         return None
@@ -355,54 +355,54 @@ def port_view_after_restart(server, admin, port_id) -> dict | None:
 
 
 def test_a_port_is_refused_before_any_ndex_call(demo, stub):
-    server, admin = demo
-    assert start_port(server, admin.headers(), stub.url, "nowhere").status_code == 404
+    server, root = demo
+    assert start_port(server, root.headers(), stub.url, "nowhere").status_code == 404
     assert start_port(server, {}, stub.url).status_code == 401
     lyra = Owner(server, "lyra")
-    enroll(admin, lyra, "demo")
+    enroll(root, lyra, "demo")
     assert start_port(server, lyra.headers(), stub.url).status_code == 403
     status_url = f"{server.url}/v1/communities/demo/ndex-imports/{uuid.uuid4()}"
-    assert HTTP.get(status_url, headers=admin.headers()).status_code == 404
+    assert HTTP.get(status_url, headers=root.headers()).status_code == 404
     assert HTTP.get(status_url).status_code == 401
     assert HTTP.get(status_url, headers=lyra.headers()).status_code == 403
     observer = [{"role": "community-observer", "collections": ["*"]}]
     for issued in (
         lyra.issue("notebook"),
-        admin.issue("dashboard", roles=observer, non_member=True),
+        root.issue("dashboard", roles=observer, non_member=True),
     ):
         by_key = {"Authorization": f"Bearer {issued['key']}"}
         assert start_port(server, by_key, stub.url).status_code == 403
         assert HTTP.get(status_url, headers=by_key).status_code == 403
 
-    create_community(server, admin, "full")
-    admin.put("full", "files", "data.csv", b"already here")
-    held = start_port(server, admin.headers(), stub.url, "full")
+    create_community(server, root, "full")
+    root.put("full", "files", "data.csv", b"already here")
+    held = start_port(server, root.headers(), stub.url, "full")
     assert held.status_code == 400 and "holds files" in held.json()["detail"]
     assert stub.requests == 0
 
 
 def test_one_port_runs_at_a_time(demo):
-    server, admin = demo
-    create_community(server, admin, "other")
+    server, root = demo
+    create_community(server, root, "other")
     stub = NdexStub(hold=True)
     try:
-        first = start_port(server, admin.headers(), stub.url)
+        first = start_port(server, root.headers(), stub.url)
         assert first.status_code == 202, first.text
         assert stub.held.wait(MAX_WAIT), "the port never reached the listing"
-        second = start_port(server, admin.headers(), stub.url, "other")
+        second = start_port(server, root.headers(), stub.url, "other")
         assert second.status_code == 409 and "another port" in second.json()["detail"]
         stub.released.set()
-        assert port_outcome(server, admin, first.json()["id"])["state"] == "ok"
+        assert port_outcome(server, root, first.json()["id"])["state"] == "ok"
     finally:
         stub.close()
     stub = NdexStub()
     try:
-        assert run_port(server, admin, stub.url, "other")["state"] == "ok"
+        assert run_port(server, root, stub.url, "other")["state"] == "ok"
     finally:
         stub.close()
 
 
-# ── the port feature holds every NDEx reference (R-S1, R-S3 scoped to data-server/) ─────────
+# ── the port feature holds every NDEx reference (scoped to data-server/) ─────────
 NDEX = re.compile(r"(?<![a-z])ndex(?!bio/)|cx2|/v[23]/|ndexbio\.org", re.IGNORECASE)
 PORT_IDENTIFIER = re.compile(r"PORT_NDEX|port-ndex|port_ndex|ndex-import|NdexImport")
 PORT_FILES = {

@@ -45,8 +45,9 @@ ALLOWED = {
     "gate-keeper": {"read c1", "read record"},
     "member * (owner)": {"read c1", "write c1", "manage c1", "read record",
                          "create collection", "submit"},
-    "member []": {"create collection", "submit"},
-    "member [c1]": {"read c1", "write c1", "create collection", "submit"},
+    # a member user reads the record whatever its collections: it validates against it
+    "member []": {"read record", "create collection", "submit"},
+    "member [c1]": {"read c1", "write c1", "read record", "create collection", "submit"},
     "observer *": {"read c1", "read record"},
     "observer [c1]": {"read c1"},
     "member of another community": set(),

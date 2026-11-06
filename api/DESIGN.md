@@ -217,7 +217,7 @@ and port communities; no quota) and `delegate` (server-level users).
 | `server-admin` | server-level users | `read`, `write`, `manage` on `*`; `communities`, `gate`, `members`, `export` |
 | `community-admin` | homed users | `read`, `write`, `manage` on `*`; `gate`, `members`, `export` |
 | `gate-keeper` | homed users | `read` on `*`; `gate` |
-| `community-member` | homed users and API keys | `read`, `write` on the assignment's collection value; `manage` on `[]`; `publish` |
+| `community-member` | homed users and API keys | `read`, `write` on the assignment's collection value, and for a user `read` on `record` as well; `manage` on `[]`; `publish` |
 | `community-observer` | homed users and API keys | `read` on the assignment's collection value |
 
 A role assignment names a principal, a role and, for `community-member` and

@@ -14,7 +14,9 @@ with are stored on the server with the invite. Setup:
   3. reads your access back (`symposium-data access`), so the session knows what it may do;
   4. for a community: syncs. `./record`, beside the context, becomes your copy of the
      community's record. The Messages already in it addressed to you are in
-     `messages_for_you`, one line each, as `sync` lists them.
+     `messages_for_you`, one line each, as `sync` lists them. Access that reads only some
+     collections (`community-observer` on named ones) works without a copy: `record` is
+     null, and `record_access` says so.
 
 It is idempotent: run again with the same invite, it reports that you are already registered
 with this machine's key and changes nothing.
@@ -32,8 +34,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from data_io import DataError, SymposiumData  # noqa: E402
+from data_io import DataError, SymposiumData, rbac  # noqa: E402
 from sync import Sync, message_line  # noqa: E402
+
+RECORD = "record"
 
 
 class Setup:
@@ -54,6 +58,12 @@ class Setup:
         }
         if context["community"] is None:
             return out  # a server-level user: its communities have sessions of their own
+        held = rbac.UserContext.from_view(access["context"])
+        if not held.allowsRequest(rbac.READ, context["community"],
+                                  rbac.CollectionRef(RECORD)):
+            return {**out, "record": None,
+                    "record_access": "your access reads named collections only, so this "
+                                     "session works without a copy of the record"}
         sync = Sync(self.data, quiet=True, lists_messages=True)
         synced = sync.once()
         if synced is None:

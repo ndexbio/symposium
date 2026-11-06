@@ -147,11 +147,20 @@ def test_every_grant_is_in_some_role():
             (ALL,),
             {READ: (ALL,), WRITE: (ALL,), MANAGE: (), PUBLISH: None},
         ),
-        ("community-member", (), {READ: (), WRITE: (), MANAGE: (), PUBLISH: None}),
+        (
+            "community-member",
+            (),
+            {READ: ("record",), WRITE: (), MANAGE: (), PUBLISH: None},
+        ),
         (
             "community-member",
             ("c1", "c2"),
-            {READ: ("c1", "c2"), WRITE: ("c1", "c2"), MANAGE: (), PUBLISH: None},
+            {
+                READ: ("c1", "c2", "record"),
+                WRITE: ("c1", "c2"),
+                MANAGE: (),
+                PUBLISH: None,
+            },
         ),
         ("community-observer", (ALL,), {READ: (ALL,)}),
         ("community-observer", (), {READ: ()}),
@@ -160,6 +169,18 @@ def test_every_grant_is_in_some_role():
 )
 def test_each_role_compiles_to_its_grants(role_id, value, expected):
     assert compile_grants([Assignment(role_id, value)]) == expected
+
+
+def test_a_member_user_reads_the_record_and_an_issued_key_only_its_value():
+    """A publisher validates against the record, so a user holding community-member reads it
+    whatever its collection value; a key carries exactly the collections it is given."""
+    assignment = [Assignment("community-member", ("files",))]
+    assert compile_grants(assignment)[READ] == ("files", "record")
+    assert compile_grants(assignment, user=False)[READ] == ("files",)
+    member = ctx(Assignment("community-member", ()))
+    assert member.allowsRequest(READ, C, ref("record"))
+    assert not member.allowsRequest(WRITE, C, ref("record"))
+    assert not member.allowsRequest(READ, C, ref("inbox"))
 
 
 def test_a_collection_value_is_required_exactly_where_the_role_takes_one():
@@ -189,7 +210,7 @@ def test_lists_merge_and_star_absorbs():
             Assignment("community-member", ("c2", "c3")),
         ]
     )
-    assert merged[READ] == ("c1", "c2", "c3")
+    assert merged[READ] == ("c1", "c2", "c3", "record")
     assert merged[WRITE] == ("c2", "c3")
     starred = compile_grants(
         [Assignment("community-observer", ("c1",)), Assignment("gate-keeper")]
@@ -199,7 +220,8 @@ def test_lists_merge_and_star_absorbs():
 
 def test_an_empty_list_adds_nothing():
     merged = compile_grants(
-        [Assignment("community-observer", ()), Assignment("community-member", ("c1",))]
+        [Assignment("community-observer", ()), Assignment("community-member", ("c1",))],
+        user=False,
     )
     assert merged[READ] == ("c1",)
     assert compile_grants([Assignment("community-observer", ())])[READ] == ()

@@ -1,21 +1,26 @@
 """The data server's integration fixtures: the session's container (tests/harness.py), started
-with the root user's key file copied onto its volume before it starts, as an operator places it
-, and the users acting on it over HTTP: the root, server admins, community admins and
+with the root user's key file copied onto its volume before it starts, as an operator places
+it, and the users acting on it over HTTP: the root, server admins, community admins and
 members, each with its own key and roles.
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
 import time
-from pathlib import Path
 
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from harness import HTTP, IMAGE, MAX_WAIT, TEST_ENV, Server
+from harness import (  # noqa: F401  (the key and header helpers, shared with every suite)
+    HTTP,
+    IMAGE,
+    MAX_WAIT,
+    TEST_ENV,
+    OwnerKey,
+    Server,
+    b64u_json,
+    file_headers,
+    place_key,
+    repr_digest,
+)
 
 ROOT = "demo-admin"  # the root user, bound from the key file
 STEWARD = (
@@ -42,44 +47,11 @@ def server(tmp_path_factory):
         server.remove()
 
 
-def place_key(directory: Path, handle: str, key: OwnerKey) -> Path:
-    """The public key file as `admin-config` writes it: admin_pub_<handle>.key, mode 0644."""
-    path = directory / f"admin_pub_{handle}.key"
-    path.write_text(key.jwk_text())
-    path.chmod(0o644)
-    return path
-
-
 @pytest.fixture(autouse=True)
 def clean_slate(server):
     """Every test starts from an empty, initialized server."""
     server.reset()
     yield
-
-
-class OwnerKey:
-    """An owner's Ed25519 key pair, as a member's keystore would hold it."""
-
-    def __init__(self):
-        self.private = Ed25519PrivateKey.generate()
-        raw = self.private.public_key().public_bytes(
-            serialization.Encoding.Raw, serialization.PublicFormat.Raw
-        )
-        self.jwk = {
-            "kty": "OKP",
-            "crv": "Ed25519",
-            "x": base64.urlsafe_b64encode(raw).rstrip(b"=").decode(),
-        }
-
-    def jwk_text(self) -> str:
-        return json.dumps(self.jwk)
-
-    def sign(self, message: str) -> str:
-        return (
-            base64.urlsafe_b64encode(self.private.sign(message.encode()))
-            .rstrip(b"=")
-            .decode()
-        )
 
 
 class Owner:
@@ -291,26 +263,6 @@ class ServerUser(Owner):
         other = ServerUser(self.server, self.handle, self.key, community)
         other._session = getattr(self, "_session", None)
         return other
-
-
-def b64u_json(value) -> str:
-    return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
-
-
-def repr_digest(data: bytes) -> str:
-    return "sha-256=:" + base64.b64encode(hashlib.sha256(data).digest()).decode() + ":"
-
-
-def file_headers(data: bytes, metadata=None) -> dict:
-    headers = {
-        "Repr-Digest": repr_digest(data),
-        "Content-Type": "application/octet-stream",
-        # a file is created only where its name holds none
-        "If-None-Match": "*",
-    }
-    if metadata is not None:
-        headers["X-Data-Metadata"] = b64u_json(metadata)
-    return headers
 
 
 def set_quota(server: Server, quota_bytes: int):

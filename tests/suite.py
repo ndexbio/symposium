@@ -149,3 +149,62 @@ def enroll(
     cli.ok(member, "context", "set", "--invite-file", invite)
     assert cli.ok(member, "owner", "register")["registered"] is True
     return member
+
+
+class Actor:
+    """One person on their own workstation: a HOME of their own, holding their keystore and
+    their skill sessions, where they run the skill. Only invite files move between actors,
+    handed over as files (`receive`)."""
+
+    def __init__(self, suite: Suite, home: Path, handle: str):
+        self.handle = handle
+        self.home = home
+        self.work = home / "work"
+        self.work.mkdir(parents=True, exist_ok=True)
+        self.env = {**suite.env, "HOME": str(home)}
+        self.skill = Cli(SKILL, self.env)
+
+    def ok(self, *args) -> dict:
+        """A skill command that must succeed. -> its JSON object."""
+        return self.skill.ok(self.work, *args)
+
+    def run(self, *args) -> tuple[int, dict]:
+        """A skill command that may be refused. -> (exit code, its JSON object)."""
+        return self.skill(self.work, *args)
+
+    def report(self, *args) -> tuple[int, str]:
+        """A workflow command (publish, validate, sync, gate): its free-text report."""
+        result = subprocess.run(
+            [sys.executable, str(SKILL), *map(str, args)],
+            cwd=self.work,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            timeout=MAX_WAIT,
+        )
+        return result.returncode, result.stdout + result.stderr
+
+    def invite(self, handle: str, *access: str, community: str | None = None) -> Path:
+        """Write an invite file for `handle` carrying `access`. -> the file."""
+        out = self.work / f"{handle}.invite"
+        args = ["invite", "--handle", handle, "--out", out]
+        for value in access:
+            args += ["--access", value]
+        if community is not None:
+            args += ["--community", community]
+        self.ok(*args)
+        return out
+
+    def receive(self, invite: Path) -> Path:
+        """An invite handed over out of band: copied onto this actor's machine."""
+        copy = self.work / invite.name
+        shutil.copyfile(invite, copy)
+        return copy
+
+    def join(self, invite: Path) -> dict:
+        """`/symposium setup` with an invite received from its inviter."""
+        return self.ok("setup", "--invite-file", self.receive(invite))
+
+    def api_key(self, issued: dict) -> str:
+        """The value of a key this actor issued, read from its 0600 key file."""
+        return json.loads(Path(issued["key_file"]).read_text())["key"]

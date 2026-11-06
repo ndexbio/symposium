@@ -263,11 +263,15 @@ def test_narrowing_the_issuer_narrows_its_keys_on_the_next_request(server):
         "script", roles=[{"role": "community-member", "collections": EVERY}]
     )
     bearer = {"Authorization": f"Bearer {key['key']}"}
-    record = lyra.url("/collections/record/changes")
-    assert HTTP.get(record, headers=bearer).status_code == 200
+    made = HTTP.post(
+        root.url("/collections"), json={"name": "lab"}, headers=root.headers()
+    )
+    assert made.status_code == 201, made.text
+    lab = lyra.url("/collections/lab/changes")
+    assert HTTP.get(lab, headers=bearer).status_code == 200
     root.unassign("community-member", None, "lyra", "demo")
     root.assign("community-member", ["files"], "lyra", "demo")
-    assert HTTP.get(record, headers=bearer).status_code == 403
+    assert HTTP.get(lab, headers=bearer).status_code == 403
     files = lyra.url("/collections/files/changes")
     assert HTTP.get(files, headers=bearer).status_code == 200
     root.unassign("community-member", None, "lyra", "demo")

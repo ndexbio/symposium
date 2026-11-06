@@ -48,8 +48,7 @@ PRINCIPAL_KINDS = frozenset({SERVER_USER, HOMED_USER, MEMBER_KEY, NON_MEMBER_KEY
 VALUE = object()
 
 # the roles the server itself assigns: the key file's root user, a new community's first
-# community admin,
-# and a ported community's authors
+# community admin, and a ported community's authors
 SERVER_ROOT = "server-root"
 COMMUNITY_ADMIN = "community-admin"
 COMMUNITY_MEMBER = "community-member"
@@ -73,6 +72,9 @@ class Role:
     # instead; None when the names change nothing about who may assign
     names_assigned_by: str | None = None
     assignable: bool = True
+    # collections a user holding the role always reads, whatever its collection value: a
+    # publisher validates against the record. An issued key reads only what it is given.
+    user_reads: tuple = ()
 
     @property
     def takes_collections(self) -> bool:
@@ -142,6 +144,7 @@ ROLES: dict[str, Role] = {
             assignable_to=frozenset({HOMED_USER, MEMBER_KEY}),
             grants={READ: VALUE, WRITE: VALUE, MANAGE: (), PUBLISH: None},
             assigned_by=MEMBERS,
+            user_reads=(RECORD,),
         ),
         Role(
             id="community-observer",
@@ -203,9 +206,9 @@ def merge(current: tuple | None, more: tuple) -> tuple:
     return tuple(dict.fromkeys((*current, *more)))
 
 
-def compile_grants(assignments: Iterable[Assignment]) -> dict:
+def compile_grants(assignments: Iterable[Assignment], user: bool = True) -> dict:
     """The grant map of a principal's live assignments: grant -> None (not collection-scoped)
-    or a tuple of collection values."""
+    or a tuple of collection values. A user's (`user`) also reads its roles' `user_reads`."""
     out: dict = {}
     for assignment in assignments:
         found = role(assignment.role_id)
@@ -216,6 +219,8 @@ def compile_grants(assignments: Iterable[Assignment]) -> dict:
                 continue
             more = value if template is VALUE else template
             out[grant] = merge(out.get(grant), more)
+        if user and found.user_reads:
+            out[READ] = merge(out.get(READ), found.user_reads)
     return out
 
 

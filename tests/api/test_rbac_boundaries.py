@@ -16,13 +16,14 @@ REPO = Path(__file__).resolve().parents[2]
 THIS = "tests/api/test_rbac_boundaries.py"
 
 # what must name what came before: Alembic's upgrade path, the published 0.1.2 client the
-# upgrade test drives, the conformance fixtures, the change history; and data recorded from
+# upgrade tests drive, the conformance fixtures, the change history; and data recorded from
 # elsewhere: NDEx's responses, the vendored libraries
 KEPT = (
     re.compile(r"^data-server/service/symposium_data/migrations/versions/"),
     re.compile(r"^examples/"),
     re.compile(r"^CHANGELOG\.md$"),
     re.compile(r"^data-server/service/tests/integration/test_migration\.py$"),
+    re.compile(r"^data-server/service/tests/previous\.py$"),
     re.compile(r"^tools/vendor/"),
     re.compile(r"^data-server/service/tests/fixtures/"),
     re.compile(rf"^{re.escape(THIS)}$"),

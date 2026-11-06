@@ -218,7 +218,7 @@ Every user and every API key holds **access roles**. A role is a fixed set of **
 | `server-admin` | server-level users root invites | everything in every community: create, import, export and port communities, run any community |
 | `community-admin` | a community's users | run its community: read, write and manage every collection, invite users, assign roles, remove users, export, run the gate |
 | `gate-keeper` | a community's users | read every collection, and run the gate |
-| `community-member` | a community's users, and API keys | read and write its collections, manage the collections it owns, and publish |
+| `community-member` | a community's users, and API keys | read and write its collections, manage the collections it owns, and publish; a user also reads `record`, which publishing validates against |
 | `community-observer` | a community's users, and API keys | read its collections |
 
 `community-member` and `community-observer` take a **collection value**, always given:
@@ -235,7 +235,7 @@ When signed in, a user always keeps access to the collections it owns. An API ke
 |---|---|
 | run a community | `community-admin` |
 | a member who publishes and works across the community | `community-member:*` |
-| a member who publishes and works only in collections it creates | `community-member:` |
+| a member who publishes, reads the record, and works only in collections it creates | `community-member:` |
 | a read-only member | `community-observer:*` |
 | a reader of some collections, a person or an application key | `community-observer:c1,c2` |
 | run the gate | `gate-keeper` |

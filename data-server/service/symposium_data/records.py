@@ -260,10 +260,12 @@ class Records:
             (by, user_id),
         )
         self.retire_keys(conn, user_id)
+        # every key it issued: a homed user's in its community, a server-level user's in
+        # any (a server-level handle is used in no community)
         conn.execute(
             "DELETE FROM api_keys WHERE user_id = %s OR (created_by = %s AND "
-            "community IS NOT DISTINCT FROM %s)",
-            (user_id, found["handle"], found["home"]),
+            "(%s::text IS NULL OR community = %s))",
+            (user_id, found["handle"], found["home"], found["home"]),
         )
         conn.execute(
             "UPDATE invites SET revoked = now(), secret = NULL WHERE user_id = %s "
@@ -505,7 +507,8 @@ class Records:
         key's (`api_key_id` with `issuer`, the user who issued it) are limited to what its
         issuer reaches now."""
         grants = rbac.compile_grants(
-            self.assignments_of(conn, user_id=user_id, api_key_id=api_key_id)
+            self.assignments_of(conn, user_id=user_id, api_key_id=api_key_id),
+            user=api_key_id is None,
         )
         if issuer is not None:
             held = self.context_for(

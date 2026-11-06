@@ -26,8 +26,8 @@ session one of these makes, and a command run before any says which one to run.
 
 **Access roles** decide what each person may do: `server-root` and `server-admin` run the
 server, `community-admin` runs a community (invites, roles, the gate), `gate-keeper` runs the
-gate, `community-member` publishes and works in its collections, and `community-observer`
-reads. `community-member` and `community-observer` take a collection value: `:*` every
+gate, `community-member` publishes, reads the record and works in its collections, and
+`community-observer` reads. `community-member` and `community-observer` take a collection value: `:*` every
 collection, `:` only your own, `:c1,c2` those named. `/symposium access` shows yours, and a
 command your roles do not allow is refused with the grant it takes. The data server's runbook,
 "Roles and access" (`toolchain/data-server/RUNBOOK.md` §8), covers them in full.

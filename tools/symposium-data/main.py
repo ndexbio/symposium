@@ -1,5 +1,5 @@
-"""symposium-data: the command-line client of a Symposium Data server, and its only client
-. Every command prints one JSON object on stdout, errors included, and exits non-zero on
+"""symposium-data: the command-line client of a Symposium Data server, and its only client.
+Every command prints one JSON object on stdout, errors included, and exits non-zero on
 an error. Nothing secret is ever printed or taken from the command line: keys stay in
 the keystore, and invites and API keys move only as files.
 

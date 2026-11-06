@@ -144,7 +144,7 @@ Every caller's access comes from its **access roles**. Users and issued keys are
 | `server-root`, `server-admin` | every grant in every community; `server-root` also `delegate` (server-level users) |
 | `community-admin` | `read`, `write`, `manage` on every collection; `gate`, `members`, `export` |
 | `gate-keeper` | `read` on every collection; `gate` |
-| `community-member` | `read`, `write` on its collections; `manage` on the collections it owns; `publish` |
+| `community-member` | `read`, `write` on its collections, and a user reads `record` whatever its collections; `manage` on the collections it owns; `publish` |
 | `community-observer` | `read` on its collections |
 
 `community-member` and `community-observer` take a collection value: `*` (every collection), empty (only the collections the user owns) or a list of names. A signed-in user always keeps access to the collections it owns; an issued key reaches exactly the collections its roles name. A collection's owner, or a community admin, can also make it public, so anyone reads it without a key. [`RUNBOOK.md`](RUNBOOK.md), "Roles and access", covers assigning roles.

@@ -50,6 +50,14 @@ def test_root_delegates_server_admins_who_cannot_delegate(server):
     )
     assert created.status_code == 201, created.text
     assert invite(ana, "demo", "lyra").status_code == 201
+    app = ana.at("demo").issue(
+        "app",
+        roles=[{"role": "community-observer", "collections": EVERY}],
+        non_member=True,
+    )
+    app_headers = {"Authorization": f"Bearer {app['key']}"}
+    record = f"{server.url}/v1/communities/demo/collections/record/changes"
+    assert HTTP.get(record, headers=app_headers).status_code == 200
     # root is not removed through the API; ana is, by root alone
     root_url = root.user_url("demo-admin")
     assert HTTP.delete(root_url, headers=root.headers()).status_code == 409
@@ -61,6 +69,9 @@ def test_root_delegates_server_admins_who_cannot_delegate(server):
     assert HTTP.get(f"{server.url}/v1/me", headers=ana.headers()).status_code == 401
     signed = ana.sign_in()
     assert signed.status_code == 401 and "removed" in signed.json()["detail"]
+    assert (
+        HTTP.get(record, headers=app_headers).status_code == 401
+    )  # its keys are deleted
     assert HTTP.get(f"{server.url}/v1/me", headers=ben.headers()).status_code == 200
 
 

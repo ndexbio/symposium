@@ -6,8 +6,11 @@
 #                                  throwaway kind cluster (chart-e2e). MAX_PER_TEST_WAIT
 #                                  (seconds, default 120) is the one limit on any wait in them
 #   make build-docker TAG=1.2.3    the image, tagged; image targets run no tests
-#   make push-docker TAG=1.2.3     multi-arch push of :TAG and :latest (the release workflow, on a
-#                                  data-server-v<version> GitHub release)
+#   make build-docker-multiplatform TAG=1.2.3
+#                                  the image for every platform in PLATFORMS, tagged :TAG and
+#                                  :latest, kept locally (needs Docker's containerd image store)
+#   make push-docker TAG=1.2.3     that build, then a push of :TAG and :latest (the release
+#                                  workflow, on a data-server-v<version> GitHub release)
 #   make helm-package              lint the chart, then dist/symposium-helm-<version>.tgz
 #   make helm-push CHART_TAG=1.2.3 push it as oci://registry-1.docker.io/ndexbio/symposium-helm, once
 #                                  its image is on Docker Hub (the release workflow, on a
@@ -28,7 +31,7 @@ export SYMPOSIUM_TEST_MAX_WAIT := $(MAX_PER_TEST_WAIT)
 
 include ../make/side-by-side.mk
 
-.PHONY: lint test service-suites chart-e2e build-docker push-docker helm-package helm-push \
+.PHONY: lint test service-suites chart-e2e build-docker build-docker-multiplatform push-docker helm-package helm-push \
 	helm-attach k8s-tools chart-tag
 
 # set while `test` runs: it has made the image, the tools and the package once, so the suites
@@ -60,9 +63,13 @@ CONTEXTS := --build-context rules=../tools --build-context api=../api
 build-docker:
 	docker build -f docker/Dockerfile $(CONTEXTS) --build-arg DATA_VERSION=$(TAG) -t $(IMAGE):$(TAG) .
 
-push-docker:
+build-docker-multiplatform:
 	docker buildx build --platform $(PLATFORMS) -f docker/Dockerfile $(CONTEXTS) \
-		--build-arg DATA_VERSION=$(TAG) -t $(IMAGE):$(TAG) -t $(IMAGE):latest --push .
+		--build-arg DATA_VERSION=$(TAG) -t $(IMAGE):$(TAG) -t $(IMAGE):latest --load .
+
+push-docker: build-docker-multiplatform
+	docker push $(IMAGE):$(TAG)
+	docker push $(IMAGE):latest
 
 # ── pinned Kubernetes tools, fetched once per platform and checked against their checksums ──
 HELM_VERSION := 4.3.0

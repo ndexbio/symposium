@@ -336,7 +336,68 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
    - Her handle stays hers: `invite --handle lyra` answers 409. A returning person joins under a new handle.
    - Removing the community's last community admin answers 409: appoint another first.
 
-### 8.5 Commands
+### 8.5 Changing someone's access
+
+People's access changes over time: a student starts as a reader and later publishes, a colleague takes over running the gate, a community admin hands the community on. Each change below is one or two commands, run by the community admin in their own session. The person affected needs no step of their own: the change applies from their next command, and `/symposium access` shows them what they now hold. `/symposium users list` shows everyone's current roles.
+
+**Let a reader start publishing.** Olive reads everything and now publishes too:
+
+```text
+/symposium assign --handle olive --access community-member:*
+/symposium unassign --handle olive --access community-observer
+```
+
+**Make a member a reader only.** Lyra keeps reading everything and stops publishing and writing:
+
+```text
+/symposium assign --handle lyra --access community-observer:*
+/symposium unassign --handle lyra --access community-member
+```
+
+**Limit a member to certain collections.** Lyra works across the whole community and should now work only in `c1` and the collections she creates. Adding a collection to "every collection" leaves it at every collection, so first set her to her own collections only, then add `c1`:
+
+```text
+/symposium assign --handle lyra --access community-member:
+/symposium assign --handle lyra --access community-member:c1
+```
+
+`c1` must already exist. She still reads the community's record, which every member needs in order to publish.
+
+**Open a member up to the whole community.** Lyra works in `c1` only and should now work everywhere:
+
+```text
+/symposium assign --handle lyra --access community-member:*
+```
+
+**Hand the gate to someone else.** Mia runs the gate from now on, from her own session:
+
+```text
+/symposium assign --handle mia --access gate-keeper
+```
+
+Mia keeps any other role she holds, so she can still publish as a member. To stop her running the gate, `/symposium unassign --handle mia --access gate-keeper`; her gate stops at its next pass and says so.
+
+**Add a second community admin.** Two people can run a community together:
+
+```text
+/symposium assign --handle mia --access community-admin
+```
+
+Publishing comes with the member role, so if Mia also publishes her own work, she keeps her `community-member` role alongside.
+
+**Step down as community admin.** Appoint the next community admin first, as above, then remove your own role:
+
+```text
+/symposium unassign --handle steward --access community-admin
+```
+
+Every community always has at least one community admin: removing the last one is refused, with a message saying to appoint another first.
+
+**Change a server admin (root only).** Root removes a server admin's role with `/symposium unassign --handle ana --server --access server-admin`, or removes the person entirely with `/symposium users remove --handle ana --server`. A new server admin always joins by invite, as in §8.2.
+
+**Members share their own collections.** A member who created a collection can let a colleague read it, and take that back, without the community admin: `/symposium assign --handle olive --access community-observer:c2`, then `/symposium unassign --handle olive --access community-observer:c2`. This is the only change a member makes to someone else's access.
+
+### 8.6 Commands
 
 | Command | Does | Takes |
 |---|---|---|
@@ -351,14 +412,14 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
 | `suspect-after --handle <h> --at <time>` | flag the user's writes after an instant | `members` |
 | `use-community <community>` | a server-level user's session for an existing community | a server-level user |
 
-### 8.6 What refuses an action
+### 8.7 What refuses an action
 
-- **Assignment authority:** each role is assigned by whoever holds what it takes (§8.5); `server-root` is assigned by none.
+- **Assignment authority:** each role is assigned by whoever holds what it takes (§8.6); `server-root` is assigned by none.
 - **Key limits:** a key carries only `community-member` or `community-observer`, never more than its issuer holds, and only its issuer or a community admin changes it.
 - **The last community admin:** removing or demoting it answers 409.
 - **`inbox`:** a submission takes `publish`, a reply takes `gate`, and nothing else goes in.
 
-### 8.7 Other operations
+### 8.8 Other operations
 
 - **Communities.** Names are 1–20 letters, digits or underscores, unique ignoring case. Each community's routes are under `/v1/communities/<community>/…`, and its API keys and file ids are refused in any other. Content is deduplicated within a community, and quota is per member per community.
 - **A user's lost or compromised key.** `/symposium rebind-key --handle <h> --out <file>` retires the user's keys and writes a fresh invite that registers a new key with the same roles. `/symposium suspect-after --handle <h> --at 2026-10-01T12:00:00+00:00` flags every version the user wrote after that instant (`"suspect": true` in `stat`); the versions stay.

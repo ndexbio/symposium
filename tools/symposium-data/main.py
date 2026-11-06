@@ -801,13 +801,19 @@ class Commands:
 
     def invitee_home(self, args, context: dict) -> str | None:
         """The invitee's home: --community, else the context's community. A server role
-        makes a server-level user."""
+        makes a server-level user; a community role needs a community."""
         if any(
             a.split(":")[0] in (rbac.SERVER_ADMIN, rbac.SERVER_ROOT)
             for a in args.access
         ):
             return None
-        return self.community_of(args, context)
+        community = self.community_of(args, context)
+        if community is None:
+            raise CommandError(
+                "a community role invites into a community: name it with --community "
+                "<community> (this session works server-wide)"
+            )
+        return community
 
     def invite_list(self, args) -> dict:
         """Every pending invite as `<community>-<handle>.invite` (0600) in --out-dir; only
@@ -939,7 +945,14 @@ class Commands:
         """Where a session's key files go: a homed user's in its own session, a server-level
         user's beside its other server-level files."""
         if not context.get("home"):
-            return Path.home() / ".symposium" / "admin" / "api-keys"
+            return (
+                Path.home()
+                / ".symposium"
+                / "admin"
+                / ADMIN_SCOPE
+                / context["handle"]
+                / "api-keys"
+            )
         return (
             Path.home()
             / ".symposium"
@@ -1050,7 +1063,7 @@ class Commands:
         if not url:
             raise CommandError(f"{args.community_file} needs `data-server-url`")
         status = self.server_for(url).status()
-        handle = self.server_handle(status["server_id"], url)
+        handle = self.server_handle(status["server_id"], url, args.handle)
         context = {
             "community": exported,
             "data-server-url": url.rstrip("/"),
@@ -1529,6 +1542,9 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     )
     p.add_argument("--from", dest="from_", required=True)
     p.add_argument("--community-file", required=True)
+    p.add_argument(
+        "--handle", help="the server-level user, when this machine holds several"
+    )
 
     p = command(
         sub,

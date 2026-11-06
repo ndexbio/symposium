@@ -32,6 +32,13 @@ which skill that server needs.
 ### Changed
 
 - **Upgrading from 0.1 takes no steps.** Keys and sessions carry over, and nobody rejoins.
+- **Several server admins can share one machine.** Root and each server admin keep their own
+  sessions, so one never replaces another's. Commands that open a community's session work as
+  whoever you are currently working as, and you can name another person instead. Existing
+  sessions are moved into place by the first command.
+- **A server admin can invite a community's admin without opening that community first,** by
+  naming the community in the invite. Leaving it out explains what's missing instead of being
+  refused for lack of a permission.
 - **Joining with access to only some collections works.** You join and work without a local copy
   of the record.
 - **A gate that runs continuously stops when its gate role is removed,** and says how to

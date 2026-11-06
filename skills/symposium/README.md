@@ -37,15 +37,15 @@ directory and nobody creates or enters one:
 
 | Directory | What it is |
 |---|---|
-| `~/.symposium/admin/` | a server-level user's server-wide session (`admin-config` for root, `setup` for a server admin), and root's public key file `admin_pub_<handle>.key` |
-| `~/.symposium/admin/<community>/` | a server-level user's session for a community: `bootstrap` or `use-community` makes it, and `bootstrap` writes the invite files there |
+| `~/.symposium/admin/admin/<handle>/` | a server-level user's server-wide session (`admin-config` for root, with root's public key file `admin_pub_<handle>.key`; `setup` for a server admin) |
+| `~/.symposium/admin/<community>/<handle>/` | a server-level user's session for a community: `bootstrap` or `use-community` makes it, and `bootstrap` writes the invite files there |
 | `~/.symposium/member/<community>/<handle>/` | a community user's session (member, observer, gate-keeper or community admin): `setup` makes it from the invite |
 
-Each holds the session's context (with the access the server resolved for it), its copy of the record (`record/`) and its event log. `setup`, `bootstrap` and `use-community` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another (`/symposium use <handle>` for a server-wide one), and `/symposium use` alone lists them all. Every other command works in the current session (or, when the agent session has chosen none, the machine's only one). Each agent session keeps its own choice, so several agents on one machine never change each other's. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`). A command the session's roles do not allow names the sessions on this machine that hold the grant it takes. Relative paths you give a command are read from the directory you are in.
+Each holds the session's context (with the access the server resolved for it), its copy of the record (`record/`) and its event log. `setup`, `bootstrap` and `use-community` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another (`/symposium use <handle>` for a server-wide one), and `/symposium use` alone lists them all. Every user has their own sessions, so root and a server admin can share a machine: `bootstrap`, `use-community` and `import` work as the server-level user of the current session, and `--handle <h>` names another. Every other command works in the current session (or, when the agent session has chosen none, the machine's only one). Each agent session keeps its own choice, so several agents on one machine never change each other's. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`). A command the session's roles do not allow names the sessions on this machine that hold the grant it takes. Relative paths you give a command are read from the directory you are in.
 
 - **Server admins:** `/symposium bootstrap --community-file community.json` creates the
   community with its first community admin, invites any members it lists, and writes their
-  invite files, one `<community>-<handle>.invite` each, in `~/.symposium/admin/<community>/`,
+  invite files, one `<community>-<handle>.invite` each, in `~/.symposium/admin/<community>/<your handle>/`,
   to hand over out of band (never through a chat). Run it again at any time: it invites only
   who is not invited yet, and rewrites the invite files of everyone still waiting.
 - **Everyone invited:** `/symposium setup --invite-file <file>`. The invite carries the handle,
@@ -153,12 +153,12 @@ skill was built for. Every new server starts **non-operational**, until its root
 
   ```bash
   # Docker
-  cp ~/.symposium/admin/admin_pub_<root>.key /path/to/your/machine/symposium-storage/
+  cp ~/.symposium/admin/admin/<root>/admin_pub_<root>.key /path/to/your/machine/symposium-storage/
   docker restart symposium-data
   # Kubernetes: add `adminKey: {handle: <root>}` to values.yaml, then (it restarts the server)
   helm upgrade symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm \
     --version <chart version> -n symposium -f values.yaml \
-    --set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<root>.key
+    --set-file adminKey.publicKey=$HOME/.symposium/admin/admin/<root>/admin_pub_<root>.key
   ```
 
   The server's status then reports `root` and that fingerprint. `--new-key` replaces root's

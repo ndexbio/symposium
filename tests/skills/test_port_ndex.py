@@ -54,7 +54,7 @@ def test_port_refusals_are_reported_with_their_reasons(
     stub = NdexStub()
     try:
         # a session for a community the server does not hold (one since removed)
-        nowhere = suite.home / ".symposium" / "admin" / "nowhere"
+        nowhere = suite.home / ".symposium" / "admin" / "nowhere" / ROOT
         nowhere.mkdir(parents=True)
         cli.ok(
             nowhere,

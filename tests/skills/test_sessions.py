@@ -64,7 +64,7 @@ def session(root: Path, *parts, handle: str, grants=None) -> Path:
     directory = root.joinpath(*parts)
     (directory / ".symposium").mkdir(parents=True)
     server_level = parts[0] == "admin"
-    community = parts[1] if len(parts) > 1 else None
+    community = parts[1] if len(parts) > 1 and parts[1] != "admin" else None
     context = {
         "community": community,
         "handle": handle,
@@ -82,20 +82,80 @@ def test_setup_and_bootstrap_make_their_sessions_from_their_files(root, caller, 
         json.dumps({"community": "demo", "handle": "lyra"})
     )
     sessions = agent_session(root, caller, table, 300)
+    directory = sessions.place("admin-config", ["--handle", "a"])[0]
+    assert directory == root / "admin" / "admin" / "a"
+    session(root, "admin", "admin", "a", handle="a", grants=ROOT_GRANTS)
     directory, _, rest = sessions.place(
         "bootstrap", ["--community-file", "community.json"]
     )
-    assert directory == root / "admin" / "demo" and directory.is_dir()
-    assert rest == ["--community-file", str(caller / "community.json")]  # the caller's
+    assert directory == root / "admin" / "demo" / "a" and directory.is_dir()
+    # the caller's path, and the machine's only server-level user
+    assert rest == ["--community-file", str(caller / "community.json"), "--handle", "a"]
     directory, _, rest = sessions.place("setup", ["--invite-file", "lyra.invite"])
     assert directory == root / "member" / "demo" / "lyra" and directory.is_dir()
     assert rest == ["--invite-file", str(caller / "lyra.invite")]
-    assert sessions.place("admin-config", ["--handle", "a"])[0] == root / "admin"
-    # a server-level invite: the server-wide session; use-community: a community's
+    # a server-level invite: that user's server-wide session; use-community: a community's
     (caller / "ana.invite").write_text(json.dumps({"community": None, "handle": "ana"}))
     directory, _, _ = sessions.place("setup", ["--invite-file", "ana.invite"])
-    assert directory == root / "admin"
-    assert sessions.place("use-community", ["demo"])[0] == root / "admin" / "demo"
+    assert directory == root / "admin" / "admin" / "ana"
+    directory, _, rest = sessions.place("use-community", ["demo", "--handle", "ana"])
+    assert directory == root / "admin" / "demo" / "ana"
+    assert rest == ["demo", "--handle", "ana"]
+
+
+def test_two_server_level_users_keep_their_own_sessions(root, caller, table):
+    """Root and a server admin on one machine: each opens the same community in a session of
+    its own, named with --handle or taken from the current session; neither touches the
+    other's."""
+    session(root, "admin", "admin", "root", handle="root", grants=ROOT_GRANTS)
+    session(root, "admin", "admin", "shawn", handle="shawn", grants=ROOT_GRANTS)
+    sessions = agent_session(root, caller, table, 300)
+    with pytest.raises(SessionError) as several:
+        sessions.place("use-community", ["lab"])
+    assert "name one with --handle" in several.value.report["error"]
+    assert sessions.place("use-community", ["lab", "--handle", "shawn"])[0] == (
+        root / "admin" / "lab" / "shawn"
+    )
+    session(root, "admin", "lab", "shawn", handle="shawn", grants=ROOT_GRANTS)
+    sessions.use(["root"])  # the current session names the user
+    directory, _, rest = sessions.place("use-community", ["lab"])
+    assert directory == root / "admin" / "lab" / "root"
+    assert rest == ["lab", "--handle", "root"]
+    assert (root / "admin" / "lab" / "shawn" / ".symposium" / "context.json").exists()
+    assert sorted(s.label() for s in sessions.all()) == [
+        "lab/shawn",
+        "server/root",
+        "server/shawn",
+    ]
+
+
+def test_server_level_sessions_move_into_their_users_folders(root, caller, table):
+    """A server-level session whose context sits directly in `admin/` or
+    `admin/<community>/` moves into its user's folder, with everything beside it."""
+    folder = root / "admin"
+    (folder / ".symposium").mkdir(parents=True)
+    (folder / ".symposium" / "context.json").write_text(
+        json.dumps({"community": None, "handle": "root", "home": None})
+    )
+    (folder / "admin_pub_root.key").write_text("{}")
+    (folder / "api-keys").mkdir()
+    (folder / "demo" / ".symposium").mkdir(parents=True)
+    (folder / "demo" / ".symposium" / "context.json").write_text(
+        json.dumps({"community": "demo", "handle": "root", "role": "admin"})
+    )
+    (folder / "demo" / "demo-lyra.invite").write_text("{}")
+    sessions = agent_session(root, caller, table, 300)
+    sessions.settle()
+    files = sorted(str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file())
+    assert files == [
+        "admin/root/.symposium/context.json",
+        "admin/root/admin_pub_root.key",
+        "demo/root/.symposium/context.json",
+        "demo/root/demo-lyra.invite",
+    ]
+    assert (folder / "admin" / "root" / "api-keys").is_dir()
+    sessions.settle()  # and again: nothing moves
+    assert sorted(s.label() for s in sessions.all()) == ["demo/root", "server/root"]
 
 
 def test_an_unusable_file_makes_no_session(root, caller, table):
@@ -117,7 +177,9 @@ def test_with_no_choice_the_machines_only_session_is_used(root, caller, table):
 
 
 def test_several_sessions_need_a_choice(root, caller, table):
-    session(root, "admin", "demo", handle="demo-admin", grants=ROOT_GRANTS)
+    session(
+        root, "admin", "demo", "demo-admin", handle="demo-admin", grants=ROOT_GRANTS
+    )
     session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     with pytest.raises(SessionError) as several:
         agent_session(root, caller, table, 300).place("sync", [])
@@ -130,7 +192,7 @@ def test_several_sessions_need_a_choice(root, caller, table):
 
 def test_use_switches_this_agent_session_only(root, caller, table):
     root_session = session(
-        root, "admin", "demo", handle="demo-admin", grants=ROOT_GRANTS
+        root, "admin", "demo", "demo-admin", handle="demo-admin", grants=ROOT_GRANTS
     )
     lyra = session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     first = agent_session(root, caller, table, 300)  # agent 200
@@ -148,7 +210,9 @@ def test_use_switches_this_agent_session_only(root, caller, table):
 def test_use_with_no_arguments_or_no_such_session_lists_them_and_changes_nothing(
     root, caller, table
 ):
-    session(root, "admin", "demo", handle="demo-admin", grants=ROOT_GRANTS)
+    session(
+        root, "admin", "demo", "demo-admin", handle="demo-admin", grants=ROOT_GRANTS
+    )
     sessions = agent_session(root, caller, table, 300)
     for args in ([], ["demo", "nobody"]):
         with pytest.raises(SessionError) as refused:
@@ -167,7 +231,9 @@ def test_no_session_names_setup_and_admin_config(root, caller, table):
 
 
 def test_a_command_is_refused_where_its_grant_is_not_held(root, caller, table):
-    session(root, "admin", "demo", handle="demo-admin", grants=ROOT_GRANTS)
+    session(
+        root, "admin", "demo", "demo-admin", handle="demo-admin", grants=ROOT_GRANTS
+    )
     session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     sessions = agent_session(root, caller, table, 300)
     sessions.use(["demo", "lyra"])
@@ -193,7 +259,9 @@ def test_with_nothing_cached_the_server_decides(root, caller, table):
 def test_a_server_wide_session_runs_server_commands_and_no_community_ones(
     root, caller, table
 ):
-    server = session(root, "admin", handle="demo-admin", grants=ROOT_GRANTS)
+    server = session(
+        root, "admin", "admin", "demo-admin", handle="demo-admin", grants=ROOT_GRANTS
+    )
     sessions = agent_session(root, caller, table, 300)
     assert sessions.use(["demo-admin"])["use"] == "/symposium use demo-admin"
     assert sessions.place("invite", ["--handle", "ana"])[0] == server
@@ -203,7 +271,9 @@ def test_a_server_wide_session_runs_server_commands_and_no_community_ones(
 
 
 def test_a_reused_pid_is_a_new_agent_session(root, caller, table):
-    session(root, "admin", "demo", handle="demo-admin", grants=ROOT_GRANTS)
+    session(
+        root, "admin", "demo", "demo-admin", handle="demo-admin", grants=ROOT_GRANTS
+    )
     session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
     agent_session(root, caller, table, 300).use(["demo", "lyra"])
     # agent 200 ends, and a new process gets its PID: it has not chosen anything

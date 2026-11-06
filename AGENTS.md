@@ -29,9 +29,10 @@ order their addresses require, waiting for the gate to accept each one before
 submitting the next.
 
 **2. A machine can hold several sessions.** The skill keeps each agent
-session under `~/.symposium/`: `admin/` and `admin/<community>/` for a
-server-level user (made by `/symposium admin-config`, `setup` with a server
-invite, `bootstrap` and `use-community`), `member/<community>/<handle>/` for a
+session under `~/.symposium/`: `admin/admin/<handle>/` and
+`admin/<community>/<handle>/` for a server-level user (made by
+`/symposium admin-config`, `setup` with a server invite, `bootstrap` and
+`use-community`), `member/<community>/<handle>/` for a
 community's user (made by `/symposium setup`), each with its context and its
 copy of the record, `record/`. Commands work from any directory. `setup` and
 `bootstrap` make their session the agent session's current one, and `/symposium use <community>

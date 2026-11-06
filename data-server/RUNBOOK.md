@@ -15,7 +15,7 @@ One server hosts many communities. If your community lives on NDEx today, deploy
 ## 2. Before you start
 
 - **The version.** `/symposium --help` names the image the skill was built for (`data_server_image`): run that version. On Kubernetes, the chart's `appVersion` is the image it deploys, and the default.
-- **The root key.** `/symposium admin-config --handle <handle> --data-server-url <url>` makes root's key on your machine and writes its **public** key file, `admin_pub_<handle>.key`, under `~/.symposium/admin/`. It also prints the key's fingerprint and sets up root's server-wide session. The private key stays on your machine.
+- **The root key.** `/symposium admin-config --handle <handle> --data-server-url <url>` makes root's key on your machine and writes its **public** key file, `admin_pub_<handle>.key`, in `~/.symposium/admin/admin/<handle>/`. It also prints the key's fingerprint and sets up root's server-wide session. The private key stays on your machine.
 - **Every new server starts non-operational.** `GET /v1/status` answers `"mode": "non-operational"`, and every other route answers `501`, until the root key file is in place. Placing it is the last step of every deployment below.
 - **After that,** root delegates: it invites server admins, who create communities, each run by its own community admin (§8).
 
@@ -42,11 +42,11 @@ One server hosts many communities. If your community lives on NDEx today, deploy
 2. **Give it the root key.** Run `admin-config` against `http://127.0.0.1:8790`, then:
 
    ```bash
-   cp ~/.symposium/admin/admin_pub_<handle>.key $HOME/symposium-data/
+   cp ~/.symposium/admin/admin/<handle>/admin_pub_<handle>.key $HOME/symposium-data/
    docker restart symposium-data
    ```
 
-   Without a mount, use `docker cp ~/.symposium/admin/admin_pub_<handle>.key symposium-data:/apps/` instead.
+   Without a mount, use `docker cp ~/.symposium/admin/admin/<handle>/admin_pub_<handle>.key symposium-data:/apps/` instead.
 3. **Check it:** `curl -s http://127.0.0.1:8790/v1/status` reports `"mode": "operational"`, `"root"` with your handle, and the fingerprint `admin-config` showed.
 
 **Reachable by other machines.** Publish the port (`-p 8790:8080`), put a TLS-terminating proxy in front of it, and name the proxy in `-e SYMPOSIUM_SERVER_TRUSTED_PROXY=<proxy address>`. Members still join only by invite.
@@ -156,7 +156,7 @@ The controller must stream responses unbuffered, with a read timeout well past t
 
    ```bash
    helm upgrade symposium-data $CHART --version <chart version> -n symposium -f values.yaml \
-     --set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<handle>.key
+     --set-file adminKey.publicKey=$HOME/.symposium/admin/admin/<handle>/admin_pub_<handle>.key
    ```
 
    The chart stores the key in a Secret, mounted at `/apps/admin-key/`, and **restarts the server itself**.
@@ -168,11 +168,11 @@ To change root's key later, run `admin-config --new-key` and the same `helm upgr
 
 ```bash
 kubectl -n symposium create secret generic symposium-data-root-key \
-  --from-file=$HOME/.symposium/admin/admin_pub_<handle>.key
+  --from-file=$HOME/.symposium/admin/admin/<handle>/admin_pub_<handle>.key
 kubectl -n symposium rollout restart deploy/symposium-data
 ```
 
-To change the key, replace the Secret (`kubectl create secret … --dry-run=client -o yaml | kubectl apply -f -`) and restart. For an install the chart does not manage, copy the file onto the volume (`kubectl -n symposium cp $HOME/.symposium/admin/admin_pub_<handle>.key <pod>:/apps/`) and restart. Use one of the three ways: two copies of the key file make the server refuse to start (`ambiguous admin key files`).
+To change the key, replace the Secret (`kubectl create secret … --dry-run=client -o yaml | kubectl apply -f -`) and restart. For an install the chart does not manage, copy the file onto the volume (`kubectl -n symposium cp $HOME/.symposium/admin/admin/<handle>/admin_pub_<handle>.key <pod>:/apps/`) and restart. Use one of the three ways: two copies of the key file make the server refuse to start (`ambiguous admin key files`).
 
 ### 5.4 Upgrading
 
@@ -260,7 +260,7 @@ Each step says where it runs, who runs it, the commands, and the check that prov
    - Check: `/symposium access` shows `server-admin`, with every collection of every community and no `delegate`; root's `/symposium users list --server` shows `<h>` registered.
    - Root's part ends here. Only root removes this server admin later, with `/symposium users remove --handle <h> --server`.
 5. **Server admin: create each community.**
-   - Write `community.json` with `community`, `admin` (the community admin's handle) and `data-server-url: https://<host>` (see `server/community.example.json`), and run `/symposium bootstrap --community-file community.json`. It writes the community admin's invite file under `~/.symposium/admin/<community>/`, to hand over out of band.
+   - Write `community.json` with `community`, `admin` (the community admin's handle) and `data-server-url: https://<host>` (see `server/community.example.json`), and run `/symposium bootstrap --community-file community.json`. It writes the community admin's invite file under `~/.symposium/admin/<community>/<your handle>/`, to hand over out of band. On a machine that holds several server-level users (root and a server admin, say), name yours with `--handle <your handle>`.
    - Repeat for each further community, each with its own community admin.
    - Check: `/symposium data communities list` shows each community, and `/symposium invite list --out-dir <dir>` shows each community admin's pending invite.
 

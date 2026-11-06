@@ -169,7 +169,7 @@ symposium-data export [-h] --out OUT
 create a community from an export, then set the context (`communities`)
 
 ```
-symposium-data import [-h] --from FROM_ --community-file COMMUNITY_FILE
+symposium-data import [-h] --from FROM_ --community-file COMMUNITY_FILE [--handle HANDLE]
 ```
 
 ## `changes`

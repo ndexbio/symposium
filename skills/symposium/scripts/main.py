@@ -7,8 +7,12 @@ the `symposium-data` CLI. What a person may run follows from their access roles
     setup --invite-file <file>             anyone invited: join a community, or as a server admin
     admin-config --handle <h> --data-server-url <url>
                                            root: make root's key and its server-wide session
-    bootstrap --community-file <file>      server admins: create a community and its community admin's invite
-    use-community <community>              server admins: a session for an existing community
+    bootstrap --community-file <file> [--handle <h>]
+                                           server admins: create a community and its community admin's invite
+    use-community <community> [--handle <h>]
+                                           server admins: a session for an existing community
+                                           (--handle: which server-level user, when this machine
+                                           holds several)
     use [<community>] <handle>             choose this agent session's session; alone, list them
     access                                 your access roles and grants, and the six roles
     publish [--role <role>] <artifact.json>
@@ -29,7 +33,8 @@ the `symposium-data` CLI. What a person may run follows from their access roles
     invite | assign | unassign | users | rebind-key | suspect-after
                                            community-admin (in its community), server admins: users
                                            and their access roles; anyone in the community lists its users, and
-                                           an owner shares its collections with `assign`
+                                           an owner shares its collections with `assign`; from a
+                                           server-wide session, name the community with --community
     purge | export | import | port <ndex_credentials_file> <url>
                                            community-admin (purge, export), server admins
     gen-api-key | list-api-keys | revoke-api-key
@@ -158,6 +163,7 @@ def main(argv=None) -> int:
         )
         return 0
     command, sessions = argv[0], Sessions()
+    sessions.settle()
     if command == "use":
         try:
             print(json.dumps(sessions.use(argv[1:])))
@@ -187,7 +193,19 @@ def main(argv=None) -> int:
             print(json.dumps(refused))
             return 1
     if command == "use-community":
-        rest = [*rest[:1], "--data-server-url", server_url(sessions, rest)]
+        url = server_url(sessions, Sessions.option(rest, "--handle"))
+        if url is None:
+            print(
+                json.dumps(
+                    {
+                        "error": "no server-wide session for "
+                        f"{Sessions.option(rest, '--handle')} on this machine: "
+                        "`/symposium use` lists the sessions"
+                    }
+                )
+            )
+            return 1
+        rest = [*rest, "--data-server-url", url]
     process = command_line(command, rest, cli)
     if command in FREE_TEXT:
         # the session first; the report then streams through, each line as it is printed
@@ -215,13 +233,16 @@ def main(argv=None) -> int:
     return result.returncode
 
 
-def server_url(sessions: Sessions, rest: list) -> str:
-    """The data server of this machine's server-wide session, for `use-community`."""
-    for session in sessions.all():
-        if not session.home:
-            context = session.directory / ".symposium" / "context.json"
-            return json.loads(context.read_text())["data-server-url"]
-    return ""
+def server_url(sessions: Sessions, handle: str | None) -> str | None:
+    """The data server of the server-level user's server-wide session, for `use-community`;
+    None when this machine holds no such session."""
+    if not handle:
+        return None
+    context = sessions.server_session(handle) / ".symposium" / "context.json"
+    try:
+        return json.loads(context.read_text())["data-server-url"]
+    except (OSError, ValueError, KeyError):
+        return None
 
 
 def keeps_running(command: str, rest: list) -> bool:

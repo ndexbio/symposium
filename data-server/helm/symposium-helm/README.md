@@ -71,7 +71,7 @@ The server starts **non-operational** until the admin key is set. To set it:
 
 1. Run `/symposium admin-config --handle <handle> --data-server-url <url>`.
 2. Add `adminKey: {handle: <handle>}` to the values file.
-3. Upgrade with `--set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<handle>.key`.
+3. Upgrade with `--set-file adminKey.publicKey=$HOME/.symposium/admin/admin/<handle>/admin_pub_<handle>.key`.
 
 When the key changes, the pod restarts and the server binds or rebinds it. The Secret is
 mounted at `/apps/admin-key/`.

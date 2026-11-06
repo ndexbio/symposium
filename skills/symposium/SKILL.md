@@ -24,11 +24,11 @@ Every other command works in a **session**: one user's context on one data serve
 
 - **Anyone invited:** `/symposium setup --invite-file <file>`. The invite file comes out of band; it names the handle, the community (none, for a server admin) and the server. Setup makes the user's key on this machine and joins: the server assigns the **access roles** stored with the invite. It then syncs the session's `record/`; its `messages_for_you` lists the Messages already addressed to the user. Running it again is harmless.
 - **Root, once per server:** `/symposium admin-config --handle <h> --data-server-url <url>` makes root's key and root's server-wide session.
-- **A server admin, for a community:** `/symposium bootstrap --community-file <community.json>` creates the community with its first community admin (`admin` in the file), invites any `handles` listed, and writes one `<community>-<handle>.invite` file per pending invite, to hand over out of band. `/symposium use-community <community>` opens a session for a community that already exists.
+- **A server admin, for a community:** `/symposium bootstrap --community-file <community.json>` creates the community with its first community admin (`admin` in the file), invites any `handles` listed, and writes one `<community>-<handle>.invite` file per pending invite, to hand over out of band. `/symposium use-community <community>` opens a session for a community that already exists. Each server-level user has their own sessions; on a machine that holds several (root and a server admin, say), these work as the current session's user, and `--handle <h>` names another.
 
 **Access roles.** Each user and API key holds access roles, and each command takes a grant one of them holds; `/symposium access` shows yours. The six roles: `server-root` and `server-admin` (server-wide), `community-admin` (runs a community: invites, roles, the gate), `gate-keeper` (runs the gate), `community-member` (publishes; reads and writes its collections) and `community-observer` (reads). `community-member` and `community-observer` take a collection value: `:*` every collection, `:` only the user's own, `:c1,c2` those named. The runbook's "Roles and access" (`toolchain/data-server/RUNBOOK.md` §8) covers them in full. Access roles are not **publishing roles** (`publish --role researcher`), which limit the Artifact types a session publishes.
 
-Sessions are kept by the skill under `~/.symposium/` (`admin/` and `admin/<community>/` for a server-level user, `member/<community>/<handle>/` for a community's user), so commands work from any directory. `setup`, `bootstrap` and `use-community` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another (`/symposium use <handle>` for a server-wide one), and `/symposium use` alone lists them all with their roles. Every other command works in the current session (or, when the agent session has chosen none, the machine's only one). Each agent session keeps its own choice, so several agents on one machine never change each other's. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`). A command the session's roles do not allow is refused with the grant it takes and the sessions that hold it.
+Sessions are kept by the skill under `~/.symposium/` (`admin/admin/<handle>/` and `admin/<community>/<handle>/` for a server-level user, `member/<community>/<handle>/` for a community's user), so commands work from any directory. `setup`, `bootstrap` and `use-community` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another (`/symposium use <handle>` for a server-wide one), and `/symposium use` alone lists them all with their roles. Every other command works in the current session (or, when the agent session has chosen none, the machine's only one). Each agent session keeps its own choice, so several agents on one machine never change each other's. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`). A command the session's roles do not allow is refused with the grant it takes and the sessions that hold it.
 
 ## Commands
 
@@ -36,8 +36,8 @@ Sessions are kept by the skill under `~/.symposium/` (`admin/` and `admin/<commu
 |---|---|---|
 | `setup --invite-file <file>` | anyone invited | join with the invite; the server assigns its roles |
 | `admin-config --handle <h> --data-server-url <url> [--new-key]` | root | make or reuse root's key, print where to place it, and set up root's server-wide session |
-| `bootstrap --community-file <file>` | server-admin | create the community with its first community admin; write invite files |
-| `use-community <community>` | server-admin | a session for an existing community |
+| `bootstrap --community-file <file> [--handle <h>]` | server-admin | create the community with its first community admin; write invite files |
+| `use-community <community> [--handle <h>]` | server-admin | a session for an existing community |
 | `use [[<community>] <handle>]` | anyone | make that session this agent session's current one; alone, list every session |
 | `access` | anyone | the six access roles, and the session's own roles and grants |
 | `publish [--role <role>] <artifact.json>` | community-member | sync (listing Messages to you, as `sync` does), validate against the record as it stands, then submit to the gate; `--roles` lists the publishing roles |
@@ -45,7 +45,7 @@ Sessions are kept by the skill under `~/.symposium/` (`admin/` and `admin/<commu
 | `sync [--watch\|--messages]` | anyone in the community | bring the session's `record/`, its copy of the record, up to date; list the gate's replies to you, and each Message whose `recipients` include you (`message for you from @<sender>: <title> (@<name>)`), once; `--messages` lists every Message to you again, newest first, new ones marked; `--watch` keeps running (see below) |
 | `gate [--dry-run\|--verify\|--rebuild\|--watch]` | community-admin, gate-keeper | accept or reject the submissions waiting in `inbox`; `--verify` compares the session's `record/` with the record, `--rebuild` rebuilds the gate's caches from the server, `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30) and keeps running (see below) |
 | `serve [<record dir>] [--port N]` | anyone | browse the session's `record/` (or the record directory given) at `http://localhost:8760`, rebuilt as it changes; keeps running (see below) |
-| `invite --handle <h> --access <role>[:<collections>] --out <file>`, `invite list --out-dir <dir>` | community-admin, server-admin (root for `server-admin`) | an invite file carrying access roles; every pending invite written again |
+| `invite --handle <h> --access <role>[:<collections>] [--community <c>] --out <file>`, `invite list --out-dir <dir>` | community-admin, server-admin (root for `server-admin`) | an invite file carrying access roles; every pending invite written again. From a server-wide session, `--community` names the community a community role invites into |
 | `assign`, `unassign` `(--handle <h> \| --api-key <id>) --access <role>[:<collections>]` | community-admin; an owner, for `community-observer` on its own collections | add or remove access roles, or some collections of one |
 | `users list` | anyone in the community | the community's users, removed ones marked, with their roles, and the server-level users |
 | `users remove --handle <h>`, `rebind-key`, `suspect-after` | community-admin, server-admin | remove a user (a tombstone); replace a lost key; flag a user's writes |
@@ -128,12 +128,12 @@ $ docker run -d --name symposium-data --restart unless-stopped \
 
 # one time root config
 agent> /symposium admin-config --handle <root> --data-server-url http://127.0.0.1:8790
-$ cp ~/.symposium/admin/admin_pub_<root>.key $HOME/symposium-data/ && docker restart symposium-data
+$ cp ~/.symposium/admin/admin/<root>/admin_pub_<root>.key $HOME/symposium-data/ && docker restart symposium-data
 
 # the community, its first community admin and, optionally, its first members
 $ echo '{"community": "<name>", "admin": "<steward>", "handles": ["lyra"], "data-server-url": "http://127.0.0.1:8790"}' > community.json
 
-# writes the invite files to ~/.symposium/admin/<name>/<name>-<handle>.invite: hand each over, out of band
+# writes the invite files to ~/.symposium/admin/<name>/<root>/<name>-<handle>.invite: hand each over, out of band
 agent> /symposium bootstrap --community-file community.json
 ```
 
@@ -171,7 +171,7 @@ $ helm install symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm 
 # one time root config: add `adminKey: {handle: <root>}` to values.yaml, then hand the chart the key; it restarts the server
 agent> /symposium admin-config --handle <root> --data-server-url https://<k8s_host>
 $ helm upgrade symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm --version <chart version> \
-    -n symposium -f values.yaml --set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<root>.key
+    -n symposium -f values.yaml --set-file adminKey.publicKey=$HOME/.symposium/admin/admin/<root>/admin_pub_<root>.key
 
 # delegate: a server admin, who creates and runs communities from its own machine
 agent> /symposium invite --handle <ana> --access server-admin --out <ana>.invite

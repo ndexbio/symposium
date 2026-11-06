@@ -1,12 +1,13 @@
 """The skill's sessions: where each agent session's state lives, and which session a
 command works in. Nobody creates or enters a session directory; the skill keeps them under
-`~/.symposium/`, beside the keystore:
+`~/.symposium/`, beside the keystore, one folder per community and user (`admin`, the one name
+no community may take, holds the server-wide sessions):
 
-    ~/.symposium/admin/                          a server-level user's server-wide session
-                                                 (admin-config for root, setup for a server
-                                                 admin) and root's public key files
-    ~/.symposium/admin/<community>/              a server-level user's session for a community
-                                                 (bootstrap, use-community)
+    ~/.symposium/admin/admin/<handle>/           a server-level user's server-wide session
+                                                 (admin-config for root, with root's public key
+                                                 file; setup for a server admin)
+    ~/.symposium/admin/<community>/<handle>/     a server-level user's session for a community
+                                                 (bootstrap, use-community, import)
     ~/.symposium/member/<community>/<handle>/    a community user's session (setup, from the
                                                  invite)
     ~/.symposium/current/<pid>.json              each agent session's current session
@@ -17,7 +18,8 @@ record, the copy of the record (`record/`), the invite files and the event log. 
 every command in its session's directory.
 
 `setup`, `bootstrap`, `use-community`, `import` and `admin-config` name their session
-themselves. Every other command works in the agent session's current session: the one
+themselves; `bootstrap`, `use-community` and `import` work as the server-level user named
+with `--handle`, else the current session's, else the machine's only one. Every other command works in the agent session's current session: the one
 `/symposium use` chose, or the one `setup`, `bootstrap` or `use-community` made; when the agent
 session has chosen none, the machine's only session. The choice is kept per agent process
 (agent_process.py), so two agent sessions on one machine never change each other's. Relative
@@ -43,11 +45,15 @@ NO_SESSION = (
     "no Symposium session on this machine: run `/symposium setup --invite-file <file>` (with "
     "an invite) or, as root, `/symposium admin-config` first"
 )
+# the scope of the server-wide sessions under admin/: the one name no community may take
+SERVER = "admin"
 # names that may name a session directory: a community (a slug) and a handle
 COMMUNITY = re.compile(r"^[A-Za-z0-9_]{1,20}$")
 HANDLE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 # commands that name their own session, from their own arguments
 NAMED = {"admin-config", "bootstrap", "import", "setup", "use-community"}
+# the NAMED commands that work as a server-level user in a community's session
+AS_SERVER_USER = {"bootstrap", "import", "use-community"}
 # the grant a command takes, any one of several sufficing: checked against the session's cached
 # access before it runs (the server decides either way)
 REQUIRES = {
@@ -167,11 +173,51 @@ class Sessions:
     def all(self) -> list:
         return [
             s
-            for context in sorted(self.root.glob("admin/.symposium/context.json"))
-            + sorted(self.root.glob("admin/*/.symposium/context.json"))
+            for context in sorted(self.root.glob("admin/*/*/.symposium/context.json"))
             + sorted(self.root.glob("member/*/*/.symposium/context.json"))
             if (s := self.at(context.parents[1])) is not None
         ]
+
+    def settle(self):
+        """Give each server-level session its user's own folder: a session whose context sits
+        directly in `admin/<community>/` moves to `admin/<community>/<handle>/`, and one in
+        `admin/` itself (the server-wide session, with root's public key files and API key
+        files) to `admin/admin/<handle>/`."""
+        folder = self.root / "admin"
+        if not folder.is_dir():
+            return
+        for directory in sorted(p for p in folder.iterdir() if p.is_dir()):
+            handle = self.handle_in(directory)
+            if directory.name == SERVER or handle is None:
+                continue
+            moving = folder / f".{directory.name}.moving"
+            directory.rename(moving)
+            directory.mkdir()
+            moving.rename(directory / handle)
+        handle = self.handle_in(folder)
+        if handle is None:
+            return
+        target = self.server_session(handle)
+        if (target / ".symposium").exists():
+            return
+        target.mkdir(parents=True)
+        for entry in list(folder.iterdir()):
+            if entry.name == SERVER or (
+                entry.is_dir() and any(entry.glob("*/.symposium/context.json"))
+            ):
+                continue
+            entry.rename(target / entry.name)
+
+    @staticmethod
+    def handle_in(directory: Path) -> str | None:
+        """The handle of the session whose context is directly in `directory`, or None."""
+        try:
+            handle = json.loads(
+                (directory / ".symposium" / "context.json").read_text()
+            ).get("handle")
+        except (OSError, ValueError):
+            return None
+        return handle if isinstance(handle, str) and HANDLE.match(handle) else None
 
     def at(self, directory: Path) -> Session | None:
         """The session in a directory, from its context, or None."""
@@ -192,11 +238,47 @@ class Sessions:
             held.get("access") or {},
         )
 
-    def server_session(self) -> Path:
-        return self.root / "admin"
+    def server_session(self, handle: str) -> Path:
+        return self.root / "admin" / SERVER / handle
 
-    def admin_session(self, community: str) -> Path:
-        return self.root / "admin" / community
+    def admin_session(self, community: str, handle: str) -> Path:
+        return self.root / "admin" / community / handle
+
+    def server_handle(self, rest: list) -> str:
+        """The server-level user a command works as: `--handle`, else the current session's
+        user when it is server-level, else the machine's only server-level user (by its
+        server-wide sessions and the server-level keys it holds)."""
+        named = self.option(rest, "--handle")
+        if named:
+            return named
+        current = self.current()
+        if current is not None and not current.home:
+            return current.handle
+        wide = [s for s in self.all() if not s.home and not s.community]
+        handles = sorted(
+            {s.handle for s in wide}
+            | {
+                key.name[: -len(".ed25519.pem")]
+                for key in self.root.glob(f"keys/*/{SERVER}/*.ed25519.pem")
+            }
+        )
+        if len(handles) == 1:
+            return handles[0]
+        if not handles:
+            raise SessionError(
+                {
+                    "error": "no server-level user on this machine: root runs "
+                    "`/symposium admin-config`; a server admin joins with "
+                    "`/symposium setup --invite-file <file>`"
+                }
+            )
+        raise SessionError(
+            {
+                "error": "this machine holds the server-level users "
+                f"{', '.join(handles)}: name one with --handle",
+                "sessions": [s.view() for s in wide],
+            }
+        )
 
     def member_session(self, community: str, handle: str) -> Path:
         return self.root / "member" / community / handle
@@ -285,6 +367,12 @@ class Sessions:
         when it has none yet; its arguments, with the caller's paths resolved)."""
         rest = self.resolve(command, rest)
         if command in NAMED:
+            if (
+                command in AS_SERVER_USER
+                and self.option(rest, "--handle") is None
+                and self.community_named(command, rest) is not None
+            ):
+                rest = [*rest, "--handle", self.server_handle(rest)]
             directory = self.named(command, rest)
             if directory is None:
                 return (
@@ -341,20 +429,39 @@ class Sessions:
         """The session a NAMED command names: the server-wide one for admin-config; the
         community file's for bootstrap and import; the community's for use-community; the
         invite's for setup. None for a file it cannot read."""
-        if command == "admin-config":
-            return self.server_session()
-        if command == "use-community":
-            community = rest[0] if rest and COMMUNITY.match(rest[0]) else None
-            return None if community is None else self.admin_session(community)
         if command == "setup":
             invite = self.read(rest, "--invite-file", community_required=False)
             if invite is None or not invite["handle"]:
                 return None
             if not invite["community"]:
-                return self.server_session()
+                return self.server_session(invite["handle"])
             return self.member_session(invite["community"], invite["handle"])
-        spec = self.read(rest, "--community-file")
-        return None if spec is None else self.admin_session(spec["community"])
+        handle = self.option(rest, "--handle") or ""
+        if not HANDLE.match(handle):
+            return None
+        if command == "admin-config":
+            return self.server_session(handle)
+        community = self.community_named(command, rest)
+        return None if community is None else self.admin_session(community, handle)
+
+    def community_named(self, command: str, rest: list) -> str | None:
+        """The community `use-community` names, or the community file of `bootstrap` and
+        `import`; None when it names none a community may take."""
+        if command == "use-community":
+            community = rest[0] if rest and COMMUNITY.match(rest[0]) else None
+        else:
+            spec = self.read(rest, "--community-file")
+            community = None if spec is None else spec["community"]
+        return None if community is None or community.lower() == SERVER else community
+
+    @staticmethod
+    def option(rest: list, name: str) -> str | None:
+        """The value of option `name` on a command line, or None."""
+        for i, arg in enumerate(rest):
+            key, equals, value = arg.partition("=")
+            if key == name:
+                return value if equals else (rest[i + 1] if i + 1 < len(rest) else None)
+        return None
 
     # ── the command line ─────────────────────────────────────────────────────────────────
     def resolve(self, command: str, rest: list) -> list:

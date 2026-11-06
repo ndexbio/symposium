@@ -18,7 +18,7 @@ storage:
 
 # Root's public key file, admin_pub_<handle>.key, from `/symposium admin-config`. Until it
 # is set the server runs non-operational. Set handle here, and the file's contents with
-#   --set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<handle>.key
+#   --set-file adminKey.publicKey=$HOME/.symposium/admin/admin/<handle>/admin_pub_<handle>.key
 # A change to either restarts the server, which then binds (or rebinds) that key.
 adminKey:
   handle: ""

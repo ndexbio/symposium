@@ -2,7 +2,7 @@
 """Bring a community up on a data server, as a server admin:
 `/symposium bootstrap --community-file <file>`.
 
-    python3 bootstrap.py --community-file community.json
+    python3 bootstrap.py --community-file community.json [--handle <server-level user>]
 
 `community.json` (see community.example.json) holds `community`, the community's name (1-20
 letters, digits or underscores); `admin`, the handle of its first community admin; optionally
@@ -12,14 +12,15 @@ letters, digits or underscores); `admin`, the handle of its first community admi
 Bootstrap:
   1. validates the file, reporting every missing or invalid field at once;
   2. checks that the data server answers and is operational, then sets this directory's
-     context: the session of this machine's server-level user for the community;
+     context: the session of this machine's server-level user (`--handle`, when the machine
+     holds several) for the community;
   3. creates the community with its first community admin, if it does not exist yet. The
      community admin joins with its invite and from then on runs the community: invites,
      roles, the gate;
   4. invites every handle in `handles`, and every user of the community holding no key yet
      (the authors a port brought in), that has not joined and is not invited yet, then writes
      every pending invite, the community admin's included, into the directory it runs in (the
-     server admin's session, `~/.symposium/admin/<community>/`, when the skill runs it) as
+     server admin's session, `~/.symposium/admin/<community>/<handle>/`, when the skill runs it) as
      `<community>-<handle>.invite` (0600), and prints each full path. Hand each one over out of
      band. A lost file is recovered by running it again.
 
@@ -51,7 +52,7 @@ class Bootstrap:
     def __init__(self, data: SymposiumData):
         self.data = data
 
-    def run(self, community_file: str) -> dict:
+    def run(self, community_file: str, handle: str | None = None) -> dict:
         spec = self.read(community_file)
         problems = self.check_fields(spec)
         url = spec.get("data-server-url")
@@ -74,7 +75,9 @@ class Bootstrap:
                 }
             )
 
-        context = self.data.run("context", "set", "--community-file", community_file)["context"]
+        user = ["--handle", handle] if handle else []
+        context = self.data.run("context", "set", "--community-file", community_file,
+                                *user)["context"]
         community, first_admin = context["community"], spec["admin"]
         made = self.data.run("communities", "create", "--name", community,
                              "--admin", first_admin,
@@ -156,9 +159,12 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--community-file", required=True, help="community.json: it names the community"
     )
+    parser.add_argument(
+        "--handle", help="the server-level user to work as, when this machine holds several"
+    )
     args = parser.parse_args(argv)
     try:
-        result = Bootstrap(SymposiumData()).run(args.community_file)
+        result = Bootstrap(SymposiumData()).run(args.community_file, args.handle)
     except DataError as e:
         print(json.dumps(e.report))
         return 1

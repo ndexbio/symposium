@@ -22,6 +22,6 @@ No admin key is set yet, so the server is non-operational. Next:
   /symposium admin-config --handle <handle> --data-server-url <URL>
 then put `adminKey: {handle: <handle>}` in your values file and run
   helm upgrade {{ .Release.Name }} <this chart> -n {{ .Release.Namespace }} --version {{ .Chart.Version }} -f <your values file> \
-    --set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<handle>.key
+    --set-file adminKey.publicKey=$HOME/.symposium/admin/admin/<handle>/admin_pub_<handle>.key
 and pass that same --set-file on every later upgrade.
 {{- end }}

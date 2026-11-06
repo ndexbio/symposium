@@ -24,7 +24,7 @@ def invite_files(directory: Path) -> list:
 
 
 def root_session(suite, community: str) -> Path:
-    return suite.home / ".symposium" / "admin" / community
+    return suite.home / ".symposium" / "admin" / community / ROOT
 
 
 def report(suite, cwd: Path, *args) -> tuple[int, str]:
@@ -297,6 +297,76 @@ def test_one_handle_in_two_communities_gets_two_invite_files(
     contents = [json.loads(f.read_text()) for f in files]
     assert [c["community"] for c in contents] == ["demo", "other"]
     assert contents[0]["invite"] != contents[1]["invite"]
+
+
+def test_two_server_level_users_on_one_machine(server, skill, suite, tmp_path):
+    """Root and a server admin it invited, on one machine: each has its own server-wide
+    session and its own session for a community, and invites into a community from the
+    server-wide session name it with --community."""
+    try:
+        skill.ok(
+            tmp_path, "admin-config", "--handle", ROOT, "--data-server-url", server.url
+        )
+        skill.ok(
+            tmp_path,
+            "invite",
+            "--handle",
+            "shawn",
+            "--access",
+            "server-admin",
+            "--out",
+            "shawn.invite",
+        )
+        skill.ok(tmp_path, "setup", "--invite-file", "shawn.invite")
+        folder = suite.home / ".symposium" / "admin"
+        assert sorted(p.name for p in (folder / "admin").iterdir()) == sorted(
+            [ROOT, "shawn"]
+        )
+        spec = community_file(tmp_path, server, "lab")
+        made = skill.ok(
+            tmp_path, "bootstrap", "--community-file", spec, "--handle", ROOT
+        )
+        assert made["session"] == f"lab/{ROOT}"
+        skill.ok(tmp_path, "use", "shawn")
+        code, out = skill(
+            tmp_path, "use-community", "lab"
+        )  # the current session: shawn's
+        assert code == 0 and out["session"] == "lab/shawn", out
+        opened = skill.ok(tmp_path, "use-community", "lab", "--handle", ROOT)
+        assert opened["session"] == f"lab/{ROOT}"
+        assert sorted(p.name for p in (folder / "lab").iterdir()) == sorted(
+            [ROOT, "shawn"]
+        )
+        assert invite_files(root_session(suite, "lab")) == ["lab-steward.invite"]
+
+        skill.ok(tmp_path, "use", "shawn")
+        code, out = skill(
+            tmp_path,
+            "invite",
+            "--handle",
+            "ana",
+            "--access",
+            "community-admin",
+            "--out",
+            "a",
+        )
+        assert code == 1 and "name it with --community" in out["error"], out
+        invited = skill.ok(
+            tmp_path,
+            "invite",
+            "--handle",
+            "ana",
+            "--community",
+            "lab",
+            "--access",
+            "community-admin",
+            "--out",
+            "lab-ana.invite",
+        )
+        assert invited["community"] == "lab" and invited["session"] == "server/shawn"
+    finally:  # the suite's keystore keeps root's key only
+        for key in suite.home.glob(".symposium/keys/*/admin/shawn.*"):
+            key.unlink()
 
 
 def test_bootstrap_takes_a_key_the_server_knows(server, skill, suite, tmp_path):

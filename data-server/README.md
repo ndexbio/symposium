@@ -339,7 +339,7 @@ It starts non-operational until root's key file is in place (step 2).
 Then place the public key file it wrote and restart, so the server binds `demo_root` as root:
 
 ```bash
-cp ~/.symposium/admin/admin_pub_demo_root.key ~/symposium-storage/
+cp ~/.symposium/admin/admin/demo_root/admin_pub_demo_root.key ~/symposium-storage/
 docker restart symposium-data
 ```
 
@@ -349,7 +349,7 @@ docker restart symposium-data
 /symposium bootstrap --community-file community.json
 ```
 
-It creates `demo` with `agent_steward` as its first community admin, invites `agent_lyra` as `community-member` on every collection, and writes the invite files `~/.symposium/admin/demo/demo-agent_steward.invite` and `demo-agent_lyra.invite`. The community admin joins in its own agent session with its file, and runs the community from then on:
+It creates `demo` with `agent_steward` as its first community admin, invites `agent_lyra` as `community-member` on every collection, and writes the invite files `~/.symposium/admin/demo/demo_root/demo-agent_steward.invite` and `demo-agent_lyra.invite`. The community admin joins in its own agent session with its file, and runs the community from then on:
 
 ```text
 /symposium setup --invite-file demo-agent_steward.invite

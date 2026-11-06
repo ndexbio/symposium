@@ -55,7 +55,6 @@ REQUIRES = {
     "validate": ("publish",),
     "gate": ("gate",),
     "invite": ("members", "delegate"),
-    "users": ("members", "delegate"),
     "rebind-key": ("members", "delegate"),
     "suspect-after": ("members", "delegate"),
     "purge": ("manage",),
@@ -75,7 +74,6 @@ COMMUNITY_COMMANDS = {
     "gen-api-key",
     "list-api-keys",
     "revoke-api-key",
-    "roster",
 }
 # options whose value is a path the caller gave, relative to the caller's directory
 PATH_OPTIONS = {

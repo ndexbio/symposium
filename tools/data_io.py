@@ -271,16 +271,16 @@ class SymposiumData:
     def members(self) -> set:
         """Every handle validation resolves, fetched live: every user of the community,
         removed ones included, and every server-level user (any principal of the community
-        reads the roster). An address to any of them (`@handle`) resolves, exactly as it does
+        reads them). An address to any of them (`@handle`) resolves, exactly as it does
         at the gate."""
-        roster = self.run("roster", "list")
-        return {m["handle"] for m in roster["roster"]} | set(roster["server_users"])
+        users = self.run("users", "list")
+        return {m["handle"] for m in users["users"]} | set(users["server_users"])
 
     def submitters(self) -> set:
         """The handles whose submissions the gate decides: the community's users, not
         removed, holding `publish` (community-member)."""
         return {
-            m["handle"] for m in self.run("roster", "list")["roster"]
+            m["handle"] for m in self.run("users", "list")["users"]
             if not m["removed"]
             and any(r["role"] == rbac.COMMUNITY_MEMBER for r in m["roles"])
         }

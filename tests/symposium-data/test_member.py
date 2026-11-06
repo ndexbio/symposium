@@ -30,11 +30,11 @@ def test_registration_by_invite_file_is_idempotent(admin_dir, cli):
     assert me["context"]["grants"]["publish"] is None
     pubkey = cli.ok(lyra, "owner", "pubkey")
     assert pubkey["fingerprint"] == me["kid"] == again["fingerprint"]
-    roster = cli.ok(admin_dir, "roster", "list")["roster"]
+    roster = cli.ok(admin_dir, "users", "list")["users"]
     assert [(m["handle"], m["registered"], m["removed"]) for m in roster] == [
         ("lyra", True, None)
     ]
-    assert cli.ok(lyra, "roster", "list")["roster"] == roster  # any member reads it too
+    assert cli.ok(lyra, "users", "list")["users"] == roster  # any member reads it too
 
 
 def test_each_command_takes_its_grant_and_a_context_without_invite_joins_none(

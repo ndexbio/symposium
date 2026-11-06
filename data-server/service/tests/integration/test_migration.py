@@ -139,7 +139,7 @@ def seed(server) -> tuple[dict, dict]:
 
 
 def roles_of(owner):
-    r = HTTP.get(owner.url("/me"), headers=owner.headers())
+    r = HTTP.get(owner.server.url + "/v1/me", headers=owner.headers())
     assert r.status_code == 200, r.text
     return r.json()["roles"]
 
@@ -181,14 +181,17 @@ def test_a_previous_release_upgrades_in_place_on_first_start(previous):
     # a member taken off the roster is a tombstone that keeps its work
     gone = users["gone"].sign_in()
     assert gone.status_code == 401 and "removed" in gone.json()["detail"]
-    roster = HTTP.get(lyra.url("/roster"), headers=lyra.headers()).json()["roster"]
+    roster = HTTP.get(lyra.url("/users"), headers=lyra.headers()).json()["users"]
     assert {e["handle"]: bool(e["removed"]) for e in roster} == {
         "lyra": False, "vega": False, "rigel": False, "nova": False, "gone": True
     }  # fmt: skip
     assert lyra.stat(files["gone"]).json()["created_by"] == "gone"
 
     # root runs the community until it names a community admin
-    assert root.assign("community-admin", None, "lyra", "demo").status_code == 200
+    assert root.assign("community-admin", None, "lyra", "demo").status_code in (
+        200,
+        201,
+    )
     invited = lyra.invite("mia", member, community="demo")
     assert invited.status_code == 201, invited.text
 

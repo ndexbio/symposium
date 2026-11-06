@@ -41,6 +41,25 @@ GRANTS = (
     "delegate",
 )
 METHODS = ("get", "post", "put", "patch", "delete")
+# the verbs the resource paths never use as a segment: an action is a method on a noun
+VERBS = {
+    "challenge",
+    "token",
+    "rebind",
+    "import",
+    "export",
+    "check",
+    "resolve",
+    "verify",
+    "query",
+    "find",
+    "stat",
+    "purge",
+    "promote",
+    "register",
+    "assign",
+    "unassign",
+}
 
 # The skill's commands (skills/symposium/SKILL.md) that have an API equivalent; DESIGN.md
 # must map every one, and map nothing that lacks an endpoint.
@@ -48,7 +67,7 @@ SKILL_COMMANDS = [
     "publish",
     "validate",
     "sync",
-    "roster list",
+    "users list",
 ]
 
 
@@ -168,17 +187,50 @@ def test_changing_access_takes_a_signed_in_user(spec):
     """The operations that change users, roles, invites or keys take a session key: an issued
     key never widens what any key may do."""
     for path, method, op in operations(spec):
-        if op["operationId"] in (
-            "createInvite",
-            "assignRole",
-            "unassignRole",
-            "removeUser",
-            "rebindUser",
+        name = op["operationId"]
+        changes = any(
+            w in name for w in ("Role", "Invite", "User")
+        ) and not name.startswith(("list", "get"))
+        if changes or op["operationId"] in (
             "createApiKey",
             "revokeApiKey",
             "rotateKey",
         ):
             assert op.get("x-session"), f"{method.upper()} {path} takes an issued key"
+
+
+def test_no_path_begins_with_a_variable_and_none_names_a_verb(spec):
+    """Every resource has its own namespace: no path under `/v1` starts with a variable that
+    could overlap a literal beside it, and every segment is a noun (an action is a method)."""
+    for path, method, _ in operations(spec):
+        segments = path.strip("/").split("/")
+        assert not segments[0].startswith("{"), f"{method.upper()} {path}"
+        verbs = VERBS & set(segments)
+        assert not verbs, f"{method.upper()} {path} names {verbs}"
+
+
+def test_every_create_answers_201_with_its_location(spec):
+    """A request that creates a resource answers 201 and names it in `Location`."""
+    for path, method, op in operations(spec):
+        created = op["responses"].get("201")
+        if created is None:
+            continue
+        created = deref(spec, created)
+        assert "Location" in created.get("headers", {}), (
+            f"{method.upper()} {path}: 201 without Location"
+        )
+
+
+def test_preconditions_are_declared_where_required(spec):
+    """Creating a file by name takes `If-None-Match: *`; replacing a role's whole value takes
+    `If-Match` with its ETag."""
+    for path, _method, op in operations(spec):
+        names = {deref(spec, p)["name"] for p in op.get("parameters", [])}
+        if op["operationId"] == "putFile":
+            assert "If-None-Match" in names and "412" in op["responses"], path
+        if op["operationId"].startswith("set") and op["operationId"].endswith("Role"):
+            assert "If-Match" in names, path
+            assert {"412", "428"} <= set(op["responses"]), path
 
 
 def test_the_api_takes_one_credential_at_one_path(spec):
@@ -430,7 +482,7 @@ def readme_routes(cell: str, known: set) -> list:
     named, method, previous = [], None, None
     for text in re.findall(r"`([^`]+)`", cell):
         text = re.split(r" \{|\?", text)[0].strip()
-        if text.split(" ", 1)[0] in ("GET", "POST", "PUT", "DELETE"):
+        if text.split(" ", 1)[0] in ("GET", "POST", "PUT", "PATCH", "DELETE"):
             method, text = text.split(" ", 1)
         if text.startswith("…"):
             segments = previous.split("/")
@@ -442,7 +494,7 @@ def readme_routes(cell: str, known: set) -> list:
         elif text.startswith("/v1"):
             path = shape(text.removeprefix("/v1"))
         else:
-            path = shape("/{community}" + text)
+            path = shape("/communities/{community}" + text)
         assert (method, path) in known, f"{method} {path}: no such operation ({cell})"
         named.append((method, path))
         previous = path

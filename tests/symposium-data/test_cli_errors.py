@@ -68,7 +68,7 @@ def test_a_server_speaking_another_api_version_is_refused(cli, tmp_path, api):
     fake = FakeServer({"api": api, "server_id": "fake", "mode": "operational"})
     try:
         admin_context(tmp_path, fake.url)
-        code, out = cli(tmp_path, "roster", "list")
+        code, out = cli(tmp_path, "users", "list")
     finally:
         fake.close()
     assert code == 1
@@ -110,7 +110,7 @@ def test_a_server_of_another_release_is_refused(monkeypatch):
     try:
         server = main.DataServer(fake.url, "demo")
         with pytest.raises(main.CommandError, match="runs version 0.1.2") as refused:
-            server.roster()
+            server.users("demo")
     finally:
         fake.close()
     assert "skill released for data server 0.1.2" in str(refused.value)

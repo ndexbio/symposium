@@ -45,7 +45,9 @@ PLUMBING = {
     "c",
     "api_keys_path",
     "upload",
-    "params",
+    "scope",
+    "user_path",
+    "key_path",
 }
 ARGUMENTS = {
     "name": "lab",
@@ -75,7 +77,9 @@ ARGUMENTS = {
     "home": "demo",
     "admin": "steward",
     "user_id": "5779183b-bb3d-439f-bdbf-d042c2e58306",
-    "params": {"handle": "lyra"},
+    "principal": "/v1/communities/demo/users/lyra",
+    "role": "community-observer",
+    "collections": ["lab"],
     "public": True,
     "port_id": "5779183b-bb3d-439f-bdbf-d042c2e58306",
     "path": Path(__file__),
@@ -94,7 +98,7 @@ def contract_operations() -> list:
     for path, item in spec["paths"].items():
         pattern = re.sub(r"\{[^}]+\}", "[^/]+", "/v1" + path)
         for method in item:
-            if method in ("get", "post", "put", "delete"):
+            if method in ("get", "post", "put", "patch", "delete"):
                 ops.append((method.upper(), re.compile(f"^{pattern}$")))
     return ops
 
@@ -105,7 +109,7 @@ def recorded_calls(monkeypatch) -> dict:
 
     def record(method, path, *args, **kwargs):
         calls.setdefault(current[0], []).append((method, path.split("?")[0]))
-        return {"nonce": "n", "key": "sak_x", "items": [], "next": None}
+        return {"nonce": "n", "key": "sak_x", "items": [{}], "next": None}
 
     class Response:
         def __enter__(self):

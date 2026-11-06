@@ -666,7 +666,10 @@ class Me(BaseModel):
         Optional[str],
         Field(description="The name the key's issuer gave it; null for a session key."),
     ]
-    community: CommunityName
+    community: Annotated[
+        Optional[str],
+        Field(description="The caller's community; null for a server-level user."),
+    ]
     key_id: UUID
     kid: Annotated[
         Optional[str],
@@ -694,7 +697,7 @@ class Me(BaseModel):
             description="The member this key acts as, when it acts as a user of this community."
         ),
     ] = None
-    position: Position
+    position: Optional[Position] = None
 
 
 class SubmissionResource(BaseModel):

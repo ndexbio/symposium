@@ -56,7 +56,7 @@ def test_admin_config_reuses_its_key_and_only_new_key_replaces_it(
 
 def test_without_a_context_every_command_names_setup(cli, tmp_path):
     for args in (
-        ("roster", "list"),
+        ("users", "list"),
         ("invite", "list", "--out-dir", "x"),
         ("changes", "--collection", "files"),
     ):
@@ -256,10 +256,10 @@ def test_assign_unassign_and_users(admin_dir, cli):
     assert {u["handle"] for u in users} == {"lyra"}  # steward has not joined yet
     removed = cli.ok(admin_dir, "users", "remove", "--handle", "lyra")
     assert removed["removed"]
-    code, out = cli(lyra, "roster", "list")
+    code, out = cli(lyra, "users", "list")
     assert code == 1 and out["status"] == 401 and "removed from demo" in out["error"]
-    roster = cli.ok(admin_dir, "roster", "list")
-    assert roster["roster"][0]["removed"] and ADMIN in roster["server_users"]
+    roster = cli.ok(admin_dir, "users", "list")
+    assert roster["users"][0]["removed"] and ADMIN in roster["server_users"]
 
 
 def test_a_server_admin_joins_by_invite_and_works_in_any_community(

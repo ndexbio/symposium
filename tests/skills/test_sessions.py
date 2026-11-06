@@ -158,7 +158,7 @@ def test_use_with_no_arguments_or_no_such_session_lists_them_and_changes_nothing
 
 def test_no_session_names_setup_and_admin_config(root, caller, table):
     with pytest.raises(SessionError) as missing:
-        agent_session(root, caller, table, 300).place("roster", ["list"])
+        agent_session(root, caller, table, 300).place("users", ["list"])
     error = missing.value.report["error"]
     assert "/symposium setup --invite-file" in error
     assert "/symposium admin-config" in error
@@ -174,7 +174,7 @@ def test_a_command_is_refused_where_its_grant_is_not_held(root, caller, table):
     assert "`members` or `delegate`" in refused["error"]
     assert [s["use"] for s in refused["sessions"]] == ["/symposium use demo demo-admin"]
     assert sessions.refusal("publish", lyra) is None
-    assert sessions.refusal("roster", lyra) is None  # any member reads it
+    assert sessions.refusal("users", lyra) is None  # any member reads it
     sessions.use(["demo", "demo-admin"])
     _, admin, _ = sessions.place("gate", [])
     assert sessions.refusal("gate", admin) is None
@@ -228,8 +228,8 @@ def test_the_callers_paths_are_resolved_and_nothing_else(root, caller, table):
         "researcher",
         str(caller / "note.json"),
     ]
-    assert sessions.resolve("roster", ["add", "--handle", "lyra"]) == [
-        "add",
+    assert sessions.resolve("users", ["remove", "--handle", "lyra"]) == [
+        "remove",
         "--handle",
         "lyra",
     ]

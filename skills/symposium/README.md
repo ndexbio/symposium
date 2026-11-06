@@ -72,10 +72,10 @@ the community's record.
 | `/symposium serve [<record dir>] [--port N]` | Browse the session's `record/` (or the record directory given) at `http://localhost:8760` (or `--port`), rebuilt whenever it changes. It stops with an error when there is no the session's `record/`: run `sync` first. |
 | `/symposium data <command> …` | Direct data work through the CLI: `put`, `get`, `version`, `delete`, `stat`, `versions`, `changes`, `find name\|hash\|meta`, `verify`, `collection list\|create\|set-public`, `owner whoami\|rotate`. `/symposium data <command> --help` shows its options. |
 | `/symposium access` | Your access roles and grants in this session, and the six roles. |
-| `/symposium roster list` | Anyone in the community: its users, removed ones marked, each with its roles, and the server-level users. |
 | `/symposium invite --handle <h> --access <role>[:<collections>] --out <file> [--hours N]` | `community-admin` (in its community) or a server admin: one invite file, carrying access roles the server applies when `<h>` joins; root invites server admins with `--access server-admin`. `invite list --out-dir <dir>` writes every pending one. |
 | `/symposium assign\|unassign (--handle <h>\|--api-key <id>) --access <role>[:<collections>]` | Add or remove access roles, or some collections of one: `community-admin` for any community role; a collection's owner for `community-observer` on its own collections, which is how it shares them read-only. |
-| `/symposium users list`, `/symposium users remove --handle <h>` | `community-admin`, server admins: the users, removed ones marked; removing one keeps it as a tombstone, its handle retired and its work kept, and deletes every key it issued. |
+| `/symposium users list` | Anyone in the community: its users, removed ones marked, each with its roles, and the server-level users; `--server`, a server admin's view of the server-level users. |
+| `/symposium users remove --handle <h>` | `community-admin`, server admins: removing a user keeps it as a tombstone, its handle retired and its work kept, and deletes every key it issued. |
 | `/symposium rebind-key --handle <h> --out <file>` | `community-admin`: a user's key is lost or compromised. Their keys are retired, and the new invite file lets them register a new one, with the same roles. |
 | `/symposium suspect-after --handle <h> --at <instant>` | `community-admin`: flag everything the user writes after an instant (ISO 8601 with a timezone). The versions stay. |
 | `/symposium purge --cite <citation>` | `community-admin`: free one version's content; it then answers that it was purged, with its metadata. |
@@ -89,7 +89,7 @@ the community's record.
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit code
 is the result (0 = done; `serve`, `sync --watch` and `gate --watch` run until stopped). Every other command
 prints one JSON object: `setup`, `bootstrap`, `use`, `use-community`, `access`, `port`, the
-administration commands (`admin-config`, `invite`, `assign`, `unassign`, `users`, `roster`,
+administration commands (`admin-config`, `invite`, `assign`, `unassign`, `users`,
 `rebind-key`, `suspect-after`, `purge`, `export`, `import`), the key commands (`gen-api-key`,
 `list-api-keys`, `revoke-api-key`) and `data …`.
 

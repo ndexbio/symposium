@@ -64,14 +64,14 @@ holds only implicitly. The server computes each traversal from its index (§1.3)
 
 | Specification type | API shape | URL |
 |---|---|---|
-| CommunityRecord (§1.1) | resource: the record's state | `/{community}/record` |
-| Member (§1.4) | resource; exposes its name and nothing inside it | `/{community}/members/{handle}` |
-| Artifact (§1.5), every type | resource, read-only | `/{community}/artifacts/{name}` |
-| Artifact property | sub-resource | `/{community}/artifacts/{name}/properties/{property}` |
-| Object (§1.6), every type | sub-resource of its Artifact | `/{community}/artifacts/{name}/objects/{object}` |
+| CommunityRecord (§1.1) | resource: the record's state | `/communities/{community}/record` |
+| Member (§1.4) | resource; exposes its name and nothing inside it | `/communities/{community}/members/{handle}` |
+| Artifact (§1.5), every type | resource, read-only | `/communities/{community}/artifacts/{name}` |
+| Artifact property | sub-resource | `/communities/{community}/artifacts/{name}/properties/{property}` |
+| Object (§1.6), every type | sub-resource of its Artifact | `/communities/{community}/artifacts/{name}/objects/{object}` |
 | Object property | sub-resource | `…/objects/{object}/properties/{property}` |
-| Relationship (§1.7) | listed under its Artifact; it has no address, so it gets no URL of its own | `/{community}/artifacts/{name}/relationships` |
-| Address (§1.8), schema references included | resolved | `/{community}/resolve?address=…` |
+| Relationship (§1.7) | listed under its Artifact; it has no address, so it gets no URL of its own | `/communities/{community}/artifacts/{name}/relationships` |
+| Address (§1.8), schema references included | resolved | `/communities/{community}/addresses?address=…` |
 | Content (§1.8.1) | an Object, listed with `?type=Content` | `…/objects?type=Content` |
 
 The Artifact types the specification defines, and the profile's community types, all use
@@ -129,7 +129,7 @@ citations leave `cited-by` and supersession.
 ### 1.4 Canonical URLs
 
 Every resource body carries `url`: an absolute URL on the data server, under
-`/v1/{community}`. It is the same whichever host or application asks. This removes the
+`/v1/communities/{community}`. It is the same whichever host or application asks. This removes the
 record browser's `localhost` link problem. An application links to the API URL, or to its
 own page built from it.
 
@@ -137,12 +137,12 @@ An address maps to a URL by a fixed rule:
 
 | Address | URL |
 |---|---|
-| `@<member>` | `/{community}/members/<member>` |
-| `@<artifact>` | `/{community}/artifacts/<artifact>` |
-| `@<artifact>.<object>` | `/{community}/artifacts/<artifact>/objects/<object>` |
-| `@<artifact>.<property>` | `/{community}/artifacts/<artifact>/properties/<property>` |
+| `@<member>` | `/communities/{community}/members/<member>` |
+| `@<artifact>` | `/communities/{community}/artifacts/<artifact>` |
+| `@<artifact>.<object>` | `/communities/{community}/artifacts/<artifact>/objects/<object>` |
+| `@<artifact>.<property>` | `/communities/{community}/artifacts/<artifact>/properties/<property>` |
 | `@<artifact>.<object>.<property>` | `…/objects/<object>/properties/<property>` |
-| anything with `#<schema reference>` | `/{community}/resolve?address=<the address, URL-encoded>` |
+| anything with `#<schema reference>` | `/communities/{community}/addresses?address=<the address, URL-encoded>` |
 
 `@a.x` can name either an Object or a property. The profile forbids an Object's name from
 colliding with its Artifact's property names, so the server always knows which one is
@@ -178,14 +178,14 @@ These skill commands have an equivalent in the API. Each row names the operation
 
 | Command | Method and path | Operations |
 |---|---|---|
-| `publish <artifact.json>` | `POST /{community}/submissions` | `submitArtifact` |
-| `validate <artifact.json>` | `POST /{community}/submissions/check` | `checkSubmission` |
-| `sync` | `GET /{community}/artifacts?cursor=…`, `GET /{community}/submissions?status=rejected` | `listArtifacts`, `listSubmissions` |
-| `sync --watch` | `GET /{community}/streams/record`, `GET /{community}/streams/submissions` | `streamRecord`, `streamSubmissions` |
-| `roster list` | `GET /{community}/members` | `listMembers` |
+| `publish <artifact.json>` | `POST /communities/{community}/submissions` | `submitArtifact` |
+| `validate <artifact.json>` | `POST /communities/{community}/submission-checks` | `checkSubmission` |
+| `sync` | `GET /communities/{community}/artifacts?cursor=…`, `GET /communities/{community}/submissions?status=rejected` | `listArtifacts`, `listSubmissions` |
+| `sync --watch` | `GET /communities/{community}/record/events`, `GET /communities/{community}/submissions/events` | `streamRecord`, `streamSubmissions` |
+| `users list` | `GET /communities/{community}/users` | `listUsers` |
 
 The three key commands, `gen-api-key`, `list-api-keys` and `revoke-api-key`, call the data
-server's own `/v1/{community}/api-keys` routes (§4.6), which take a session key.
+server's own `/v1/communities/{community}/api-keys` routes (§4.6), which take a session key.
 
 ## 3. Access
 
@@ -221,7 +221,15 @@ and port communities; no quota) and `delegate` (server-level users).
 | `community-observer` | homed users and API keys | `read` on the assignment's collection value |
 
 A role assignment names a principal, a role and, for `community-member` and
-`community-observer` only, a required collection value. The community is never part of an
+`community-observer` only, a required collection value. Assignments are sub-resources of their
+principal: `…/users/{handle}/roles/{role}` and `…/api-keys/{key_id}/roles/{role}`. `PUT` sets a
+role's whole value under `If-Match` with its `ETag`; `PUT` and `DELETE` on
+`…/roles/{role}/collections/{collection}` add or withdraw one collection, with the authority
+over that collection alone, which is how an owner shares its own.
+
+**Users and Members are two resources.** `…/communities/{c}/users` are the community's
+accounts, with their roles; `…/communities/{c}/members` are the specification's Members, the
+record's publishers, read as the record is (anonymously while it is public). The community is never part of an
 assignment: it is the principal's own.
 
 ### 3.2 The user context and its two check points
@@ -269,72 +277,99 @@ signed-in user's session key, so only a signed-in user invites, assigns, issues 
 |---|---|---|---|---|
 | getOpenApiYaml | GET /openapi.yaml | no key |  | always |
 | getOpenApiJson | GET /openapi.json | no key |  | always |
-| getRecord | GET /{community}/record | `read` |  | public |
-| listArtifacts | GET /{community}/artifacts | `read` |  | public |
-| getArtifact | GET /{community}/artifacts/{name} | `read` |  | public |
-| getArtifactContent | GET /{community}/artifacts/{name}/content | `read` |  | public |
-| getArtifactProperty | GET /{community}/artifacts/{name}/properties/{property} | `read` |  | public |
-| listObjects | GET /{community}/artifacts/{name}/objects | `read` |  | public |
-| getObject | GET /{community}/artifacts/{name}/objects/{object} | `read` |  | public |
-| getObjectProperty | GET /{community}/artifacts/{name}/objects/{object}/properties/{property} | `read` |  | public |
-| listRelationships | GET /{community}/artifacts/{name}/relationships | `read` |  | public |
-| listCitedBy | GET /{community}/artifacts/{name}/cited-by | `read` |  | public |
-| listSupersession | GET /{community}/artifacts/{name}/supersession | `read` |  | public |
-| listFindings | GET /{community}/artifacts/{name}/findings | `read` |  | public |
-| resolveAddress | GET /{community}/resolve | `read` |  | public |
-| listMembers | GET /{community}/members | `read` |  | public |
-| getMember | GET /{community}/members/{handle} | `read` |  | public |
-| listMemberArtifacts | GET /{community}/members/{handle}/artifacts | `read` |  | public |
-| listMemberMessages | GET /{community}/members/{handle}/messages | `read` |  | public |
-| getMe | GET /{community}/me | any key; the handler decides |  |  |
-| checkSubmission | POST /{community}/submissions/check | `publish` |  |  |
-| listSubmissions | GET /{community}/submissions | `publish` |  |  |
-| submitArtifact | POST /{community}/submissions | `publish` |  |  |
-| getSubmission | GET /{community}/submissions/{submission} | `publish` |  |  |
-| streamRecord | GET /{community}/streams/record | `read` |  | public |
-| streamSubmissions | GET /{community}/streams/submissions | `publish` |  |  |
 | getStatus | GET /status | no key |  | always |
-| challenge | POST /auth/challenge | no key |  | always |
-| createSession | POST /auth/token | no key |  | always |
-| listUsers | GET /users | `members` or `delegate` | ✓ |  |
-| register | POST /users | no key |  | always |
-| rotateKey | POST /users/me/keys | any key; the handler decides | ✓ |  |
-| removeUser | DELETE /users/{user_id} | `members` or `delegate` | ✓ |  |
-| rebindUser | POST /users/{user_id}/rebind | `members` or `delegate` | ✓ |  |
-| setSuspectAfter | PUT /users/{user_id}/suspect-after | `members` or `delegate` | ✓ |  |
+| createChallenge | POST /challenges | no key |  | always |
+| createSession | POST /sessions | no key |  | always |
+| getMe | GET /me | any key; the handler decides |  |  |
+| rotateKey | POST /me/keys | any key; the handler decides | ✓ |  |
+| register | POST /registrations | no key |  | always |
 | listRoles | GET /roles | any key; the handler decides |  |  |
-| listInvites | GET /invites | `members` or `delegate` | ✓ |  |
-| createInvite | POST /invites | `members` or `delegate` | ✓ |  |
-| listAssignments | GET /assignments | any key; the handler decides | ✓ |  |
-| assignRole | POST /assignments | any key; the handler decides | ✓ |  |
-| unassignRole | DELETE /assignments | any key; the handler decides | ✓ |  |
+| getRole | GET /roles/{role} | any key; the handler decides |  |  |
+| listServerUsers | GET /users | `delegate` | ✓ |  |
+| getServerUser | GET /users/{handle} | `delegate` | ✓ |  |
+| updateServerUser | PATCH /users/{handle} | `delegate` | ✓ |  |
+| removeServerUser | DELETE /users/{handle} | `delegate` | ✓ |  |
+| rebindServerUser | POST /users/{handle}/invites | `delegate` | ✓ |  |
+| listServerUserRoles | GET /users/{handle}/roles | any key; the handler decides | ✓ |  |
+| getServerUserRole | GET /users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| setServerUserRole | PUT /users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| unsetServerUserRole | DELETE /users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| listServerInvites | GET /invites | `delegate` | ✓ |  |
+| createServerInvite | POST /invites | `delegate` | ✓ |  |
+| getServerInvite | GET /invites/{invite_id} | `delegate` | ✓ |  |
+| revokeServerInvite | DELETE /invites/{invite_id} | `delegate` | ✓ |  |
 | listCommunities | GET /communities | `communities` | ✓ |  |
 | createCommunity | POST /communities | `communities` | ✓ |  |
-| importCommunity | POST /communities/import | `communities` | ✓ |  |
-| exportCommunity | GET /{community}/export | `export` | ✓ |  |
-| startPortNdex | POST /{community}/port-ndex | `communities` | ✓ |  |
-| getPortNdex | GET /{community}/port-ndex/{port_id} | `communities` | ✓ |  |
-| listRoster | GET /{community}/roster | any key; the handler decides |  |  |
-| listApiKeys | GET /{community}/api-keys | any key; the handler decides | ✓ |  |
-| createApiKey | POST /{community}/api-keys | any key; the handler decides | ✓ |  |
-| getApiKey | GET /{community}/api-keys/{key_id} | any key; the handler decides | ✓ |  |
-| revokeApiKey | DELETE /{community}/api-keys/{key_id} | any key; the handler decides | ✓ |  |
-| listCollections | GET /{community}/collections | any key; the handler decides |  | public |
-| createCollection | POST /{community}/collections | `write` |  |  |
-| setPublic | PUT /{community}/collections/{collection}/public | `manage` | ✓ |  |
-| putFile | PUT /{community}/collections/{collection}/files/{name} | `write` or `publish` or `gate` |  |  |
-| listFileVersions | GET /{community}/files/{file_id}/versions | any key; the handler decides |  | public |
-| addFileVersion | POST /{community}/files/{file_id}/versions | `write` or `manage` |  |  |
-| deleteFile | DELETE /{community}/files/{file_id} | `write` or `manage` |  |  |
-| getFileContent | GET /{community}/files/{file_id}/v/{ref} | any key; the handler decides |  | public |
-| statFileVersion | GET /{community}/files/{file_id}/v/{ref}/stat | any key; the handler decides |  | public |
-| purgeVersion | POST /{community}/files/{file_id}/v/{n}/purge | `manage` | ✓ |  |
-| promoteVersion | POST /{community}/files/{file_id}/v/{n}/promote | `gate` or `manage` | ✓ |  |
-| listChanges | GET /{community}/collections/{collection}/changes | any key; the handler decides |  | public |
-| queryCollection | POST /{community}/collections/{collection}/query | any key; the handler decides |  | public |
-| findFile | GET /{community}/collections/{collection}/find | any key; the handler decides |  | public |
-| findByHash | GET /{community}/sha256/{sha} | any key; the handler decides |  | public |
-| verifyCitation | GET /{community}/verify | any key; the handler decides |  | public |
+| getCommunity | GET /communities/{community} | any key; the handler decides |  |  |
+| exportCommunity | GET /communities/{community}/archive | `export` | ✓ |  |
+| listUsers | GET /communities/{community}/users | any key; the handler decides |  |  |
+| getUser | GET /communities/{community}/users/{handle} | any key; the handler decides |  |  |
+| updateUser | PATCH /communities/{community}/users/{handle} | `members` | ✓ |  |
+| removeUser | DELETE /communities/{community}/users/{handle} | `members` | ✓ |  |
+| rebindUser | POST /communities/{community}/users/{handle}/invites | `members` | ✓ |  |
+| listUserRoles | GET /communities/{community}/users/{handle}/roles | any key; the handler decides | ✓ |  |
+| getUserRole | GET /communities/{community}/users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| setUserRole | PUT /communities/{community}/users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| unsetUserRole | DELETE /communities/{community}/users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| addUserRoleCollection | PUT /communities/{community}/users/{handle}/roles/{role}/collections/{role_collection} | any key; the handler decides | ✓ |  |
+| removeUserRoleCollection | DELETE /communities/{community}/users/{handle}/roles/{role}/collections/{role_collection} | any key; the handler decides | ✓ |  |
+| listInvites | GET /communities/{community}/invites | `members` | ✓ |  |
+| createInvite | POST /communities/{community}/invites | `members` | ✓ |  |
+| getInvite | GET /communities/{community}/invites/{invite_id} | `members` | ✓ |  |
+| revokeInvite | DELETE /communities/{community}/invites/{invite_id} | `members` | ✓ |  |
+| listApiKeyRoles | GET /communities/{community}/api-keys/{key_id}/roles | any key; the handler decides | ✓ |  |
+| getApiKeyRole | GET /communities/{community}/api-keys/{key_id}/roles/{role} | any key; the handler decides | ✓ |  |
+| setApiKeyRole | PUT /communities/{community}/api-keys/{key_id}/roles/{role} | any key; the handler decides | ✓ |  |
+| unsetApiKeyRole | DELETE /communities/{community}/api-keys/{key_id}/roles/{role} | any key; the handler decides | ✓ |  |
+| addApiKeyRoleCollection | PUT /communities/{community}/api-keys/{key_id}/roles/{role}/collections/{role_collection} | any key; the handler decides | ✓ |  |
+| removeApiKeyRoleCollection | DELETE /communities/{community}/api-keys/{key_id}/roles/{role}/collections/{role_collection} | any key; the handler decides | ✓ |  |
+| listApiKeys | GET /communities/{community}/api-keys | any key; the handler decides | ✓ |  |
+| createApiKey | POST /communities/{community}/api-keys | any key; the handler decides | ✓ |  |
+| getApiKey | GET /communities/{community}/api-keys/{key_id} | any key; the handler decides | ✓ |  |
+| revokeApiKey | DELETE /communities/{community}/api-keys/{key_id} | any key; the handler decides | ✓ |  |
+| startNdexImport | POST /communities/{community}/ndex-imports | `communities` | ✓ |  |
+| getNdexImport | GET /communities/{community}/ndex-imports/{import_id} | `communities` | ✓ |  |
+| getRecord | GET /communities/{community}/record | `read` |  | public |
+| streamRecord | GET /communities/{community}/record/events | `read` |  | public |
+| listArtifacts | GET /communities/{community}/artifacts | `read` |  | public |
+| getArtifact | GET /communities/{community}/artifacts/{name} | `read` |  | public |
+| getArtifactContent | GET /communities/{community}/artifacts/{name}/content | `read` |  | public |
+| getArtifactProperty | GET /communities/{community}/artifacts/{name}/properties/{property} | `read` |  | public |
+| listObjects | GET /communities/{community}/artifacts/{name}/objects | `read` |  | public |
+| getObject | GET /communities/{community}/artifacts/{name}/objects/{object} | `read` |  | public |
+| getObjectProperty | GET /communities/{community}/artifacts/{name}/objects/{object}/properties/{property} | `read` |  | public |
+| listRelationships | GET /communities/{community}/artifacts/{name}/relationships | `read` |  | public |
+| listCitedBy | GET /communities/{community}/artifacts/{name}/cited-by | `read` |  | public |
+| listSupersession | GET /communities/{community}/artifacts/{name}/supersession | `read` |  | public |
+| listFindings | GET /communities/{community}/artifacts/{name}/findings | `read` |  | public |
+| listMembers | GET /communities/{community}/members | `read` |  | public |
+| getMember | GET /communities/{community}/members/{handle} | `read` |  | public |
+| listMemberArtifacts | GET /communities/{community}/members/{handle}/artifacts | `read` |  | public |
+| listMemberMessages | GET /communities/{community}/members/{handle}/messages | `read` |  | public |
+| resolveAddress | GET /communities/{community}/addresses | `read` |  | public |
+| listSubmissions | GET /communities/{community}/submissions | `publish` |  |  |
+| submitArtifact | POST /communities/{community}/submissions | `publish` |  |  |
+| getSubmission | GET /communities/{community}/submissions/{submission} | `publish` |  |  |
+| streamSubmissions | GET /communities/{community}/submissions/events | `publish` |  |  |
+| checkSubmission | POST /communities/{community}/submission-checks | `publish` |  |  |
+| listCollections | GET /communities/{community}/collections | any key; the handler decides |  | public |
+| createCollection | POST /communities/{community}/collections | `write` |  |  |
+| getCollection | GET /communities/{community}/collections/{collection} | any key; the handler decides |  | public |
+| updateCollection | PATCH /communities/{community}/collections/{collection} | `manage` | ✓ |  |
+| listFiles | GET /communities/{community}/collections/{collection}/files | any key; the handler decides |  | public |
+| promoteVersion | POST /communities/{community}/collections/{collection}/files | `gate` or `manage` | ✓ |  |
+| queryCollection | POST /communities/{community}/collections/{collection}/files/search | any key; the handler decides |  | public |
+| putFile | PUT /communities/{community}/collections/{collection}/files/{name} | `write` or `publish` or `gate` |  |  |
+| listChanges | GET /communities/{community}/collections/{collection}/changes | any key; the handler decides |  | public |
+| getFile | GET /communities/{community}/files/{file_id} | any key; the handler decides |  | public |
+| deleteFile | DELETE /communities/{community}/files/{file_id} | `write` or `manage` |  |  |
+| listFileVersions | GET /communities/{community}/files/{file_id}/versions | any key; the handler decides |  | public |
+| addFileVersion | POST /communities/{community}/files/{file_id}/versions | `write` or `manage` |  |  |
+| getFileContent | GET /communities/{community}/files/{file_id}/versions/{ref} | any key; the handler decides |  | public |
+| purgeVersion | DELETE /communities/{community}/files/{file_id}/versions/{ref} | `manage` | ✓ |  |
+| statFileVersion | GET /communities/{community}/files/{file_id}/versions/{ref}/metadata | any key; the handler decides |  | public |
+| verifyCitation | GET /communities/{community}/files/{file_id}/versions/{ref}/verification | any key; the handler decides |  | public |
+| findByHash | GET /communities/{community}/versions | any key; the handler decides |  | public |
 
 ## 4. API keys
 
@@ -346,8 +381,8 @@ security scheme, the API's only one; any other bearer credential answers 401.
 
 ### 4.2 Kinds of key
 
-- **A session key** proves a user signed in: `POST /v1/auth/challenge` then
-  `POST /v1/auth/token` with `{handle, community}` (`community` is null for a server-level
+- **A session key** proves a user signed in: `POST /v1/challenges` then
+  `POST /v1/sessions` with `{handle, community}` (`community` is null for a server-level
   user), signed with the user's private key file. It lasts `SYMPOSIUM_SERVER_SESSION_TTL`
   seconds (default 900); the skill's CLI obtains one per command.
 - **A member issued key** acts as the user who issued it, for an application or script. It
@@ -416,16 +451,17 @@ whose `name` does not carry the `<handle>_` prefix.
 
 ### 4.6 Life cycle
 
-Keys are issued, listed and revoked on `/v1/{community}/api-keys` with a session key.
+Keys are issued, listed and revoked on `/v1/communities/{community}/api-keys` with a session key.
 
 | Route | Who | What |
 |---|---|---|
-| `POST /v1/{community}/api-keys` `{label, non_member?, roles, expires_days?}` | a signed-in user of the community | an issued key carrying `roles`, each within the issuer's grants; a non-member key also takes the authority to assign each role |
-| `GET /v1/{community}/api-keys` | the issuer: its own keys; a `members` holder: every key of the community | the keys with their roles, and their values for the issuer |
-| `GET /v1/{community}/api-keys/{key_id}` | the issuer, or a `members` holder | one key |
-| `DELETE /v1/{community}/api-keys/{key_id}` | the issuer, or a `members` holder | deletes the key and its assignments; its next request answers 401 |
+| `POST /v1/communities/{community}/api-keys` `{label, non_member?, roles, expires_days?}` | a signed-in user of the community | an issued key carrying `roles`, each within the issuer's grants; a non-member key also takes the authority to assign each role |
+| `GET /v1/communities/{community}/api-keys` | the issuer: its own keys; a `members` holder: every key of the community | the keys with their roles, and their values for the issuer |
+| `GET /v1/communities/{community}/api-keys/{key_id}` | the issuer, or a `members` holder | one key |
+| `DELETE /v1/communities/{community}/api-keys/{key_id}` | the issuer, or a `members` holder | deletes the key and its assignments; its next request answers 401 |
 
-A key's roles change through `POST` and `DELETE /v1/assignments` with `api_key_id`, by the
+A key's roles change through `…/api-keys/{key_id}/roles/{role}` (`PUT`, `DELETE`) and
+`…/roles/{role}/collections/{collection}` (one collection at a time), by the
 same two callers. Every route answers `Cache-Control: no-store` wherever it carries a key's
 value. A label already on one of the issuer's keys answers 409.
 
@@ -588,7 +624,7 @@ API, and the rules import none of the storage. Only `symposium_server` sees all 
 
 ### 10.2 Why the data server image
 
-- **The API reads PostgreSQL directly.** The index, the `api_keys` table, the roster and
+- **The API reads PostgreSQL directly.** The index, the `api_keys` table, the users and
   the feeds all live in the image's PostgreSQL, which listens on `127.0.0.1` alone. A process
   in the image reaches it with no new network exposure and no new credential. A separate
   image would need PostgreSQL opened to the network, or every read relayed through `/v1`

@@ -44,7 +44,7 @@ def test_a_server_admin_creates_communities_idempotently(server, admin):
     # the default collections exist from the start
     for collection in ("inbox", "files", "record"):
         r = HTTP.get(
-            f"{server.url}/v1/comm1/collections/{collection}/changes",
+            f"{server.url}/v1/communities/comm1/collections/{collection}/changes",
             headers=admin.headers(),
         )
         assert r.status_code == 200, r.text
@@ -74,19 +74,17 @@ def test_a_server_admin_creates_communities_idempotently(server, admin):
         "my-comm",
         "comm.1",
         "",
-        "status",
-        "STATUS",
-        "Communities",
-        "admin",
-        "users",
-        "invites",
-        "roles",
-        "assignments",
-        "auth",
     ],
 )
-def test_community_names_must_be_slugs_and_not_reserved(server, admin, name):
+def test_community_names_must_be_slugs(server, admin, name):
     assert create(server, admin, name).status_code == 400
+
+
+def test_any_slug_names_a_community_route_words_included(server, admin):
+    """No server-wide route shares a community's path segment, so every slug is free."""
+    for name in ("status", "users", "invites"):
+        assert create(server, admin, name).status_code == 201, name
+    assert HTTP.get(f"{server.url}/v1/status").json()["mode"] == "operational"
 
 
 def test_names_are_unique_and_matched_ignoring_case(server, admin):
@@ -98,7 +96,7 @@ def test_names_are_unique_and_matched_ignoring_case(server, admin):
     lyra = Owner(server, "lyra", community="Comm1")
     assert enroll(admin.at("Comm1"), lyra, "Comm1").status_code == 201
     lyra.community = "COMM1"  # any case reaches Comm1
-    me = HTTP.get(lyra.url("/me"), headers=lyra.headers()).json()
+    me = HTTP.get(lyra.server.url + "/v1/me", headers=lyra.headers()).json()
     assert me["community"] == "Comm1"
 
     for path in ("my-comm", "x" * 21, "nowhere"):
@@ -117,8 +115,12 @@ def test_one_handle_is_an_independent_user_in_each_community(server, admin):
     # each key signs in only to its own community, and each session works only there
     assert Owner(server, "lyra", lyra1.key, "comm2").sign_in().status_code == 401
     assert Owner(server, "lyra", lyra2.key, "comm1").sign_in().status_code == 401
-    wrong = HTTP.get(f"{server.url}/v1/comm2/me", headers=lyra1.headers())
+    wrong = HTTP.get(
+        f"{server.url}/v1/communities/comm2/collections", headers=lyra1.headers()
+    )
     assert wrong.status_code == 403 and "belongs to comm1" in wrong.json()["detail"]
+    me = HTTP.get(f"{server.url}/v1/me", headers=lyra1.headers()).json()
+    assert me["community"] == "comm1"  # the caller's own community
 
     fid = lyra1.put("comm1", "files", "a.csv", b"comm1 data").json()["file_id"]
     lyra2.community = "comm2"
@@ -128,15 +130,15 @@ def test_one_handle_is_an_independent_user_in_each_community(server, admin):
 def test_a_server_level_user_works_in_every_community_and_on_no_roster(server, admin):
     create_community(server, admin, "comm1")
     create_community(server, admin, "comm2")
+    me = HTTP.get(f"{server.url}/v1/me", headers=admin.headers()).json()
+    assert me["community"] is None and me["context"]["community"] is None
+    assert {"communities", "delegate"} <= set(me["context"]["grants"])
     for community in ("comm1", "comm2"):
-        me = HTTP.get(f"{server.url}/v1/{community}/me", headers=admin.headers()).json()
-        assert me["community"] == community and me["context"]["community"] is None
-        assert {"communities", "delegate"} <= set(me["context"]["grants"])
         roster = HTTP.get(
-            f"{server.url}/v1/{community}/roster", headers=admin.headers()
+            f"{server.url}/v1/communities/{community}/users", headers=admin.headers()
         ).json()
         assert roster["server_users"] == ["demo-admin"]
-        assert "demo-admin" not in [r["handle"] for r in roster["roster"]]
+        assert "demo-admin" not in [r["handle"] for r in roster["users"]]
     clash = admin.invite(
         "demo-admin",
         [{"role": "community-member", "collections": ["*"]}],

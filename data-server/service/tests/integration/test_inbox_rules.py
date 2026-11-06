@@ -90,10 +90,10 @@ def test_an_inbox_item_never_changes_and_inbox_is_never_public(server):
     for actor in (lyra, steward, root):
         assert actor.version(fid, b"{}", SUBMISSION).status_code == 403
         assert actor.delete(fid).status_code == 403
-    public = HTTP.put(
-        steward.url("/collections/inbox/public"),
+    public = HTTP.patch(
+        steward.url("/collections/inbox"),
         json={"public": True},
         headers=root.headers(),
     )
     assert public.status_code == 403
-    assert HTTP.get(lyra.url(f"/files/{fid}/v/latest")).status_code == 401
+    assert HTTP.get(lyra.url(f"/files/{fid}/versions/latest")).status_code == 401

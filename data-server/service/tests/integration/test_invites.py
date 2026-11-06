@@ -28,7 +28,9 @@ def demo(server):
 
 
 def roles_of(owner):
-    return HTTP.get(owner.url("/me"), headers=owner.headers()).json()["roles"]
+    return HTTP.get(owner.server.url + "/v1/me", headers=owner.headers()).json()[
+        "roles"
+    ]
 
 
 def test_joining_applies_exactly_the_roles_the_server_stored(demo):
@@ -85,8 +87,7 @@ def test_pending_invites_are_listed_with_their_roles_until_used(demo):
     invite(admin, "demo", "lyra")
     invite(admin, "demo", "olive", roles=OBSERVER)
     listed = HTTP.get(
-        f"{server.url}/v1/invites",
-        params={"community": "demo"},
+        f"{server.url}/v1/communities/demo/invites",
         headers=admin.headers(),
     ).json()["invites"]
     handles = {i["handle"]: i for i in listed}
@@ -94,11 +95,23 @@ def test_pending_invites_are_listed_with_their_roles_until_used(demo):
     assert handles["olive"]["roles"] == OBSERVER and handles["olive"]["invite"]
     Owner(server, "lyra").register(handles["lyra"]["invite"])
     again = HTTP.get(
-        f"{server.url}/v1/invites",
-        params={"community": "demo"},
+        f"{server.url}/v1/communities/demo/invites",
         headers=admin.headers(),
     ).json()["invites"]
     assert {i["handle"] for i in again} == {"olive", "steward"}
+
+
+def test_an_invite_is_read_and_revoked_by_its_id(demo):
+    server, admin = demo
+    issued = invite(admin, "demo", "lyra")
+    assert issued.status_code == 201
+    url = issued.headers["Location"]
+    assert url.endswith(f"/v1/communities/demo/invites/{issued.json()['id']}")
+    read = HTTP.get(url, headers=admin.headers())
+    assert read.status_code == 200 and read.json()["invite"] == issued.json()["invite"]
+    assert HTTP.delete(url, headers=admin.headers()).status_code == 200
+    assert HTTP.get(url, headers=admin.headers()).status_code == 404
+    assert Owner(server, "lyra").register(issued.json()["invite"]).status_code == 403
 
 
 def test_a_missing_collection_value_is_refused(demo):
@@ -131,12 +144,16 @@ def test_rebind_retires_keys_and_only_the_fresh_invite_works(server):
     admin, owners = community_with(server, members=("lyra",))
     lyra = owners["lyra"]
     old_session = lyra.session_key()
-    user = admin.user_id("lyra", "demo")
-    rebound = HTTP.post(f"{server.url}/v1/users/{user}/rebind", headers=admin.headers())
+    rebound = HTTP.post(
+        admin.user_url("lyra", "demo") + "/invites", headers=admin.headers()
+    )
     assert rebound.status_code == 201, rebound.text
     assert rebound.json()["retired_keys"] == 1
     assert (
-        HTTP.get(lyra.url("/me"), headers=lyra.headers(old_session)).status_code == 401
+        HTTP.get(
+            lyra.server.url + "/v1/me", headers=lyra.headers(old_session)
+        ).status_code
+        == 401
     )
     assert lyra.sign_in().status_code == 401
     fresh = Owner(server, "lyra", OwnerKey())

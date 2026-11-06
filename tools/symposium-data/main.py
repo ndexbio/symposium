@@ -173,8 +173,10 @@ class DataServer:
         headers: dict | None = None,
         auth: bool = True,
         stream: bool = False,
+        answered: dict | None = None,
     ):
-        """-> the parsed JSON body, or the open response when `stream`."""
+        """-> the parsed JSON body, or the open response when `stream`. `answered`, when
+        given, receives the response's headers."""
         if not self.checked:
             self.check_api()
         headers = dict(headers or {})
@@ -196,6 +198,8 @@ class DataServer:
             ) from None
         if stream:
             return response
+        if answered is not None:
+            answered.update({k.lower(): v for k, v in response.headers.items()})
         with response:
             raw = response.read()
         return json.loads(raw) if raw else {}
@@ -259,13 +263,13 @@ class DataServer:
     def c(self, path: str) -> str:
         if not self.community:
             raise CommandError(NO_COMMUNITY)
-        return f"/v1/{urllib.parse.quote(self.community)}{path}"
+        return f"/v1/communities/{urllib.parse.quote(self.community)}{path}"
 
     # ── sign-in ────────────────────────────────────────────────────────────────────────────
     def challenge(self, handle: str, home: str | None) -> str:
         return self.request(
             "POST",
-            "/v1/auth/challenge",
+            "/v1/challenges",
             body={"handle": handle, "community": home},
             auth=False,
         )["nonce"]
@@ -277,7 +281,7 @@ class DataServer:
         signature = keystore.sign(home or ADMIN_SCOPE, handle, nonce.encode())
         self.key = self.request(
             "POST",
-            "/v1/auth/token",
+            "/v1/sessions",
             body={
                 "handle": handle,
                 "community": home,
@@ -290,7 +294,7 @@ class DataServer:
     def register(self, handle: str, jwk: dict, nonce: str, signature: str, invite: str):
         return self.request(
             "POST",
-            "/v1/users",
+            "/v1/registrations",
             body={
                 "handle": handle,
                 "public_jwk": jwk,
@@ -304,12 +308,12 @@ class DataServer:
     def rotate(self, jwk: dict, nonce: str, signature: str) -> dict:
         return self.request(
             "POST",
-            "/v1/users/me/keys",
+            "/v1/me/keys",
             body={"public_jwk": jwk, "nonce": nonce, "signature": signature},
         )
 
     def me(self) -> dict:
-        return self.request("GET", self.c("/me"))
+        return self.request("GET", "/v1/me")
 
     # ── server-wide ────────────────────────────────────────────────────────────────────────
     def communities(self) -> dict:
@@ -324,7 +328,7 @@ class DataServer:
         with open(path, "rb") as source:
             return self.request(
                 "POST",
-                "/v1/communities/import",
+                "/v1/communities",
                 data=source,
                 headers={
                     "Content-Type": "application/x-tar",
@@ -334,52 +338,76 @@ class DataServer:
 
     # ── users, roles and invites ───────────────────────────────────────────────────────────
     @staticmethod
-    def params(params: dict) -> str:
-        given = {k: v for k, v in params.items() if v is not None}
-        return "?" + urllib.parse.urlencode(given) if given else ""
+    def scope(community: str | None) -> str:
+        """Where a scope's users and invites live: a community's, or the server's."""
+        if community is None:
+            return "/v1"
+        return f"/v1/communities/{urllib.parse.quote(community)}"
 
-    def roster(self) -> dict:
-        return self.request("GET", self.c("/roster"))
+    def user_path(self, handle: str, community: str | None) -> str:
+        return f"{self.scope(community)}/users/{urllib.parse.quote(handle, safe='')}"
+
+    def key_path(self, key_id: str) -> str:
+        return self.c(f"/api-keys/{urllib.parse.quote(key_id, safe='')}")
 
     def users(self, community: str | None) -> dict:
-        return self.request("GET", "/v1/users" + self.params({"community": community}))
+        return self.request("GET", f"{self.scope(community)}/users")
 
-    def remove_user(self, user_id: str) -> dict:
-        return self.request("DELETE", f"/v1/users/{user_id}")
+    def remove_user(self, handle: str, community: str | None) -> dict:
+        return self.request("DELETE", self.user_path(handle, community))
 
-    def rebind(self, user_id: str, hours: int | None) -> dict:
+    def rebind(self, handle: str, community: str | None, hours: int | None) -> dict:
         body = {} if hours is None else {"hours": hours}
-        return self.request("POST", f"/v1/users/{user_id}/rebind", body=body)
-
-    def suspect_after(self, user_id: str, at: str) -> dict:
         return self.request(
-            "PUT", f"/v1/users/{user_id}/suspect-after", body={"at": at}
+            "POST", self.user_path(handle, community) + "/invites", body=body
+        )
+
+    def suspect_after(self, handle: str, community: str | None, at: str) -> dict:
+        return self.request(
+            "PATCH", self.user_path(handle, community), body={"suspect_after": at}
         )
 
     def roles(self) -> dict:
         return self.request("GET", "/v1/roles")
 
-    def assignments(self, params: dict) -> dict:
-        return self.request("GET", "/v1/assignments" + self.params(params))
+    def set_role(self, principal: str, role: str, collections) -> dict:
+        """Assign a role, or set its whole collection value under its ETag."""
+        path = f"{principal}/roles/{role}"
+        answered: dict = {}
+        headers = {}
+        try:
+            self.request("GET", path, answered=answered)
+        except CommandError as e:
+            if e.status != 404:
+                raise
+        if answered.get("etag"):
+            headers["If-Match"] = answered["etag"]
+        body = None if collections is None else {"collections": collections}
+        return self.request(
+            "PUT", path, body=body if body is not None else {}, headers=headers
+        )
 
-    def assign(self, body: dict) -> dict:
-        return self.request("POST", "/v1/assignments", body=body)
+    def unset_role(self, principal: str, role: str) -> dict:
+        return self.request("DELETE", f"{principal}/roles/{role}")
 
-    def unassign(self, body: dict) -> dict:
-        return self.request("DELETE", "/v1/assignments", body=body)
+    def add_role_collection(self, principal: str, role: str, collection: str) -> dict:
+        name = urllib.parse.quote(collection, safe="")
+        return self.request("PUT", f"{principal}/roles/{role}/collections/{name}")
 
-    def invite(self, body: dict) -> dict:
-        return self.request("POST", "/v1/invites", body=body)
+    def remove_role_collection(self, principal: str, role: str, collection: str):
+        name = urllib.parse.quote(collection, safe="")
+        return self.request("DELETE", f"{principal}/roles/{role}/collections/{name}")
+
+    def invite(self, community: str | None, body: dict) -> dict:
+        return self.request("POST", f"{self.scope(community)}/invites", body=body)
 
     def pending_invites(self, community: str | None) -> dict:
-        return self.request(
-            "GET", "/v1/invites" + self.params({"community": community})
-        )
+        return self.request("GET", f"{self.scope(community)}/invites")
 
     # ── API keys: issued per community by a signed-in user ─────────────────────────────────
     @staticmethod
     def api_keys_path(community: str, path: str = "") -> str:
-        return f"/v1/{urllib.parse.quote(community)}/api-keys{path}"
+        return f"/v1/communities/{urllib.parse.quote(community)}/api-keys{path}"
 
     def create_api_key(self, community: str, body: dict) -> dict:
         return self.request("POST", self.api_keys_path(community), body=body)
@@ -432,7 +460,7 @@ class DataServer:
         path = self.c(
             f"/collections/{collection}/files/{urllib.parse.quote(name, safe='')}"
         )
-        return self.upload("PUT", path, source, headers)
+        return self.upload("PUT", path, source, {**headers, "If-None-Match": "*"})
 
     def add_version(self, file_id: str, source: Path | None, headers: dict) -> dict:
         return self.upload(
@@ -443,29 +471,36 @@ class DataServer:
         query = "?" + urllib.parse.urlencode({"reason": reason}) if reason else ""
         return self.request("DELETE", self.c(f"/files/{file_id}{query}"))
 
-    def promote(self, file_id: str, n: str, body: dict) -> dict:
+    def promote(self, collection: str, body: dict) -> dict:
+        """Copy the version `body["from"]` cites into `collection` as a new file."""
         return self.request(
-            "POST", self.c(f"/files/{file_id}/v/{n}/promote"), body=body
+            "POST", self.c(f"/collections/{collection}/files"), body=body
         )
 
     def find(self, collection: str, name: str) -> dict:
         query = urllib.parse.urlencode({"name": name})
-        return self.request("GET", self.c(f"/collections/{collection}/find?{query}"))
+        found = self.request("GET", self.c(f"/collections/{collection}/files?{query}"))
+        if not found["items"]:
+            raise CommandError(f"no file named '{name}' in {collection}", 404)
+        return found["items"][0]
 
     def by_hash(self, sha256: str) -> dict:
-        return self.request("GET", self.c(f"/sha256/{sha256}"))
+        query = urllib.parse.urlencode({"sha256": sha256})
+        return self.request("GET", self.c(f"/versions?{query}"))
 
     def query(self, collection: str, contains: dict, since: int, limit: int) -> dict:
         return self.request(
             "POST",
-            self.c(f"/collections/{collection}/query"),
+            self.c(f"/collections/{collection}/files/search"),
             body={"contains": contains, "since": since, "limit": limit},
         )
 
-    def verify(self, cite: str, before: str | None, sha256: str | None) -> dict:
-        params = {"cite": cite}
-        params.update({k: v for k, v in (("before", before), ("sha256", sha256)) if v})
-        return self.request("GET", self.c("/verify?" + urllib.parse.urlencode(params)))
+    def verify(self, file_id: str, n: str, before: str | None, sha256: str | None):
+        params = {k: v for k, v in (("before", before), ("sha256", sha256)) if v}
+        query = "?" + urllib.parse.urlencode(params) if params else ""
+        return self.request(
+            "GET", self.c(f"/files/{file_id}/versions/{n}/verification{query}")
+        )
 
     # ── collections ────────────────────────────────────────────────────────────────────────
     def list_collections(self) -> dict:
@@ -476,34 +511,36 @@ class DataServer:
 
     def set_public(self, collection: str, public: bool) -> dict:
         return self.request(
-            "PUT", self.c(f"/collections/{collection}/public"), body={"public": public}
+            "PATCH", self.c(f"/collections/{collection}"), body={"public": public}
         )
 
     def purge(self, file_id: str, n: str) -> dict:
-        return self.request("POST", self.c(f"/files/{file_id}/v/{n}/purge"))
+        return self.request("DELETE", self.c(f"/files/{file_id}/versions/{n}"))
 
     def stat(self, file_id: str, ref: str) -> dict:
-        return self.request("GET", self.c(f"/files/{file_id}/v/{ref}/stat"))
+        return self.request("GET", self.c(f"/files/{file_id}/versions/{ref}/metadata"))
 
     def versions(self, file_id: str) -> dict:
         return self.request("GET", self.c(f"/files/{file_id}/versions"))
 
     def content(self, file_id: str, ref: str):
-        return self.request("GET", self.c(f"/files/{file_id}/v/{ref}"), stream=True)
+        return self.request(
+            "GET", self.c(f"/files/{file_id}/versions/{ref}"), stream=True
+        )
 
     def changes(self, collection: str, since: int, limit: int) -> dict:
         query = urllib.parse.urlencode({"since": since, "limit": limit})
         return self.request("GET", self.c(f"/collections/{collection}/changes?{query}"))
 
     def export(self):
-        return self.request("GET", self.c("/export"), stream=True)
+        return self.request("GET", self.c("/archive"), stream=True)
 
     # ── the port (R-M1) ────────────────────────────────────────────────────────────────────
     def start_port(self, body: dict) -> dict:  # port-ndex
-        return self.request("POST", self.c("/port-ndex"), body=body)
+        return self.request("POST", self.c("/ndex-imports"), body=body)
 
     def port(self, port_id: str) -> dict:  # port-ndex
-        return self.request("GET", self.c(f"/port-ndex/{port_id}"))
+        return self.request("GET", self.c(f"/ndex-imports/{port_id}"))
 
 
 class Context:
@@ -592,14 +629,6 @@ class Commands:
     def community_of(self, args, context: dict) -> str | None:
         """The community a command names (`--community`), else the context's."""
         return getattr(args, "community", None) or context.get("community")
-
-    def user_id(self, server: DataServer, handle: str, community: str | None) -> str:
-        """A user's id from its handle, in a community or among the server-level users."""
-        for user in server.users(community)["users"]:
-            if user["handle"] == handle:
-                return user["id"]
-        where = community or "the server-level users"
-        raise CommandError(f"no user '{handle}' in {where}", 404)
 
     # ── status and context ─────────────────────────────────────────────────────────────────
     def status(self, args) -> dict:
@@ -721,11 +750,6 @@ class Commands:
     def communities_list(self, _args) -> dict:
         return self.signed_in().communities()
 
-    def roster_list(self, _args) -> dict:
-        """Every user of the community, removed ones marked, with its roles, and the
-        server-level users: any principal of the community reads it."""
-        return self.signed_in().roster()
-
     # ── invites ────────────────────────────────────────────────────────────────────────────
     def invite_file(self, server: DataServer, issued: dict) -> dict:
         """An invite as a file: its secret, the handle, its home and the server's URL. The
@@ -746,14 +770,10 @@ class Commands:
             )
         context = self.context.load()
         server = self.signed_in(context)
-        body = {
-            "handle": args.handle,
-            "community": self.invitee_home(args, context),
-            "roles": access_list(args.access),
-        }
+        body = {"handle": args.handle, "roles": access_list(args.access)}
         if args.hours is not None:
             body["hours"] = args.hours
-        issued = server.invite(body)
+        issued = server.invite(self.invitee_home(args, context), body)
         write_secret(Path(args.out), self.invite_file(server, issued))
         return {
             "community": issued["community"],
@@ -804,43 +824,27 @@ class Commands:
         context = self.context.load()
         server = self.signed_in(context)
         roles = server.roles()["roles"]
-        if context.get("community"):
-            me = server.me()
-            held, resolved = me["roles"], me["context"]
-        else:
-            held = server.assignments({"handle": context["handle"]})["roles"]
-            resolved = self.server_context(context, held, roles)
-        context["access"] = {"roles": held, "context": resolved}
+        me = server.me()
+        context["access"] = {"roles": me["roles"], "context": me["context"]}
         self.context.save(context)
         return {
             "handle": context["handle"],
             "community": context.get("community"),
-            "roles": held,
-            "context": resolved,
+            "roles": me["roles"],
+            "context": me["context"],
             "access_roles": roles,
         }
 
-    @staticmethod
-    def server_context(context: dict, held: list, roles: list) -> dict:
-        """A server-level user's grants, from its roles' grants: none takes a collection
-        value, and every collection-scoped grant reaches every collection."""
-        grants: dict = {}
-        by_id = {r["role"]: r for r in roles}
-        for assignment in held:
-            for grant, value in by_id[assignment["role"]]["grants"].items():
-                grants[grant] = None if value is None else [rbac.ALL]
-        return {
-            "principal": context["handle"],
-            "community": None,
-            "via_session": True,
-            "grants": dict(sorted(grants.items())),
-        }
-
-    def principal(self, args, context: dict) -> dict:
-        """The principal an assign or unassign names: a user, or an issued key."""
+    def principal(self, server: DataServer, args, context: dict) -> tuple[str, dict]:
+        """The principal an assign or unassign names: a user, or an issued key. -> (its
+        path, how it is printed)."""
         if args.api_key:
-            return {"api_key_id": args.api_key}
-        return {"handle": args.handle, "community": self.target_home(args, context)}
+            return server.key_path(args.api_key), {"api_key_id": args.api_key}
+        home = self.target_home(args, context)
+        return server.user_path(args.handle, home), {
+            "handle": args.handle,
+            "community": home,
+        }
 
     def target_home(self, args, context: dict) -> str | None:
         """--community, else the context's community; --server names a server-level user."""
@@ -849,42 +853,56 @@ class Commands:
         return self.community_of(args, context)
 
     def assign(self, args) -> dict:
-        return self.change_roles(args, "assign")
-
-    def unassign(self, args) -> dict:
-        return self.change_roles(args, "unassign")
-
-    def change_roles(self, args, how: str) -> dict:
+        """`<role>:c1,c2` adds those collections, one at a time; `<role>:*`, `<role>:` and
+        `<role>` set the role's whole value. -> each changed assignment, as the server answers
+        it."""
         context = self.context.load()
         server = self.signed_in(context)
-        target = self.principal(args, context)
-        roles = []
+        path, target = self.principal(server, args, context)
+        changed = []
+        for assignment in access_list(args.access):
+            names = assignment["collections"]
+            if names and rbac.ALL not in names:
+                for name in names:
+                    held = server.add_role_collection(path, assignment["role"], name)
+            else:
+                held = server.set_role(path, assignment["role"], names)
+            changed.append(held)
+        return {**target, "roles": changed}
+
+    def unassign(self, args) -> dict:
+        """`<role>` ends the role; `<role>:c1,c2` withdraws those collections. -> the
+        principal's roles as the last change left them."""
+        context = self.context.load()
+        server = self.signed_in(context)
+        path, target = self.principal(server, args, context)
+        left: dict = {"roles": []}
         for value in args.access:
             role, colon, _ = value.partition(":")
-            if how == "unassign" and not colon:
-                # unassigning a role whole, whatever its collection value
-                assignment = {"role": role, "collections": None}
-            else:
-                assignment = access_list([value])[0]
-            roles = getattr(server, how)({**target, **assignment})["roles"]
-        return {**target, "roles": roles}
+            if not colon:
+                left = server.unset_role(path, role)
+                continue
+            for name in access_list([value])[0]["collections"] or []:
+                left = server.remove_role_collection(path, role, name)
+        return {**target, "roles": left["roles"]}
 
     # ── users ──────────────────────────────────────────────────────────────────────────────
     def users_list(self, args) -> dict:
+        """A community's users, readable by any principal of it, or with --server the
+        server-level users."""
         context = self.context.load()
         return self.signed_in(context).users(self.target_home(args, context))
 
     def users_remove(self, args) -> dict:
         context = self.context.load()
-        server = self.signed_in(context)
-        home = self.target_home(args, context)
-        return server.remove_user(self.user_id(server, args.handle, home))
+        return self.signed_in(context).remove_user(
+            args.handle, self.target_home(args, context)
+        )
 
     def rebind_key(self, args) -> dict:
         context = self.context.load()
         server = self.signed_in(context)
-        home = self.target_home(args, context)
-        issued = server.rebind(self.user_id(server, args.handle, home), args.hours)
+        issued = server.rebind(args.handle, self.target_home(args, context), args.hours)
         write_secret(Path(args.out), self.invite_file(server, issued))
         return {
             "community": issued["community"],
@@ -896,9 +914,9 @@ class Commands:
 
     def suspect_after(self, args) -> dict:
         context = self.context.load()
-        server = self.signed_in(context)
-        home = self.target_home(args, context)
-        return server.suspect_after(self.user_id(server, args.handle, home), args.at)
+        return self.signed_in(context).suspect_after(
+            args.handle, self.target_home(args, context), args.at
+        )
 
     # ── API keys (api/DESIGN.md §4.6): values move as 0600 files, never on stdout ───────────
     @staticmethod
@@ -1151,7 +1169,7 @@ class Commands:
             raise CommandError(
                 "promote takes a citation: symposium-data:<file-id>@v<n>"
             )
-        body = {"collection": args.collection}
+        body = {"from": f"symposium-data:{file_id}@v{n}"}
         for key, value in (
             ("name", args.name),
             ("metadata", args.metadata),
@@ -1159,7 +1177,7 @@ class Commands:
         ):
             if value is not None:
                 body[key] = value
-        return self.signed_in().promote(file_id, n, body)
+        return self.signed_in().promote(args.collection, body)
 
     # ── collections ────────────────────────────────────────────────────────────────────────
     def collection_list(self, _args) -> dict:
@@ -1184,7 +1202,17 @@ class Commands:
         )
 
     def verify(self, args) -> dict:
-        return self.signed_in().verify(args.cite, args.before, args.sha256)
+        """A citation names its version: the check is that version's verification."""
+        cited = CITATION.match(args.cite)
+        if not cited:
+            return {
+                "ok": False,
+                "exists": False,
+                "reason": "not a symposium-data citation",
+            }
+        return self.signed_in().verify(
+            cited.group(1), cited.group(2), args.before, args.sha256
+        )
 
     def changes(self, args) -> dict:
         server = self.signed_in()
@@ -1337,16 +1365,6 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     )
     command(actions, "list", commands.communities_list, "list the communities")
 
-    roster = sub.add_parser("roster", help="the community's users")
-    actions = roster.add_subparsers(dest="action", metavar="<action>", required=True)
-    command(
-        actions,
-        "list",
-        commands.roster_list,
-        "every user of the community, removed ones marked, with its roles, and the "
-        "server-level users",
-    )
-
     p = command(
         sub,
         "invite",
@@ -1400,7 +1418,8 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
         actions,
         "list",
         commands.users_list,
-        "a community's users, or with --server the server-level users, removed ones marked",
+        "a community's users, removed ones marked, each with its roles, and the server-level "
+        "users (anyone in the community reads them); with --server, the server-level users",
     )
     p.add_argument("--community", help="default: the context's community")
     p.add_argument("--server", action="store_true")

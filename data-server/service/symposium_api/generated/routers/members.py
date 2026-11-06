@@ -21,34 +21,7 @@ router = APIRouter(tags=["members"])
 
 
 @router.get(
-    "/{community}/me",
-    response_model=Me,
-    response_model_exclude_unset=True,
-    status_code=200,
-    operation_id="getMe",
-    responses={
-        "401": {
-            "model": Error,
-        },
-        "403": {
-            "model": Error,
-        },
-        "404": {
-            "model": Error,
-        },
-    },
-)
-def get_me(
-    community: str,
-    caller: Caller = Depends(authorize("getMe")),
-    service: Service = Depends(service_provider),
-) -> Me:
-    """Who this API key acts as"""
-    return service.get_me(caller, community=community)
-
-
-@router.get(
-    "/{community}/members",
+    "/communities/{community}/members",
     response_model=MemberPage,
     response_model_exclude_unset=True,
     status_code=200,
@@ -80,7 +53,7 @@ def list_members(
 
 
 @router.get(
-    "/{community}/members/{handle}",
+    "/communities/{community}/members/{handle}",
     response_model=MemberResource,
     response_model_exclude_unset=True,
     status_code=200,
@@ -108,7 +81,7 @@ def get_member(
 
 
 @router.get(
-    "/{community}/members/{handle}/artifacts",
+    "/communities/{community}/members/{handle}/artifacts",
     response_model=ArtifactSummaryPage,
     response_model_exclude_unset=True,
     status_code=200,
@@ -149,7 +122,7 @@ def list_member_artifacts(
 
 
 @router.get(
-    "/{community}/members/{handle}/messages",
+    "/communities/{community}/members/{handle}/messages",
     response_model=ArtifactSummaryPage,
     response_model_exclude_unset=True,
     status_code=200,
@@ -187,3 +160,29 @@ def list_member_messages(
         limit=limit,
         order=order,
     )
+
+
+@router.get(
+    "/me",
+    response_model=Me,
+    response_model_exclude_unset=True,
+    status_code=200,
+    operation_id="getMe",
+    responses={
+        "401": {
+            "model": Error,
+        },
+        "403": {
+            "model": Error,
+        },
+        "404": {
+            "model": Error,
+        },
+    },
+)
+def get_me(
+    caller: Caller = Depends(authorize("getMe")),
+    service: Service = Depends(service_provider),
+) -> Me:
+    """Who this API key acts as"""
+    return service.get_me(caller)

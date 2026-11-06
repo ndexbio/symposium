@@ -99,11 +99,11 @@ class Owner:
 
     def url(self, path: str) -> str:
         """A route of the community this user is calling."""
-        return f"{self.server.url}/v1/{self.community}{path}"
+        return f"{self.server.url}/v1/communities/{self.community}{path}"
 
     def challenge(self) -> str:
         r = HTTP.post(
-            f"{self.server.url}/v1/auth/challenge",
+            f"{self.server.url}/v1/challenges",
             json={"handle": self.handle, "community": self.home},
         )
         r.raise_for_status()
@@ -121,13 +121,13 @@ class Owner:
             "invite": invite,
             **extra,
         }
-        return HTTP.post(f"{self.server.url}/v1/users", json=body)
+        return HTTP.post(f"{self.server.url}/v1/registrations", json=body)
 
     def sign_in(self, key: OwnerKey | None = None):
         key = key or self.key
         nonce = self.challenge()
         return HTTP.post(
-            f"{self.server.url}/v1/auth/token",
+            f"{self.server.url}/v1/sessions",
             json={
                 "handle": self.handle,
                 "community": self.home,
@@ -160,41 +160,63 @@ class Owner:
         return HTTP.post(self.url("/api-keys"), json=body, headers=self.headers())
 
     # ── roles ────────────────────────────────────────────────────────────────────────────────
+    def principal_url(self, handle=None, community=None, api_key_id=None) -> str:
+        """A user's URL (in `community`, else this user's own home: none for a server-level
+        user), or an issued key's in this user's community."""
+        if api_key_id is not None:
+            return f"{self.server.url}/v1/communities/{self.community}/api-keys/{api_key_id}"
+        home = community if community is not None else self.home
+        scope = "" if home is None else f"/communities/{home}"
+        return f"{self.server.url}/v1{scope}/users/{handle}"
+
+    def user_url(self, handle: str, community=None) -> str:
+        return self.principal_url(handle, community)
+
     def assign(
         self, role: str, collections=None, handle=None, community=None, api_key_id=None
     ):
-        return HTTP.post(
-            f"{self.server.url}/v1/assignments",
-            json=assignment(role, collections, handle, community, api_key_id),
-            headers=self.headers(),
-        )
+        """Assign a role: collection names one at a time (each merges into the assignment);
+        a whole value (`*`, `[]`, or none) under the assignment's ETag. -> the last response."""
+        role_url = f"{self.principal_url(handle, community, api_key_id)}/roles/{role}"
+        if collections and "*" not in collections:
+            r = None
+            for name in collections:
+                r = HTTP.put(f"{role_url}/collections/{name}", headers=self.headers())
+                if r.status_code >= 300:
+                    return r
+            return r
+        held = HTTP.get(role_url, headers=self.headers())
+        headers = dict(self.headers())
+        if held.status_code == 200:
+            headers["If-Match"] = held.headers["ETag"]
+        body = None if collections is None else {"collections": collections}
+        return HTTP.put(role_url, json=body, headers=headers)
 
     def unassign(
         self, role: str, collections=None, handle=None, community=None, api_key_id=None
     ):
-        return HTTP.request(
-            "DELETE",
-            f"{self.server.url}/v1/assignments",
-            json=assignment(role, collections, handle, community, api_key_id),
-            headers=self.headers(),
-        )
+        """End a role, or withdraw some collections from it. -> the last response."""
+        role_url = f"{self.principal_url(handle, community, api_key_id)}/roles/{role}"
+        if collections is None:
+            return HTTP.delete(role_url, headers=self.headers())
+        r = None
+        for name in collections:
+            r = HTTP.delete(f"{role_url}/collections/{name}", headers=self.headers())
+            if r.status_code >= 300:
+                return r
+        return r
 
     def invite(self, handle: str, roles, community=None, hours=None):
-        body = {"handle": handle, "roles": roles, "community": community}
+        """An invite into `community`, else this user's own home: none for a server-level
+        user, which invites server-level users."""
+        home = community if community is not None else self.home
+        scope = "" if home is None else f"/communities/{home}"
+        body = {"handle": handle, "roles": roles}
         if hours is not None:
             body["hours"] = hours
         return HTTP.post(
-            f"{self.server.url}/v1/invites", json=body, headers=self.headers()
+            f"{self.server.url}/v1{scope}/invites", json=body, headers=self.headers()
         )
-
-    def user_id(self, handle: str, community=None) -> str:
-        r = HTTP.get(
-            f"{self.server.url}/v1/users",
-            params={"community": community} if community else {},
-            headers=self.headers(),
-        )
-        assert r.status_code == 200, r.text
-        return next(u["id"] for u in r.json()["users"] if u["handle"] == handle)
 
     def headers(self, key: str | None = None) -> dict:
         """This owner's key as a request header: by default a session key, signed in once."""
@@ -207,11 +229,16 @@ class Owner:
     def put(
         self, community, collection, name, data: bytes, metadata=None, content_type=None
     ):
-        headers = {**self.headers(), **file_headers(data, metadata)}
+        headers = {
+            **self.headers(),
+            **file_headers(data, metadata),
+            "If-None-Match": "*",
+        }
         if content_type:
             headers["Content-Type"] = content_type
         return HTTP.put(
-            f"{self.server.url}/v1/{community}/collections/{collection}/files/{name}",
+            f"{self.server.url}/v1/communities/{community}/collections/{collection}"
+            f"/files/{name}",
             content=data,
             headers=headers,
         )
@@ -240,13 +267,14 @@ class Owner:
 
     def get(self, file_id, ref="latest", headers=None):
         return HTTP.get(
-            self.url(f"/files/{file_id}/v/{ref}"),
+            self.url(f"/files/{file_id}/versions/{ref}"),
             headers={**self.headers(), **(headers or {})},
         )
 
     def stat(self, file_id, ref="latest"):
         return HTTP.get(
-            self.url(f"/files/{file_id}/v/{ref}/stat"), headers=self.headers()
+            self.url(f"/files/{file_id}/versions/{ref}/metadata"),
+            headers=self.headers(),
         )
 
 
@@ -265,17 +293,6 @@ class Admin(Owner):
         return other
 
 
-def assignment(
-    role, collections=None, handle=None, community=None, api_key_id=None
-) -> dict:
-    body = {"role": role, "collections": collections}
-    if api_key_id is not None:
-        body["api_key_id"] = api_key_id
-    else:
-        body["handle"], body["community"] = handle, community
-    return body
-
-
 def b64u_json(value) -> str:
     return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
 
@@ -288,6 +305,8 @@ def file_headers(data: bytes, metadata=None) -> dict:
     headers = {
         "Repr-Digest": repr_digest(data),
         "Content-Type": "application/octet-stream",
+        # a file is created only where its name holds none
+        "If-None-Match": "*",
     }
     if metadata is not None:
         headers["X-Data-Metadata"] = b64u_json(metadata)
@@ -304,8 +323,8 @@ def set_quota(server: Server, quota_bytes: int):
 
 def purge(admin: Owner, file_id, n: int, community: str = "demo"):
     """A holder of `manage` frees one version's content through the purge route."""
-    return HTTP.post(
-        f"{admin.server.url}/v1/{community}/files/{file_id}/v/{n}/purge",
+    return HTTP.delete(
+        f"{admin.server.url}/v1/communities/{community}/files/{file_id}/versions/{n}",
         headers=admin.headers(),
     )
 

@@ -26,9 +26,9 @@ the `symposium-data` CLI (R-I1). What a person may run follows from their access
                                            limit of their own: start them in the background, and
                                            again if the agent's limit stops them; a restart resumes
                                            and takes over. SIGINT or SIGTERM stops one within a second.
-    invite | assign | unassign | users | roster | rebind-key | suspect-after
+    invite | assign | unassign | users | rebind-key | suspect-after
                                            community-admin (in its community), server admins: users
-                                           and their access roles; any member reads the roster, and
+                                           and their access roles; anyone in the community lists its users, and
                                            an owner shares its collections with `assign`
     purge | export | import | port <ndex_credentials_file> <url>
                                            community-admin (purge, export), server admins
@@ -78,7 +78,6 @@ CLI_COMMANDS = (
     "assign",
     "unassign",
     "users",
-    "roster",
     "rebind-key",
     "suspect-after",
     "purge",
@@ -99,7 +98,7 @@ WORKFLOW = {
 }
 USAGE = (
     "/symposium <setup|admin-config|bootstrap|use-community|use|access|publish|validate|sync|"
-    "gate|serve|invite|assign|unassign|users|roster|rebind-key|suspect-after|purge|export|"
+    "gate|serve|invite|assign|unassign|users|rebind-key|suspect-after|purge|export|"
     "import|port|gen-api-key|list-api-keys|revoke-api-key|data> [options]    "
     "e.g. /symposium setup --invite-file <file>"
 )

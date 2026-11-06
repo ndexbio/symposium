@@ -47,8 +47,8 @@ Sessions are kept by the skill under `~/.symposium/` (`admin/` and `admin/<commu
 | `serve [<record dir>] [--port N]` | anyone | browse the session's `record/` (or the record directory given) at `http://localhost:8760`, rebuilt as it changes; keeps running (see below) |
 | `invite --handle <h> --access <role>[:<collections>] --out <file>`, `invite list --out-dir <dir>` | community-admin, server-admin (root for `server-admin`) | an invite file carrying access roles; every pending invite written again |
 | `assign`, `unassign` `(--handle <h> \| --api-key <id>) --access <role>[:<collections>]` | community-admin; an owner, for `community-observer` on its own collections | add or remove access roles, or some collections of one |
-| `users list`, `users remove --handle <h>`, `rebind-key`, `suspect-after` | community-admin, server-admin | users, removed ones marked; remove one; replace a lost key; flag a user's writes |
-| `roster list` | anyone in the community | the community's users and the server-level users |
+| `users list` | anyone in the community | the community's users, removed ones marked, with their roles, and the server-level users |
+| `users remove --handle <h>`, `rebind-key`, `suspect-after` | community-admin, server-admin | remove a user (a tombstone); replace a lost key; flag a user's writes |
 | `purge`, `export` | community-admin, server-admin | free a version's content; export the community |
 | `import`, `port <ndex_credentials_file> <ndex_url>` | server-admin | import an export; port a community's record (port-ndex; see `reference/PORT_NDEX.md`) |
 | `gen-api-key <label> --access <role>[:<collections>] [--non-member]`, `list-api-keys`, `revoke-api-key <key id>` | anyone in the community | issued keys for the data server (`/v1`), one community each, carrying access roles: a member key acts as you, within your grants; `--non-member` makes a key of its own for an application, carrying `community-observer`. Key values go to 0600 files in the session's `api-keys/`, never to the chat |

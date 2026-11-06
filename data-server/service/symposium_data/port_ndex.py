@@ -242,7 +242,7 @@ class Port:
             "skipped": found["skipped"],
             "record": len(found["record"]),
             "replies": len(found["inbox"]),
-            "reserved_roster": members,
+            "authors": members,
         }
 
     def write(self, conn, items: list, members: list, duplicates: list):

@@ -65,7 +65,7 @@ A 0.1.x server upgrades in place. Run the 0.2.0 image on the same `/apps` volume
    | the admin bound from the key file | the root user, holding `server-root`, with the same handle and key file |
    | a roster member | a user of that community, holding `community-member` on every collection (`*`), signing in with the key it joined with |
    | a member narrowed to fewer than the default grants | `community-observer` on the collections it could read; the log names each one |
-   | an owner taken off the roster | a removed user: listed on the roster as removed, its handle retired, its work kept under that handle |
+   | an owner taken off the roster | a removed user: listed among the users as removed, its handle retired, its work kept under that handle |
    | a collection's owner | the same owner |
    | files, versions, the record and `inbox` | unchanged |
 
@@ -104,8 +104,8 @@ Every other user joins by invite. An **invite file** names the handle, its home 
 ### Session key
 A session key is a short-lived API key proving a user signed in. It expires after 15 minutes by default (`SYMPOSIUM_SERVER_SESSION_TTL` sets this). Every user obtains one the same way, in two calls:
 
-1. `POST /v1/auth/challenge {handle, community}`: the data server answers with a one-time challenge (a `nonce`), good for 5 minutes. `community` is the user's home, or null for a server-level user.
-2. `POST /v1/auth/token {handle, community, nonce, signature}`: the user's client sends the challenge back, signed with the user's private key file. The data server checks the signature against the user's registered public key and answers the session key and its expiry time.
+1. `POST /v1/challenges {handle, community}`: the data server answers with a one-time challenge (a `nonce`), good for 5 minutes. `community` is the user's home, or null for a server-level user.
+2. `POST /v1/sessions {handle, community, nonce, signature}`: the user's client sends the challenge back, signed with the user's private key file. The data server checks the signature against the user's registered public key and answers the session key and its expiry time.
 
 Every `/symposium` command that calls the data server, and the `symposium-data` tool it runs underneath, obtains a session key this way first and uses it for that command's calls. An API user making calls from `curl`, a script or an application uses an issued key.
 
@@ -158,7 +158,7 @@ The Data API reads and writes a community's data. It has two views:
 - **the record**, in the [Symposium specification's model](../spec/symposium_specification.md): Artifacts, Objects, properties, relationships, Members and addresses;
 - **the files** stored in collections, including the data files Artifacts cite.
 
-Every route is under `/v1/{community}`. Record listings page with `cursor` and `limit`; file listings page with `since` and `limit`. Record reads carry a `position`, the record's cursor at the time of the read. All endpoints either accept no api key for anonymous callers accessing public granted resources if allowed or endpoints will accept an **issued** or **session** api key where authentication is required.
+Every route is under `/v1/communities/{community}`. Record listings page with `cursor` and `limit`; file listings page with `since` and `limit`. Record reads carry a `position`, the record's cursor at the time of the read. All endpoints either accept no api key for anonymous callers accessing public granted resources if allowed or endpoints will accept an **issued** or **session** api key where authentication is required.
 
 **The record.** These routes take `read` on `record`. They answer without a key when `record` is public.
 
@@ -174,7 +174,7 @@ Every route is under `/v1/{community}`. Record listings page with `cursor` and `
 | `GET /artifacts/{name}/cited-by` | Later Artifacts that cite it | issued key, session key, no key (public) |
 | `GET /artifacts/{name}/supersession` | Its supersession chain | issued key, session key, no key (public) |
 | `GET /artifacts/{name}/findings` | The validator's findings on it | issued key, session key, no key (public) |
-| `GET /resolve?address=` | What an address points at; for a Content Object whose `location` is a file on this server, its `location_url` | issued key, session key, no key (public) |
+| `GET /addresses?address=` | What an address points at; for a Content Object whose `location` is a file on this server, its `location_url` | issued key, session key, no key (public) |
 | `GET /members`, `/members/{handle}` | The community's Members and what each has published | issued key, session key, no key (public) |
 | `GET /members/{handle}/artifacts`, `/members/{handle}/messages` | A Member's Artifacts, and the Messages addressed to them | issued key, session key, no key (public) |
 
@@ -182,7 +182,7 @@ Every route is under `/v1/{community}`. Record listings page with `cursor` and `
 
 | Route | Does | Authentication |
 |---|---|---|
-| `POST /submissions/check` | Runs the gate's checks on an Artifact against the record as it stands, and answers the findings | issued key, session key |
+| `POST /submission-checks` | Runs the gate's checks on an Artifact against the record as it stands, and answers the findings | issued key, session key |
 | `POST /submissions` | Submits one Artifact to the gate. Answers `201`, with the submission's URL in `Location` | issued key, session key |
 | `GET /submissions`, `/submissions/{id}` | The member's submissions, each with the gate's decision and reply | issued key, session key |
 
@@ -191,21 +191,23 @@ Every route is under `/v1/{community}`. Record listings page with `cursor` and `
 | Route | Answers | Authentication |
 |---|---|---|
 | `GET /collections` | The community's collections the caller may use, each with its owner, whether it is public, and the caller's `access`: `read` to list and read its files, `write` to add files, `manage` to share it or change its visibility | issued key, session key, no key (public) |
+| `GET /collections/{collection}` | One collection, with the caller's `access` | issued key, session key, no key (public) |
 
 **Files.** A file has its collection's access: `read` to read it, `write` to add to the collection. The file's creator versions or deletes it with `write`, and a `manage` holder does so for any file. A non-member issued key reads.
 
 | Route | Does | Authentication |
 |---|---|---|
-| `PUT /collections/{collection}/files/{name}` | Creates a file. The body is v1, and the `Repr-Digest: sha-256=:…:` header is required: the server hashes the body as it streams and answers `400` on a mismatch. Optional headers: `X-Data-Metadata` (a base64url JSON object), `X-Data-Size` and `Content-Type`. `409` if the name is taken, `413` over quota | issued key, session key |
+| `PUT /collections/{collection}/files/{name}` | Creates a file, with `If-None-Match: *` (`412` when the name is taken, `428` without it). The body is v1, and the `Repr-Digest: sha-256=:…:` header is required: the server hashes the body as it streams and answers `400` on a mismatch. Optional headers: `X-Data-Metadata` (a base64url JSON object), `X-Data-Size` and `Content-Type`. `413` over quota. Answers `201` with the file's `Location` | issued key, session key |
 | `POST /files/{id}/versions` | Adds a version: new content, or new metadata with `X-Data-Metadata-Only: 1`. `If-Match: "v<n>"` applies it only to that head (`412` otherwise) | issued key, session key |
-| `DELETE /files/{id}?reason=` | Adds a tombstone version that keeps serving the previous content with `X-Data-Deleted: true`. A later version restores the file | issued key, session key |
-| `GET /files/{id}/v/{n}` | One version's content, with `Range` support and its `Repr-Digest`, `X-Data-Citation` and `Link` headers. `n` may be `latest`, the newest version that isn't a tombstone. A purged version answers `410` with its metadata | issued key, session key, no key (public) |
-| `GET /files/{id}/v/{n}/stat`, `/files/{id}/versions` | One version's metadata, and every version of the file | issued key, session key, no key (public) |
+| `DELETE /files/{id}?reason=` | A soft delete: adds a tombstone version, and the file keeps serving the previous content with `X-Data-Deleted: true`. A later version restores it | issued key, session key |
+| `GET /files/{id}` | The file at its newest version: its metadata | issued key, session key, no key (public) |
+| `GET /files/{id}/versions/{n}` | One version's content, with `Range` support and its `Repr-Digest`, `X-Data-Citation` and `Link` headers. `n` may be `latest`, the newest version that isn't a tombstone. A purged version answers `410` with its metadata | issued key, session key, no key (public) |
+| `GET /files/{id}/versions/{n}/metadata`, `/files/{id}/versions` | One version's metadata, and every version of the file | issued key, session key, no key (public) |
 | `GET /collections/{collection}/changes?since&limit` | The collection's versions in `seq` order, with their metadata. Page with `next_since` until `more` is false | issued key, session key, no key (public) |
-| `POST /collections/{collection}/query {contains, since?, limit?}` | The files in collection whose version's metadata contains `contains`.  every matching version is returned, not just the newest. a JSON object, paged like `changes` | issued key, session key, no key (public) |
-| `GET /collections/{collection}/find?name=` | The file that holds a name, at its newest version: its id, version and metadata | issued key, session key, no key (public) |
-| `GET /sha256/{hash}` | The versions the caller may read that hold this content | issued key, session key, no key (public) |
-| `GET /verify?cite=&before=&sha256=` | Checks a citation: the version exists, its content matches, and it predates `before` | issued key, session key, no key (public) |
+| `POST /collections/{collection}/files/search {contains, since?, limit?}` | The collection's versions whose metadata contains the JSON object `contains`: every matching version, not just the newest, paged like `changes` | issued key, session key, no key (public) |
+| `GET /collections/{collection}/files?name=&cursor=&limit=` | The collection's files, each at its newest version, by name, paged with `next`; with `name`, the file that holds it | issued key, session key, no key (public) |
+| `GET /versions?sha256=` | The versions the caller may read that hold this content | issued key, session key, no key (public) |
+| `GET /files/{id}/versions/{n}/verification?before=&sha256=` | Checks a citation of this version (`symposium-data:<id>@v<n>`): it exists, its content matches, and it predates `before` | issued key, session key, no key (public) |
 
 A file's citation is `symposium-data:<id>@v<n>`, and every response about one version carries `ETag: "v<n>"`. Every write is atomic: a client disconnecting mid-upload included, it fully happens or leaves the collection as it was. Identical content is stored once, and every version in a collection gets the next `seq` and a strictly later `created`, both from the server's clock.
 
@@ -213,59 +215,64 @@ A file's citation is `symposium-data:<id>@v<n>`, and every response about one ve
 
 | Route | Sends | Authentication |
 |---|---|---|
-| `GET /streams/record` | One `artifact` event per acceptance, and a heartbeat every 30 s. It takes `read` on `record` | issued key, session key, no key (public) |
-| `GET /streams/submissions` | The member's submissions as they arrive and as the gate decides them. It takes `publish` | issued key, session key |
+| `GET /record/events` | One `artifact` event per acceptance, and a heartbeat every 30 s. It takes `read` on `record` | issued key, session key, no key (public) |
+| `GET /submissions/events` | The member's submissions as they arrive and as the gate decides them. It takes `publish` | issued key, session key |
 
-`GET /me` answers who the key acts as: its kind, user, label, roles, resolved grants and expiry.
+`GET /v1/me` answers who the key acts as: its kind, user, label, roles, resolved grants and expiry, in the caller's own community.
 
 
 ### Control API
 
-The Control API administers the data server and its communities, and decides who has access. The `symposium` skill calls it through the `symposium-data` command-line tool. The routes that change users, roles, invites or keys take a **session key**, so only a signed-in user makes those changes; an issued key gets `403`.
+The Control API administers the data server and its communities, and decides who has access. The `symposium` skill calls it through the `symposium-data` command-line tool. The routes that change users, roles, invites or keys take a **session key**, so only a signed-in user makes those changes; an issued key gets `403`. Every route is a noun: sign-in creates a challenge and a session, joining creates a registration, and roles are sub-resources of the user or key that holds them. Every request that creates a resource answers `201` with its `Location`.
 
 #### Communities
 
-One server hosts many communities. Each has its own users and data, under `/v1/{community}/…`; `/v1/status`, `/v1/communities`, `/v1/auth/…`, `/v1/users`, `/v1/invites`, `/v1/roles` and `/v1/assignments` are server-wide. A community name is 1–20 letters, digits or underscores; `status`, `communities`, `auth`, `users`, `invites`, `roles`, `assignments` and `admin` are reserved. A name keeps the case it was created with and is unique and matched ignoring case. An unknown community, or a name that is not a slug, answers `404`.
+One server hosts many communities. Each has its own users and data, under `/v1/communities/{community}/…`; the server's own resources (`/v1/status`, `/v1/challenges`, `/v1/sessions`, `/v1/registrations`, `/v1/me`, `/v1/roles`, `/v1/users`, `/v1/invites`) sit beside `/v1/communities`, so any slug names a community. A community name is 1–20 letters, digits or underscores; it keeps the case it was created with and is unique and matched ignoring case. An unknown community, or a name that is not a slug, answers `404`.
 
 | Route | Does | Grants | Authentication |
 |---|---|---|---|
-| `POST /v1/communities {name, admin}` | Creates a community and its collections `inbox`, `files` and `record`, and answers an invite making `admin` its first community admin. Idempotent: `201` when created, `200` when exactly that name exists; `400` for a name that is not a slug, is reserved, or differs only in case from an existing one | `communities` | session key |
+| `POST /v1/communities {name, admin}` | Creates a community and its collections `inbox`, `files` and `record`, and answers an invite making `admin` its first community admin. Idempotent: `201` when created, `200` when exactly that name exists; `400` for a name that is not a slug or differs only in case from an existing one. With `Content-Type: application/x-tar`, the body is an archive (`GET …/archive`) and the community is imported in one transaction: `409` when it already exists here, or one of its handles is a server-level user's or a removed user's here; `400` for a damaged stream | `communities` | session key |
 | `GET /v1/communities` | Every community, with when it was created | `communities` | session key |
-| `GET /v1/{community}/export` | The community as a tar stream: one consistent snapshot of its users, role assignments and rows, then every stored payload. API keys stay on this server | `export` | session key |
-| `POST /v1/communities/import` (body: an export) | Creates the exported community in one transaction: `409` when it already exists here, or one of its handles is a server-level user's or a removed user's here; `400` for a damaged stream. The exported root's collections become this server's root's | `communities` | session key |
-| `POST /v1/{community}/port-ndex {ndex_url, credentials: {username, password}, page_size?}`, `GET …/port-ndex/{id}` | Copies a community's record from NDEx into this empty community, in the background ([`PORT_NDEX.md`](PORT_NDEX.md)) | `communities` | session key |
+| `GET /v1/communities/{community}` | The community: its name and when it was created | — | issued key, session key |
+| `GET /v1/communities/{community}/archive` | The community's archive, a tar stream: one consistent snapshot of its users, role assignments and rows, then every stored payload. API keys stay on this server | `export` | session key |
+| `POST /v1/communities/{community}/ndex-imports {ndex_url, credentials: {username, password}, page_size?}`, `GET …/ndex-imports/{id}` | Imports a community's record from NDEx into this empty community, in the background (port-ndex, [`PORT_NDEX.md`](PORT_NDEX.md)) | `communities` | session key |
 
 #### Session management and identity
 
-A user is a handle in its home community, or a server-level user with no home. A handle is unique within its home, and a server-level handle is used in no community.
+A user is a handle in its home community, or a server-level user with no home. A handle is unique within its scope, and a server-level handle is used in no community.
 
 | Route | Does | Grants | Authentication |
 |---|---|---|---|
-| `POST /v1/auth/challenge {handle, community}`, `POST /v1/auth/token {handle, community, nonce, signature}` | Issues a user's session key ([Session key](#session-key)). A removed user answers `401`, naming the removal | — | no key required |
-| `POST /v1/users {handle, public_jwk, nonce, signature, invite}` | Joins with an invite: creates the user with the invite's stored roles and registers its public key. `403` for an invite that is unknown, used, expired or for another handle; `400` for a request naming roles or a home; `401` when the signature fails proof of possession | — | no key required |
-| `POST /v1/users/me/keys {public_jwk, nonce, signature}` | Replaces the caller's private key file with a new one, proven by the new key. The old key is retired and keeps its attribution, and the session keys obtained with it end | — | session key |
-| `GET /v1/users?community=` | The users of a community, or the server-level users, each with its roles; removed users are marked | `members` in the community, or `delegate` | session key |
-| `DELETE /v1/users/{id}` | Removes a user: its assignments end, its keys retire, its sessions end and every key it issued is deleted. The user stays as a tombstone: its handle stays bound to it and its work keeps its name. `409` for root, or for the community's last `members` holder | `members` in its community, or `delegate` | session key |
-| `POST /v1/users/{id}/rebind {hours?}` | Replaces a lost or compromised private key file: retires the user's keys, ends its sessions, and answers a fresh invite that registers a new key under the same handle and roles | `members` in its community, or `delegate` | session key |
-| `PUT /v1/users/{id}/suspect-after {at}` | Flags every version the user writes after the instant (ISO 8601, with a timezone): `stat` reports `"suspect": true`, and `GET /me` reports the instant | `members` in its community, or `delegate` | session key |
-| `GET /v1/{community}/roster` | Every user homed in the community, removed ones marked, each with its roles, and the server-level users | any key of the community | issued key, session key |
+| `POST /v1/challenges {handle, community}`, `POST /v1/sessions {handle, community, nonce, signature}` | Issues a user's session key ([Session key](#session-key)). A removed user answers `401`, naming the removal | — | no key required |
+| `POST /v1/registrations {handle, public_jwk, nonce, signature, invite}` | Joins with an invite: creates the user with the invite's stored roles and registers its public key; `201` with the user's `Location`. `403` for an invite that is unknown, used, expired or for another handle; `400` for a request naming roles or a home; `401` when the signature fails proof of possession | — | no key required |
+| `POST /v1/me/keys {public_jwk, nonce, signature}` | Replaces the caller's private key file with a new one, proven by the new key. The old key is retired and keeps its attribution, and the session keys obtained with it end | — | session key |
+| `GET /v1/communities/{community}/users`, `GET …/users/{handle}` | The community's users, removed ones marked, each with its roles, and the server-level users' handles; one user, its tombstone too once removed | — | issued key, session key |
+| `PATCH /v1/communities/{community}/users/{handle} {suspect_after}` | Flags every version the user writes after the instant (ISO 8601, with a timezone): its metadata reports `"suspect": true`, and `GET /v1/me` reports the instant | `members` | session key |
+| `DELETE /v1/communities/{community}/users/{handle}` | Removes a user: its roles end, its keys retire, its sessions end and every key it issued is deleted. The user stays as a tombstone: its handle stays bound to it and its work keeps its name. `409` for the community's last `members` holder | `members` | session key |
+| `POST /v1/communities/{community}/users/{handle}/invites {hours?}` | Replaces a lost or compromised private key file: retires the user's keys, ends its sessions, and answers a fresh invite that registers a new key under the same handle and roles | `members` | session key |
+| `GET /v1/users`, `GET …/users/{handle}`, `PATCH …`, `DELETE …`, `POST …/invites` | The same, for server-level users; removing root answers `409` | `delegate` | session key |
 
 #### Roles and invites
 
 | Route | Does | Grants | Authentication |
 |---|---|---|---|
-| `GET /v1/roles` | The six access roles and their grants | any key | issued key, session key |
-| `POST /v1/invites {handle, community, roles, hours?}`, `GET /v1/invites?community=` | Issues a single-use invite carrying `roles`, revoking the handle's earlier unused one, or lists the pending invites, secrets included, so one can be handed over again. The caller needs the authority to assign every role in it | `members` in the community, or `delegate` | session key |
-| `GET /v1/assignments?handle=&community=` | A user's roles, or with `api_key_id` a key's | — | session key |
-| `POST /v1/assignments {role, collections, handle and community, or api_key_id}`, `DELETE …` | Assigns a role, merging collection names into a live assignment, or unassigns it, or some of its names. `community-member`, `community-admin` and `gate-keeper` take `members`; `community-observer` on named collections takes `manage` on each, so an owner shares its own; `server-admin` takes `delegate`. On a key, only its issuer or a `members` holder, and never beyond the issuer's grants. `409` for the last `members` holder | per role | session key |
+| `GET /v1/roles`, `GET /v1/roles/{role}` | The six access roles and their grants | — | issued key, session key |
+| `GET /v1/communities/{community}/users/{handle}/roles`, `GET …/roles/{role}` | A user's roles; one with its `ETag` | — | session key |
+| `PUT /v1/communities/{community}/users/{handle}/roles/{role} {collections?}`, `DELETE …` | Assigns a role, or sets its whole collection value (replacing one takes `If-Match` with its `ETag`: `412` when it changed, `428` without it), or ends it. `community-member`, `community-admin` and `gate-keeper` take `members`; `community-observer` takes `manage` on each named collection; `server-admin` takes `delegate`. `409` for the last `members` holder | per role | session key |
+| `PUT /v1/communities/{community}/users/{handle}/roles/{role}/collections/{collection}`, `DELETE …` | Adds or withdraws one collection, with the authority over that collection alone: how an owner shares its own collections read-only | per role | session key |
+| `GET /v1/users/{handle}/roles`, `GET …/roles/{role}`, `PUT …/roles/{role}`, `DELETE …/roles/{role}` | The same, for a server-level user: `server-admin`, assigned with `delegate` | per role | session key |
+| `GET /v1/communities/{community}/api-keys/{key_id}/roles`, `GET …/roles/{role}`, `PUT …/roles/{role}`, `DELETE …/roles/{role}`, `PUT …/roles/{role}/collections/{collection}`, `DELETE …` | The same, for an issued key: only its issuer or a `members` holder, and never beyond the issuer's grants | per role | session key |
+| `POST /v1/communities/{community}/invites {handle, roles, hours?}`, `GET …/invites` | Issues a single-use invite carrying `roles`, revoking the handle's earlier unused one (`201`, with its `Location`), or lists the pending invites, secrets included. The caller needs the authority to assign every role in it | `members` | session key |
+| `GET /v1/communities/{community}/invites/{invite_id}`, `DELETE …` | One pending invite, with its secret, so it can be handed over again; or revokes it | `members` | session key |
+| `POST /v1/invites`, `GET /v1/invites`, `GET …/{invite_id}`, `DELETE …` | The same, for server-level users | `delegate` | session key |
 
 #### API keys
 
 | Route | Does | Grants | Authentication |
 |---|---|---|---|
-| `POST /v1/{community}/api-keys {label, roles, non_member?, expires_days?}` | Issues a key carrying `roles` and answers it once, with its value. A label names one key among its issuer's (`409` when taken) | within the issuer's | session key |
-| `GET /v1/{community}/api-keys`, `GET …/{key_id}` | The keys the caller issued, with their roles and values; a `members` holder sees every key of the community | — | session key |
-| `DELETE /v1/{community}/api-keys/{key_id}` | Deletes a key the caller issued, or with `members` any key of the community. Its next request answers `401` | — | session key |
+| `POST /v1/communities/{community}/api-keys {label, roles, non_member?, expires_days?}` | Issues a key carrying `roles` and answers it once, with its value and `Location`. A label names one key among its issuer's (`409` when taken) | within the issuer's | session key |
+| `GET /v1/communities/{community}/api-keys`, `GET …/{key_id}` | The keys the caller issued, with their roles and values; a `members` holder sees every key of the community | — | session key |
+| `DELETE /v1/communities/{community}/api-keys/{key_id}` | Deletes a key the caller issued, or with `members` any key of the community. Its next request answers `401` | — | session key |
 
 Every answer that carries a key's value is sent `Cache-Control: no-store`.
 
@@ -273,17 +280,17 @@ Every answer that carries a key's value is sent `Cache-Control: no-store`.
 
 | Route | Does | Grants | Authentication |
 |---|---|---|---|
-| `POST /v1/{community}/collections {name}` | Creates a collection, owned by the caller's user, who reaches it through the owner allowance | `write` | issued key, session key |
-| `PUT /v1/{community}/collections/{collection}/public {public}` | Opens a collection to reads without a key, or closes it again. `inbox` stays private | `manage` | session key |
+| `POST /v1/communities/{community}/collections {name}` | Creates a collection, owned by the caller's user, who reaches it through the owner allowance; `201` with its `Location` | `write` | issued key, session key |
+| `PATCH /v1/communities/{community}/collections/{collection} {public}` | Opens a collection to reads without a key, or closes it again. `inbox` stays private | `manage` | session key |
 
-A collection's owner shares it read-only by assigning `community-observer` with its name (`POST /v1/assignments`).
+A collection's owner shares it read-only by adding it to someone's `community-observer` role (`PUT …/roles/community-observer/collections/{collection}`).
 
 #### Curation
 
 | Route | Does | Grants | Authentication |
 |---|---|---|---|
-| `POST /v1/{community}/files/{id}/v/{n}/purge` | Frees one version's content: the version stays addressable and answers `410` with its metadata. Its bytes are freed once no other live version shares them (`bytes_freed`) | `manage` | session key |
-| `POST /v1/{community}/files/{id}/v/{n}/promote {collection, name?, metadata?, stamp_json_pointer?}` | Copies a version into a collection as a new file, atomically, with the server's clock written at `stamp_json_pointer`. The gate uses it to accept a submission into `record` | `gate`, or `manage` outside `record` | session key |
+| `DELETE /v1/communities/{community}/files/{id}/versions/{n}` | Purges one version's content: the version stays addressable and answers `410` with its metadata. Its bytes are freed once no other live version shares them (`bytes_freed`) | `manage` | session key |
+| `POST /v1/communities/{community}/collections/{collection}/files {from, name?, metadata?, stamp_json_pointer?}` | Copies the version `from` cites into the collection as a new file, atomically, with the server's clock written at `stamp_json_pointer`. Into `record` it takes `gate`: the gate's accept | `gate`, or `manage` outside `record` | session key |
 | `GET /v1/status` | The server's version, health, mode and root handle. Open to every caller | — | no key required |
 
 ## Server Runtime Configuration

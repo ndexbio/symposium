@@ -5,7 +5,7 @@ the skill's runtime (SYMPOSIUM_DATA_CLI, which the skill sets).
 
 Run it after `/symposium bootstrap` has created the community (empty) and set the context, and
 run `bootstrap` again afterwards: it writes the invites for the authors and reply recipients the
-port added to the roster. The NDEx credentials file is JSON {"username": ..., "password": ...},
+port added as users. The NDEx credentials file is JSON {"username": ..., "password": ...},
 mode 0600; it is read by the CLI and sent only to the data server. reference/PORT_NDEX.md is the
 guide. This prints the CLI's one JSON object.
 """

@@ -6,10 +6,12 @@ contract or the templates in codegen/templates, then regenerate."""
 
 from .routers import contract, members, publishing, record, streams
 
+# the streams first: a route is matched in the order it is registered, and their literal
+# `…/events` paths share a parent with `…/{submission}`
 ROUTERS = [
+    streams.router,
     contract.router,
     members.router,
     publishing.router,
     record.router,
-    streams.router,
 ]

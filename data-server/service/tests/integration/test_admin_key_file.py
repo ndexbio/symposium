@@ -52,9 +52,9 @@ def test_without_its_key_the_server_is_not_operational(server):
         assert status["server_id"] and "root" not in status
         for method, path in (
             ("GET", "/v1/communities"),
-            ("POST", "/v1/auth/challenge"),
-            ("POST", "/v1/users"),
-            ("GET", "/v1/demo/collections/record/changes"),
+            ("POST", "/v1/challenges"),
+            ("POST", "/v1/registrations"),
+            ("GET", "/v1/communities/demo/collections/record/changes"),
         ):
             r = HTTP.request(method, server.url + path)
             assert r.status_code == 501, (path, r.text)

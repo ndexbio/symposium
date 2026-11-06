@@ -30,7 +30,7 @@ def demo(server):
 
 def changes(server, headers, collection, since=0, limit=100, community="demo"):
     return HTTP.get(
-        f"{server.url}/v1/{community}/collections/{collection}/changes",
+        f"{server.url}/v1/communities/{community}/collections/{collection}/changes",
         params={"since": since, "limit": limit},
         headers=headers,
     )
@@ -50,7 +50,7 @@ def every_change(server, headers, collection, limit=3, community="demo") -> list
 
 def query(server, headers, collection, contains, since=0, limit=100):
     return HTTP.post(
-        f"{server.url}/v1/demo/collections/{collection}/query",
+        f"{server.url}/v1/communities/demo/collections/{collection}/files/search",
         json={"contains": contains, "since": since, "limit": limit},
         headers=headers,
     )
@@ -58,17 +58,22 @@ def query(server, headers, collection, contains, since=0, limit=100):
 
 def promote(admin, file_id, n, collection="record", **body):
     return HTTP.post(
-        admin.url(f"/files/{file_id}/v/{n}/promote"),
-        json={"collection": collection, **body},
+        admin.url(f"/collections/{collection}/files"),
+        json={"from": f"symposium-data:{file_id}@v{n}", **body},
         headers=admin.headers(),
     )
 
 
+def verification_url(owner, cite: str) -> str:
+    """Where a citation `symposium-data:<file id>@v<n>` is verified: under the version it
+    names."""
+    file_id, _, n = cite.removeprefix("symposium-data:").partition("@v")
+    return owner.url(f"/files/{file_id}/versions/{n}/verification")
+
+
 def verify(owner, cite, **params):
     return HTTP.get(
-        owner.url("/verify"),
-        params={"cite": cite, **params},
-        headers=owner.headers(),
+        verification_url(owner, cite), params=params, headers=owner.headers()
     )
 
 
@@ -146,15 +151,27 @@ def test_find_and_query_by_metadata(demo):
     assert names == ["a0.json", "a1.json", "a2.json"] and not rest["more"]
     assert query(server, lyra.headers(), "files", ["kind"]).status_code == 422
 
-    url = f"{server.url}/v1/demo/collections/files/find"
+    url = f"{server.url}/v1/communities/demo/collections/files/files"
     hit = HTTP.get(url, params={"name": "d.json"}, headers=lyra.headers())
     assert hit.status_code == 200
-    assert hit.json()["file_id"] == data.json()["file_id"]
-    assert hit.headers["etag"] == '"v1"'
+    [found] = hit.json()["items"]
+    assert found["file_id"] == data.json()["file_id"] and found["version"] == 1
     deleted = HTTP.get(url, params={"name": "gone.json"}, headers=lyra.headers())
-    assert deleted.json()["file_deleted"]  # a deleted file still holds its name
+    assert deleted.json()["items"][0]["file_deleted"]  # a deleted file holds its name
     missing = HTTP.get(url, params={"name": "nope"}, headers=lyra.headers())
-    assert missing.status_code == 404
+    assert missing.status_code == 200 and missing.json()["items"] == []
+    # without a name: every file, by name, paged
+    first = HTTP.get(url, params={"limit": 1}, headers=lyra.headers()).json()
+    assert len(first["items"]) == 1 and first["next"]
+    names, cursor = [], None
+    while True:
+        params = {"limit": 2, **({"cursor": cursor} if cursor else {})}
+        page = HTTP.get(url, params=params, headers=lyra.headers()).json()
+        names += [i["name"] for i in page["items"]]
+        cursor = page["next"]
+        if not cursor:
+            break
+    assert names == sorted(names) and "d.json" in names
 
 
 def test_hash_lookup_finds_every_readable_copy(demo):
@@ -169,17 +186,23 @@ def test_hash_lookup_finds_every_readable_copy(demo):
     assert enroll(admin.at("other"), bob, "other").status_code == 201
     bob.put("other", "files", "three.csv", content)
 
-    url = f"{server.url}/v1/demo/sha256/{sha}"
+    url = f"{server.url}/v1/communities/demo/versions?sha256={sha}"
     seen = HTTP.get(url, headers=lyra.headers()).json()["items"]
     assert sorted(i["name"] for i in seen) == ["one.csv", "two.csv"]
     # hash lookup stays inside its community, even for the admin
     assert len(HTTP.get(url, headers=admin.headers()).json()["items"]) == 2
-    elsewhere = HTTP.get(f"{server.url}/v1/other/sha256/{sha}", headers=bob.headers())
+    elsewhere = HTTP.get(
+        f"{server.url}/v1/communities/other/versions?sha256={sha}",
+        headers=bob.headers(),
+    )
     assert [i["name"] for i in elsewhere.json()["items"]] == ["three.csv"]
     # content is deduplicated within a community, never across: one payload each
     stored = psql(server, f"SELECT count(*) FROM payloads WHERE sha256 = '{sha}'")
     assert stored == "2"
-    bad = HTTP.get(f"{server.url}/v1/demo/sha256/{sha.upper()}", headers=lyra.headers())
+    bad = HTTP.get(
+        f"{server.url}/v1/communities/demo/versions?sha256={sha.upper()}",
+        headers=lyra.headers(),
+    )
     assert bad.status_code == 400
 
 
@@ -294,10 +317,9 @@ def test_verify_checks_existence_hash_and_strict_ordering(demo):
     hidden = verify(bob, cite).json()
     unknown = verify(bob, "symposium-data:00000000-0000-0000-0000-000000000000@v1")
     assert hidden == unknown.json() and not hidden["exists"]
-    assert not verify(admin, "other:abc").json()["exists"]
     assert verify(admin, cite, before="yesterday").status_code == 400
     # a caller with no key verifies only what it may read: here, nothing
-    anonymous = HTTP.get(f"{server.url}/v1/demo/verify", params={"cite": cite})
+    anonymous = HTTP.get(verification_url(admin, cite))
     assert anonymous.status_code == 200 and anonymous.json() == unknown.json()
 
     assert purge(admin, data["file_id"], 1).status_code == 200
@@ -309,7 +331,7 @@ def test_verify_checks_existence_hash_and_strict_ordering(demo):
 # ── export and import ───────────────────────────────────────────────────────────────────────
 def export(admin, community, path):
     """Stream the community's export through the route into `path`."""
-    url = f"{admin.server.url}/v1/{community}/export"
+    url = f"{admin.server.url}/v1/communities/{community}/archive"
     with HTTP.stream("GET", url, headers=admin.headers()) as r:
         assert r.status_code == 200, r.read()
         with open(path, "wb") as out:
@@ -322,9 +344,9 @@ def import_(admin, path):
     """Upload an export through the route. -> the response."""
     with open(path, "rb") as source:
         return HTTP.post(
-            f"{admin.server.url}/v1/communities/import",
+            f"{admin.server.url}/v1/communities",
             content=source.read(),
-            headers=admin.headers(),
+            headers={**admin.headers(), "Content-Type": "application/x-tar"},
         )
 
 
@@ -365,14 +387,15 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
     purged = secret["citation"]
     assert purge(admin, secret["file_id"], 1).status_code == 200
     HTTP.post(
-        f"{source.url}/v1/demo/collections",
+        f"{source.url}/v1/communities/demo/collections",
         json={"name": "project"},
         headers=lyra.headers(),
     )
     # vega is narrowed to `files`, then given read on the project lyra owns
     assert admin.unassign("community-member", None, "vega", "demo").status_code == 200
-    assert (
-        admin.assign("community-member", ["files"], "vega", "demo").status_code == 200
+    assert admin.assign("community-member", ["files"], "vega", "demo").status_code in (
+        200,
+        201,
     )
     rigel = owners["rigel"]
     shared_to = lyra.assign("community-observer", ["project"], "vega", "demo")
@@ -383,10 +406,7 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
         roles=[{"role": "community-observer", "collections": ["project"]}],
         non_member=True,
     )
-    removed = HTTP.delete(
-        f"{source.url}/v1/users/{admin.user_id('rigel', 'demo')}",
-        headers=admin.headers(),
-    )
+    removed = HTTP.delete(admin.user_url("rigel", "demo"), headers=admin.headers())
     assert removed.status_code == 200, removed.text
     goal = lyra.put("demo", "inbox", "goal.json", submission(), SUBMITTED).json()[
         "file_id"
@@ -422,12 +442,14 @@ def test_export_import_round_trip_preserves_the_community(server, tmp_path):
     assert lyra2.get(fid, 2).content == b"1,2,3,4"
     assert vega2.get(shared).content == b"for vega"  # the share survived
     # the removed member came along as a tombstone: listed, and unable to sign in
-    roster = HTTP.get(f"{target.url}/v1/demo/roster", headers=lyra2.headers()).json()
-    assert {r["handle"]: bool(r["removed"]) for r in roster["roster"]}["rigel"] is True
+    roster = HTTP.get(
+        f"{target.url}/v1/communities/demo/users", headers=lyra2.headers()
+    ).json()
+    assert {r["handle"]: bool(r["removed"]) for r in roster["users"]}["rigel"] is True
     assert Owner(target, "rigel", key=rigel.key).sign_in().status_code == 401
     # API keys stay on the server that issued them, and so do their roles
     read = HTTP.get(
-        f"{target.url}/v1/demo/files/{shared}/v/1",
+        f"{target.url}/v1/communities/demo/files/{shared}/versions/1",
         headers={"Authorization": f"Bearer {app['key']}"},
     )
     assert read.status_code == 401

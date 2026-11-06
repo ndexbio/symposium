@@ -46,20 +46,20 @@ server.
 1. Create the community, empty: `POST /v1/communities {name, admin}`.
 2. Start the port-ndex, with a session key holding `communities`:
 
-   `POST /v1/<community>/port-ndex {"ndex_url": ..., "credentials": {"username": ..., "password": ...}, "page_size": 100}`
+   `POST /v1/communities/<community>/ndex-imports {"ndex_url": ..., "credentials": {"username": ..., "password": ...}, "page_size": 100}`
 
    `ndex_url` is the NDEx server's base URL; `credentials` is the NDEx community admin's account,
    a bound pair. The password is held in memory only, for the length of the port, and is never
    stored or logged. `page_size` is optional (default 100). It answers `202` with the
    port-ndex's `id`, `"state": "running"` and `requested_by`, the user who started it.
-3. Poll `GET /v1/<community>/port-ndex/<id>` until `state` is no longer `running`:
+3. Poll the `Location` it answers, `GET /v1/communities/<community>/ndex-imports/<id>`, until `state` is no longer `running`:
 
    ```json
    {"id": "…", "community": "demo", "requested_by": "demo-admin",
     "source": "https://ndex.example.org", "state": "ok",
     "result": {"source": "https://ndex.example.org", "community": "demo", "root": "demo-admin",
                "pages": 1, "networks": 10, "skipped": 0, "record": 9, "replies": 1,
-               "reserved_roster": ["lyra", "vega"]},
+               "authors": ["lyra", "vega"]},
     "started": "…", "finished": "…"}
    ```
 
@@ -89,6 +89,6 @@ The start is refused at once, before NDEx is contacted, when:
 
 ## After the port
 
-- Check the record: `GET /v1/<community>/collections/record/changes` lists every artifact, in
+- Check the record: `GET /v1/communities/<community>/collections/record/changes` lists every artifact, in
   `created` order, with its original sha256.
-- Add the members' invites (`POST /v1/<community>/invites`) so they can claim their handles.
+- Add the members' invites (`POST /v1/communities/<community>/invites`) so they can claim their handles.

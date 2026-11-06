@@ -154,10 +154,12 @@ def test_community_names_are_slugs(name):
         "my-comm",
         "comm.1",
         "café",
-        "status",
-        "Communities",
-        "ADMIN",
     ],
 )
-def test_community_names_that_are_not_slugs_or_are_reserved_are_refused(name):
+def test_community_names_that_are_not_slugs_are_refused(name):
     assert not valid_community(name)
+
+
+@pytest.mark.parametrize("name", ["status", "users", "admin", "communities"])
+def test_any_slug_names_a_community_since_no_route_shares_its_segment(name):
+    assert valid_community(name)

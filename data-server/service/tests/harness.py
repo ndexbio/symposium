@@ -36,7 +36,7 @@ MAX_WAIT = float(os.environ.get("SYMPOSIUM_TEST_MAX_WAIT", "120"))
 HTTP = SimpleNamespace(
     **{
         name: functools.partial(getattr(httpx, name), timeout=MAX_WAIT)
-        for name in ("get", "post", "put", "delete", "request", "stream")
+        for name in ("get", "post", "put", "patch", "delete", "request", "stream")
     }
 )
 

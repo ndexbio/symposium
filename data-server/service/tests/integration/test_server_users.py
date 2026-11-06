@@ -31,8 +31,9 @@ def delegate(server, handle="ana") -> Admin:
 def test_root_delegates_server_admins_who_cannot_delegate(server):
     root = init_admin(server)
     ana, ben = delegate(server, "ana"), delegate(server, "ben")
-    me = HTTP.get(f"{server.url}/v1/demo/me", headers=ana.headers())
-    assert me.status_code == 404  # no community yet: a server-level user works in any
+    me = HTTP.get(f"{server.url}/v1/me", headers=ana.headers())
+    assert me.status_code == 200 and me.json()["community"] is None  # server-wide
+    assert me.json().get("position") is None  # no record to report a position in
     users = HTTP.get(f"{server.url}/v1/users", headers=root.headers()).json()["users"]
     assert {u["handle"]: [r["role"] for r in u["roles"]] for u in users} == {
         "demo-admin": ["server-root"],
@@ -50,34 +51,17 @@ def test_root_delegates_server_admins_who_cannot_delegate(server):
     assert created.status_code == 201, created.text
     assert invite(ana, "demo", "lyra").status_code == 201
     # root is not removed through the API; ana is, by root alone
-    root_id = next(u["id"] for u in users if u["handle"] == "demo-admin")
-    assert (
-        HTTP.delete(
-            f"{server.url}/v1/users/{root_id}", headers=root.headers()
-        ).status_code
-        == 409
-    )
-    ana_id = next(u["id"] for u in users if u["handle"] == "ana")
-    assert (
-        HTTP.delete(
-            f"{server.url}/v1/users/{ana_id}", headers=ben.headers()
-        ).status_code
-        == 403
-    )
-    assert (
-        HTTP.delete(
-            f"{server.url}/v1/users/{ana_id}", headers=root.headers()
-        ).status_code
-        == 200
-    )
-    assert (
-        HTTP.get(f"{server.url}/v1/demo/me", headers=ana.headers()).status_code == 401
-    )
+    root_url = root.user_url("demo-admin")
+    assert HTTP.delete(root_url, headers=root.headers()).status_code == 409
+    ana_url = root.user_url("ana")
+    assert HTTP.delete(ana_url, headers=ben.headers()).status_code == 403
+    assert HTTP.delete(ana_url, headers=root.headers()).status_code == 200
+    gone = HTTP.get(ana_url, headers=root.headers())
+    assert gone.status_code == 200 and gone.json()["removed"]  # its tombstone answers
+    assert HTTP.get(f"{server.url}/v1/me", headers=ana.headers()).status_code == 401
     signed = ana.sign_in()
     assert signed.status_code == 401 and "removed" in signed.json()["detail"]
-    assert (
-        HTTP.get(f"{server.url}/v1/demo/me", headers=ben.headers()).status_code == 200
-    )
+    assert HTTP.get(f"{server.url}/v1/me", headers=ben.headers()).status_code == 200
 
 
 def test_a_handle_is_server_level_or_in_communities_never_both(server):
@@ -121,8 +105,8 @@ def test_a_removed_member_is_a_permanent_tombstone(server):
         "demo",
         roles=[{"role": "gate-keeper", "collections": None}],
     )
-    lyra_id = root.user_id("lyra", "demo")
-    url = f"{server.url}/v1/users/{lyra_id}"
+    lyra_id = psql(server, "SELECT id FROM users WHERE handle = 'lyra'")
+    url = root.user_url("lyra", "demo")
     assert HTTP.delete(url, headers=gate_keeper.headers()).status_code == 403
     assert HTTP.delete(url, headers=owners["olive"].headers()).status_code == 403
     removed = HTTP.delete(url, headers=steward.headers())
@@ -134,22 +118,21 @@ def test_a_removed_member_is_a_permanent_tombstone(server):
     assert signed.status_code == 401 and "removed from demo" in signed.json()["detail"]
     for issued in (member_key, lyra_app.json()):
         by_key = {"Authorization": f"Bearer {issued['key']}"}
-        assert HTTP.get(lyra.url("/me"), headers=by_key).status_code == 401
+        assert HTTP.get(lyra.server.url + "/v1/me", headers=by_key).status_code == 401
     listed = HTTP.get(steward.url("/api-keys"), headers=steward.headers()).json()[
         "items"
     ]
     assert [k["label"] for k in listed] == ["app"]
     assert (
         HTTP.get(
-            steward.url("/me"), headers={"Authorization": f"Bearer {app_key['key']}"}
+            steward.server.url + "/v1/me",
+            headers={"Authorization": f"Bearer {app_key['key']}"},
         ).status_code
         == 200
     )
 
     # it stays: on the roster, marked removed; its work under its handle; its collection
-    roster = HTTP.get(steward.url("/roster"), headers=steward.headers()).json()[
-        "roster"
-    ]
+    roster = HTTP.get(steward.url("/users"), headers=steward.headers()).json()["users"]
     assert {r["handle"]: bool(r["removed"]) for r in roster}["lyra"] is True
     assert steward.stat(published["file_id"]).json()["created_by"] == "lyra"
     assert owners["olive"].get(shared).status_code == 200

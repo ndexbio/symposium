@@ -400,6 +400,18 @@ class Records:
         )
         return merged
 
+    def replace_value(
+        self, conn, role_id: str, collections, by: str, *, user_id=None, api_key_id=None
+    ):
+        """Set the whole collection value of the principal's live assignment of `role_id`."""
+        column, value = self._principal(user_id, api_key_id)
+        wanted = rbac.collection_value(role_id, collections)
+        conn.execute(
+            f"UPDATE role_assignments SET collections = %s WHERE {column} = %s "
+            "AND role_id = %s AND revoked IS NULL",
+            (None if wanted is None else list(wanted), value, role_id),
+        )
+
     def current_value(self, conn, role_id: str, *, user_id=None, api_key_id=None):
         """The principal's live assignment of `role_id`: its collection value (None for a role
         without one), or False when it holds no such assignment."""
@@ -563,11 +575,26 @@ class Records:
 
     def pending_invites(self, conn, home: str | None) -> list:
         return conn.execute(
-            "SELECT handle, home, roles, secret, expires FROM invites "
+            "SELECT hash, handle, home, roles, secret, expires FROM invites "
             "WHERE home IS NOT DISTINCT FROM %s AND used IS NULL AND revoked IS NULL "
             "AND expires > now() AND secret IS NOT NULL ORDER BY handle",
             (home,),
         ).fetchall()
+
+    def invite_by_id(self, conn, home: str | None, digest: str):
+        """A pending invite of `home` by its id (its hash), or None."""
+        return conn.execute(
+            "SELECT hash, handle, home, roles, secret, expires FROM invites "
+            "WHERE hash = %s AND home IS NOT DISTINCT FROM %s AND used IS NULL "
+            "AND revoked IS NULL AND expires > now()",
+            (digest, home),
+        ).fetchone()
+
+    def revoke_invite(self, conn, digest: str):
+        conn.execute(
+            "UPDATE invites SET revoked = now(), secret = NULL WHERE hash = %s",
+            (digest,),
+        )
 
     def pending_invite(self, conn, digest: str, handle: str):
         """The usable invite with this secret for this handle, without spending it."""
@@ -933,6 +960,17 @@ class Records:
             (community, collection, name),
         ).fetchone()
         return row["id"] if row else None
+
+    def files_after(self, conn, community, collection, after: str, limit: int) -> list:
+        """The collection's live files named after `after`, by name. -> [(id, name)]"""
+        return [
+            (r["id"], r["name"])
+            for r in conn.execute(
+                "SELECT id, name FROM files WHERE community = %s AND collection = %s "
+                "AND state = 'live' AND name > %s ORDER BY name LIMIT %s",
+                (community, collection, after, limit),
+            ).fetchall()
+        ]
 
     def reserve_file(self, conn, community, collection, name, by):
         """Reserve a name before any bytes are streamed (committed by the caller at once), so

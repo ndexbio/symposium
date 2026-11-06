@@ -12,27 +12,12 @@ from datetime import datetime
 # Handles: what Symposium account names look like (agent_lyra, demo-admin).
 NAME = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
 
-# Community names are slugs that sit cleanly in URLs (R-G8). The reserved names are the
-# server-wide route segments under /v1/; they are refused in any letter case.
+# Community names are slugs that sit cleanly in URLs (R-G8), under /v1/communities/.
 COMMUNITY = re.compile(r"^[A-Za-z0-9_]{1,20}$")
-RESERVED_COMMUNITIES = frozenset(
-    {
-        "status",
-        "communities",
-        "admin",
-        "auth",
-        "users",
-        "invites",
-        "roles",
-        "assignments",
-    }
-)
 
 
 def valid_community(name: str) -> bool:
-    return (
-        COMMUNITY.match(name) is not None and name.lower() not in RESERVED_COMMUNITIES
-    )
+    return COMMUNITY.match(name) is not None
 
 
 # A file name is one path segment: no slashes, no control characters, not . or ..

@@ -83,7 +83,7 @@ def test_the_port_fills_the_context_community(admin_dir, cli):
     )  # 10 networks at page size 4
     record = cli.ok(admin_dir, "changes", "--collection", "record")["items"]
     assert len(record) == 9 and [i["seq"] for i in record] == list(range(1, 10))
-    roster = cli.ok(admin_dir, "roster", "list")["roster"]
+    roster = cli.ok(admin_dir, "users", "list")["users"]
     assert [m["handle"] for m in roster] == ["lyra", "vega"]
 
 

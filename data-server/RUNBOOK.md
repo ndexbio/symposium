@@ -268,14 +268,14 @@ Everyone from here on works from their own workstation, with the skill installed
 
 6. **Community admin: join.**
    - Run `/symposium setup --invite-file <community>-<handle>.invite`. It generates the admin's key on this machine (encrypted, in the OS keychain, or under `SYMPOSIUM_KEY_PASSPHRASE` on a headless machine), registers it with the server, which assigns `community-admin` from the stored invite, creates the session `~/.symposium/member/<community>/<handle>/` and syncs `record/`.
-   - Check: `/symposium access` shows `community-admin` in `<community>`, with `read`, `write` and `manage` on every collection, and `gate`, `members` and `export`; `/symposium roster list` shows the admin registered.
+   - Check: `/symposium access` shows `community-admin` in `<community>`, with `read`, `write` and `manage` on every collection, and `gate`, `members` and `export`; `/symposium users list` shows the admin registered.
 7. **Community admin: invite members.**
    - Run `/symposium invite --handle <h> --access community-member:* --out <h>.invite` for each member. Use `--access community-observer:*` for a read-only member, or `--access community-member:` for a member limited to the collections it creates.
    - Hand each file over out of band.
    - Check: `/symposium invite list --out-dir <dir>` lists each pending invite and writes its file again if one is lost.
 8. **Each member: join and publish.**
    - Run `/symposium setup --invite-file <h>.invite`. The key is generated on the member's machine, the server assigns the roles stored on the invite, and the session is created and synced.
-   - Check: `/symposium access` shows the roles invited; the admin's `/symposium roster list` shows `<h>` registered.
+   - Check: `/symposium access` shows the roles invited; the admin's `/symposium users list` shows `<h>` registered.
    - Work: `/symposium sync` brings the record copy up to date; `/symposium validate --role <publishing role> <artifact.json>` runs the gate's own checks; `/symposium publish --role <publishing role> <artifact.json>` submits one artifact to the community's `inbox`. A member holding several sessions picks one with `/symposium use <community> <h>`.
 9. **Community admin: run the gate.**
    - In the admin's session, start `/symposium gate --watch` as a long-running background process. It polls the community's `inbox` every `SYMPOSIUM_POLL` seconds (default 30), validates each submission against the record, then accepts it (promotes it into `record`) or rejects it (a reply only the submitter reads), printing one line per decision.
@@ -297,11 +297,11 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
    - Run `/symposium gen-api-key <app> --non-member --access community-observer:<c1>,<c2>`. Naming a collection the member does not own answers 403.
    - Add a collection with `/symposium assign --api-key <id> --access community-observer:<c3>`, and remove one with `/symposium unassign --api-key <id> --access community-observer:<c1>`.
    - Check: `/symposium list-api-keys` shows `community-observer: [c2, c3]`.
-   - The application reads with `Authorization: Bearer $KEY`: `curl -s -H "Authorization: Bearer $KEY" https://<host>/v1/<community>/collections/<c2>/changes | jq .` lists the collection's files, and `GET /v1/<community>/files/<file id>/v/latest` retrieves one. The same calls on any other collection answer 403.
+   - The application reads with `Authorization: Bearer $KEY`: `curl -s -H "Authorization: Bearer $KEY" https://<host>/v1/communities/<community>/collections/<c2>/changes | jq .` lists the collection's files, and `GET /v1/communities/<community>/files/<file id>/versions/latest` retrieves one. The same calls on any other collection answer 403.
 2. **A script reads the whole community, as the member.**
    - Run `/symposium gen-api-key <script> --access community-observer:*`. This member key reads everything the member reads, and neither writes nor publishes.
    - A **non-member** key on `*` takes the `members` grant: a community admin issues it with `/symposium gen-api-key <app> --non-member --access community-observer:*`.
-   - The script lists the record with `curl -s -H "Authorization: Bearer $KEY" https://<host>/v1/<community>/artifacts | jq '.items[] | {name, type}'`, and reads one with `…/artifacts/<name>`.
+   - The script lists the record with `curl -s -H "Authorization: Bearer $KEY" https://<host>/v1/communities/<community>/artifacts | jq '.items[] | {name, type}'`, and reads one with `…/artifacts/<name>`.
 3. **A member's upload script:** `/symposium gen-api-key <uploader> --access community-member:files` reads and writes `files` only; a key reaches only the collections its roles name, whatever the member owns.
 4. **Refusals:** a read-only key gets 403 on a submission and on an upload. An issued key gets 403 on `gen-api-key`, `assign` and `invite`: changing access takes a signed-in user.
 5. **Revoke a key.**
@@ -331,8 +331,8 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
    - Lyra changes only the names she manages: unassigning a collection Mia owns, or the whole role, answers 403.
 5. **A community admin removes a member.**
    - `/symposium users remove --handle lyra`.
-   - Check: `roster list` and `users list` still show `lyra`, marked removed with the date; her next command reports the removal; every API key she issued is deleted and answers 401; the gate's next pass skips her pending submissions as "not an active member"; her collections keep her as owner, and the community admin manages them.
-   - The record keeps her authorship: her artifacts stay listed with `published_by: @lyra`, `/v1/<community>/members/lyra` shows `removed: true`, and artifacts citing `@lyra` still validate.
+   - Check: `users list` still shows `lyra`, marked removed with the date; her next command reports the removal; every API key she issued is deleted and answers 401; the gate's next pass skips her pending submissions as "not an active member"; her collections keep her as owner, and the community admin manages them.
+   - The record keeps her authorship: her artifacts stay listed with `published_by: @lyra`, `/v1/communities/<community>/members/lyra` shows `removed: true`, and artifacts citing `@lyra` still validate.
    - Her handle stays hers: `invite --handle lyra` answers 409. A returning person joins under a new handle.
    - Removing the community's last community admin answers 409: appoint another first.
 
@@ -344,8 +344,8 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
 | `invite --handle <h> --access <role>[:<collections>] … --out <file>` | an invite file; the server applies its roles when `<h>` joins | `members` in the community, or `delegate` for `server-admin` |
 | `invite list --out-dir <dir>` | every pending invite, written again as files | `members` |
 | `assign`, `unassign` `(--handle <h> \| --api-key <id>) --access …` | add or remove roles, or some collections of one | per role: `members`; `manage` on each named collection for `community-observer:<names>`; `delegate` for `server-admin` |
-| `users list`, `users remove --handle <h>` | users, removed ones marked; remove one | `members` (`delegate` with `--server`) |
-| `roster list` | every user of the community, and the server-level users | any user of the community |
+| `users list` | every user of the community, removed ones marked, with roles, and the server-level users | any user of the community (`delegate` with `--server`) |
+| `users remove --handle <h>` | remove a user: a tombstone | `members` (`delegate` with `--server`) |
 | `gen-api-key`, `list-api-keys`, `revoke-api-key` | issued keys, with their roles | a signed-in user |
 | `rebind-key --handle <h> --out <file>` | retire a user's keys, and a fresh invite for the same roles | `members` |
 | `suspect-after --handle <h> --at <time>` | flag the user's writes after an instant | `members` |
@@ -360,7 +360,7 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
 
 ### 8.7 Other operations
 
-- **Communities.** Names are 1–20 letters, digits or underscores, unique ignoring case; the server's route names (`status`, `communities`, `admin`, `auth`, `users`, `invites`, `roles`, `assignments`) are reserved. Each community's routes are under `/v1/<community>/…`, and its API keys and file ids are refused in any other. Content is deduplicated within a community, and quota is per member per community.
+- **Communities.** Names are 1–20 letters, digits or underscores, unique ignoring case. Each community's routes are under `/v1/communities/<community>/…`, and its API keys and file ids are refused in any other. Content is deduplicated within a community, and quota is per member per community.
 - **A user's lost or compromised key.** `/symposium rebind-key --handle <h> --out <file>` retires the user's keys and writes a fresh invite that registers a new key with the same roles. `/symposium suspect-after --handle <h> --at 2026-10-01T12:00:00+00:00` flags every version the user wrote after that instant (`"suspect": true` in `stat`); the versions stay.
 - **Public collections:** `/symposium data collection set-public --collection <c> --public` opens a collection to reads with no key. `inbox` stays private.
 - **Browser apps:** list the origins they are served from in `SYMPOSIUM_SERVER_CORS_ORIGINS` (with Helm, the `corsOrigins` value).
@@ -372,7 +372,7 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
   - **What goes:** its bytes are deleted only when no other live version shares them. If the file store refuses, the route reports `"bytes_freed": false` and the janitor finishes the job.
 
   ```bash
-  curl -X POST -H "Authorization: Bearer <session key>" https://data.example.org/v1/<community>/files/<file-id>/v/<n>/purge
+  curl -X DELETE -H "Authorization: Bearer <session key>" https://data.example.org/v1/communities/<community>/files/<file-id>/versions/<n>
   ```
 
 - **The janitor** runs in the background. It removes what a crash mid-write leaves behind (uploads that never completed, names reserved but never used) once they are older than `SYMPOSIUM_SERVER_PENDING_TTL`, and retries failed deletes. Work in progress keeps refreshing its timestamps, so the janitor never removes it.
@@ -380,7 +380,7 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
 - **Back up** with export, which works however the server runs. It exports one community, with `export` (a community admin, or a server admin), while the server runs: one consistent snapshot of its users, their roles, its rows and its payloads, without invites or API keys.
 
   ```bash
-  curl -fsS -H "Authorization: Bearer <session key>" -o demo.tar https://data.example.org/v1/demo/export
+  curl -fsS -H "Authorization: Bearer <session key>" -o demo.tar https://data.example.org/v1/communities/demo/archive
   ```
 
   To back up the whole server, stop it and copy its `/apps` directory. On Kubernetes, that means snapshotting its PVC, where the cluster supports CSI volume snapshots.
@@ -391,7 +391,7 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
 
   ```bash
   curl -fsS -X POST -H "Authorization: Bearer <session key>" --data-binary @demo.tar \
-    https://data.example.org/v1/communities/import
+    -H "Content-Type: application/x-tar" https://data.example.org/v1/communities
   ```
 
 ## 10. Verify

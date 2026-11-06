@@ -53,14 +53,6 @@ list the communities
 symposium-data communities list [-h]
 ```
 
-## `roster list`
-
-every user of the community, removed ones marked, with its roles, and the server-level users
-
-```
-symposium-data roster list [-h]
-```
-
 ## `invite`
 
 write a single-use invite file carrying access roles, which the server applies when the invitee joins; `invite list --out-dir <dir>` writes every pending invite
@@ -99,7 +91,7 @@ symposium-data unassign [-h] (--handle HANDLE | --api-key API_KEY) [--community 
 
 ## `users list`
 
-a community's users, or with --server the server-level users, removed ones marked
+a community's users, removed ones marked, each with its roles, and the server-level users (anyone in the community reads them); with --server, the server-level users
 
 ```
 symposium-data users list [-h] [--community COMMUNITY] [--server]

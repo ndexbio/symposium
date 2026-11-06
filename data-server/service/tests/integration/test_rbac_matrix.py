@@ -29,7 +29,7 @@ OPERATIONS = {
     "read record": 200,
     "create collection": 201,
     "submit": 201,
-    "list users": 200,
+    "list invites": 200,
     "export": 200,
     "list communities": 200,
 }
@@ -37,11 +37,11 @@ OPERATIONS = {
 # who may do what: lyra owns c1
 ALLOWED = {
     "root": {"read c1", "write c1", "manage c1", "read record", "create collection",
-             "list users", "export", "list communities"},
+             "list invites", "export", "list communities"},
     "server-admin": {"read c1", "write c1", "manage c1", "read record", "create collection",
-                     "list users", "export", "list communities"},
+                     "list invites", "export", "list communities"},
     "community-admin": {"read c1", "write c1", "manage c1", "read record",
-                        "create collection", "list users", "export"},
+                        "create collection", "list invites", "export"},
     "gate-keeper": {"read c1", "read record"},
     "member * (owner)": {"read c1", "write c1", "manage c1", "read record",
                          "create collection", "submit"},
@@ -57,9 +57,11 @@ ALLOWED = {
 
 def operate(name: str, headers: dict, url: str, fid: str) -> int:
     n = next(UNIQUE)
-    demo = f"{url}/v1/demo"
+    demo = f"{url}/v1/communities/demo"
     if name == "read c1":
-        return HTTP.get(f"{demo}/files/{fid}/v/latest", headers=headers).status_code
+        return HTTP.get(
+            f"{demo}/files/{fid}/versions/latest", headers=headers
+        ).status_code
     if name == "write c1":
         return HTTP.put(
             f"{demo}/collections/c1/files/f{n}.csv",
@@ -67,8 +69,8 @@ def operate(name: str, headers: dict, url: str, fid: str) -> int:
             headers={**headers, **file_headers(b"x")},
         ).status_code
     if name == "manage c1":
-        return HTTP.put(
-            f"{demo}/collections/c1/public", json={"public": False}, headers=headers
+        return HTTP.patch(
+            f"{demo}/collections/c1", json={"public": False}, headers=headers
         ).status_code
     if name == "read record":
         return HTTP.get(f"{demo}/artifacts", headers=headers).status_code
@@ -82,12 +84,10 @@ def operate(name: str, headers: dict, url: str, fid: str) -> int:
             content=b"{}",
             headers={**headers, **file_headers(b"{}", {"symposium_submission": True})},
         ).status_code
-    if name == "list users":
-        return HTTP.get(
-            f"{url}/v1/users", params={"community": "demo"}, headers=headers
-        ).status_code
+    if name == "list invites":
+        return HTTP.get(f"{demo}/invites", headers=headers).status_code
     if name == "export":
-        return HTTP.get(f"{demo}/export", headers=headers).status_code
+        return HTTP.get(f"{demo}/archive", headers=headers).status_code
     if name == "list communities":
         return HTTP.get(f"{url}/v1/communities", headers=headers).status_code
     raise AssertionError(name)
@@ -175,19 +175,14 @@ def test_the_roster_names_every_known_handle_to_any_principal(server):
         "app",
         roles=[{"role": "community-observer", "collections": EVERY}],
     )
-    vega = root.user_id("vega", "demo")
+    vega = root.user_url("vega", "demo")
     steward = steward_of(server)
-    assert (
-        HTTP.delete(
-            f"{server.url}/v1/users/{vega}", headers=steward.headers()
-        ).status_code
-        == 200
-    )
+    assert HTTP.delete(vega, headers=steward.headers()).status_code == 200
     for headers in (observer.headers(), bearer(app)):
-        r = HTTP.get(f"{server.url}/v1/demo/roster", headers=headers)
+        r = HTTP.get(f"{server.url}/v1/communities/demo/users", headers=headers)
         assert r.status_code == 200, r.text
         body = r.json()
-        homed = {e["handle"]: bool(e["removed"]) for e in body["roster"]}
+        homed = {e["handle"]: bool(e["removed"]) for e in body["users"]}
         assert homed["lyra"] is False and homed["vega"] is True
         assert {"olive", "steward"} <= set(homed)
         assert set(body["server_users"]) == {"demo-admin", "ana"}

@@ -169,6 +169,9 @@ class ApiService(Service):
     def base(caller: Caller) -> str:
         return caller.base_url + API
 
+    def community_url(self, caller: Caller, community: str) -> str:
+        return f"{self.base(caller)}/communities/{quote(community)}"
+
     def location_url(self, caller, community, location) -> str | None:
         """Where a `symposium-data:` location is read on this API: the cited file version's
         content. None for any other location."""
@@ -176,16 +179,16 @@ class ApiService(Service):
         if cited is None:
             return None
         file_id, n = cited
-        return f"{self.base(caller)}/{quote(community)}/files/{file_id}/v/{n}"
+        return f"{self.community_url(caller, community)}/files/{file_id}/versions/{n}"
 
     def artifact_url(self, caller, community, name) -> str:
         return (
-            f"{self.base(caller)}/{quote(community)}/artifacts/{quote(name, safe='')}"
+            f"{self.community_url(caller, community)}/artifacts/{quote(name, safe='')}"
         )
 
     def member_url(self, caller, community, handle) -> str:
         return (
-            f"{self.base(caller)}/{quote(community)}/members/{quote(handle, safe='')}"
+            f"{self.community_url(caller, community)}/members/{quote(handle, safe='')}"
         )
 
     def address_url(
@@ -195,8 +198,9 @@ class ApiService(Service):
         base, _, schema = address.partition("#")
         segs = base[1:].split(".")
         if schema or kind is None and len(segs) > 1:
-            return f"{self.base(caller)}/{quote(community)}/resolve?address=" + quote(
-                address, safe=""
+            return (
+                f"{self.community_url(caller, community)}/addresses?address="
+                + quote(address, safe="")
             )
         if kind == "member":
             return self.member_url(caller, community, segs[0])
@@ -309,7 +313,7 @@ class ApiService(Service):
             return m.RecordState.model_validate(
                 {
                     "community": community,
-                    "url": f"{self.base(caller)}/{quote(community)}/record",
+                    "url": f"{self.community_url(caller, community)}/record",
                     "position": self.position(conn, community),
                     "counts": self.index.counts(conn, community),
                     "members": sum(
@@ -762,9 +766,13 @@ class ApiService(Service):
                 )
             )
 
-    def get_me(self, caller, *, community):
+    def get_me(self, caller):
+        """The caller: its user, its roles and its resolved access, in its own community (the
+        key's, or the user's home); a server-level user's has none, and no record position."""
+        community = caller.community
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            if community is not None:
+                community = self.fresh(conn, community)
             row = conn.execute(
                 "SELECT expires FROM api_keys WHERE id = %s", (caller.key_id,)
             ).fetchone()
@@ -785,10 +793,12 @@ class ApiService(Service):
                 "suspect_after": iso(user["suspect_after"]) if user else None,
                 "roles": roles,
                 "context": caller.context.view(),
-                "position": self.position(conn, community),
             }
+            if community is not None:
+                out["position"] = self.position(conn, community)
             if (
-                caller.user_id is not None
+                community is not None
+                and caller.user_id is not None
                 and user is not None
                 and user["home"] == community
             ):
@@ -823,7 +833,7 @@ class ApiService(Service):
         name = row["name"].partition("@")[0]
         out = {
             "id": str(row["file_id"]),
-            "url": f"{self.base(caller)}/{quote(community)}/submissions/{row['file_id']}",
+            "url": f"{self.community_url(caller, community)}/submissions/{row['file_id']}",
             "name": name,
             "submitted_by": row["created_by"],
             "submitted": iso(row["created"]),

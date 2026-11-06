@@ -165,9 +165,9 @@ def test_use_lists_switches_and_refuses_what_a_session_does_not_hold(
         "session"
     ] == ("demo/lyra")
     # any member reads the roster; inviting takes `members`, refused in lyra's session
-    listed = skill.ok(tmp_path, "roster", "list")
+    listed = skill.ok(tmp_path, "users", "list")
     assert listed["session"] == "demo/lyra"
-    assert [m["handle"] for m in listed["roster"]] == ["lyra"]
+    assert [m["handle"] for m in listed["users"]] == ["lyra"]
     code, out = skill(
         tmp_path, "invite", "--handle", "vega", "--access", "community-member:*"
     )
@@ -184,15 +184,15 @@ def test_use_lists_switches_and_refuses_what_a_session_does_not_hold(
     assert code == 1 and "no session for nobody in demo" in out["error"]
     chosen = skill.ok(tmp_path, "use", "demo", ADMIN)
     assert chosen["server_level"] is True and chosen["current"] is True
-    roster = skill.ok(tmp_path, "roster", "list")
-    assert [m["handle"] for m in roster["roster"]] == ["lyra"]
+    roster = skill.ok(tmp_path, "users", "list")
+    assert [m["handle"] for m in roster["users"]] == ["lyra"]
     assert roster["session"] == f"demo/{ADMIN}"
     access = skill.ok(tmp_path, "access")
     assert [r["role"] for r in access["roles"]] == ["server-root"]
 
 
 def test_a_command_without_a_session_names_setup_and_admin_config(skill, tmp_path):
-    code, out = skill(tmp_path, "roster", "list")
+    code, out = skill(tmp_path, "users", "list")
     assert code == 1
     assert "/symposium setup --invite-file" in out["error"]
     assert "/symposium admin-config" in out["error"]
@@ -270,7 +270,7 @@ def test_bootstrap_writes_invite_files_and_only_adds(server, skill, suite, tmp_p
     assert second["created"] is False and second["invited"] == []
     assert invite_files(session) == ["demo-vega.invite"]
 
-    roster = skill.ok(tmp_path, "roster", "list")["roster"]
+    roster = skill.ok(tmp_path, "users", "list")["users"]
     assert [(m["handle"], m["registered"]) for m in roster] == [
         ("lyra", True),
         ("steward", True),
@@ -365,7 +365,7 @@ def test_keys_sharing_and_public_collections_through_the_skill(
     invites = skill.ok(tmp_path, "bootstrap", "--community-file", spec)["invite_files"]
     [invite] = [i for i in invites if i.endswith("demo-lyra.invite")]
     skill.ok(tmp_path, "setup", "--invite-file", invite)  # lyra's session is current
-    api = f"{server.url}/v1/demo"
+    api = f"{server.url}/v1/communities/demo"
 
     (tmp_path / "scores.csv").write_bytes(b"gene,score\nBST2,0.06\n")
     skill.ok(tmp_path, "data", "collection", "create", "--name", "test_collection")
@@ -390,7 +390,7 @@ def test_keys_sharing_and_public_collections_through_the_skill(
     assert issued["session"] == "demo/lyra" and issued["member_key"] is False
     key = json.loads(Path(issued["key_file"]).read_text())["key"]
     bearer = {"Authorization": f"Bearer {key}"}
-    content = f"{api}/files/{private['file_id']}/v/latest"
+    content = f"{api}/files/{private['file_id']}/versions/latest"
     assert HTTP.get(content, headers=bearer).content == b"gene,score\nBST2,0.06\n"
     assert HTTP.get(content).status_code == 401  # private: no key, no read
     narrowed = skill.ok(
@@ -433,7 +433,7 @@ def test_keys_sharing_and_public_collections_through_the_skill(
     assert owned == {"test_collection": False, "test_collection_public": True}
     listed = HTTP.get(f"{api}/collections/test_collection_public/changes").json()
     assert [i["name"] for i in listed["items"]] == ["summary.csv"]
-    read = HTTP.get(f"{api}/files/{public['file_id']}/v/latest")
+    read = HTTP.get(f"{api}/files/{public['file_id']}/versions/latest")
     assert read.status_code == 200 and read.content == b"genes,1\n"
 
     mine = skill.ok(tmp_path, "list-api-keys")

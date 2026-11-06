@@ -67,7 +67,7 @@ def recorded_artifacts() -> list:
 
 def start_port(server, headers, url, community="demo"):
     return HTTP.post(
-        f"{server.url}/v1/{community}/port-ndex",
+        f"{server.url}/v1/communities/{community}/ndex-imports",
         # 4 networks per page, so the 10 recorded networks take 3 listing pages
         json={"ndex_url": url, "credentials": CREDENTIALS, "page_size": 4},
         headers=headers,
@@ -79,7 +79,8 @@ def port_outcome(server, admin, port_id, community="demo") -> dict:
     deadline = time.monotonic() + MAX_WAIT
     while True:
         view = HTTP.get(
-            f"{server.url}/v1/{community}/port-ndex/{port_id}", headers=admin.headers()
+            f"{server.url}/v1/communities/{community}/ndex-imports/{port_id}",
+            headers=admin.headers(),
         ).json()
         if view["state"] != "running":
             return view
@@ -99,7 +100,7 @@ def everything(server, headers, collection) -> list:
     items, since = [], 0
     while True:
         page = HTTP.get(
-            f"{server.url}/v1/demo/collections/{collection}/changes",
+            f"{server.url}/v1/communities/demo/collections/{collection}/changes",
             params={"since": since, "limit": 4},
             headers=headers,
         ).json()
@@ -118,7 +119,7 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
     assert (
         result["pages"] == 3 and stub.listing_pages == 3
     )  # 10 networks at page size 4
-    assert result["reserved_roster"] == ["lyra", "vega"]
+    assert result["authors"] == ["lyra", "vega"]
     assert result["root"] == admin.handle and result["source"] == stub.url
 
     recorded = recorded_artifacts()
@@ -180,8 +181,8 @@ def test_the_port_fills_an_empty_community_once(demo, stub, tmp_path):
     # the record's clock continues after the last ported instant: the next accept takes it
     sub = lyra.put("demo", "inbox", "after.json", b"{}", {"symposium_submission": True})
     after = HTTP.post(
-        admin.url(f"/files/{sub.json()['file_id']}/v/1/promote"),
-        json={"collection": "record"},
+        admin.url("/collections/record/files"),
+        json={"from": f"symposium-data:{sub.json()['file_id']}@v1"},
         headers=admin.headers(),
     ).json()
     assert after["seq"] == 10
@@ -345,7 +346,8 @@ def port_view_after_restart(server, admin, port_id) -> dict | None:
     """The port's view once it is no longer running; None while the API restarts."""
     try:
         view = HTTP.get(
-            f"{server.url}/v1/demo/port-ndex/{port_id}", headers=admin.headers()
+            f"{server.url}/v1/communities/demo/ndex-imports/{port_id}",
+            headers=admin.headers(),
         ).json()
     except httpx.HTTPError:
         return None
@@ -359,7 +361,7 @@ def test_a_port_is_refused_before_any_ndex_call(demo, stub):
     lyra = Owner(server, "lyra")
     enroll(admin, lyra, "demo")
     assert start_port(server, lyra.headers(), stub.url).status_code == 403
-    status_url = f"{server.url}/v1/demo/port-ndex/{uuid.uuid4()}"
+    status_url = f"{server.url}/v1/communities/demo/ndex-imports/{uuid.uuid4()}"
     assert HTTP.get(status_url, headers=admin.headers()).status_code == 404
     assert HTTP.get(status_url).status_code == 401
     assert HTTP.get(status_url, headers=lyra.headers()).status_code == 403
@@ -402,7 +404,7 @@ def test_one_port_runs_at_a_time(demo):
 
 # ── the port feature holds every NDEx reference (R-S1, R-S3 scoped to data-server/) ─────────
 NDEX = re.compile(r"(?<![a-z])ndex(?!bio/)|cx2|/v[23]/|ndexbio\.org", re.IGNORECASE)
-PORT_IDENTIFIER = re.compile(r"PORT_NDEX|port-ndex|port_ndex")
+PORT_IDENTIFIER = re.compile(r"PORT_NDEX|port-ndex|port_ndex|ndex-import|NdexImport")
 PORT_FILES = {
     "service/symposium_data/port_ndex.py",
     "service/tests/integration/test_port_ndex.py",

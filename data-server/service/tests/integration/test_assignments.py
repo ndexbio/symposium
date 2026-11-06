@@ -19,9 +19,7 @@ from harness import HTTP
 
 def roles(owner, handle, community="demo"):
     r = HTTP.get(
-        f"{owner.server.url}/v1/assignments",
-        params={"handle": handle, "community": community},
-        headers=owner.headers(),
+        owner.principal_url(handle, community) + "/roles", headers=owner.headers()
     )
     assert r.status_code == 200, r.text
     return {a["role"]: a["collections"] for a in r.json()["roles"]}
@@ -29,7 +27,7 @@ def roles(owner, handle, community="demo"):
 
 def make_collection(owner, name, community="demo"):
     r = HTTP.post(
-        f"{owner.server.url}/v1/{community}/collections",
+        f"{owner.server.url}/v1/communities/{community}/collections",
         json={"name": name},
         headers=owner.headers(),
     )
@@ -49,13 +47,13 @@ def test_each_role_is_assigned_only_by_its_authority(server):
         assert (
             lyra.assign("community-member", value, "olive", "demo").status_code == 403
         )
-    assert (
-        steward.assign("community-member", ["files"], "olive", "demo").status_code
-        == 200
-    )
+    assert steward.assign(
+        "community-member", ["files"], "olive", "demo"
+    ).status_code in (200, 201)
     # community-observer by name: manage on each collection, so an owner shares its own
-    assert (
-        lyra.assign("community-observer", ["mine"], "olive", "demo").status_code == 200
+    assert lyra.assign("community-observer", ["mine"], "olive", "demo").status_code in (
+        200,
+        201,
     )
     assert (
         lyra.assign("community-observer", ["files"], "olive", "demo").status_code == 403
@@ -64,7 +62,10 @@ def test_each_role_is_assigned_only_by_its_authority(server):
     # administrative community roles: members
     assert bob.assign("community-admin", None, "olive", "demo").status_code == 403
     assert lyra.assign("gate-keeper", None, "olive", "demo").status_code == 403
-    assert steward.assign("gate-keeper", None, "olive", "demo").status_code == 200
+    assert steward.assign("gate-keeper", None, "olive", "demo").status_code in (
+        200,
+        201,
+    )
     # server roles: delegate; server-root never
     ana = Owner(server, "ana", community=None)
     ana.home = None
@@ -90,18 +91,22 @@ def test_collection_values_merge_and_shrink(server):
     for name in ("c1", "c2", "c3"):
         make_collection(lyra, name)
     for names in (["c1"], ["c2", "c3"]):
-        assert (
-            lyra.assign("community-observer", names, "olive", "demo").status_code == 200
-        )
+        assert lyra.assign(
+            "community-observer", names, "olive", "demo"
+        ).status_code in (200, 201)
     assert roles(admin, "olive")["community-observer"] == ["c1", "c2", "c3"]
     assert (
         lyra.unassign("community-observer", ["c2"], "olive", "demo").status_code == 200
     )
     assert roles(admin, "olive")["community-observer"] == ["c1", "c3"]
     # `*` absorbs names, and names leave `*` as it is
-    assert admin.assign("community-observer", EVERY, "olive", "demo").status_code == 200
-    assert (
-        admin.assign("community-observer", ["c1"], "olive", "demo").status_code == 200
+    assert admin.assign("community-observer", EVERY, "olive", "demo").status_code in (
+        200,
+        201,
+    )
+    assert admin.assign("community-observer", ["c1"], "olive", "demo").status_code in (
+        200,
+        201,
     )
     assert roles(admin, "olive")["community-observer"] == EVERY
 
@@ -161,15 +166,13 @@ def test_only_the_issuer_or_a_members_holder_changes_a_key(server):
     assert (
         lyra.assign("community-member", ["c9"], api_key_id=key["id"]).status_code == 404
     )
-    assert (
-        lyra.assign("community-member", ["theirs"], api_key_id=key["id"]).status_code
-        == 200
-    )
+    assert lyra.assign(
+        "community-member", ["theirs"], api_key_id=key["id"]
+    ).status_code in (200, 201)
     # a members holder changes it, never beyond the issuer's grants
-    assert (
-        steward.assign("community-observer", EVERY, api_key_id=key["id"]).status_code
-        == 200
-    )
+    assert steward.assign(
+        "community-observer", EVERY, api_key_id=key["id"]
+    ).status_code in (200, 201)
     admin.unassign("community-member", None, "lyra", "demo")
     admin.assign("community-observer", ["files"], "lyra", "demo")
     assert (
@@ -203,7 +206,7 @@ def test_the_last_members_holder_stays(server):
         steward.unassign("community-admin", None, "steward", "demo").status_code == 409
     )
     removed = HTTP.delete(
-        f"{server.url}/v1/users/{admin.user_id('steward', 'demo')}",
+        admin.user_url("steward", "demo"),
         headers=admin.headers(),
     )
     assert removed.status_code == 409
@@ -247,11 +250,11 @@ def test_two_concurrent_demotions_of_the_last_two_admins_leave_one(server):
     # as no longer holding members (403)
     assert sorted(results)[0] == 200 and sorted(results)[1] in (403, 409)
     roster = HTTP.get(
-        steward.url("/roster"), headers=init_admin(server).headers()
+        steward.url("/users"), headers=init_admin(server).headers()
     ).json()
     admins = [
         r["handle"]
-        for r in roster["roster"]
+        for r in roster["users"]
         if any(a["role"] == "community-admin" for a in r["roles"])
     ]
     assert len(admins) == 1

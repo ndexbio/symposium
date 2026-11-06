@@ -74,11 +74,17 @@ runs and the skill it needs.
 - **Users.** Every identity is a user, homed in a community or server-level. The key file binds
   root (`server-root`). A removed user stays as a tombstone: its handle is retired and its work
   keeps its name. `/v1/status` reports `root`.
-- **Routes:** `POST /v1/auth/challenge`, `POST /v1/auth/token` (one sign-in for every user),
-  `POST /v1/users` (join with an invite), `GET /v1/users`, `DELETE /v1/users/{id}`,
-  `POST /v1/users/{id}/rebind`, `PUT /v1/users/{id}/suspect-after`, `POST /v1/users/me/keys`,
-  `GET /v1/roles`, `GET`/`POST /v1/invites` (invites carry their roles on the server),
-  `GET`/`POST`/`DELETE /v1/assignments`.
+- **One resource tree.** Every community's routes are under `/v1/communities/{community}/…`,
+  beside the server's own resources, so any slug names a community. Every path segment is a
+  noun; every create answers `201` with its `Location`.
+- **Routes:** `POST /v1/challenges` and `POST /v1/sessions` (one sign-in for every user),
+  `POST /v1/registrations` (join with an invite), `GET /v1/me` and `POST /v1/me/keys`,
+  `GET /v1/roles[/{role}]`; users by handle, `/v1/users/{handle}` (server-level) and
+  `/v1/communities/{c}/users/{handle}` (`GET`, `PATCH {suspect_after}`, `DELETE`, and
+  `POST …/invites` for a fresh key); roles as sub-resources of their user or key,
+  `…/roles/{role}` (`PUT` under `If-Match`, `DELETE`) and `…/roles/{role}/collections/{c}`
+  (`PUT`, `DELETE`); invites with ids, `…/invites[/{invite_id}]`; `GET /v1/communities/{c}`,
+  its `archive`, and `POST /v1/communities` with an archive to import one; `ndex-imports`.
 - **Upgrading in place.** A 0.1.x server converts its database on its first 0.2.0 start, after
   a backup to `/apps/data/backups/`; the server backs up its database before every schema
   upgrade. The admin becomes root, roster members `community-member` on every collection,
@@ -87,15 +93,27 @@ runs and the skill it needs.
 ### Changed
 
 - `POST /v1/communities` takes `admin`, the first community admin's handle, and answers its
-  invite. `POST /v1/{community}/api-keys` takes `roles` and `non_member`; a key's listing shows
-  its roles, and revoking a key deletes it. `GET /v1/{community}/roster` lists users with their
-  roles and a `removed` flag, and the server-level users. `GET /v1/{community}/me` answers the
-  caller's roles and resolved grants. Creating a collection takes `write`; `inbox` takes
-  submissions with `publish` and replies with `gate`; promotion into `record` takes `gate`.
+  invite. `POST …/api-keys` takes `roles` and `non_member`; a key's listing shows its roles,
+  and revoking a key deletes it. `GET /v1/communities/{c}/users` lists users with their roles
+  and a `removed` flag, and the server-level users, to anyone in the community. `GET /v1/me`
+  answers the caller's roles and resolved grants. Creating a collection takes `write`; `inbox`
+  takes submissions with `publish` and replies with `gate`; promotion into `record` takes
+  `gate`.
+- Every route moves under the resource tree: `/v1/{community}/…` becomes
+  `/v1/communities/{community}/…`; `files/{id}/v/{n}` becomes `files/{id}/versions/{n}`, its
+  `stat` `…/metadata`, its `purge` `DELETE …/versions/{n}`, and its `promote`
+  `POST …/collections/{collection}/files {from}`; `verify` becomes
+  `…/files/{id}/versions/{n}/verification`; `sha256/{sha}` becomes `versions?sha256=`;
+  `collections/{c}/find` and `query` become `…/files?name=` and `…/files/search`; `PUT
+  …/collections/{c}/public` becomes `PATCH …/collections/{c}`; creating a file takes
+  `If-None-Match: *`; `streams/record` and `streams/submissions` become `record/events` and
+  `submissions/events`; `submissions/check` becomes `submission-checks`; `resolve` becomes
+  `addresses`; `export` becomes `archive`, and `port-ndex` `ndex-imports`.
 - The routes `/v1/admin/challenge`, `/v1/admin/token`, `/v1/{community}/auth/*`,
-  `/v1/{community}/owners*`, `/v1/{community}/roster/{handle}`, `/v1/{community}/invites` and
-  `/v1/{community}/collections/{collection}/grants` are retired; sharing a collection is an
-  assignment of `community-observer`.
+  `/v1/{community}/owners*`, `/v1/{community}/roster[/{handle}]`, `/v1/{community}/invites`,
+  `/v1/communities/import` and `/v1/{community}/collections/{collection}/grants` are retired;
+  sharing a collection is an assignment of `community-observer`, and no community name is
+  reserved.
 
 ## [Data Server 0.1.3] - Unreleased
 

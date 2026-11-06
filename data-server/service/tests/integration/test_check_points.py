@@ -20,7 +20,7 @@ def bearer(key) -> dict:
 
 def collection(owner, name, community="demo"):
     r = HTTP.post(
-        f"{owner.server.url}/v1/{community}/collections",
+        f"{owner.server.url}/v1/communities/{community}/collections",
         json={"name": name},
         headers=owner.headers(),
     )
@@ -42,16 +42,18 @@ def test_a_collection_limited_key_reads_its_collections_only(server):
         roles=[{"role": "community-observer", "collections": ["c2", "c3"]}],
         non_member=True,
     )
-    url = f"{server.url}/v1/demo"
+    url = f"{server.url}/v1/communities/demo"
     ok = HTTP.get(f"{url}/collections/c2/changes", headers=bearer(key))
     assert ok.status_code == 200 and len(ok.json()["items"]) == 1
     assert (
-        HTTP.get(f"{url}/files/{files['c2']}/v/latest", headers=bearer(key)).status_code
+        HTTP.get(
+            f"{url}/files/{files['c2']}/versions/latest", headers=bearer(key)
+        ).status_code
         == 200
     )
     for refused in (
         f"{url}/collections/c1/changes",
-        f"{url}/files/{files['c1']}/v/latest",
+        f"{url}/files/{files['c1']}/versions/latest",
         f"{url}/collections/record/changes",
         f"{url}/collections/inbox/changes",
         f"{url}/artifacts",
@@ -61,12 +63,14 @@ def test_a_collection_limited_key_reads_its_collections_only(server):
     assert [c["name"] for c in listed] == ["c2", "c3"]
     missing = "00000000-0000-0000-0000-000000000000"
     assert (
-        HTTP.get(f"{url}/files/{missing}/v/latest", headers=bearer(key)).status_code
+        HTTP.get(
+            f"{url}/files/{missing}/versions/latest", headers=bearer(key)
+        ).status_code
         == 404
     )
     create_community(server, root, "other")
     other = HTTP.get(
-        f"{server.url}/v1/other/collections/c2/changes", headers=bearer(key)
+        f"{server.url}/v1/communities/other/collections/c2/changes", headers=bearer(key)
     )
     assert other.status_code in (403, 404)
     write = HTTP.put(
@@ -105,15 +109,15 @@ def test_issued_keys_get_no_owner_allowance_and_sessions_do(server):
         "uploader", roles=[{"role": "community-member", "collections": ["files"]}]
     )
     up = HTTP.put(
-        f"{server.url}/v1/demo/collections/files/files/a.csv",
+        f"{server.url}/v1/communities/demo/collections/files/files/a.csv",
         content=b"x",
-        headers={**bearer(script), "Repr-Digest": _digest(b"x")},
+        headers={**bearer(script), "If-None-Match": "*", "Repr-Digest": _digest(b"x")},
     )
     assert up.status_code == 201, up.text
     mine = HTTP.put(
-        f"{server.url}/v1/demo/collections/mine/files/a.csv",
+        f"{server.url}/v1/communities/demo/collections/mine/files/a.csv",
         content=b"x",
-        headers={**bearer(script), "Repr-Digest": _digest(b"x")},
+        headers={**bearer(script), "If-None-Match": "*", "Repr-Digest": _digest(b"x")},
     )
     assert mine.status_code == 403
     # the same user, signed in and narrowed to nothing by list, still reaches what it owns
@@ -130,17 +134,17 @@ def test_public_collections_answer_without_a_key(server):
     lyra, olive = owners["lyra"], owners["olive"]
     collection(lyra, "open")
     fid = lyra.put("demo", "open", "a.csv", b"x").json()["file_id"]
-    url = f"{server.url}/v1/demo"
-    assert HTTP.get(f"{url}/files/{fid}/v/latest").status_code == 401
-    made = HTTP.put(
-        f"{url}/collections/open/public", json={"public": True}, headers=olive.headers()
+    url = f"{server.url}/v1/communities/demo"
+    assert HTTP.get(f"{url}/files/{fid}/versions/latest").status_code == 401
+    made = HTTP.patch(
+        f"{url}/collections/open", json={"public": True}, headers=olive.headers()
     )
     assert made.status_code == 403  # manage: the owner's
-    made = HTTP.put(
-        f"{url}/collections/open/public", json={"public": True}, headers=lyra.headers()
+    made = HTTP.patch(
+        f"{url}/collections/open", json={"public": True}, headers=lyra.headers()
     )
     assert made.status_code == 200
-    assert HTTP.get(f"{url}/files/{fid}/v/latest").status_code == 200
+    assert HTTP.get(f"{url}/files/{fid}/versions/latest").status_code == 200
     assert (
         HTTP.put(f"{url}/collections/open/files/b.csv", content=b"x").status_code == 401
     )
@@ -161,8 +165,8 @@ def test_creating_a_collection_takes_write_with_any_value(server):
         assert made.status_code == 201, made.text
         # the creator owns it: read, write and manage through the owner allowance
         assert owner.put("demo", f"{handle}s", "a.csv", b"x").status_code == 201
-        public = HTTP.put(
-            owner.url(f"/collections/{handle}s/public"),
+        public = HTTP.patch(
+            owner.url(f"/collections/{handle}s"),
             json={"public": False},
             headers=owner.headers(),
         )

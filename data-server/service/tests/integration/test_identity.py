@@ -25,7 +25,8 @@ def community(server):
 
 def me(owner, headers=None):
     return HTTP.get(
-        owner.url("/me"), headers=owner.headers() if headers is None else headers
+        owner.server.url + "/v1/me",
+        headers=owner.headers() if headers is None else headers,
     )
 
 
@@ -41,10 +42,10 @@ def test_joining_requires_proof_of_possession(community):
         "signature": OwnerKey().sign(nonce),
         "invite": secret,
     }
-    assert HTTP.post(server.url + "/v1/users", json=body).status_code == 401
+    assert HTTP.post(server.url + "/v1/registrations", json=body).status_code == 401
     # the challenge was spent by the failed attempt; replaying it with a good signature fails
     body["signature"] = lyra.key.sign(nonce)
-    assert HTTP.post(server.url + "/v1/users", json=body).status_code == 401
+    assert HTTP.post(server.url + "/v1/registrations", json=body).status_code == 401
     # the invite was not spent: a fresh challenge joins
     assert lyra.register(secret).status_code == 201
 
@@ -62,13 +63,13 @@ def test_sign_in_needs_the_registered_key_and_a_fresh_challenge(community):
         "nonce": nonce,
         "signature": lyra.key.sign(nonce),
     }
-    signed_in = HTTP.post(server.url + "/v1/auth/token", json=body)
+    signed_in = HTTP.post(server.url + "/v1/sessions", json=body)
     assert signed_in.status_code == 200
     session = signed_in.json()
     assert session["key"].startswith("sak_") and len(session["key"]) == 47
     assert session["expires"] and session["kid"]
     assert signed_in.headers["cache-control"] == "no-store"
-    assert HTTP.post(server.url + "/v1/auth/token", json=body).status_code == 401
+    assert HTTP.post(server.url + "/v1/sessions", json=body).status_code == 401
 
     mine = me(lyra, lyra.headers(session["key"])).json()
     assert mine["handle"] == "lyra" and mine["community"] == "demo"
@@ -118,9 +119,9 @@ def test_key_rotation_retires_the_old_key(community):
         "signature": new_key.sign(nonce),
     }
     r = HTTP.post(
-        server.url + "/v1/users/me/keys", json=rotate, headers=lyra.headers(old_session)
+        server.url + "/v1/me/keys", json=rotate, headers=lyra.headers(old_session)
     )
-    assert r.status_code == 201, r.text
+    assert r.status_code == 200, r.text  # the key is replaced
 
     # the old key's sessions end with it, and it cannot sign in again
     assert me(lyra, lyra.headers(old_session)).status_code == 401
@@ -132,7 +133,7 @@ def test_key_rotation_retires_the_old_key(community):
     nonce = rotated.challenge()
     other = OwnerKey()
     r = HTTP.post(
-        server.url + "/v1/users/me/keys",
+        server.url + "/v1/me/keys",
         json={"public_jwk": other.jwk, "nonce": nonce, "signature": other.sign(nonce)},
         headers=rotated.headers(issued["key"]),
     )
@@ -142,25 +143,25 @@ def test_key_rotation_retires_the_old_key(community):
 def test_suspect_after_is_recorded_and_reported(server):
     admin, owners = community_with(server, members=("lyra",))
     lyra = owners["lyra"]
-    user = admin.user_id("lyra", "demo")
+    user = admin.user_url("lyra", "demo")
     at = "2026-10-01T12:00:00+00:00"
-    flagged = HTTP.put(
-        f"{server.url}/v1/users/{user}/suspect-after",
-        json={"at": at},
+    flagged = HTTP.patch(
+        user,
+        json={"suspect_after": at},
         headers=admin.headers(),
     )
     assert flagged.status_code == 200, flagged.text
     assert flagged.json()["suspect_after"].startswith("2026-10-01T12:00:00")
     assert me(lyra).json()["suspect_after"].startswith("2026-10-01T12:00:00")
-    naive = HTTP.put(
-        f"{server.url}/v1/users/{user}/suspect-after",
-        json={"at": "2026-10-01T12:00:00"},
+    naive = HTTP.patch(
+        user,
+        json={"suspect_after": "2026-10-01T12:00:00"},
         headers=admin.headers(),
     )
     assert naive.status_code == 400
-    refused = HTTP.put(
-        f"{server.url}/v1/users/{user}/suspect-after",
-        json={"at": at},
+    refused = HTTP.patch(
+        user,
+        json={"suspect_after": at},
         headers=lyra.headers(),
     )
     assert refused.status_code == 403

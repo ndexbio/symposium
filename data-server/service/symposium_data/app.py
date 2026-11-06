@@ -34,11 +34,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -133,15 +133,26 @@ async def operational_only(request: Request, call_next):
     return await call_next(request)
 
 
-# A request body is at most 8 MiB, except the three routes that stream one: a file's content
-# and an import, which quota bounds instead.
+# A request body is at most 8 MiB, except where one streams: a file's content (creating a file,
+# adding a version), which quota bounds instead, and a community's archive (an import).
 BODY_LIMIT = 8 * 1024 * 1024
 TOO_LARGE = "the request body is over 8 MiB"
 STREAMED = (
-    ("PUT", re.compile(r"^/v1/[^/]+/collections/[^/]+/files/[^/]+$")),
-    ("POST", re.compile(r"^/v1/[^/]+/files/[^/]+/versions$")),
-    ("POST", re.compile(r"^/v1/communities/import$")),
+    ("PUT", re.compile(r"^/v1/communities/[^/]+/collections/[^/]+/files/[^/]+$"), None),
+    ("POST", re.compile(r"^/v1/communities/[^/]+/files/[^/]+/versions$"), None),
+    ("POST", re.compile(r"^/v1/communities$"), b"application/x-tar"),
 )
+
+
+def streams(scope) -> bool:
+    """Whether a request's body streams past the limit: a route above, with its media type."""
+    media = dict(scope["headers"]).get(b"content-type", b"").split(b";")[0].strip()
+    return any(
+        scope["method"] == method
+        and path.match(scope["path"])
+        and (wanted is None or media == wanted)
+        for method, path, wanted in STREAMED
+    )
 
 
 class BodyLimit:
@@ -153,10 +164,7 @@ class BodyLimit:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or any(
-            scope["method"] == method and path.match(scope["path"])
-            for method, path in STREAMED
-        ):
+        if scope["type"] != "http" or streams(scope):
             return await self.app(scope, receive, send)
         length = dict(scope["headers"]).get(b"content-length", b"")
         too_large = JSONResponse(body_for(413, TOO_LARGE), status_code=413)
@@ -339,22 +347,16 @@ class RoleIn(BaseModel):
 
 class InviteIn(BaseModel):
     handle: str = Field(pattern=NAME)
-    # the invitee's home; a homed caller's own community when omitted, and for a
-    # server-level caller, omitted means a server-level user
-    community: str | None = None
     roles: list[RoleIn] = Field(min_length=1)
     hours: int | None = Field(default=None, ge=1, le=24 * 366)
 
 
-class AssignmentIn(BaseModel):
-    """A principal (a user by handle and community, or an API key by id) and one role. On
-    DELETE, `collections` names the collections to remove; omitted, the whole assignment."""
-
-    handle: str | None = Field(default=None, pattern=NAME)
-    community: str | None = None
-    api_key_id: str | None = None
-    role: str
+class RoleValueIn(BaseModel):
     collections: list[str] | None = None
+
+
+class UserPatch(BaseModel):
+    suspect_after: datetime
 
 
 class CommunityIn(BaseModel):
@@ -383,6 +385,11 @@ def community_of(conn, name: str) -> str:
 
 def home_of(conn, name: str | None) -> str | None:
     return None if name is None else community_of(conn, name)
+
+
+def located(response: Response, caller: Caller, path: str):
+    """The `Location` of a resource a request created: an absolute URL on this server."""
+    response.headers["Location"] = caller.base_url + "/v1" + path
 
 
 def checked_new_key(conn, home: str | None, handle: str, body) -> tuple[str, dict]:
@@ -415,9 +422,9 @@ def removed_message(home: str | None) -> str:
     return "this account was removed" + (f" from {home}" if home else "")
 
 
-@app.post("/v1/auth/challenge")
-def challenge(
-    caller: Annotated[Caller, Depends(authorize("challenge"))], body: ChallengeIn
+@app.post("/v1/challenges")
+def create_challenge(
+    caller: Annotated[Caller, Depends(authorize("createChallenge"))], body: ChallengeIn
 ):
     """A nonce to sign, for signing in or for proving a new key, by any handle: the answer is
     the same whether or not the handle exists."""
@@ -428,7 +435,7 @@ def challenge(
     return {"nonce": nonce, "expires_in": 300}
 
 
-@app.post("/v1/auth/token")
+@app.post("/v1/sessions")
 def create_session(
     caller: Annotated[Caller, Depends(authorize("createSession"))],
     body: SessionIn,
@@ -462,9 +469,17 @@ def create_session(
         refuse(401, "the signature does not match an active key of this handle", conn)
 
 
-@app.post("/v1/users", status_code=201)
+def user_path(home: str | None, handle: str) -> str:
+    """A user's path under /v1: its scope's users, by handle."""
+    scope = "" if home is None else f"/communities/{home}"
+    return f"{scope}/users/{handle}"
+
+
+@app.post("/v1/registrations", status_code=201)
 def register(
-    caller: Annotated[Caller, Depends(authorize("register"))], body: RegisterIn
+    caller: Annotated[Caller, Depends(authorize("register"))],
+    body: RegisterIn,
+    response: Response,
 ):
     """Join with an invite: register a key generated on the invitee's machine (R-D1, R-D5).
     The invite, held by the server, says the home and the roles; the request names neither."""
@@ -503,6 +518,7 @@ def register(
                 invite["created_by"],
                 user_id=user["id"],
             )
+        located(response, caller, user_path(home, body.handle))
         return {
             "handle": body.handle,
             "community": home,
@@ -511,7 +527,7 @@ def register(
         }
 
 
-@app.post("/v1/users/me/keys", status_code=201)
+@app.post("/v1/me/keys")
 def rotate(caller: Annotated[Caller, Depends(authorize("rotateKey"))], body: RotateIn):
     """Replace the signed-in user's key, proven by the new key; the old key retires (versions
     name it) and the sessions it obtained end."""
@@ -523,6 +539,7 @@ def rotate(caller: Annotated[Caller, Depends(authorize("rotateKey"))], body: Rot
         return {"handle": caller.handle, "kid": kid}
 
 
+# ── users: server-level, and a community's ──────────────────────────────────────────────────
 def user_out(conn, row) -> dict:
     return {
         "id": str(row["id"]),
@@ -536,13 +553,6 @@ def user_out(conn, row) -> dict:
     }
 
 
-def target_home(conn, caller: Caller, community: str | None) -> str | None:
-    """The home a request names: its `community`, or a homed caller's own."""
-    if community is None:
-        return caller.community
-    return community_of(conn, community)
-
-
 def require_user_admin(caller: Caller, home: str | None):
     """`delegate` for server-level users, `members` in their community otherwise."""
     if home is None:
@@ -552,139 +562,218 @@ def require_user_admin(caller: Caller, home: str | None):
         refuse(403, f"this needs the members grant in {home}")
 
 
-def user_row(conn, user_id: str):
-    try:
-        found = records.user(conn, uuid.UUID(user_id))
-    except ValueError:
-        found = None
-    if found is None:
-        refuse(404, f"no user '{user_id}'")
-    return found
+def require_reader(caller: Caller, home: str | None):
+    """A community's users are read by any principal of the community; the server-level users
+    by `delegate` holders."""
+    if home is None:
+        require_user_admin(caller, None)
+    elif caller.community not in (None, home):
+        refuse(403, f"this key belongs to {caller.community}")
 
 
-@app.get("/v1/users")
-def list_users(
-    caller: Annotated[Caller, Depends(authorize("listUsers"))],
-    community: str | None = None,
-):
-    """A community's users (or, with no community, the server-level users), removed ones
-    included and marked, each with its roles."""
-    with db.connection() as conn:
-        home = target_home(conn, caller, community)
-        require_user_admin(caller, home)
-        return {
-            "community": home,
-            "users": [user_out(conn, r) for r in records.users(conn, home)],
-        }
+def scoped_user(conn, home: str | None, handle: str):
+    user = records.user_by_handle(conn, home, handle)
+    if user is None:
+        refuse(404, f"no user '{handle}'" + (f" in {home}" if home else ""))
+    return user
 
 
-@app.delete("/v1/users/{user_id}")
-def remove_user(
-    caller: Annotated[Caller, Depends(authorize("removeUser"))],
-    user_id: str,
-):
+def list_users_in(conn, caller: Caller, home: str | None) -> dict:
+    require_reader(caller, home)
+    out = {
+        "community": home,
+        "users": [user_out(conn, r) for r in records.users(conn, home)],
+    }
+    if home is not None:
+        out["server_users"] = [r["handle"] for r in records.users(conn, None)]
+    return out
+
+
+def get_user_in(conn, caller: Caller, home: str | None, handle: str) -> dict:
+    require_reader(caller, home)
+    return user_out(conn, scoped_user(conn, home, handle))
+
+
+def update_user_in(conn, caller: Caller, home, handle, body: UserPatch) -> dict:
+    if body.suspect_after.tzinfo is None:
+        refuse(400, "the instant needs a timezone, e.g. 2026-10-01T12:00:00+00:00")
+    require_user_admin(caller, home)
+    user = scoped_user(conn, home, handle)
+    if not records.set_suspect_after(conn, user["id"], body.suspect_after):
+        refuse(409, f"'{handle}' was removed")
+    return user_out(conn, records.user(conn, user["id"]))
+
+
+def remove_user_in(conn, caller: Caller, home, handle) -> dict:
     """Remove a user. It stays as a tombstone: its handle is never used again, and everything
     it published keeps its name. Its roles end, its keys retire, and its sessions and every
     API key it issued are deleted."""
-    with db.connection() as conn:
-        user = user_row(conn, user_id)
-        require_user_admin(caller, user["home"])
-        if (
-            records.current_value(conn, rbac.SERVER_ROOT, user_id=user["id"])
-            is not False
-        ):
-            refuse(
-                409,
-                "the root administrator is bound by the key file and not removed here",
-            )
-        try:
-            removed = records.remove_user(conn, user["id"], caller.handle)
-        except Conflict as e:
-            conn.rollback()
-            refuse(409, str(e))
-        if not removed:
-            refuse(409, f"'{user['handle']}' was already removed")
-        return user_out(conn, records.user(conn, user["id"]))
+    require_user_admin(caller, home)
+    user = scoped_user(conn, home, handle)
+    if records.current_value(conn, rbac.SERVER_ROOT, user_id=user["id"]) is not False:
+        refuse(
+            409, "the root administrator is bound by the key file and not removed here"
+        )
+    try:
+        removed = records.remove_user(conn, user["id"], caller.handle)
+    except Conflict as e:
+        conn.rollback()
+        refuse(409, str(e))
+    if not removed:
+        refuse(409, f"'{handle}' was already removed")
+    return user_out(conn, records.user(conn, user["id"]))
 
 
 class RebindIn(BaseModel):
     hours: int | None = Field(default=None, ge=1, le=24 * 366)
 
 
-@app.post("/v1/users/{user_id}/rebind", status_code=201)
-def rebind(
-    caller: Annotated[Caller, Depends(authorize("rebindUser"))],
-    user_id: str,
-    body: RebindIn | None = None,
-):
+def rebind_user_in(conn, caller: Caller, home, handle, body, response) -> dict:
     """A lost or compromised key: retire the user's keys, end its sessions, and return a fresh
     invite that registers a new key for the same user, with its roles as they are."""
+    require_user_admin(caller, home)
+    user = scoped_user(conn, home, handle)
+    if user["removed"] is not None:
+        refuse(409, f"'{handle}' was removed")
+    retired = records.retire_keys(conn, user["id"])
+    issued = mint_invite(
+        conn,
+        handle=user["handle"],
+        home=home,
+        roles=[],
+        by=caller.handle,
+        hours=body.hours if body else None,
+        url=caller.base_url,
+        user_id=user["id"],
+    )
+    located(response, caller, invite_path(home, issued["id"]))
+    return {"retired_keys": retired, **issued}
+
+
+@app.get("/v1/users")
+def list_server_users(caller: Annotated[Caller, Depends(authorize("listServerUsers"))]):
+    """The server-level users, removed ones included and marked, each with its roles."""
     with db.connection() as conn:
-        user = user_row(conn, user_id)
-        require_user_admin(caller, user["home"])
-        if user["removed"] is not None:
-            refuse(409, f"'{user['handle']}' was removed")
-        retired = records.retire_keys(conn, user["id"])
-        issued = mint_invite(
-            conn,
-            handle=user["handle"],
-            home=user["home"],
-            roles=[],
-            by=caller.handle,
-            hours=body.hours if body else None,
-            url=caller.base_url,
-            user_id=user["id"],
-        )
-        return {"retired_keys": retired, **issued}
+        return list_users_in(conn, caller, None)
 
 
-class SuspectIn(BaseModel):
-    at: datetime
-
-
-@app.put("/v1/users/{user_id}/suspect-after")
-def suspect_after(
-    caller: Annotated[Caller, Depends(authorize("setSuspectAfter"))],
-    user_id: str,
-    body: SuspectIn,
+@app.get("/v1/communities/{community}/users")
+def list_users(
+    caller: Annotated[Caller, Depends(authorize("listUsers"))], community: str
 ):
-    """Flag everything the user writes after an instant; nothing is deleted."""
-    if body.at.tzinfo is None:
-        refuse(400, "the instant needs a timezone, e.g. 2026-10-01T12:00:00+00:00")
+    """The community's users, removed ones included and marked, each with its roles, and the
+    server-level users. Members resolve one another's `@handle` against it."""
     with db.connection() as conn:
-        user = user_row(conn, user_id)
-        require_user_admin(caller, user["home"])
-        if not records.set_suspect_after(conn, user["id"], body.at):
-            refuse(409, f"'{user['handle']}' was removed")
-        return user_out(conn, records.user(conn, user["id"]))
+        return list_users_in(conn, caller, community_of(conn, community))
 
 
-# ── roles, invites and assignments ──────────────────────────────────────────────────────────
+@app.get("/v1/users/{handle}")
+def get_server_user(
+    caller: Annotated[Caller, Depends(authorize("getServerUser"))], handle: str
+):
+    with db.connection() as conn:
+        return get_user_in(conn, caller, None, handle)
+
+
+@app.get("/v1/communities/{community}/users/{handle}")
+def get_user(
+    caller: Annotated[Caller, Depends(authorize("getUser"))],
+    community: str,
+    handle: str,
+):
+    with db.connection() as conn:
+        return get_user_in(conn, caller, community_of(conn, community), handle)
+
+
+@app.patch("/v1/users/{handle}")
+def update_server_user(
+    caller: Annotated[Caller, Depends(authorize("updateServerUser"))],
+    handle: str,
+    body: UserPatch,
+):
+    with db.connection() as conn:
+        return update_user_in(conn, caller, None, handle, body)
+
+
+@app.patch("/v1/communities/{community}/users/{handle}")
+def update_user(
+    caller: Annotated[Caller, Depends(authorize("updateUser"))],
+    community: str,
+    handle: str,
+    body: UserPatch,
+):
+    with db.connection() as conn:
+        return update_user_in(conn, caller, community_of(conn, community), handle, body)
+
+
+@app.delete("/v1/users/{handle}")
+def remove_server_user(
+    caller: Annotated[Caller, Depends(authorize("removeServerUser"))], handle: str
+):
+    with db.connection() as conn:
+        return remove_user_in(conn, caller, None, handle)
+
+
+@app.delete("/v1/communities/{community}/users/{handle}")
+def remove_user(
+    caller: Annotated[Caller, Depends(authorize("removeUser"))],
+    community: str,
+    handle: str,
+):
+    with db.connection() as conn:
+        return remove_user_in(conn, caller, community_of(conn, community), handle)
+
+
+@app.post("/v1/users/{handle}/invites", status_code=201)
+def rebind_server_user(
+    caller: Annotated[Caller, Depends(authorize("rebindServerUser"))],
+    handle: str,
+    response: Response,
+    body: RebindIn | None = None,
+):
+    with db.connection() as conn:
+        return rebind_user_in(conn, caller, None, handle, body, response)
+
+
+@app.post("/v1/communities/{community}/users/{handle}/invites", status_code=201)
+def rebind_user(
+    caller: Annotated[Caller, Depends(authorize("rebindUser"))],
+    community: str,
+    handle: str,
+    response: Response,
+    body: RebindIn | None = None,
+):
+    with db.connection() as conn:
+        home = community_of(conn, community)
+        return rebind_user_in(conn, caller, home, handle, body, response)
+
+
+# ── roles: the registry, and each principal's assignments ───────────────────────────────────
+def role_info(r) -> dict:
+    return {
+        "role": r.id,
+        "assignable_to": sorted(r.assignable_to),
+        "takes_collections": r.takes_collections,
+        "keys_may_carry": r.key_assignable,
+        "assignable": r.assignable,
+        "grants": {
+            g: ("assignment" if v is rbac.VALUE else None if v is None else list(v))
+            for g, v in r.grants.items()
+        },
+    }
+
+
 @app.get("/v1/roles")
 def roles(caller: Annotated[Caller, Depends(authorize("listRoles"))]):
     """The six roles and what each grants: the registry, read-only."""
-    return {
-        "roles": [
-            {
-                "role": r.id,
-                "assignable_to": sorted(r.assignable_to),
-                "takes_collections": r.takes_collections,
-                "keys_may_carry": r.key_assignable,
-                "assignable": r.assignable,
-                "grants": {
-                    g: (
-                        "assignment"
-                        if v is rbac.VALUE
-                        else None
-                        if v is None
-                        else list(v)
-                    )
-                    for g, v in r.grants.items()
-                },
-            }
-            for r in rbac.ROLES.values()
-        ]
-    }
+    return {"roles": [role_info(r) for r in rbac.ROLES.values()]}
+
+
+@app.get("/v1/roles/{role}")
+def get_role(caller: Annotated[Caller, Depends(authorize("getRole"))], role: str):
+    if role not in rbac.ROLES:
+        refuse(404, f"no role '{role}'")
+    return role_info(rbac.ROLES[role])
 
 
 def refs_for(conn, community: str | None, names) -> dict:
@@ -698,151 +787,34 @@ def refs_for(conn, community: str | None, names) -> dict:
 
 
 def checked_value(role_id: str, collections) -> tuple | None:
+    if role_id not in rbac.ROLES:
+        refuse(404, f"no role '{role_id}'")
     try:
         return rbac.collection_value(role_id, collections)
     except rbac.AssignmentError as e:
         refuse(400, str(e))
 
 
-def mint_invite(conn, *, handle, home, roles, by, hours, url, user_id=None) -> dict:
-    invite = secrets.new("sdi_")
-    hours = settings.invite_hours if hours is None else hours
-    expires = records.add_invite(
-        conn,
-        digest=secrets.digest(invite),
-        secret=invite,
-        handle=handle,
-        home=home,
-        roles=roles,
-        by=by,
-        hours=hours,
-        user_id=user_id,
-    )
-    return invite_out(handle, home, roles, invite, expires, url)
-
-
-def invite_out(handle, home, roles, invite, expires, url) -> dict:
+def user_principal(conn, home: str | None, handle: str) -> dict:
+    user = scoped_user(conn, home, handle)
+    if user["removed"] is not None:
+        refuse(409, f"'{handle}' was removed")
     return {
-        "handle": handle,
+        "kind": rbac.SERVER_USER if home is None else rbac.HOMED_USER,
         "community": home,
-        "roles": roles,
-        "invite": invite,
-        "expires": iso(expires),
-        "data-server-url": url,
+        "user_id": user["id"],
+        "api_key_id": None,
     }
 
 
-@app.post("/v1/invites", status_code=201)
-def create_invite(
-    caller: Annotated[Caller, Depends(authorize("createInvite"))],
-    body: InviteIn,
-):
-    """A single-use invite for a new user, returned once. It carries the user's home and roles,
-    which the server keeps and applies when the invite is redeemed; the inviter needs the
-    authority to assign every one of them. Any earlier pending invite for the handle is
-    revoked."""
-    with db.connection() as conn:
-        home = target_home(conn, caller, body.community)
-        if caller.community is not None and home != caller.community:
-            refuse(403, f"this key belongs to {caller.community}")
-        kind = rbac.SERVER_USER if home is None else rbac.HOMED_USER
-        roles_ = []
-        for entry in body.roles:
-            value = checked_value(entry.role, entry.collections)
-            refs = refs_for(conn, home, value)
-            if not rbac.may_assign(caller.context, entry.role, value, kind, home, refs):
-                refuse(
-                    403,
-                    f"assigning '{entry.role}' here is not within this caller's grants",
-                )
-            roles_.append(
-                {
-                    "role": entry.role,
-                    "collections": None if value is None else list(value),
-                }
-            )
-        # a user without a key (a ported author) claims its handle with this invite
-        existing = records.user_by_handle(conn, home, body.handle)
-        if (
-            existing is not None
-            and existing["removed"] is None
-            and not existing["registered"]
-        ):
-            claimed = existing["id"]
-        else:
-            claimed = None
-            try:
-                records.check_new_handle(conn, body.handle, home)
-            except Conflict as e:
-                refuse(409, str(e))
-        return mint_invite(
-            conn,
-            handle=body.handle,
-            home=home,
-            roles=roles_,
-            by=caller.handle,
-            hours=body.hours,
-            url=caller.base_url,
-            user_id=claimed,
-        )
-
-
-@app.get("/v1/invites")
-def list_invites(
-    caller: Annotated[Caller, Depends(authorize("listInvites"))],
-    community: str | None = None,
-):
-    """The pending invites of a community (or of server-level users), with their secrets, so
-    they can be handed over again. Used, expired and revoked invites are never listed."""
-    with db.connection() as conn:
-        home = target_home(conn, caller, community)
-        require_user_admin(caller, home)
-        return {
-            "community": home,
-            "invites": [
-                invite_out(
-                    r["handle"],
-                    r["home"],
-                    r["roles"],
-                    r["secret"],
-                    r["expires"],
-                    caller.base_url,
-                )
-                for r in records.pending_invites(conn, home)
-            ],
-        }
-
-
-def assignee(conn, caller: Caller, body: AssignmentIn) -> dict:
-    """The principal an assignment request names: kind, community, and its user or key."""
-    if (body.handle is None) == (body.api_key_id is None):
-        refuse(400, "name either a user (handle) or an API key (api_key_id)")
-    if body.handle is not None:
-        home = target_home(conn, caller, body.community)
-        user = records.user_by_handle(conn, home, body.handle)
-        if user is None:
-            refuse(404, f"no user '{body.handle}'")
-        if user["removed"] is not None:
-            refuse(409, f"'{body.handle}' was removed")
-        return {
-            "kind": rbac.SERVER_USER if home is None else rbac.HOMED_USER,
-            "community": home,
-            "user_id": user["id"],
-            "api_key_id": None,
-        }
+def key_principal(conn, caller: Caller, community: str, key_id: str) -> dict:
     key = conn.execute(
-        "SELECT * FROM api_keys WHERE id = %s AND kind = 'issued'",
-        (api_key_id(body.api_key_id),),
+        "SELECT * FROM api_keys WHERE id = %s AND kind = 'issued' AND community = %s",
+        (api_key_id(key_id), community),
     ).fetchone()
     if key is None:
-        refuse(404, f"no API key '{body.api_key_id}'")
-    if not (
-        (
-            key["created_by"] == caller.handle
-            and caller.community in (None, key["community"])
-        )
-        or caller.allows(rbac.MEMBERS, key["community"])
-    ):
+        refuse(404, f"no API key '{key_id}'")
+    if not (issued_by(key, caller) or caller.allows(rbac.MEMBERS, key["community"])):
         refuse(403, "only the key's issuer, or a members holder, changes a key")
     return {
         "kind": rbac.MEMBER_KEY if key["user_id"] is not None else rbac.NON_MEMBER_KEY,
@@ -855,9 +827,7 @@ def assignee(conn, caller: Caller, body: AssignmentIn) -> dict:
 
 def issuer_context(conn, key) -> rbac.UserContext:
     """The context of the user who issued `key`: what the key may never exceed."""
-    issuer = records.user_by_handle(conn, key["community"], key["created_by"])
-    if issuer is None:
-        issuer = records.user_by_handle(conn, None, key["created_by"])
+    issuer = records.issuer_of(conn, key["community"], key["created_by"])
     if issuer is None:
         refuse(409, "the key's issuer is gone")
     return records.context_for(
@@ -888,122 +858,599 @@ def may_change(conn, caller: Caller, who: dict, role_id: str, value) -> bool:
     return allowed
 
 
-@app.get("/v1/assignments")
-def list_assignments(
-    caller: Annotated[Caller, Depends(authorize("listAssignments"))],
-    handle: str | None = None,
-    community: str | None = None,
-    api_key_id: str | None = None,
-):
-    """A principal's live roles: one's own, or another's for a members (or delegate) holder,
-    or a key's for its issuer."""
-    with db.connection() as conn:
-        if handle is None and api_key_id is None:
-            return {"roles": records.role_list(conn, user_id=caller.user_id)}
-        body = AssignmentIn(
-            handle=handle,
-            community=community,
-            api_key_id=api_key_id,
-            role=rbac.COMMUNITY_MEMBER,
+def require_change(conn, caller: Caller, who: dict, role_id: str, value):
+    if not may_change(conn, caller, who, role_id, value):
+        refuse(403, f"changing '{role_id}' here is not within this caller's grants")
+
+
+def require_role_reader(caller: Caller, who: dict):
+    """A principal's own roles, a key's for its issuer (checked on resolving it), and anyone's
+    for a holder of `members` (`delegate` for a server-level user)."""
+    if who["user_id"] is not None and who["user_id"] != caller.user_id:
+        require_user_admin(caller, who["community"])
+
+
+def role_etag(role_id: str, value) -> str:
+    material = json.dumps([role_id, None if value is None else sorted(value)])
+    return '"' + hashlib.sha256(material.encode()).hexdigest()[:24] + '"'
+
+
+def roles_of(conn, who: dict) -> dict:
+    return {
+        "roles": records.role_list(
+            conn, user_id=who["user_id"], api_key_id=who["api_key_id"]
         )
-        who = assignee(conn, caller, body)
-        if who["user_id"] is not None and who["user_id"] != caller.user_id:
-            require_user_admin(caller, who["community"])
-        return {
-            "roles": records.role_list(
-                conn, user_id=who["user_id"], api_key_id=who["api_key_id"]
-            )
-        }
+    }
 
 
-@app.post("/v1/assignments")
-def assign(
-    caller: Annotated[Caller, Depends(authorize("assignRole"))], body: AssignmentIn
+def assignment_out(conn, who: dict, role_id: str, response: Response) -> dict:
+    current = records.current_value(
+        conn, role_id, user_id=who["user_id"], api_key_id=who["api_key_id"]
+    )
+    if current is False:
+        refuse(404, f"no '{role_id}' assignment")
+    response.headers["ETag"] = role_etag(role_id, current)
+    return {"role": role_id, "collections": None if current is None else list(current)}
+
+
+def get_role_of(conn, caller, who, role_id, response) -> dict:
+    require_role_reader(caller, who)
+    return assignment_out(conn, who, role_id, response)
+
+
+def set_role_of(conn, caller, who, role_id, body, if_match, response, path) -> dict:
+    """Assign the role, or replace its whole collection value under `If-Match`."""
+    value = checked_value(role_id, body.collections if body else None)
+    if who["kind"] not in rbac.role(role_id).assignable_to:
+        refuse(400, f"'{role_id}' is not assigned to this kind of principal")
+    principal = {"user_id": who["user_id"], "api_key_id": who["api_key_id"]}
+    current = records.current_value(conn, role_id, **principal)
+    if current is False:
+        require_change(conn, caller, who, role_id, value)
+        records.assign(conn, role_id, value, caller.handle, **principal)
+        response.status_code = 201
+        located(response, caller, path)
+    else:
+        # authority first, so a caller without it learns nothing of the assignment
+        if value is None or rbac.ALL in value or rbac.ALL in (current or ()):
+            changed = value
+        else:
+            changed = tuple(sorted(set(value) ^ set(current or ())))
+        require_change(conn, caller, who, role_id, changed if changed else value)
+        if if_match is None:
+            refuse(428, "replacing an assignment takes If-Match with its ETag")
+        if if_match != role_etag(role_id, current):
+            refuse(412, "the assignment changed since its ETag was read")
+        records.replace_value(conn, role_id, value, caller.handle, **principal)
+    return assignment_out(conn, who, role_id, response)
+
+
+def unset_role_of(conn, caller, who, role_id) -> dict:
+    principal = {"user_id": who["user_id"], "api_key_id": who["api_key_id"]}
+    current = records.current_value(conn, role_id, **principal)
+    if current is False:
+        refuse(404, f"no '{role_id}' assignment")
+    allowed = may_change(conn, caller, who, role_id, current)
+    if not allowed and who["community"] is not None:
+        allowed = caller.allows(rbac.MEMBERS, who["community"])
+    if not allowed:
+        refuse(403, f"ending '{role_id}' here is not within this caller's grants")
+    try:
+        records.unassign(conn, role_id, None, caller.handle, **principal)
+    except Conflict as e:
+        conn.rollback()
+        refuse(409, str(e))
+    return roles_of(conn, who)
+
+
+def add_role_collection_of(conn, caller, who, role_id, collection, response) -> dict:
+    value = checked_value(role_id, [collection])
+    if who["kind"] not in rbac.role(role_id).assignable_to:
+        refuse(400, f"'{role_id}' is not assigned to this kind of principal")
+    require_change(conn, caller, who, role_id, value)
+    records.assign(
+        conn,
+        role_id,
+        value,
+        caller.handle,
+        user_id=who["user_id"],
+        api_key_id=who["api_key_id"],
+    )
+    return assignment_out(conn, who, role_id, response)
+
+
+def remove_role_collection_of(conn, caller, who, role_id, collection) -> dict:
+    principal = {"user_id": who["user_id"], "api_key_id": who["api_key_id"]}
+    current = records.current_value(conn, role_id, **principal)
+    if current is False or current is None or collection not in current:
+        refuse(404, f"no '{collection}' in a '{role_id}' assignment")
+    require_change(conn, caller, who, role_id, checked_value(role_id, [collection]))
+    try:
+        records.unassign(conn, role_id, [collection], caller.handle, **principal)
+    except Conflict as e:
+        conn.rollback()
+        refuse(409, str(e))
+    return roles_of(conn, who)
+
+
+# the same five operations on three kinds of principal: server-level users, a community's
+# users, and a community's API keys
+@app.get("/v1/users/{handle}/roles")
+def list_server_user_roles(
+    caller: Annotated[Caller, Depends(authorize("listServerUserRoles"))], handle: str
 ):
-    """Assign a role, or add collections to the principal's assignment of it."""
     with db.connection() as conn:
-        who = assignee(conn, caller, body)
-        if who["kind"] not in rbac.role(body.role).assignable_to:
-            refuse(400, f"'{body.role}' is not assigned to this kind of principal")
-        value = checked_value(body.role, body.collections)
-        if not may_change(conn, caller, who, body.role, value):
-            refuse(
-                403, f"assigning '{body.role}' here is not within this caller's grants"
-            )
-        records.assign(
+        who = user_principal(conn, None, handle)
+        require_role_reader(caller, who)
+        return roles_of(conn, who)
+
+
+@app.get("/v1/users/{handle}/roles/{role}")
+def get_server_user_role(
+    caller: Annotated[Caller, Depends(authorize("getServerUserRole"))],
+    handle: str,
+    role: str,
+    response: Response,
+):
+    with db.connection() as conn:
+        return get_role_of(
+            conn, caller, user_principal(conn, None, handle), role, response
+        )
+
+
+@app.put("/v1/users/{handle}/roles/{role}")
+def set_server_user_role(
+    caller: Annotated[Caller, Depends(authorize("setServerUserRole"))],
+    handle: str,
+    role: str,
+    response: Response,
+    body: RoleValueIn | None = None,
+    if_match: Annotated[str | None, Header()] = None,
+):
+    with db.connection() as conn:
+        who = user_principal(conn, None, handle)
+        return set_role_of(
             conn,
-            body.role,
-            value,
-            caller.handle,
-            user_id=who["user_id"],
-            api_key_id=who["api_key_id"],
+            caller,
+            who,
+            role,
+            body,
+            if_match,
+            response,
+            f"/users/{handle}/roles/{role}",
         )
-        return {
-            "roles": records.role_list(
-                conn, user_id=who["user_id"], api_key_id=who["api_key_id"]
-            )
-        }
 
 
-@app.delete("/v1/assignments")
-def unassign(
-    caller: Annotated[Caller, Depends(authorize("unassignRole"))], body: AssignmentIn
+@app.delete("/v1/users/{handle}/roles/{role}")
+def unset_server_user_role(
+    caller: Annotated[Caller, Depends(authorize("unsetServerUserRole"))],
+    handle: str,
+    role: str,
 ):
-    """Remove collections from a principal's assignment of a role, ending it when none remain;
-    without collections, end it. Removing a collection needs the authority to assign it."""
     with db.connection() as conn:
-        who = assignee(conn, caller, body)
-        current = records.current_value(
-            conn, body.role, user_id=who["user_id"], api_key_id=who["api_key_id"]
+        return unset_role_of(conn, caller, user_principal(conn, None, handle), role)
+
+
+@app.get("/v1/communities/{community}/users/{handle}/roles")
+def list_user_roles(
+    caller: Annotated[Caller, Depends(authorize("listUserRoles"))],
+    community: str,
+    handle: str,
+):
+    with db.connection() as conn:
+        who = user_principal(conn, community_of(conn, community), handle)
+        require_role_reader(caller, who)
+        return roles_of(conn, who)
+
+
+@app.get("/v1/communities/{community}/users/{handle}/roles/{role}")
+def get_user_role(
+    caller: Annotated[Caller, Depends(authorize("getUserRole"))],
+    community: str,
+    handle: str,
+    role: str,
+    response: Response,
+):
+    with db.connection() as conn:
+        who = user_principal(conn, community_of(conn, community), handle)
+        return get_role_of(conn, caller, who, role, response)
+
+
+@app.put("/v1/communities/{community}/users/{handle}/roles/{role}")
+def set_user_role(
+    caller: Annotated[Caller, Depends(authorize("setUserRole"))],
+    community: str,
+    handle: str,
+    role: str,
+    response: Response,
+    body: RoleValueIn | None = None,
+    if_match: Annotated[str | None, Header()] = None,
+):
+    with db.connection() as conn:
+        home = community_of(conn, community)
+        who = user_principal(conn, home, handle)
+        return set_role_of(
+            conn,
+            caller,
+            who,
+            role,
+            body,
+            if_match,
+            response,
+            f"/communities/{home}/users/{handle}/roles/{role}",
         )
-        if current is False:
-            refuse(404, f"no '{body.role}' assignment to remove")
-        removing = (
-            current
-            if body.collections is None
-            else checked_value(body.role, body.collections)
+
+
+@app.delete("/v1/communities/{community}/users/{handle}/roles/{role}")
+def unset_user_role(
+    caller: Annotated[Caller, Depends(authorize("unsetUserRole"))],
+    community: str,
+    handle: str,
+    role: str,
+):
+    with db.connection() as conn:
+        who = user_principal(conn, community_of(conn, community), handle)
+        return unset_role_of(conn, caller, who, role)
+
+
+@app.put(
+    "/v1/communities/{community}/users/{handle}/roles/{role}/collections/{role_collection}"
+)
+def add_user_role_collection(
+    caller: Annotated[Caller, Depends(authorize("addUserRoleCollection"))],
+    community: str,
+    handle: str,
+    role: str,
+    role_collection: str,
+    response: Response,
+):
+    with db.connection() as conn:
+        who = user_principal(conn, community_of(conn, community), handle)
+        return add_role_collection_of(
+            conn, caller, who, role, role_collection, response
         )
-        allowed = may_change(conn, caller, who, body.role, removing)
-        if not allowed and body.collections is None and who["community"] is not None:
-            allowed = caller.allows(rbac.MEMBERS, who["community"])
-        if not allowed:
+
+
+@app.delete(
+    "/v1/communities/{community}/users/{handle}/roles/{role}/collections/{role_collection}"
+)
+def remove_user_role_collection(
+    caller: Annotated[Caller, Depends(authorize("removeUserRoleCollection"))],
+    community: str,
+    handle: str,
+    role: str,
+    role_collection: str,
+):
+    with db.connection() as conn:
+        who = user_principal(conn, community_of(conn, community), handle)
+        return remove_role_collection_of(conn, caller, who, role, role_collection)
+
+
+@app.get("/v1/communities/{community}/api-keys/{key_id}/roles")
+def list_api_key_roles(
+    caller: Annotated[Caller, Depends(authorize("listApiKeyRoles"))],
+    community: str,
+    key_id: str,
+):
+    with db.connection() as conn:
+        return roles_of(
+            conn, key_principal(conn, caller, community_of(conn, community), key_id)
+        )
+
+
+@app.get("/v1/communities/{community}/api-keys/{key_id}/roles/{role}")
+def get_api_key_role(
+    caller: Annotated[Caller, Depends(authorize("getApiKeyRole"))],
+    community: str,
+    key_id: str,
+    role: str,
+    response: Response,
+):
+    with db.connection() as conn:
+        who = key_principal(conn, caller, community_of(conn, community), key_id)
+        return assignment_out(conn, who, role, response)
+
+
+@app.put("/v1/communities/{community}/api-keys/{key_id}/roles/{role}")
+def set_api_key_role(
+    caller: Annotated[Caller, Depends(authorize("setApiKeyRole"))],
+    community: str,
+    key_id: str,
+    role: str,
+    response: Response,
+    body: RoleValueIn | None = None,
+    if_match: Annotated[str | None, Header()] = None,
+):
+    with db.connection() as conn:
+        home = community_of(conn, community)
+        who = key_principal(conn, caller, home, key_id)
+        return set_role_of(
+            conn,
+            caller,
+            who,
+            role,
+            body,
+            if_match,
+            response,
+            f"/communities/{home}/api-keys/{key_id}/roles/{role}",
+        )
+
+
+@app.delete("/v1/communities/{community}/api-keys/{key_id}/roles/{role}")
+def unset_api_key_role(
+    caller: Annotated[Caller, Depends(authorize("unsetApiKeyRole"))],
+    community: str,
+    key_id: str,
+    role: str,
+):
+    with db.connection() as conn:
+        who = key_principal(conn, caller, community_of(conn, community), key_id)
+        return unset_role_of(conn, caller, who, role)
+
+
+@app.put(
+    "/v1/communities/{community}/api-keys/{key_id}/roles/{role}/collections/{role_collection}"
+)
+def add_api_key_role_collection(
+    caller: Annotated[Caller, Depends(authorize("addApiKeyRoleCollection"))],
+    community: str,
+    key_id: str,
+    role: str,
+    role_collection: str,
+    response: Response,
+):
+    with db.connection() as conn:
+        who = key_principal(conn, caller, community_of(conn, community), key_id)
+        return add_role_collection_of(
+            conn, caller, who, role, role_collection, response
+        )
+
+
+@app.delete(
+    "/v1/communities/{community}/api-keys/{key_id}/roles/{role}/collections/{role_collection}"
+)
+def remove_api_key_role_collection(
+    caller: Annotated[Caller, Depends(authorize("removeApiKeyRoleCollection"))],
+    community: str,
+    key_id: str,
+    role: str,
+    role_collection: str,
+):
+    with db.connection() as conn:
+        who = key_principal(conn, caller, community_of(conn, community), key_id)
+        return remove_role_collection_of(conn, caller, who, role, role_collection)
+
+
+# ── invites ─────────────────────────────────────────────────────────────────────────────────
+def invite_path(home: str | None, invite_id: str) -> str:
+    scope = "" if home is None else f"/communities/{home}"
+    return f"{scope}/invites/{invite_id}"
+
+
+def mint_invite(conn, *, handle, home, roles, by, hours, url, user_id=None) -> dict:
+    invite = secrets.new("sdi_")
+    hours = settings.invite_hours if hours is None else hours
+    digest = secrets.digest(invite)
+    expires = records.add_invite(
+        conn,
+        digest=digest,
+        secret=invite,
+        handle=handle,
+        home=home,
+        roles=roles,
+        by=by,
+        hours=hours,
+        user_id=user_id,
+    )
+    return invite_out(digest, handle, home, roles, invite, expires, url)
+
+
+def invite_out(digest, handle, home, roles, invite, expires, url) -> dict:
+    return {
+        "id": digest,
+        "handle": handle,
+        "community": home,
+        "roles": roles,
+        "invite": invite,
+        "expires": iso(expires),
+        "data-server-url": url,
+    }
+
+
+def invite_row_out(row, url) -> dict:
+    return invite_out(
+        row["hash"],
+        row["handle"],
+        row["home"],
+        row["roles"],
+        row["secret"],
+        row["expires"],
+        url,
+    )
+
+
+def create_invite_in(conn, caller: Caller, home: str | None, body: InviteIn, response):
+    """A single-use invite for a new user, returned once. It carries the user's home and roles,
+    which the server keeps and applies when the invite is redeemed; the inviter needs the
+    authority to assign every one of them. Any earlier pending invite for the handle is
+    revoked."""
+    if caller.community is not None and home != caller.community:
+        refuse(403, f"this key belongs to {caller.community}")
+    kind = rbac.SERVER_USER if home is None else rbac.HOMED_USER
+    roles_ = []
+    for entry in body.roles:
+        value = checked_value(entry.role, entry.collections)
+        refs = refs_for(conn, home, value)
+        if not rbac.may_assign(caller.context, entry.role, value, kind, home, refs):
             refuse(
-                403, f"removing '{body.role}' here is not within this caller's grants"
+                403, f"assigning '{entry.role}' here is not within this caller's grants"
             )
+        roles_.append(
+            {"role": entry.role, "collections": None if value is None else list(value)}
+        )
+    # a user without a key (a ported author) claims its handle with this invite
+    existing = records.user_by_handle(conn, home, body.handle)
+    if (
+        existing is not None
+        and existing["removed"] is None
+        and not existing["registered"]
+    ):
+        claimed = existing["id"]
+    else:
+        claimed = None
         try:
-            records.unassign(
-                conn,
-                body.role,
-                None if body.collections is None else rbac.names_in(removing),
-                caller.handle,
-                user_id=who["user_id"],
-                api_key_id=who["api_key_id"],
-            )
+            records.check_new_handle(conn, body.handle, home)
         except Conflict as e:
-            conn.rollback()
             refuse(409, str(e))
+    issued = mint_invite(
+        conn,
+        handle=body.handle,
+        home=home,
+        roles=roles_,
+        by=caller.handle,
+        hours=body.hours,
+        url=caller.base_url,
+        user_id=claimed,
+    )
+    located(response, caller, invite_path(home, issued["id"]))
+    return issued
+
+
+def pending_invite_in(conn, caller: Caller, home: str | None, invite_id: str):
+    require_user_admin(caller, home)
+    row = records.invite_by_id(conn, home, invite_id)
+    if row is None:
+        refuse(404, f"no pending invite '{invite_id}'")
+    return row
+
+
+@app.post("/v1/invites", status_code=201)
+def create_server_invite(
+    caller: Annotated[Caller, Depends(authorize("createServerInvite"))],
+    body: InviteIn,
+    response: Response,
+):
+    with db.connection() as conn:
+        return create_invite_in(conn, caller, None, body, response)
+
+
+@app.post("/v1/communities/{community}/invites", status_code=201)
+def create_invite(
+    caller: Annotated[Caller, Depends(authorize("createInvite"))],
+    community: str,
+    body: InviteIn,
+    response: Response,
+):
+    with db.connection() as conn:
+        return create_invite_in(
+            conn, caller, community_of(conn, community), body, response
+        )
+
+
+@app.get("/v1/invites")
+def list_server_invites(
+    caller: Annotated[Caller, Depends(authorize("listServerInvites"))],
+):
+    """The server-level users' pending invites, with their secrets, so one can be handed over
+    again. Used, expired and revoked invites are never listed."""
+    with db.connection() as conn:
+        require_user_admin(caller, None)
         return {
-            "roles": records.role_list(
-                conn, user_id=who["user_id"], api_key_id=who["api_key_id"]
-            )
+            "community": None,
+            "invites": [
+                invite_row_out(r, caller.base_url)
+                for r in records.pending_invites(conn, None)
+            ],
         }
 
 
-# ── communities (server-wide) ───────────────────────────────────────────────────────────────
+@app.get("/v1/communities/{community}/invites")
+def list_invites(
+    caller: Annotated[Caller, Depends(authorize("listInvites"))], community: str
+):
+    """The community's pending invites, with their secrets."""
+    with db.connection() as conn:
+        home = community_of(conn, community)
+        require_user_admin(caller, home)
+        return {
+            "community": home,
+            "invites": [
+                invite_row_out(r, caller.base_url)
+                for r in records.pending_invites(conn, home)
+            ],
+        }
+
+
+@app.get("/v1/invites/{invite_id}")
+def get_server_invite(
+    caller: Annotated[Caller, Depends(authorize("getServerInvite"))], invite_id: str
+):
+    with db.connection() as conn:
+        return invite_row_out(
+            pending_invite_in(conn, caller, None, invite_id), caller.base_url
+        )
+
+
+@app.get("/v1/communities/{community}/invites/{invite_id}")
+def get_invite(
+    caller: Annotated[Caller, Depends(authorize("getInvite"))],
+    community: str,
+    invite_id: str,
+):
+    with db.connection() as conn:
+        row = pending_invite_in(conn, caller, community_of(conn, community), invite_id)
+        return invite_row_out(row, caller.base_url)
+
+
+@app.delete("/v1/invites/{invite_id}")
+def revoke_server_invite(
+    caller: Annotated[Caller, Depends(authorize("revokeServerInvite"))], invite_id: str
+):
+    with db.connection() as conn:
+        row = pending_invite_in(conn, caller, None, invite_id)
+        records.revoke_invite(conn, row["hash"])
+        return invite_row_out({**row, "secret": None}, caller.base_url)
+
+
+@app.delete("/v1/communities/{community}/invites/{invite_id}")
+def revoke_invite(
+    caller: Annotated[Caller, Depends(authorize("revokeInvite"))],
+    community: str,
+    invite_id: str,
+):
+    with db.connection() as conn:
+        row = pending_invite_in(conn, caller, community_of(conn, community), invite_id)
+        records.revoke_invite(conn, row["hash"])
+        return invite_row_out({**row, "secret": None}, caller.base_url)
+
+
+# ── communities ─────────────────────────────────────────────────────────────────────────────
 @app.post("/v1/communities")
-def create_community(
+async def create_community(
     caller: Annotated[Caller, Depends(authorize("createCommunity"))],
-    body: CommunityIn,
+    request: Request,
     response: Response,
 ):
     """Create a community, its default collections, and the invite of its first community
-    admin (R-G8). Idempotent: the exact existing name answers 200 and changes nothing."""
+    admin (R-G8), from `{name, admin}`; or, from an archive (`application/x-tar`), import
+    one. Creating is idempotent: the exact existing name answers 200 and changes nothing."""
+    media = request.headers.get("content-type", "").split(";")[0].strip()
+    if media == "application/x-tar":
+        return await import_archive(caller, request, response)
+    if media != "application/json":
+        refuse(415, "a community is created from application/json or application/x-tar")
+    try:
+        body = CommunityIn.model_validate_json(await request.body())
+    except ValidationError as e:
+        raise RequestValidationError(e.errors()) from None
+    return await run_in_threadpool(create_community_from, caller, body, response)
+
+
+def create_community_from(
+    caller: Caller, body: CommunityIn, response: Response
+) -> dict:
     if not valid_community(body.name):
-        refuse(
-            400,
-            "a community name is 1-20 letters, digits or underscores, and not a "
-            "server-wide route name",
-        )
+        refuse(400, "a community name is 1-20 letters, digits or underscores")
     with db.connection() as conn:
         root = records.root_user(conn)
         try:
@@ -1027,6 +1474,7 @@ def create_community(
                 hours=None,
                 url=caller.base_url,
             )
+            located(response, caller, f"/communities/{body.name}")
         response.status_code = 201 if created else 200
         return out
 
@@ -1042,28 +1490,18 @@ def list_communities(caller: Annotated[Caller, Depends(authorize("listCommunitie
         }
 
 
-@app.get("/v1/{community}/roster")
-def roster(
-    caller: Annotated[Caller, Depends(authorize("listRoster"))],
-    community: str,
+@app.get("/v1/communities/{community}")
+def get_community(
+    caller: Annotated[Caller, Depends(authorize("getCommunity"))], community: str
 ):
-    """Every user homed in the community, removed ones included and marked, with whether it
-    has registered and its roles, and the server-level users. Members resolve one another's
-    `@handle` against it."""
+    """The community: its name and when it was created, to any principal of it."""
     with db.connection() as conn:
-        community = community_of(conn, community)
+        name = community_of(conn, community)
+        row = next(r for r in records.communities(conn) if r["name"] == name)
         return {
-            "community": community,
-            "roster": [
-                {
-                    "handle": r["handle"],
-                    "registered": r["registered"],
-                    "removed": iso(r["removed"]),
-                    "roles": r["roles"],
-                }
-                for r in records.users(conn, community)
-            ],
-            "server_users": [r["handle"] for r in records.users(conn, None)],
+            "name": name,
+            "created": iso(row["created"]),
+            "url": caller.base_url + f"/v1/communities/{name}",
         }
 
 
@@ -1107,7 +1545,7 @@ def api_key_id(key_id: str) -> uuid.UUID:
         refuse(404, f"no API key '{key_id}'")
 
 
-@app.post("/v1/{community}/api-keys", status_code=201)
+@app.post("/v1/communities/{community}/api-keys", status_code=201)
 def create_api_key(
     caller: Annotated[Caller, Depends(authorize("createApiKey"))],
     community: str,
@@ -1152,10 +1590,11 @@ def create_api_key(
             records.assign(conn, role_id, value, caller.handle, api_key_id=row["id"])
         conn.commit()
         response.headers["Cache-Control"] = "no-store"
+        located(response, caller, f"/communities/{community}/api-keys/{row['id']}")
         return api_key_out(conn, row, reveal=True)
 
 
-@app.get("/v1/{community}/api-keys")
+@app.get("/v1/communities/{community}/api-keys")
 def list_api_keys(
     caller: Annotated[Caller, Depends(authorize("listApiKeys"))],
     community: str,
@@ -1215,7 +1654,7 @@ def key_for(conn, caller: Caller, community: str, key_id: str):
     return row
 
 
-@app.get("/v1/{community}/api-keys/{key_id}")
+@app.get("/v1/communities/{community}/api-keys/{key_id}")
 def get_api_key(
     caller: Annotated[Caller, Depends(authorize("getApiKey"))],
     community: str,
@@ -1230,7 +1669,7 @@ def get_api_key(
         return api_key_out(conn, row, reveal=issued_by(row, caller))
 
 
-@app.delete("/v1/{community}/api-keys/{key_id}")
+@app.delete("/v1/communities/{community}/api-keys/{key_id}")
 def revoke_api_key(
     caller: Annotated[Caller, Depends(authorize("revokeApiKey"))],
     community: str,
@@ -1260,13 +1699,13 @@ def close_quietly(stream):
         pass  # the other end is gone already
 
 
-@app.get("/v1/{community}/export")
+@app.get("/v1/communities/{community}/archive")
 def export(
     caller: Annotated[Caller, Depends(authorize("exportCommunity"))],
     community: str,
 ):
-    """The community as a tar stream (admin only): one consistent snapshot of its rows, then
-    every stored payload. Written by a thread into a pipe, so no copy lands on disk."""
+    """The community's archive, a tar stream (`export`): one consistent snapshot of its rows,
+    then every stored payload. Written by a thread into a pipe, so no copy lands on disk."""
     with db.connection() as conn:
         community = community_of(conn, community)
     reader, writer = pipe()
@@ -1297,13 +1736,10 @@ def export(
     )
 
 
-@app.post("/v1/communities/import", status_code=201)
-async def import_community(
-    caller: Annotated[Caller, Depends(authorize("importCommunity"))], request: Request
-):
-    """Create a community from an export (admin only), in one transaction (R-J6): refused if
-    the community exists here (there is no merge), and nothing is written on any failure. What
-    the exported admin owned becomes this server's admin's."""
+async def import_archive(caller: Caller, request: Request, response: Response):
+    """Create a community from its archive, in one transaction (R-J6): refused if the
+    community exists here (there is no merge), and nothing is written on any failure. What the
+    exported root owned becomes this server's root's."""
     reader, writer = pipe()
 
     def consume():
@@ -1322,11 +1758,14 @@ async def import_community(
     finally:
         await run_in_threadpool(close_quietly, writer)
     try:
-        return await imported
+        result = await imported
     except Refused as e:
         refuse(409, str(e))
     except Malformed as e:
         refuse(400, str(e))
+    response.status_code = 201
+    located(response, caller, f"/communities/{result['imported']}")
+    return result
 
 
 # ── files and versions ──────────────────────────────────────────────────────────────────────
@@ -1411,9 +1850,23 @@ async def stream_upload(
     return upload
 
 
-def written(conn, community, file_id, n, status_code=201) -> JSONResponse:
+def file_path(community, file_id, n=None) -> str:
+    path = f"/communities/{community}/files/{file_id}"
+    return path if n is None else f"{path}/versions/{n}"
+
+
+def written(
+    conn, community, file_id, n, status_code=201, location=None
+) -> JSONResponse:
+    """A version as written: its metadata, its ETag, and, for a created resource, its
+    `Location` (`location` is the server's base URL)."""
     info = records.stat(conn, records.version(conn, community, file_id, n))
-    return JSONResponse(info, status_code=status_code, headers={"ETag": etag(n)})
+    headers = {"ETag": etag(n)}
+    if location is not None:
+        headers["Location"] = (
+            location + "/v1" + file_path(community, file_id, n if n > 1 else None)
+        )
+    return JSONResponse(info, status_code=status_code, headers=headers)
 
 
 def commit_version(
@@ -1453,7 +1906,9 @@ def mapped(error: Exception):
     raise error
 
 
-@app.put("/v1/{community}/collections/{collection}/files/{name}", status_code=201)
+@app.put(
+    "/v1/communities/{community}/collections/{collection}/files/{name}", status_code=201
+)
 async def put_file(
     caller: Annotated[Caller, Depends(authorize("putFile"))],
     community: str,
@@ -1461,8 +1916,15 @@ async def put_file(
     name: str,
     request: Request,
 ):
-    """Create a file; its content and metadata become version 1. The name is reserved before
-    any bytes move, and the file turns live only in the transaction that inserts v1."""
+    """Create a file; its content and metadata become version 1. Creating is the one thing a
+    `PUT` here does, so it takes `If-None-Match: *` (412 when the name holds a file). The name
+    is reserved before any bytes move, and the file turns live only in the transaction that
+    inserts v1."""
+    precondition = request.headers.get("if-none-match")
+    if precondition is None:
+        refuse(428, "creating a file takes If-None-Match: *")
+    if precondition.strip() != "*":
+        refuse(400, "If-None-Match takes `*`: create only when the name holds no file")
     if not valid_file_name(name):
         refuse(400, "a file name is one path segment of 1-255 characters")
     metadata = wire(parse_metadata, request.headers.get("x-data-metadata")) or {}
@@ -1478,13 +1940,12 @@ async def put_file(
                 conn, caller.context, found, collection, metadata
             ):
                 refuse(403, f"no write access to {found}/{collection}")
-            return (
-                found,
-                handle,
-                kid,
-                quota_for(caller),
-                records.reserve_file(conn, found, collection, name, handle),
-            )
+            try:
+                reserved = records.reserve_file(conn, found, collection, name, handle)
+            except Conflict as e:
+                conn.rollback()
+                refuse(412, str(e))
+            return found, handle, kid, quota_for(caller), reserved
 
     community, handle, kid, quota, file_id = await run_in_threadpool(reserve)
 
@@ -1518,7 +1979,7 @@ async def put_file(
                 conn.rollback()
                 mapped(e)
             conn.commit()
-            response = written(conn, community, file_id, n)
+            response = written(conn, community, file_id, n, location=caller.base_url)
         finish_after_commit(duplicate)
         return response
 
@@ -1530,7 +1991,7 @@ async def put_file(
         raise
 
 
-@app.post("/v1/{community}/files/{file_id}/versions", status_code=201)
+@app.post("/v1/communities/{community}/files/{file_id}/versions", status_code=201)
 async def put_version(
     caller: Annotated[Caller, Depends(authorize("addFileVersion"))],
     community: str,
@@ -1591,7 +2052,7 @@ async def put_version(
                 conn.rollback()
                 mapped(e)
             conn.commit()
-            response = written(conn, community, file_id, n)
+            response = written(conn, community, file_id, n, location=caller.base_url)
         finish_after_commit(duplicate)
         return response
 
@@ -1603,7 +2064,7 @@ async def put_version(
         raise
 
 
-@app.delete("/v1/{community}/files/{file_id}")
+@app.delete("/v1/communities/{community}/files/{file_id}")
 def delete_file(
     caller: Annotated[Caller, Depends(authorize("deleteFile"))],
     community: str,
@@ -1611,7 +2072,8 @@ def delete_file(
     request: Request,
     reason: str | None = None,
 ):
-    """Soft delete (R-B1): append a tombstone that keeps serving the previous content."""
+    """Soft delete (R-B1): append a tombstone version. The file still answers, serving the
+    previous content with `X-Data-Deleted: true`; a later version restores it."""
     expected = wire(parse_if_match, request.headers.get("if-match"))
     with db.connection() as conn:
         community = community_of(conn, community)
@@ -1630,16 +2092,23 @@ def delete_file(
         return written(conn, community, file_id, n, status_code=200)
 
 
-@app.post("/v1/{community}/files/{file_id}/v/{n}/purge")
+def version_number(ref: str) -> int:
+    if not ref.isdigit() or int(ref) < 1:
+        refuse(400, "name a version by its number")
+    return int(ref)
+
+
+@app.delete("/v1/communities/{community}/files/{file_id}/versions/{ref}")
 def purge(
     caller: Annotated[Caller, Depends(authorize("purgeVersion"))],
     community: str,
     file_id: uuid.UUID,
-    n: int,
+    ref: str,
 ):
     """Free one version's content (`manage` on its collection; R-B3). The version stays
     addressable and answers 410 with its metadata; the bytes go only when no other live version
     shares them. When S3 refuses, the payload stays purging and the janitor finishes the job."""
+    n = version_number(ref)
     with db.connection() as conn:
         community = community_of(conn, community)
         row = records.version(
@@ -1674,7 +2143,7 @@ def readable(caller: Caller, community: str, file_id, ref):
         return community, records.stat(conn, row), row["s3_key"]
 
 
-@app.get("/v1/{community}/files/{file_id}/v/{ref}/stat")
+@app.get("/v1/communities/{community}/files/{file_id}/versions/{ref}/metadata")
 def stat(
     caller: Annotated[Caller, Depends(authorize("statFileVersion"))],
     community: str,
@@ -1685,7 +2154,7 @@ def stat(
     return JSONResponse(info, headers={"ETag": etag(info["version"])})
 
 
-@app.get("/v1/{community}/files/{file_id}/versions")
+@app.get("/v1/communities/{community}/files/{file_id}/versions")
 def versions(
     caller: Annotated[Caller, Depends(authorize("listFileVersions"))],
     community: str,
@@ -1696,7 +2165,7 @@ def versions(
         return {"versions": records.versions(conn, community, file_id)}
 
 
-@app.get("/v1/{community}/files/{file_id}/v/{ref}")
+@app.get("/v1/communities/{community}/files/{file_id}/versions/{ref}")
 async def content(
     caller: Annotated[Caller, Depends(authorize("getFileContent"))],
     community: str,
@@ -1715,7 +2184,7 @@ async def content(
         )
     byte_range = request.headers.get("range")
     obj = await run_in_threadpool(store.open_read, key, byte_range)
-    base = f"/v1/{community}/files/{file_id}/v"
+    base = f"/v1/communities/{community}/files/{file_id}/versions"
     links = [f'<{base}/{info["latest"]}>; rel="latest"']
     if info["prev"]:
         links.append(f'<{base}/{info["prev"]}>; rel="prev"')
@@ -1744,12 +2213,26 @@ async def content(
     )
 
 
+@app.get("/v1/communities/{community}/files/{file_id}")
+def get_file(
+    caller: Annotated[Caller, Depends(authorize("getFile"))],
+    community: str,
+    file_id: uuid.UUID,
+):
+    """The file at its newest version: its metadata, as `…/versions/latest/metadata`."""
+    info = readable(caller, community, file_id, "latest")[1]
+    headers = {"ETag": etag(info["version"])}
+    if info["file_deleted"]:
+        headers["X-Data-Deleted"] = "true"
+    return JSONResponse(info, headers=headers)
+
+
 # ── collections and sharing ─────────────────────────────────────────────────────────────────
 class CollectionIn(BaseModel):
     name: str = Field(pattern=NAME)
 
 
-class PublicIn(BaseModel):
+class CollectionPatch(BaseModel):
     public: bool
 
 
@@ -1761,7 +2244,7 @@ def require_manager(conn, caller: Caller, community, collection) -> Caller:
     return caller
 
 
-@app.get("/v1/{community}/collections")
+@app.get("/v1/communities/{community}/collections")
 def list_collections(
     caller: Annotated[Caller, Depends(authorize("listCollections"))],
     community: str,
@@ -1775,11 +2258,12 @@ def list_collections(
         }
 
 
-@app.post("/v1/{community}/collections", status_code=201)
+@app.post("/v1/communities/{community}/collections", status_code=201)
 def create_collection(
     caller: Annotated[Caller, Depends(authorize("createCollection"))],
     community: str,
     body: CollectionIn,
+    response: Response,
 ):
     """Create a collection, owned by the caller's user (R-D3), who reaches it through the
     owner allowance. It takes `write` in the community, with any collection value."""
@@ -1788,6 +2272,7 @@ def create_collection(
         if caller.user_id is None:
             refuse(403, "a collection is owned by a user: create it as a member")
         records.create_collection(conn, community, body.name, caller.user_id)
+        located(response, caller, f"/communities/{community}/collections/{body.name}")
         return {
             "community": community,
             "name": body.name,
@@ -1796,14 +2281,37 @@ def create_collection(
         }
 
 
-@app.put("/v1/{community}/collections/{collection}/public")
-def set_public(
-    caller: Annotated[Caller, Depends(authorize("setPublic"))],
+def collection_view(conn, caller: Caller, community: str, collection: str) -> dict:
+    for item in records.readable_collections(conn, caller.context, community):
+        if item["name"] == collection:
+            return item
+    records.collection_row(
+        conn, community, collection
+    )  # 404 for one that does not exist
+    if caller.anonymous:
+        refuse(401, "use an API key to read this collection")
+    refuse(403, f"no read access to {community}/{collection}")
+
+
+@app.get("/v1/communities/{community}/collections/{collection}")
+def get_collection(
+    caller: Annotated[Caller, Depends(authorize("getCollection"))],
     community: str,
     collection: str,
-    body: PublicIn,
 ):
-    """The owner opens a collection to reads without a key, or closes it again."""
+    """The collection, with what the caller may do in it."""
+    with db.connection() as conn:
+        return collection_view(conn, caller, community_of(conn, community), collection)
+
+
+@app.patch("/v1/communities/{community}/collections/{collection}")
+def update_collection(
+    caller: Annotated[Caller, Depends(authorize("updateCollection"))],
+    community: str,
+    collection: str,
+    body: CollectionPatch,
+):
+    """A collection's manager opens it to reads without a key, or closes it again."""
     with db.connection() as conn:
         community = community_of(conn, community)
         require_manager(conn, caller, community, collection)
@@ -1822,7 +2330,9 @@ class QueryIn(BaseModel):
 
 
 class PromoteIn(BaseModel):
-    collection: str = Field(pattern=NAME)
+    model_config = ConfigDict(populate_by_name=True)
+
+    source: str = Field(alias="from")  # the version to copy, by its citation
     name: str | None = None
     metadata: dict | None = None
     stamp_json_pointer: str | None = None
@@ -1852,7 +2362,7 @@ def page(conn, who, rows, since: int, limit: int) -> dict:
     }
 
 
-@app.get("/v1/{community}/collections/{collection}/changes")
+@app.get("/v1/communities/{community}/collections/{collection}/changes")
 def changes(
     caller: Annotated[Caller, Depends(authorize("listChanges"))],
     community: str,
@@ -1868,7 +2378,7 @@ def changes(
         return page(conn, who, rows, since, limit)
 
 
-@app.post("/v1/{community}/collections/{collection}/query")
+@app.post("/v1/communities/{community}/collections/{collection}/files/search")
 def query(
     caller: Annotated[Caller, Depends(authorize("queryCollection"))],
     community: str,
@@ -1885,34 +2395,53 @@ def query(
         return page(conn, who, rows, body.since, body.limit)
 
 
-@app.get("/v1/{community}/collections/{collection}/find")
-def find(
-    caller: Annotated[Caller, Depends(authorize("findFile"))],
+@app.get("/v1/communities/{community}/collections/{collection}/files")
+def list_files(
+    caller: Annotated[Caller, Depends(authorize("listFiles"))],
     community: str,
     collection: str,
-    name: str,
+    name: str | None = None,
+    cursor: str | None = None,
+    limit: int = Query(default=100, ge=1, le=MAX_PAGE),
 ):
-    """The file holding a name (R-G1), at its newest version, tombstone or not: a deleted
-    file still holds its name."""
+    """The collection's files, each at its newest version, tombstone or not (a deleted file
+    still holds its name), ordered by name. With `name`, the file holding it (R-G1)."""
+    after = ""
+    if cursor is not None:
+        try:
+            after = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+        except (binascii.Error, UnicodeDecodeError):
+            refuse(400, "not a cursor this server issued")
     with db.connection() as conn:
         community = community_of(conn, community)
         who = lister(conn, caller, community, collection)
-        file_id = records.find_name(conn, community, collection, name)
-        if file_id is None:
-            refuse(404, f"no file named '{name}' in {community}/{collection}")
-        row = records.version(
-            conn, community, file_id, records.latest_version(conn, file_id)["n"]
+        if name is not None:
+            found = records.find_name(conn, community, collection, name)
+            files, more = ([] if found is None else [(found, name)]), False
+        else:
+            files = records.files_after(conn, community, collection, after, limit + 1)
+            more = len(files) > limit
+            files = files[:limit]
+        items = []
+        for file_id, _ in files:
+            row = records.version(
+                conn, community, file_id, records.latest_version(conn, file_id)["n"]
+            )
+            if records.can_read(conn, who, row):
+                items.append(records.stat(conn, row))
+        following = (
+            base64.urlsafe_b64encode(files[-1][1].encode()).decode().rstrip("=")
+            if more
+            else None
         )
-        if not records.can_read(conn, who, row):
-            refuse(404, f"no file named '{name}' in {community}/{collection}")
-        return JSONResponse(records.stat(conn, row), headers={"ETag": etag(row["n"])})
+        return {"items": items, "next": following}
 
 
-@app.get("/v1/{community}/sha256/{sha}")
+@app.get("/v1/communities/{community}/versions")
 def by_hash(
     caller: Annotated[Caller, Depends(authorize("findByHash"))],
     community: str,
-    sha: str,
+    sha: str = Query(alias="sha256"),
 ):
     """Every version of this community the caller may read that holds this content (R-F2)."""
     if not valid_sha256(sha):
@@ -1929,16 +2458,16 @@ def by_hash(
         }
 
 
-@app.post("/v1/{community}/files/{file_id}/v/{n}/promote", status_code=201)
+@app.post("/v1/communities/{community}/collections/{collection}/files", status_code=201)
 def promote(
     caller: Annotated[Caller, Depends(authorize("promoteVersion"))],
     community: str,
-    file_id: uuid.UUID,
-    n: int,
+    collection: str,
     body: PromoteIn,
 ):
-    """Copy one version into a collection as a new file, atomically (R-G4). Into `record`
-    this is the gate's accept and takes `gate`; into any other collection, `manage` on it.
+    """Copy one version, named by its citation in `from`, into the collection as a new file,
+    atomically (R-G4). Into `record` this is the gate's accept and takes `gate`; into any
+    other collection, `manage` on it.
 
     With `stamp_json_pointer` the content is a JSON document, and the server writes the new
     version's own `created` at that pointer: the clock is the server's, never the caller's.
@@ -1948,21 +2477,25 @@ def promote(
     credited to the source version's creator, with no key id."""
     name = body.name
     pointer = body.stamp_json_pointer
+    cited = parse_citation(body.source)
+    if cited is None:
+        refuse(400, "`from` takes a citation: symposium-data:<file id>@v<n>")
+    file_id, n = cited
     with db.connection() as conn:
         community = community_of(conn, community)
         handle = caller.handle
         source = records.version(conn, community, file_id, n)
-        records.collection_row(conn, community, body.collection)
-        if body.collection == "record":
+        records.collection_row(conn, community, collection)
+        if collection == "record":
             allowed = caller.allows(rbac.GATE, community)
         else:
             allowed = records.allows(
-                conn, caller.context, rbac.MANAGE, community, body.collection
+                conn, caller.context, rbac.MANAGE, community, collection
             )
         if not allowed or not records.can_read(conn, caller.context, source):
             refuse(
                 403,
-                f"promoting into {community}/{body.collection} is not within these grants",
+                f"promoting into {community}/{collection} is not within these grants",
             )
         name = name or source["name"]
         if not valid_file_name(name):
@@ -1971,8 +2504,8 @@ def promote(
             refuse(410, "this version's content was purged")
         if source["deleted"]:
             refuse(409, "a tombstone cannot be promoted")
-        if records.find_name(conn, community, body.collection, name):
-            refuse(409, f"'{name}' already exists in {community}/{body.collection}")
+        if records.find_name(conn, community, collection, name):
+            refuse(409, f"'{name}' already exists in {community}/{collection}")
         document = None
         if pointer is not None:
             raw = store.open_read(source["s3_key"])["Body"].read()
@@ -1990,10 +2523,10 @@ def promote(
         duplicate = None
         with db.connection() as conn:
             records.lock_owner(conn, community, handle)
-            new = records.create_live_file(conn, community, body.collection, name)
+            new = records.create_live_file(conn, community, collection, name)
             clock, payload = None, source["payload_id"]
             if document is not None:
-                clock = records.allocate(conn, community, body.collection)
+                clock = records.allocate(conn, community, collection)
                 data = json.dumps(stamp(document, pointer, iso(clock[1]))).encode()
                 store.put_bytes(s3_key, data)
                 try:
@@ -2022,7 +2555,7 @@ def promote(
                 clock=clock,
             )
             conn.commit()
-            response = written(conn, community, new, 1)
+            response = written(conn, community, new, 1, location=caller.base_url)
         finish_after_commit(duplicate)
         return response
 
@@ -2034,31 +2567,27 @@ def promote(
         raise
 
 
-@app.get("/v1/{community}/verify")
+@app.get("/v1/communities/{community}/files/{file_id}/versions/{ref}/verification")
 def verify(
     caller: Annotated[Caller, Depends(authorize("verifyCitation"))],
     community: str,
-    cite: str,
+    file_id: uuid.UUID,
+    ref: str,
     before: str | None = None,
     sha256: str | None = None,
 ):
-    """The gate's check of a cited download (R-G9). A version the caller cannot read answers
-    exactly like one that never existed, and a citation resolves only inside this community,
-    so verify reveals nothing the caller may not read."""
+    """The gate's check of a cited download (R-G9): the citation
+    `symposium-data:<file id>@v<n>` names this version. A version the caller cannot read
+    answers exactly like one that never existed, so the check reveals nothing the caller may
+    not read."""
     when = wire(parse_instant, before) if before else None
+    n = version_number(ref)
     with db.connection() as conn:
         community = community_of(conn, community)
         who = caller.context
-        cited = parse_citation(cite)
-        if cited is None:
-            return {
-                "ok": False,
-                "exists": False,
-                "reason": "not a symposium-data citation",
-            }
         missing = {"ok": False, "exists": False, "reason": "no such file version"}
         try:
-            row = records.version(conn, community, *cited)
+            row = records.version(conn, community, file_id, n)
         except NotFound:
             return missing
         if not records.can_read(conn, who, row):
@@ -2093,14 +2622,15 @@ def port_view(row) -> dict:
     }
 
 
-@app.post("/v1/{community}/port-ndex", status_code=202)
+@app.post("/v1/communities/{community}/ndex-imports", status_code=202)
 def start_port(
-    caller: Annotated[Caller, Depends(authorize("startPortNdex"))],
+    caller: Annotated[Caller, Depends(authorize("startNdexImport"))],
     community: str,
     body: PortIn,
+    response: Response,
 ):
-    """Start a port-ndex into this empty community, in the background; one at a time,
-    server-wide. Poll GET /v1/{community}/port-ndex/{id} for its outcome."""
+    """Start an import of a record from NDEx (port-ndex) into this empty community, in the
+    background; one at a time, server-wide. Poll its `Location` for the outcome."""
     from . import port_ndex  # the port feature, isolated: imported only here
 
     with db.connection() as conn:
@@ -2125,18 +2655,20 @@ def start_port(
         settings.heartbeat,
     ).run
     threading.Thread(target=run, args=(port_id,), name="port-ndex", daemon=True).start()
+    located(response, caller, f"/communities/{community}/ndex-imports/{port_id}")
     with db.connection() as conn:
         return port_view(records.port(conn, community, port_id))
 
 
-@app.get("/v1/{community}/port-ndex/{port_id}")
+@app.get("/v1/communities/{community}/ndex-imports/{import_id}")
 def port_status(
-    caller: Annotated[Caller, Depends(authorize("getPortNdex"))],
+    caller: Annotated[Caller, Depends(authorize("getNdexImport"))],
     community: str,
-    port_id: uuid.UUID,
+    import_id: uuid.UUID,
 ):
     with db.connection() as conn:
         community = community_of(conn, community)
+        port_id = import_id
         row = records.port(conn, community, port_id)
         if row is None:
             refuse(404, f"no port-ndex {port_id} in {community}")

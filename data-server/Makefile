@@ -7,10 +7,11 @@
 #                                  (seconds, default 120) is the one limit on any wait in them
 #   make build-docker TAG=1.2.3    the image, tagged; image targets run no tests
 #   make build-docker-multiplatform TAG=1.2.3
-#                                  the image for every platform in PLATFORMS, tagged :TAG and
-#                                  :latest, kept locally (needs Docker's containerd image store)
-#   make push-docker TAG=1.2.3     that build, then a push of :TAG and :latest (the release
-#                                  workflow, on a data-server-v<version> GitHub release)
+#                                  optional: the image for every platform in PLATFORMS, tagged
+#                                  :TAG and :latest, kept locally to inspect or `docker push`
+#                                  (needs Docker's containerd image store)
+#   make push-docker TAG=1.2.3     multi-arch build and push of :TAG and :latest in one step (the
+#                                  release workflow, on a data-server-v<version> GitHub release)
 #   make helm-package              lint the chart, then dist/symposium-helm-<version>.tgz
 #   make helm-push CHART_TAG=1.2.3 push it as oci://registry-1.docker.io/ndexbio/symposium-helm, once
 #                                  its image is on Docker Hub (the release workflow, on a
@@ -67,9 +68,9 @@ build-docker-multiplatform:
 	docker buildx build --platform $(PLATFORMS) -f docker/Dockerfile $(CONTEXTS) \
 		--build-arg DATA_VERSION=$(TAG) -t $(IMAGE):$(TAG) -t $(IMAGE):latest --load .
 
-push-docker: build-docker-multiplatform
-	docker push $(IMAGE):$(TAG)
-	docker push $(IMAGE):latest
+push-docker:
+	docker buildx build --platform $(PLATFORMS) -f docker/Dockerfile $(CONTEXTS) \
+		--build-arg DATA_VERSION=$(TAG) -t $(IMAGE):$(TAG) -t $(IMAGE):latest --push .
 
 # ── pinned Kubernetes tools, fetched once per platform and checked against their checksums ──
 HELM_VERSION := 4.3.0

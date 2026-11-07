@@ -1,0 +1,9 @@
+# Ruff configuration shared by the whole repository (top-level `make lint`).
+# The Symposium tools are standard-library-only Python 3.9+, so the baseline target is py39;
+# data-server/service/ruff.toml extends this file and targets py311.
+target-version = "py39"
+extend-exclude = ["tools/vendor", "examples"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]

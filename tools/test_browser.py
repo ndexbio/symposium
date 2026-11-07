@@ -47,9 +47,9 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import browse                                                          # noqa: E402
-import templates as T                                                  # noqa: E402
-from validate import parse_address                                     # noqa: E402
+import browse  # noqa: E402
+import templates as T  # noqa: E402
+from validate import parse_address  # noqa: E402
 
 RECORDS = [HERE.parent / "examples" / "record",
            HERE.parent / "examples" / "manuscript_example"]
@@ -113,6 +113,117 @@ def fixture_record(root):
         (root / f'{doc["artifact"]["name"]}.json').write_text(json.dumps(doc, indent=1))
     return root
 
+#: A second fixture, shaped like a community that works in rounds (c037_2): two ResearchGoals,
+#: a plan, an analysis and its result, Arguments whose Grounds address a cell, a row, a whole
+#: table and a quoted passage, testimony, a Message, and one artifact serving both goals. Two
+#: artifacts exist to trip a browser that places by NAME rather than by address (N4):
+#: `fx_goal_two_notes` serves no goal whatever it is called, and `fx_misfiled` names in
+#: `serves_goals` something that is not a goal. Neither may land in a goal's column.
+ROUNDS_EXPECTED = {"corpus": {"fx_goal_one", "fx_import_table", "fx_goal_two",
+                              "fx_goal_two_notes", "fx_misfiled"},
+                   "fx_goal_one": {"fx_plan_one", "fx_analysis_one", "fx_result_one",
+                                   "fx_arg_one", "fx_closing"},
+                   "fx_goal_two": {"fx_arg_two", "fx_msg", "fx_closing"}}
+
+
+def rounds_fixture_record(root):
+    def art(name, typ, t, member, **props):
+        return {"artifact": {"name": name, "type": typ, "specification_version": "1.0",
+                             "published_by": f"@{member}",
+                             "created": f"2026-02-01T00:{t:02d}:00+00:00",
+                             "title": props.pop("title", f"Fixture {name}"), **props},
+                "objects": props.pop("objects", None) or [], "relationships": []}
+
+    def goal(name, t, title):
+        d = art(name, "ResearchGoal", t, "lead", title=title, groundable=False,
+                text=f"{title} Asked for the browser tests.")
+        d["objects"] = [{"name": "goal_text", "type": "Content", "groundable": False,
+                         "description": "The goal, in `text`.",
+                         "addressing_method": '`quote="<exact text>"` against `text`.'}]
+        return d
+
+    imp = art("fx_import_table", "Data", 2, "lead", import_method="Written for the tests.",
+              measures="key,a,b,c\nk1,1,2,3\nk2,4,5,6\nk3,7,8,9",
+              text="The source says a load-bearing sentence here, and nothing else.")
+    imp["objects"] = [
+        {"name": "measures_csv", "type": "Content", "groundable": True,
+         "description": "The table in `measures`.",
+         "addressing_method": "`row=<key>&col=<column>`; no reference names the whole table."},
+        {"name": "text_span", "type": "Content", "groundable": True,
+         "description": "The `text` property.", "addressing_method": '`quote="<exact text>"`.'}]
+    result = art("fx_result_one", "Data", 5, "analyst", produced_by="@fx_analysis_one",
+                 serves_goals=["@fx_goal_one"], effects="row,effect,p\nr1,0.5,0.01\nr2,0.1,0.4")
+    result["objects"] = [{"name": "effects_csv", "type": "Content", "groundable": True,
+                          "description": "The table in `effects`.",
+                          "addressing_method": "`row=<row>&col=<column>`."}]
+
+    arg1 = art("fx_arg_one", "Argument", 6, "analyst", serves_goals=["@fx_goal_one"],
+               primary_assertion="a_primary", verdict="It holds where tested. Not beyond.",
+               purpose="Round one.", rationale="See the Grounds.")
+    arg1["objects"] = [
+        {"name": "a_primary", "type": "Assertion", "claim": "The effect is positive.",
+         "scope": "The fixture."},
+        {"name": "g_cell", "type": "Ground", "criterion": "Counts against if effect <= 0.",
+         "citation": "@fx_result_one.effects#effects_csv.row=r1&col=effect", "rationale": "A cell."},
+        {"name": "g_row", "type": "Ground", "citation": "@fx_import_table.measures#measures_csv.row=k2",
+         "rationale": "A whole row."},
+        {"name": "g_table", "type": "Ground", "criterion": "Counts against if any row is negative.",
+         "citation": "@fx_import_table.measures#measures_csv", "rationale": "The whole table."},
+        {"name": "g_quote", "type": "Ground", "rationale": "A passage.",
+         "citation": '@fx_import_table.text#text_span.quote="a load-bearing sentence"'}]
+    arg1["relationships"] = [{"rel": "grounded_by", "source": "a_primary", "target": g}
+                             for g in ("g_cell", "g_row", "g_table", "g_quote")]
+
+    arg2 = art("fx_arg_two", "Argument", 8, "critic", serves_goals=["@fx_goal_two"],
+               supersedes=["@fx_arg_one"], primary_assertion="a_primary",
+               verdict="It holds, more narrowly.", purpose="Round two.",
+               rationale="Builds on [the effects](@fx_result_one) and on the first verdict.")
+    arg2["objects"] = [
+        {"name": "a_primary", "type": "Assertion", "claim": "The effect is positive in r1 only.",
+         "scope": "The fixture."},
+        {"name": "g_prior", "type": "Ground", "citation": "@fx_arg_one.a_primary",
+         "rationale": "Takes the first Argument's conclusion as testimony."}]
+    arg2["relationships"] = [{"rel": "grounded_by", "source": "a_primary", "target": "g_prior"}]
+
+    docs = [
+        goal("fx_goal_one", 1, "Does the effect hold?"), imp,
+        art("fx_plan_one", "AnalysisPlan", 3, "lead", serves_goals=["@fx_goal_one"],
+            groundable=False, text="Plan: one analysis."),
+        art("fx_analysis_one", "Analysis", 4, "analyst", serves_goals=["@fx_goal_one"],
+            inputs=["@fx_import_table"], procedure="Compute the effect.", code="effect = a - b"),
+        result, arg1, goal("fx_goal_two", 7, "Does it hold more narrowly?"), arg2,
+        art("fx_msg", "Message", 9, "lead", serves_goals=["@fx_goal_two"],
+            recipients=["@critic"], text="Please read [the second verdict](@fx_arg_two)."),
+        art("fx_closing", "Message", 10, "lead", serves_goals=["@fx_goal_one", "@fx_goal_two"],
+            recipients=["@analyst", "@critic"], text="Both goals have verdicts."),
+        art("fx_goal_two_notes", "NonGroundable", 11, "lead", text="Notes, serving nothing."),
+        art("fx_misfiled", "NonGroundable", 12, "lead", serves_goals=["@fx_import_table"],
+            text="Names a table where a goal belongs."),
+    ]
+    root.mkdir(parents=True, exist_ok=True)
+    for doc in docs:
+        (root / f'{doc["artifact"]["name"]}.json').write_text(json.dumps(doc, indent=1))
+    return root
+
+
+def renamed_copy(src, dst):
+    """The same record with every artifact given an opaque name, every address rewritten to
+    match. Everything derived from addresses must come out the same; anything that differs
+    was read from a name (N4)."""
+    docs = [json.loads(p.read_text()) for p in sorted(src.glob("*.json"))
+            if not p.name.startswith(".")]
+    names = sorted((d["artifact"]["name"] for d in docs), key=len, reverse=True)
+    new = {n: f"zz{i:03d}" for i, n in enumerate(sorted(names))}
+    pattern = re.compile(r"@(" + "|".join(re.escape(n) for n in names) + r")(?![A-Za-z0-9_])")
+    dst.mkdir(parents=True, exist_ok=True)
+    for d in docs:
+        text = pattern.sub(lambda m: "@" + new[m.group(1)], json.dumps(d))
+        d2 = json.loads(text)
+        d2["artifact"]["name"] = new[d["artifact"]["name"]]
+        (dst / f'{d2["artifact"]["name"]}.json').write_text(json.dumps(d2, indent=1))
+    return new
+
+
 #: Which addresses the browser is expected to anchor, decided from the REFERENCE and never
 #: from the method's name. A Content Object may be called anything — this record's are
 #: `pooled_csv`, `control_rows_csv`, `inventory_csv` — and a check that looked for the name
@@ -120,35 +231,50 @@ def fixture_record(root):
 #: written under `csv` whatever the Content was called. `rest` names content held outside
 #: the record and `graph` addresses a Model's nodes and edges; neither has a page rendering
 #: yet, so a Ground through one is expected not to land.
-ANCHORED_REF = re.compile(r"\brow=|\bquote=")
+ANCHORED_REF = re.compile(r"\brow=|\bquote=|^col=[^&]*$")
+
+
+def anchored(p):
+    """Does the browser anchor what this parsed address names? A cell, a row, a column or a
+    quoted passage; or a whole property of an artifact page (`@x.prop#content`, no reference),
+    which lands on that property's heading."""
+    if p["ref"]:
+        return bool(ANCHORED_REF.search(p["ref"]))
+    return bool(p["method"] and p["segs"])
 
 
 def compile_all(tmp):
     out = {}
-    for rec in RECORDS + [fixture_record(tmp / "_fixture_record")]:
+    for rec in RECORDS + [fixture_record(tmp / "_fixture_record"),
+                          rounds_fixture_record(tmp / "_rounds_record")]:
         d = tmp / ("build_" + rec.name)
         browse.compile_record(str(rec), str(d), quiet=True)
         out[rec] = d
     return out
 
 
+def _docs(rec):
+    return [json.loads(fn.read_text()) for fn in sorted(rec.glob("*.json"))
+            if not fn.name.startswith(".")]
+
+
 def case_a_grounds_land(dists):
-    """Every Ground whose method the browser anchors must find its anchor."""
+    """Every Ground whose target the browser anchors must find its anchor: a cell, and since
+    phase 2 a whole row, a whole column and a whole table, which on c037_2 were 73 of its 82
+    Grounds and landed at the top of the page."""
     bad, total = [], 0
     for rec, dist in dists.items():
-        for fn in sorted(rec.glob("*.json")):
-            if fn.name.startswith("."):
-                continue
-            doc = json.loads(fn.read_text())
+        types = {d["artifact"]["name"]: d["artifact"]["type"] for d in _docs(rec)}
+        for doc in _docs(rec):
             for o in doc.get("objects", []):
                 if o.get("type") != "Ground":
                     continue
                 p = parse_address(o.get("citation", ""))
-                if not p or not p["ref"] or not ANCHORED_REF.search(p["ref"]):
+                if not p or not anchored(p) or types.get(p["root"]) == "Argument":
                     continue
                 total += 1
                 page = dist / browse.page_name(p["root"])
-                frag = html.escape(f'{p["method"]}.{p["ref"]}')
+                frag = html.escape(browse.address_fragment(o["citation"]))
                 if not (page.is_file() and f'id="{frag}"' in page.read_text()):
                     bad.append(f'{doc["artifact"]["name"]}.{o["name"]} -> {frag[:70]}')
     return (not bad, f"{total - len(bad)}/{total} Grounds land on the content they name", bad)
@@ -251,10 +377,11 @@ def plain_run(md, least=40):
 def case_f_argument_is_readable(dists):
     """Every Argument's prose has a page that scrolls, carrying all of it.
 
-    The claim map puts prose in a fixed 96-pixel strip beside the graph; on this record's
+    The claim map once put prose in a fixed 96-pixel strip beside the graph; on this record's
     one Argument that was 95 pixels of 26,019, so the verdict, purpose and rationale an
     author is required to write were four tenths of one per cent visible. A reader must be
-    able to reach all of it without scrolling a letterbox."""
+    able to reach all of it without scrolling a letterbox. (The claim map now shows the
+    verdict whole, case M; the reading page is still where all of it reads in one place.)"""
     bad = []
     for rec, dist in dists.items():
         for fn in sorted(rec.glob("*.json")):
@@ -333,8 +460,7 @@ def case_g_citation_edges_span_columns(dists):
 def case_h_pins_survive_a_rebuild(dists):
     """A hand-placed node stays where it was put, and a bad pin file cannot break the build.
 
-    Manual arrangement used to be lost on every rebuild. The sidecar is also hand-editable,
-    so the malformed case is part of the contract: a typo in a viewing preference must cost
+    The sidecar is hand-editable, so the malformed case is part of the contract: a typo in a viewing preference must cost
     the arrangement and nothing else.
     """
     bad = []
@@ -494,6 +620,289 @@ def case_k_annotations_are_not_artifacts(dists):
     return (not bad, "a caption is drawn, uncounted, unlinked and uncitable", bad)
 
 
+def _storage_unwrapped(page_text):
+    """Lines of a page's script that touch localStorage outside a try. Storage throws outright
+    in some privacy modes, and a page that cannot remember a preference must still work."""
+    code = (ln.strip() for ln in page_text.splitlines())
+    return [ln for ln in code
+            if "localStorage." in ln and "try" not in ln and not ln.startswith(("//", "/*", "*"))]
+
+
+def case_l_overview_hides_context_links_by_default(dists):
+    """The overview starts with `cites` and Messages hidden, and says how it lays the record out.
+
+    At 74 artifacts, 323 of c037_2's 404 derived edges were prose citations: context, not
+    evidence, and drawn by default they buried the 81 edges that carry the evidential
+    structure. With them hidden, c037_2's 22 Messages, whose 96 edges were all `cites`, were a
+    third of the nodes and connected to nothing, so they start hidden too. The defaults live in
+    the build (meta.default_hidden_rels, meta.default_hidden_types) so this test and the page
+    read one value. The caption once said columns ran in publication order while the code laid
+    them out by citation depth; a reader was told how to read a picture it was not.
+    """
+    want = {"default_hidden_rels": ["cites"], "default_hidden_types": ["Message"]}
+    bad, checked = [], 0
+    for rec, dist in dists.items():
+        elements, meta = _overview_of(rec)
+        page = (pathlib.Path(dist) / "index.html").read_text(encoding="utf-8")
+        checked += 1
+        data = json.loads(re.search(
+            r'<script id="graph-data" type="application/json">(.*?)</script>', page, re.S).group(1))
+        for key, value in want.items():
+            if meta.get(key) != value:
+                bad.append(f"{rec.name}: {key} is {meta.get(key)!r}, want {value!r}")
+            if data["meta"].get(key) != value:
+                bad.append(f"{rec.name}: the compiled page does not carry {key}")
+            if f"DATA.meta.{key}" not in page:
+                bad.append(f"{rec.name}: the page never reads the {key} it carries")
+        for kind in ("mem", "type", "rel"):
+            if f"chip('{kind}'" not in page:
+                bad.append(f"{rec.name}: no legend toggle for {kind}")
+        if 'data-ctx="show"' not in page or "DEFAULTS.forEach" not in page:
+            bad.append(f"{rec.name}: no one-click restore for what starts hidden")
+        header = re.search(r'<div class="sub">(.*?)</div>', page, re.S).group(1)
+        if "citation depth" not in header or "publication order" in header:
+            bad.append(f"{rec.name}: the caption does not describe the citation-depth layout")
+        if "Messages" not in header:
+            bad.append(f"{rec.name}: the caption does not say Messages start hidden")
+        bad += [f"{rec.name}: unwrapped storage access: {ln[:80]}"
+                for ln in _storage_unwrapped(page)]
+    return (not bad, f"{checked} overview(s) start with cites and Messages hidden and describe "
+            "their layout", bad)
+
+
+_CAPPED = re.compile(r"max-height|overflow(-y)?\s*:\s*(auto|hidden|scroll)")
+
+
+def case_m_verdict_is_never_height_capped(dists):
+    """On an Argument's claim map, the whole verdict is shown, outside any height-capped box.
+
+    The verdict, purpose and rationale once shared a 96px strip that scrolled; on c037_2's
+    R1'' that showed about two lines of the verdict, the one thing a reader opens the page
+    for. The verdict must sit in no box whose height is capped, purpose and rationale in
+    sections a reader opens, and one control must expand the pane to its full height.
+
+    Checked by reading the compiled page: the rules for the verdict's own box and each box
+    around it (#intro, #verdictpanel, .vtext) must set no max-height and no scrolling overflow.
+    """
+    bad, checked = [], 0
+    for rec, dist in dists.items():
+        for a in browse.load_record(str(rec)):
+            h = a["artifact"]
+            if h["type"] != browse.ARGUMENT or not (h.get("verdict") or "").strip():
+                continue
+            page = (pathlib.Path(dist) / browse.page_name(h["name"])).read_text(encoding="utf-8")
+            checked += 1
+            verdict = html.escape(h["verdict"].strip())
+            if f'<div class="vtext">{verdict}</div>' not in page:
+                bad.append(f"{h['name']}: the verdict is not shown whole in the verdict pane")
+            css = re.sub(r"/\*.*?\*/", "", re.search(r"<style>(.*?)</style>", page, re.S).group(1),
+                         flags=re.S)
+            for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+                subjects = {part.strip().split()[-1] for part in sel.split(",") if part.strip()}
+                if subjects & {"#intro", "#verdictpanel", ".vtext"} and _CAPPED.search(body):
+                    bad.append(f"{h['name']}: '{sel.strip()}' caps the box the verdict is in")
+            for key, label in (("purpose", "Purpose and stakes"), ("rationale", "Rationale")):
+                if (h.get(key) or "").strip() and \
+                        f'<details class="vsec"><summary>{label}</summary>' not in page:
+                    bad.append(f"{h['name']}: {key} is not in a section a reader opens")
+            if 'id="btn-intro"' not in page or 'aria-expanded="false"' not in page:
+                bad.append(f"{h['name']}: no Expand control for the verdict pane")
+            bad += [f"{h['name']}: unwrapped storage access: {ln[:80]}"
+                    for ln in _storage_unwrapped(page)]
+    return (not bad, f"{checked} Argument page(s) show the whole verdict, uncapped", bad)
+
+
+def _page_of(dist, doc):
+    """The page that carries an artifact's "Cited by": its own, or an Argument's reading page."""
+    page = browse.page_name(doc["artifact"]["name"])
+    if doc["artifact"]["type"] == "Argument":
+        page = page.replace(".html", "_reading.html")
+    return (dist / page).read_text()
+
+
+def _cited_by(text):
+    return text[text.index('id="cited-by"'):] if 'id="cited-by"' in text else ""
+
+
+def case_n_cited_by_matches_a_direct_count(dists):
+    """Every artifact's "Cited by" lists exactly the Grounds that address it (R1).
+
+    The count is made directly from the record, Ground by Ground, and compared with the rows on
+    the compiled page; on the rounds fixture the other relations must each have their group."""
+    bad, pages, grounds = [], 0, 0
+    for rec, dist in dists.items():
+        docs = _docs(rec)
+        names = {d["artifact"]["name"] for d in docs}
+        want = {n: 0 for n in names}
+        for d in docs:
+            for o in d.get("objects", []):
+                p = parse_address(o.get("citation", "")) if o.get("type") == "Ground" else None
+                if p and p["root"] in names and p["root"] != d["artifact"]["name"]:
+                    want[p["root"]] += 1
+        for d in docs:
+            text = _cited_by(_page_of(dist, d))
+            pages += 1
+            if not text:
+                bad.append(f'{rec.name}/{d["artifact"]["name"]}: no "Cited by" section')
+                continue
+            got = text.count('<tr id="cb-')
+            grounds += got
+            if got != want[d["artifact"]["name"]]:
+                bad.append(f'{rec.name}/{d["artifact"]["name"]}: {got} Ground row(s), the record '
+                           f'has {want[d["artifact"]["name"]]}')
+    dist = next(v for k, v in dists.items() if k.name == "_rounds_record")
+    for name, group in (("fx_import_table", "Used as an input"),
+                        ("fx_analysis_one", "Named as their producer"),
+                        ("fx_result_one", "Cited in prose"), ("fx_arg_one", "Superseded by")):
+        page = browse.page_name(name)
+        if name == "fx_arg_one":
+            page = page.replace(".html", "_reading.html")
+        if f'<h3 class="cbh">{group} (' not in (dist / page).read_text():
+            bad.append(f"rounds fixture: {name} has no {group!r} group")
+    return (not bad, f"{pages} page(s) list the {grounds} Grounds the record says cite them",
+            bad)
+
+
+def case_o_cited_content_is_marked(dists):
+    """Each cell, row, table and passage a Ground addresses is marked, and each mark's link
+    reaches a row of "Cited by" on the same page (R2, N6)."""
+    bad, marked = [], 0
+    for rec, dist in dists.items():
+        types = {d["artifact"]["name"]: d["artifact"]["type"] for d in _docs(rec)}
+        for d in _docs(rec):
+            for o in d.get("objects", []):
+                p = parse_address(o.get("citation", "")) if o.get("type") == "Ground" else None
+                if not p or not anchored(p) or types.get(p["root"]) in (None, "Argument"):
+                    continue
+                text = (dist / browse.page_name(p["root"])).read_text()
+                frag = html.escape(browse.address_fragment(o["citation"]))
+                if p["method"] == "text_span":
+                    ok = re.search(f'<mark id="{re.escape(frag)}" title="Cited by [^"]*">'
+                                   r'.*?</mark><a class="cmark"', text) is not None
+                else:
+                    ok = f'id="{frag}" class="cited"' in text
+                marked += ok
+                if not ok:
+                    bad.append(f'{d["artifact"]["name"]}.{o["name"]} -> {frag[:60]} is not marked')
+        for page in dist.glob("*.html"):
+            text = page.read_text()
+            for href in set(re.findall(r'class="cmark" href="#([^"]+)"', text)):
+                if f'id="{href}"' not in text:
+                    bad.append(f"{page.name}: a mark links to #{href[:50]}, which is not there")
+    return (not bad, f"{marked} cited cell(s), row(s), table(s) and passage(s) marked, "
+            "each linked to its Ground", bad)
+
+
+def _columns(text, by_page):
+    """Rounds page -> {column label: {artifact name}}, read from its links."""
+    out = {}
+    for sec in text.split('<section class="rcol')[1:]:
+        label = re.search(r'aria-label="([^"]*)"', sec).group(1)
+        out[label] = {by_page[h] for h in re.findall(r'<li class="ritem"><a href="([^"]+)"', sec)}
+    return out
+
+
+def case_p_rounds_come_from_addresses(dists):
+    """The Rounds columns hold exactly what `serves_goals` names (R3), and only that: renaming
+    every artifact changes nothing about where anything is placed or what cites it (N4)."""
+    rec, dist = next((k, v) for k, v in dists.items() if k.name == "_rounds_record")
+    bad = []
+
+    def pages_of(names):
+        m = {}
+        for n in names:
+            m[browse.page_name(n)] = n
+            m[browse.page_name(n).replace(".html", "_reading.html")] = n
+        return m
+
+    docs = _docs(rec)
+    names = [d["artifact"]["name"] for d in docs]
+    cols = _columns((dist / "rounds.html").read_text(), pages_of(names))
+    want = {"Corpus and unassigned": ROUNDS_EXPECTED["corpus"],
+            "Goal 1": ROUNDS_EXPECTED["fx_goal_one"], "Goal 2": ROUNDS_EXPECTED["fx_goal_two"]}
+    if cols != want:
+        bad.append(f"columns {cols}, want {want}")
+    text = (dist / "rounds.html").read_text()
+    if text.count('shared &middot; also') != 2:
+        bad.append("fx_closing, serving both goals, is not marked shared in both columns")
+    goal_page = (dist / browse.page_name("fx_goal_one")).read_text()
+    if "Serving this goal (5)" not in goal_page:
+        bad.append("fx_goal_one's page does not list the 5 artifacts serving it")
+
+    renamed_rec = dist.parent / "_rounds_renamed"
+    new = renamed_copy(rec, renamed_rec)
+    renamed_dist = dist.parent / "build__rounds_renamed"
+    browse.compile_record(str(renamed_rec), str(renamed_dist), quiet=True)
+    cols2 = _columns((renamed_dist / "rounds.html").read_text(), pages_of(new.values()))
+    want2 = {k: {new[n] for n in v} for k, v in want.items()}
+    if cols2 != want2:
+        bad.append(f"after renaming, columns {cols2}, want {want2}")
+    for d in docs:
+        n = d["artifact"]["name"]
+        d2 = json.loads((renamed_rec / f"{new[n]}.json").read_text())
+        before = _cited_by(_page_of(dist, d)).count('<tr id="cb-')
+        after = _cited_by(_page_of(renamed_dist, d2)).count('<tr id="cb-')
+        if before != after:
+            bad.append(f"{n}: {before} Ground row(s), {after} once renamed")
+    return (not bad, "Rounds columns and Cited by come from addresses: the same under any "
+            "names", bad)
+
+
+def case_q_no_goals_no_rounds_page(dists):
+    """A record without a ResearchGoal gets no Rounds page and no link to one; a record with
+    one does (plan, risks: a community without goals would see an empty page)."""
+    bad = []
+    for rec, dist in dists.items():
+        has_goal = any(d["artifact"]["type"] == "ResearchGoal" for d in _docs(rec))
+        exists = (dist / "rounds.html").is_file()
+        linked = 'href="rounds.html"' in (dist / "index.html").read_text()
+        if has_goal != exists or has_goal != linked:
+            bad.append(f"{rec.name}: goal={has_goal}, rounds.html={exists}, linked={linked}")
+    return (not bad, "only a record with a goal has a Rounds page", bad)
+
+
+_STICKY = re.compile(r"position\s*:\s*sticky")
+_PADDING = re.compile(r"scroll-padding-top\s*:\s*(\d+)px")
+HEADER_PX = 56  # an artifact page's header with a one-line title, measured at 1440px
+
+
+def _rules(page):
+    """A compiled page's CSS rules, as (set of selectors, body), comments removed."""
+    m = re.search(r"<style>(.*?)</style>", page, re.S)
+    css = re.sub(r"/\*.*?\*/", "", m.group(1) if m else "", flags=re.S)
+    return [({s.strip() for s in sel.split(",")}, body)
+            for sel, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css)]
+
+
+def case_r_link_targets_clear_the_sticky_header(dists):
+    """A link to a place on a page lands below the page's sticky header, not under it.
+
+    An artifact page's header is sticky. With no scroll padding, every in-page target (a
+    Ground's row or cell, Cited by, Serving this goal, a mark's badge) landed 56px up, under a
+    56px header, so a cited table row, about 27px tall, could not be seen at all.
+
+    Checked by reading each compiled page: where a rule makes the header sticky, the page must
+    pad its scroll by at least a one-line header in CSS, and its script must size the padding
+    to the header, which grows when a long title wraps.
+    """
+    bad, checked = [], 0
+    for rec, dist in dists.items():
+        for p in sorted(pathlib.Path(dist).glob("*.html")):
+            page = p.read_text(encoding="utf-8")
+            rules = _rules(page)
+            if not any("header" in sels and _STICKY.search(body) for sels, body in rules):
+                continue
+            checked += 1
+            pads = [int(v) for sels, body in rules if "html" in sels for v in _PADDING.findall(body)]
+            if not pads or max(pads) < HEADER_PX:
+                bad.append(f"{rec.name}/{p.name}: a sticky header, and no scroll padding for it")
+            if "scrollPaddingTop" not in page or "header.offsetHeight" not in page:
+                bad.append(f"{rec.name}/{p.name}: the scroll padding is not sized to the header")
+    if not checked:
+        bad.append("no compiled page has a sticky header, so nothing was checked")
+    return (not bad, f"{checked} page(s) with a sticky header keep link targets below it", bad)
+
+
 CASES = [
     ("every Ground lands on the content it names", case_a_grounds_land),
     ("an Argument's prose is readable, not letterboxed", case_f_argument_is_readable),
@@ -506,6 +915,13 @@ CASES = [
     ("an Argument page restores moved nodes on load", case_i_claim_positions_restore_on_load),
     ("an Artifact's own Objects and relationships are shown", case_j_internal_structure_is_shown),
     ("a presenter caption is not mistaken for an artifact", case_k_annotations_are_not_artifacts),
+    ("the overview starts with context links and Messages hidden", case_l_overview_hides_context_links_by_default),
+    ("an Argument's verdict is never height-capped", case_m_verdict_is_never_height_capped),
+    ("every page's Cited by matches a direct count", case_n_cited_by_matches_a_direct_count),
+    ("cited content is marked and linked to its Ground", case_o_cited_content_is_marked),
+    ("Rounds come from serves_goals addresses, not names", case_p_rounds_come_from_addresses),
+    ("only a record with a goal has a Rounds page", case_q_no_goals_no_rounds_page),
+    ("a link target lands below the sticky header", case_r_link_targets_clear_the_sticky_header),
 ]
 
 

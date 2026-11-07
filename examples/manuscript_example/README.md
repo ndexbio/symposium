@@ -27,10 +27,6 @@ Start with these two, side by side. The claim map is identical; only `purpose` c
 
 ## Reading it
 
-No server needed:
-
 ```bash
-cd ../../tools && python3 serve.py ../examples/manuscript_example --port 8761
+/symposium serve examples/manuscript_example --port 8761
 ```
-
-**[`../../docs/quickstart.md`](../../docs/quickstart.md)** section 1 covers this in more depth, and section 4 walks through publishing this whole set to a real local server and resetting it afterward — useful for seeing the publish/gate loop work before trusting it with a real community's record.

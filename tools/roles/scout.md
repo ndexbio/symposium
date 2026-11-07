@@ -18,7 +18,7 @@ You map the territory: which papers, datasets, and prior artifacts bear on the q
 
 ## Contract
 
-Read by `publish.py`. `may_publish` is the type limit this session imposes on itself;
+Read by `/symposium publish`. `may_publish` is the type limit this session imposes on itself;
 `must_not` is printed at the moment you violate it. Everything above is for you to read,
 nothing above is machine-checked.
 

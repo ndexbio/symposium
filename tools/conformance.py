@@ -24,6 +24,10 @@ published before it, which is the sequence the gate saw when it accepted them.
 are no publication units; each artifact gets its own `created` (spec 1.9) — which is the one
 part of the publishing loop that can be wrong without any Artifact being wrong.
 
+**The browser** is checked for an address landing on the thing it names (`test_browser.py`),
+and **the sync** for the Messages a pass lists to the member they are addressed to
+(`test_sync.py`), each against a stand-in rather than a server.
+
 Nothing here needs a network, a server, or credentials.
 """
 from __future__ import annotations
@@ -33,10 +37,10 @@ import copy
 import pathlib
 import sys
 
-from validate import validate, passed
+from validate import passed, validate
 
 HERE = pathlib.Path(__file__).resolve().parent
-MEMBERS = {"agent_lyra", "agent_vega", "ndex-admin"}
+MEMBERS = {"agent_lyra", "agent_vega", "symposium-admin"}
 V = "1.0"
 
 # --------------------------------------------------------------------------- corpus
@@ -338,8 +342,8 @@ CASES = [
     ("a name without the account prefix", mut(
         lambda a: a["artifact"].update(name="arid1a")), False, "NAMING"),
     ("a hyphenated account prefix is accepted", mut(
-        lambda a: a["artifact"].update(name="ndex-admin_arid1a_v1",
-                                       published_by="@ndex-admin")), True, None),
+        lambda a: a["artifact"].update(name="symposium-admin_arid1a_v1",
+                                       published_by="@symposium-admin")), True, None),
     ("a name carrying an address delimiter", mut(
         lambda a: a["artifact"].update(name="agent_lyra_arid1a.v1")), False, "STRUCT"),
     ("the wrong specification version", mut(
@@ -401,6 +405,39 @@ INDEPENDENCE_CASES = [
      two_grounds("@agent_lyra_gdsc_v1.measurements#csv.row=MCF7&col=ic50_z",
                  "@agent_lyra_depmap_v1#rest.query=ARID1A"), False),
 ]
+
+# ------------------------------------------------------------- the profile's own types
+# A ResearchGoal is defined by this profile (CANONICAL.md 2.1), not by the specification, so it
+# must draw no "not defined" STRUCT finding; a type neither defines still must. Judged against
+# the record plus the goal, which no other scenario needs.
+GOAL = {
+    "artifact": {"name": "agent_vega_goal_v1", "type": "ResearchGoal",
+                 "specification_version": V, "published_by": "@agent_vega",
+                 "created": "2026-08-01T08:00:00Z", "groundable": False,
+                 "title": "Which lines are sensitive to the screening compound?",
+                 "text": "Find which cell lines respond to the screening compound, and stop "
+                         "when each has a verdict."},
+    "objects": [
+        {"name": "text_span", "type": "Content", "groundable": False,
+         "description": "The goal statement; addressable, never groundable.",
+         "addressing_method": "`#text_span.quote=\"<exact passage>\"`."},
+    ],
+    "relationships": [],
+}
+
+# (label, artifact, expect a STRUCT REVIEW)
+PROFILE_TYPE_CASES = [
+    ("a ResearchGoal, a type this profile defines, draws no STRUCT finding", GOAL, False),
+    ("a ResearchGoal that does not declare groundable: false is reviewed", mut(
+        lambda a: a["artifact"].pop("groundable"), base=GOAL), True),
+    ("a type neither the specification nor the profile defines is still reviewed", mut(
+        lambda a: a["artifact"].update(type="AnalysisPlan"), base=NOTE), True),
+]
+
+# A Ground into a ResearchGoal is refused: it declares groundable: false (CANONICAL.md 2.1).
+GROUND_INTO_GOAL = mut(lambda a: ground(
+    a, citation='@agent_vega_goal_v1.text#text_span.quote="screening compound"'))
+
 
 # ------------------------------------------------------------- accepted, but reviewed
 # (label, artifact, expected_review_check)
@@ -491,7 +528,32 @@ def run_scenarios(quiet=False):
             for x in got:
                 print(f"          {x['level']:6} {x['check']:12} {x['msg'][:110]}")
 
-    total = len(CASES) + len(INDEPENDENCE_CASES) + len(REVIEW_CASES)
+    for label, art, want_review in PROFILE_TYPE_CASES:
+        same = art["artifact"]["name"] == GOAL["artifact"]["name"]   # the goal, or a mutation of it
+        got = validate(art, _without(art) + ([] if same else [GOAL]), MEMBERS)
+        reviewed = any(x["check"] == "STRUCT" and x["level"] == "REVIEW" for x in got)
+        good = passed(got) and reviewed == want_review
+        bad += not good
+        if not good or not quiet:
+            print(f"  [{'ok ' if good else 'BAD'}] {label}"
+                  + ("" if good else f"  -> STRUCT reviewed={reviewed} (want {want_review}), "
+                                     f"passes={passed(got)}"))
+        if not good:
+            for x in got:
+                print(f"          {x['level']:6} {x['check']:12} {x['msg'][:110]}")
+
+    got = validate(GROUND_INTO_GOAL, RECORD + [GOAL], MEMBERS)
+    good = not passed(got) and any(x["check"] == "GROUND" and x["level"] == "FAIL" for x in got)
+    bad += not good
+    if not good or not quiet:
+        print(f"  [{'ok ' if good else 'BAD'}] a Ground into a ResearchGoal is refused"
+              + ("" if good else f"  -> passes={passed(got)}"))
+    if not good:
+        for x in got:
+            print(f"          {x['level']:6} {x['check']:12} {x['msg'][:110]}")
+
+    total = (len(CASES) + len(INDEPENDENCE_CASES) + len(REVIEW_CASES)
+             + len(PROFILE_TYPE_CASES) + 1)
     return total - bad, total
 
 
@@ -522,7 +584,11 @@ def main(argv=None):
     import test_browser
     rc_browser = test_browser.run()
 
-    failed = (ok != total) or rc_fix or rc_rec or rc_gate or rc_browser
+    print("\nTHE SYNC — Messages addressed to you are listed, offline\n")
+    import test_sync
+    rc_sync = test_sync.run()
+
+    failed = (ok != total) or rc_fix or rc_rec or rc_gate or rc_browser or rc_sync
     print("\n" + "=" * 70)
     print("CONFORMANCE: " + ("FAILED" if failed else "everything behaved as specified"))
     return 1 if failed else 0

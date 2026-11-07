@@ -3,8 +3,8 @@
 
     python test_gate.py
 
-No network and no credentials: `ndex_io.auth` is stubbed before `gate` is imported, because
-the gate authenticates at module scope. Nothing here uploads, and nothing here needs a server.
+No server and no credentials: `order_submissions` is pure, and importing the gate contacts
+nothing. Nothing here uploads, and nothing here needs a server.
 
 Publication is strictly serial (spec 1.9). Every artifact gets its own `created` and is
 validated against the record as it stands, so `order_submissions` returns a FLAT list: what
@@ -30,11 +30,7 @@ from __future__ import annotations
 import sys
 
 sys.path.insert(0, ".")
-import ndex_io                                                        # noqa: E402
-
-ndex_io.auth = lambda prefix: ("ndex-admin", "stub-token")            # noqa: E731
-
-import gate                                                           # noqa: E402
+import gate  # noqa: E402
 
 
 def art(name, typ, objs=(), **header):

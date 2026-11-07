@@ -31,12 +31,10 @@ That is a real limit, and it points at a design rule rather than a workaround:
 | | |
 |---|---|
 | over **50 KB** | `validate.py` emits a REVIEW finding. Not a rejection — a note a human will read. |
-| over **250 KB** | `publish.py` and `admin_publish.py` refuse before uploading anything. |
+| over **250 KB** | `/symposium publish` refuses before uploading anything. |
 
-The server's own ceiling is between 814 KB and 1.5 MB, measured; above it an upload is an HTTP
-413. **That is not the limit that matters.** Embedded content in this profile lives in a string
-property and not in the CX2 nodes, so nothing can query it: a reader loads all of a table to
-read one row of it. The binding limit is what a reader can actually read — a few hundred rows is
+Embedded content in this profile lives in a string property, so nothing can query it: a reader
+loads all of a table to read one row of it. The binding limit is what a reader can actually read — a few hundred rows is
 a result; twenty thousand is the input with a filter applied.
 
 The split between REVIEW and refusal is deliberate. Size is a judgment about whether a question

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "symposium.name" . }}
+  labels:
+    {{- include "symposium.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "symposium.selectorLabels" . | nindent 4 }}
+  # only the API's port: PostgreSQL and SeaweedFS stay inside the pod
+  ports:
+    - {name: http, port: {{ .Values.service.port }}, targetPort: http, protocol: TCP}

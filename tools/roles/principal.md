@@ -29,7 +29,7 @@ Credentials, role assignment and working directories are operational and stay in
 
 ## Contract
 
-Read by `publish.py`. `may_publish` is the type limit this session imposes on itself;
+Read by `/symposium publish`. `may_publish` is the type limit this session imposes on itself;
 `must_not` is printed at the moment you violate it. Everything above is for you to read,
 nothing above is machine-checked.
 
@@ -45,7 +45,7 @@ nothing above is machine-checked.
   "must_not": [
     "Assert anything about the science. A goal says what to investigate, never what is true.",
     "Publish groundable material of any kind. A `ResearchGoal` declares `groundable: false` and so does every Content Object in it.",
-    "Hold the admin account or run the gate. Setting what must be investigated and deciding what may be published are two hands, and they belong to two accounts.",
+    "Hold the community-admin access role or run the gate. Setting what must be investigated and deciding what may be published are two hands, and they belong to two accounts.",
     "Revise a goal out of band. A goal that changes without a superseding artifact is a goal the record cannot show changing."
   ],
   "sop": []

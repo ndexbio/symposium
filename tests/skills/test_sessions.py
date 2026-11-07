@@ -146,7 +146,9 @@ def test_server_level_sessions_move_into_their_users_folders(root, caller, table
     (folder / "demo" / "demo-lyra.invite").write_text("{}")
     sessions = agent_session(root, caller, table, 300)
     sessions.settle()
-    files = sorted(str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file())
+    files = sorted(
+        p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file()
+    )
     assert files == [
         "admin/root/.symposium/context.json",
         "admin/root/admin_pub_root.key",

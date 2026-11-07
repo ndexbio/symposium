@@ -1,13 +1,16 @@
-"""The admin's gate: discover the members' submissions, validate them, accept or reject.
+"""The gate: discover the members' submissions, validate them, accept or reject.
 
-Run it as `/symposium gate`, in the admin's session directory: the context there says which
-community, and `./record` beside it is the gate's copy of the record. One pass per run:
+Run it as `/symposium gate`, in the session of a user holding the `gate` grant (a community admin
+or a gate-keeper): the context there says which community, and `./record` beside it is
+the gate's copy of the record. Each pass first checks the grant, so a gate whose `gate` is
+unassigned stops deciding at its next pass. One pass per run:
 
   1. a sync pass brings the copy up to date from the `record` feed, exactly as a member's;
   2. the `inbox` feed, from the gate's cursor, plus the submissions deferred last pass, gives
      the submissions (marked `symposium_submission`) not decided yet;
   3. a submission is considered only when its inbox name, before the `@`, is the artifact's
-     name, prefixed with its submitter's handle, and the submitter is a member;
+     name, prefixed with its submitter's handle, and the submitter is an active member: a
+     user of the community, not removed, holding `publish`;
   4. `order_submissions` puts them in the order a serial publication needs: an artifact after
      anything it addresses, an output after its Analysis or deferred until it arrives;
   5. each is validated against the record as it stands, with a provisional `created` from
@@ -33,9 +36,9 @@ is sent twice.
                               SIGTERM or (Windows) CTRL_BREAK stops it within a second, with
                               exit code 0, even mid-pass. A restart resumes where it left off,
                               and takes over from a gate still watching this session, which it
-                              stops.
+                              stops. A pass that finds `gate` unassigned stops it, exit code 1.
 
-Everything goes through the `symposium-data` CLI (R-I1). Exit 0 = the pass ran; 1 = no context
+Everything goes through the `symposium-data` CLI. Exit 0 = the pass ran; 1 = no context
 in this directory (the message names `/symposium setup` and `bootstrap`), the data server could
 not be reached, or the copy differs from the record (`--verify`); 2 = `--watch` given with
 `--verify` or `--rebuild`.
@@ -61,6 +64,7 @@ from data_io import (
     Mirror,
     SymposiumData,
     pause,
+    rbac,
     stop_on_signals,
     take_over,
     uninterrupted,
@@ -89,11 +93,8 @@ def order_submissions(subs, record_names):
     decides only the ORDER in which a pass considers what is pending, so that an artifact is
     stamped after anything it addresses.
 
-    Bundling used to live here. It is gone because it created the one thing spec 1.9 says
-    cannot happen — two artifacts with an identical `created`, which are therefore not
-    earlier than one another and cannot refer to each other. Making that publishable at all
-    required an ordering exemption on `produced_by`, and the exemption then suppressed the
-    ordering check on the very property most in need of it.
+    Two artifacts never share a `created` (spec 1.9), so each one is strictly earlier or
+    later than every other, and `produced_by` is ordered like every other address.
 
     An output names its Analysis with `produced_by` and that address must resolve (spec 2.5).
     An output whose Analysis is neither in the record nor pending in this pass is DEFERRED
@@ -155,6 +156,7 @@ class Gate:
         self.mirror = mirror or Mirror()
         self.dry = dry
         self.decided = 0  # submissions accepted or rejected since the last look
+        self.refused = False  # a pass found the session without `gate`
 
     # ── state: a cache of what the server says ────────────────────────────────────────────
     def load_state(self):
@@ -185,12 +187,19 @@ class Gate:
 
     # ── one pass ──────────────────────────────────────────────────────────────────────────
     def once(self) -> int:
+        try:
+            self.data.require(rbac.GATE, "the gate")
+        except DataError as e:
+            print(f"! {e}")
+            self.refused = True
+            return 1
         sync = Sync(self.data, self.mirror, quiet=True)
         if sync.once() is None:
             print("! the data server could not be reached — nothing was decided")
             return 1
         try:
-            admin = self.data.context()["handle"]
+            gate = self.data.context()["handle"]
+            submitters = self.data.submitters()
             state = self.load_state()
             items, inbox_since = self.refresh(state)
         except DataError as e:
@@ -213,7 +222,7 @@ class Gate:
         for item in {i["citation"]: i for i in candidates}.values():
             if item["citation"] in state["decisions"]:
                 continue
-            sub = self.admit(item, members, state)
+            sub = self.admit(item, submitters, state)
             if sub:
                 subs.append(sub)
         print(f"gate: {len(subs)} submission(s) to decide\n")
@@ -249,7 +258,7 @@ class Gate:
                                    atype=canonical["artifact"].get("type"),
                                    submitter=sub["owner"], findings=findings)
                 else:
-                    if not self.reject(sub, findings, admin):
+                    if not self.reject(sub, findings, gate):
                         continue
                     state["decisions"][sub["citation"]] = "rejected"
                     self.decided += 1
@@ -342,7 +351,7 @@ class Gate:
         print(f"    ACCEPTED -> {promoted['citation']}, created {stored['artifact']['created']}")
         return stored
 
-    def reject(self, sub, findings, admin) -> bool:
+    def reject(self, sub, findings, gate) -> bool:
         """A reply in `inbox` that only the submitter reads. -> whether it was sent."""
         fails = [f"{x['check']}: {x['msg']}" for x in findings if x["level"] == "FAIL"]
         print(f"    REJECTED ({len(fails)} failures)")
@@ -350,13 +359,13 @@ class Gate:
             print(f"      - {x[:150]}")
         if self.dry:
             return True
-        reply_name = f"{admin}_REPLY_{sub['item']['name']}"
+        reply_name = f"{gate}_REPLY_{sub['item']['name']}"
         reply = {
             "artifact": {
                 "name": re.sub(r"[^A-Za-z0-9_]", "_", reply_name),
                 "type": "NonGroundable",
                 "specification_version": "1.0",
-                "published_by": f"@{admin}",
+                "published_by": f"@{gate}",
                 "created": None,
                 "text": "REJECTED\n\nin_reply_to: " + sub["name"] + "\n\n"
                         + "\n".join(f"- {x}" for x in fails),
@@ -381,7 +390,7 @@ class Gate:
         """A pass every POLL seconds until stopped. A pass's report is printed when it accepted
         or rejected something; a pass that fails is reported on the 1st, 5th and every 20th
         failure in a row. A stop mid-pass prints what the pass had decided so far: each line
-        is a decision the admin must see."""
+        is a decision the gate's runner must see."""
         stop_on_signals()
         lock = take_over("gate")  # noqa: F841 — held for as long as this gate watches
         print(f"watching inbox (every {POLL}s) — ctrl-c to stop", flush=True)
@@ -392,6 +401,13 @@ class Gate:
                 report = io.StringIO()
                 with contextlib.redirect_stdout(report):
                     code = self.once()
+                if self.refused:
+                    # the grant is gone: watching on would decide nothing
+                    print(report.getvalue().rstrip(), flush=True)
+                    print("stopped: `gate` was unassigned from this session; to resume, a "
+                          "community admin assigns gate-keeper again and the gate is started "
+                          "again", flush=True)
+                    return 1
                 if code:
                     misses += 1
                     if misses in (1, 5) or misses % 20 == 0:

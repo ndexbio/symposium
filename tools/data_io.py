@@ -1,11 +1,11 @@
 """The toolchain's one way to the data server, and its local copy of the record.
 
-`SymposiumData` runs the `symposium-data` CLI and reads the one JSON object each command prints
-(R-I1): nothing in the toolchain makes an HTTP request to the server itself. It runs the CLI
+`SymposiumData` runs the `symposium-data` CLI and reads the one JSON object each command
+prints: nothing in the toolchain makes an HTTP request to the server itself. It runs the CLI
 with the command the skill prepared for the session and passed in SYMPOSIUM_DATA_CLI (a JSON
 list: the interpreter of the skill's own environment, then the CLI's `cli.py`). `Mirror` is the
 local copy of the community's record, `./record` beside the context in the session's working
-directory: sync writes it on a member's machine and the gate on the admin's, and validation
+directory: sync writes it on a member's machine and the gate on its runner's, and validation
 reads it.
 
 Standard library only, Python 3.9+, like the rest of tools/.
@@ -23,6 +23,10 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+
+# the CLI's access-role module: standard library only, shared with the tools
+sys.path.insert(0, str(Path(__file__).resolve().parent / "symposium-data"))
+import rbac  # noqa: E402
 
 NO_RUNTIME = (
     "no CLI command in SYMPOSIUM_DATA_CLI: the toolchain's tools run only as /symposium "
@@ -249,13 +253,37 @@ class SymposiumData:
         """The data server's status, for this directory's context."""
         return self.run("status")
 
+    def access(self) -> rbac.UserContext:
+        """The access the server resolves for this context, fetched afresh."""
+        return rbac.UserContext.from_view(self.run("access")["context"])
+
+    def require(self, grant: str, doing: str):
+        """Refuse early, with what to do, when this context lacks `grant` in its community;
+        the server decides either way."""
+        context = self.context()
+        if not self.access().allowsRequest(grant, context.get("community")):
+            raise DataError({
+                "error": f"{doing} takes the `{grant}` grant, which '{context['handle']}' "
+                f"does not hold in {context.get('community')}: `/symposium access` shows what "
+                "it holds"
+            })
+
     def members(self) -> set:
-        """Everyone validation counts as a member, fetched live: every handle on the community's
-        roster, registered or not yet (any member may read it, R-D6), and the server's admin.
-        An address to any of them (`@handle`) resolves, exactly as it does at the gate."""
-        handles = {m["handle"] for m in self.run("roster", "list")["roster"]}
-        admin = self.status().get("admin")
-        return handles | ({admin} if admin else set())
+        """Every handle validation resolves, fetched live: every user of the community,
+        removed ones included, and every server-level user (any principal of the community
+        reads them). An address to any of them (`@handle`) resolves, exactly as it does
+        at the gate."""
+        users = self.run("users", "list")
+        return {m["handle"] for m in users["users"]} | set(users["server_users"])
+
+    def submitters(self) -> set:
+        """The handles whose submissions the gate decides: the community's users, not
+        removed, holding `publish` (community-member)."""
+        return {
+            m["handle"] for m in self.run("users", "list")["users"]
+            if not m["removed"]
+            and any(r["role"] == rbac.COMMUNITY_MEMBER for r in m["roles"])
+        }
 
     # ── reading ────────────────────────────────────────────────────────────────────────────
     def changes(self, collection: str, since: int = 0) -> dict:

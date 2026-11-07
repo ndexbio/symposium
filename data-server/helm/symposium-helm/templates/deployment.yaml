@@ -55,11 +55,12 @@ spec:
           ports:
             - {name: http, containerPort: 8080, protocol: TCP}
           # /v1/status answers 200 once PostgreSQL and the file store are up, operational or
-          # not, and 503 while either is down. A first start initialises both: up to 7 min.
+          # not, and 503 while either is down. A first start initialises both, and the first
+          # start of a new release backs the database up and upgrades it: up to 10 min.
           startupProbe:
             httpGet: {path: /v1/status, port: http}
             periodSeconds: 5
-            failureThreshold: 84
+            failureThreshold: 120
           readinessProbe:
             httpGet: {path: /v1/status, port: http}
             periodSeconds: 5
@@ -76,7 +77,7 @@ spec:
           {{- end }}
           volumeMounts:
             - {name: storage, mountPath: /apps}
-            # the admin's public key file, read at start-up (R-D4)
+            # root's public key file, read at start-up
             - {name: admin-key, mountPath: /apps/admin-key, readOnly: true}
       volumes:
         - name: storage

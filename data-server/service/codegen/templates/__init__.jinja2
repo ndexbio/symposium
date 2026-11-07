@@ -3,4 +3,7 @@ contract or the templates in codegen/templates, then regenerate."""
 
 from .routers import {{ routers | join(", ") }}
 
-ROUTERS = [{% for router in routers %}{{ router }}.router, {% endfor %}]
+# the streams first: a route is matched in the order it is registered, and their literal
+# `…/events` paths share a parent with `…/{submission}`
+{% set ordered = (routers | select("equalto", "streams") | list) + (routers | reject("equalto", "streams") | list) -%}
+ROUTERS = [{% for router in ordered %}{{ router }}.router, {% endfor %}]

@@ -336,7 +336,7 @@ def check_structure(a):
             f.append(finding("STRUCT", "FAIL", f"name '{name}' contains a delimiter (. # @)"))
         # A Member-name prefix segment must be present. Hyphens are permitted in it because
         # account handles may contain them — `symposium-admin` is one — and excluding them
-        # would bar the admin from naming its own artifacts after its own account. This
+        # would bar such an account from naming its own artifacts after itself. This
         # check is structural only: that the NAME MATCHES THE PUBLISHING ACCOUNT is enforced
         # where the account is actually known, in publish.py and at the gate.
         if not re.match(r"^[A-Za-z0-9][A-Za-z0-9-]*_", name):
@@ -722,11 +722,9 @@ def check_corpus(a, index, members, record_names):
                 f.append(finding("GROUND", "REVIEW", f"{ctx}: {reason}"))
         f.extend(finding(x["check"], x["level"], f"{ctx}: {x['msg']}") for x in verify_content(info))
 
-    # `produced_by` is ordered like every other address. It used to carry an exemption, which
-    # existed only because the gate published an Analysis and its outputs as one act under one
-    # timestamp; the exemption then suppressed the ordering check on the property that most
-    # needs it. Publication is serial and the Analysis is strictly earlier (spec 2.5), so the
-    # ordinary check is both correct and sufficient.
+    # `produced_by` is ordered like every other address. Publication is serial and the
+    # Analysis is strictly earlier (spec 2.5), so the ordinary check is both correct and
+    # sufficient.
     if h.get("produced_by"):
         check_addr(h["produced_by"], "header produced_by", False)
         # spec 2.5: a produced_by citation must resolve to an existing ANALYSIS. Resolving to

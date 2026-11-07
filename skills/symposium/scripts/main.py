@@ -1,31 +1,45 @@
 #!/usr/bin/env python3
-"""The `symposium` skill's entry point: every person (admin, operator, member) works through
-`/symposium <command>`, and this dispatches it (R-I7). It never contacts a data server itself:
-every data interaction runs the `symposium-data` CLI (R-I1).
+"""The `symposium` skill's entry point: every person works through `/symposium <command>`, and
+this dispatches it. It never contacts a data server itself: every data interaction runs
+the `symposium-data` CLI. What a person may run follows from their access roles
+(`access` lists them); "who" below names the role that holds what a command takes.
 
-    setup --invite-file <file>             members: join a community (run first in a session)
-    bootstrap --community-file <file>      admins: bring a community up (run first in a session)
-    use [<community> <handle>]             choose this agent session's session; alone, list them
+    setup --invite-file <file>             anyone invited: join a community, or as a server admin
+    admin-config --handle <h> --data-server-url <url>
+                                           root: make root's key and its server-wide session
+    bootstrap --community-file <file> [--handle <h>]
+                                           server admins: create a community and its community admin's invite
+    use-community <community> [--handle <h>]
+                                           server admins: a session for an existing community
+                                           (--handle: which server-level user, when this machine
+                                           holds several)
+    use [<community>] <handle>             choose this agent session's session; alone, list them
+    access                                 your access roles and grants, and the six roles
     publish [--role <role>] <artifact.json>
-                                           submit an artifact to the gate (`--check`: validate only)
-    validate <artifact.json>               validate only: `publish --check`
-    sync [--watch|--messages]              bring ./record, this session's copy of the record, up to date;
-                                           list the gate's replies and the Messages addressed to you
-                                           (`--messages`: all of them, newest first)
+                                           community-member: submit an artifact to the gate
+                                           (`--check`: validate only)
+    validate <artifact.json>               community-member: validate only, `publish --check`
+    sync [--watch|--messages]              bring ./record, this session's copy of the record, up to
+                                           date; list the gate's replies and the Messages addressed
+                                           to you (`--messages`: all of them, newest first)
     gate [--dry-run|--verify|--rebuild|--watch]
-                                           admins: decide the submissions waiting in inbox
+                                           community-admin, gate-keeper: decide the submissions
+                                           waiting in inbox
     serve [<record dir>] [--port N]        browse ./record (or a record dir), rebuilt as it changes
                                            `--watch` and `serve` run until stopped, with no time
                                            limit of their own: start them in the background, and
                                            again if the agent's limit stops them; a restart resumes
                                            and takes over. SIGINT or SIGTERM stops one within a second.
-    port <ndex_credentials_file> <url>     admins: port a community's record (port-ndex)
-    admin-config | roster | invite | rebind-key | suspect-after | purge | export | import
-                                           admins: the server admin's commands
+    invite | assign | unassign | users | rebind-key | suspect-after
+                                           community-admin (in its community), server admins: users
+                                           and their access roles; anyone in the community lists its users, and
+                                           an owner shares its collections with `assign`; from a
+                                           server-wide session, name the community with --community
+    purge | export | import | port <ndex_credentials_file> <url>
+                                           community-admin (purge, export), server admins
     gen-api-key | list-api-keys | revoke-api-key
-                                           API keys, as 0600 files in the session's api-keys/:
-                                           a member's own keys, or keys for applications
-                                           (--non-member) that read what you grant them
+                                           API keys, as 0600 files in the session's api-keys/,
+                                           each carrying access roles (`--access`)
     data <symposium-data command …>        direct data work: put, get, collection, find, …
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit
@@ -34,11 +48,11 @@ the session it worked in: a `session` key in its JSON object, or a first line
 `session: <community>/<handle>` before its free text, which then streams through as it comes.
 
 Every command runs in its session's directory, which the skill keeps under ~/.symposium/
-(sessions.py): `setup`, `bootstrap`, `import` and `admin-config` name theirs, and `setup` and
-`bootstrap` make theirs this agent session's current one; any other command works in the
-current session (`use` chooses it), or the machine's only one. The first command of a session prepares the CLI's Python runtime (runtime.py) before anything
-else; later commands in the session reuse it. Every tool started here gets the CLI command in
-SYMPOSIUM_DATA_CLI.
+(sessions.py): `setup`, `bootstrap`, `use-community`, `import` and `admin-config` name theirs,
+and make theirs this agent session's current one; any other command works in the current
+session (`use` chooses it), or the machine's only one. The first command of a session prepares
+the CLI's Python runtime (runtime.py) before anything else; later commands in the session reuse
+it. Every tool started here gets the CLI command in SYMPOSIUM_DATA_CLI.
 
 Standard library only, Python 3.9+.
 """
@@ -61,18 +75,23 @@ SKILL = Path(__file__).resolve().parents[1]
 # suite) it is the repository itself.
 TOOLCHAIN = SKILL / "toolchain" if (SKILL / "toolchain").is_dir() else SKILL.parents[1]
 CLI = TOOLCHAIN / "tools" / "symposium-data" / "cli.py"
-ADMIN = (
+# the CLI's own commands, run as they are
+CLI_COMMANDS = (
     "admin-config",
-    "roster",
+    "access",
     "invite",
+    "assign",
+    "unassign",
+    "users",
     "rebind-key",
     "suspect-after",
     "purge",
     "export",
     "import",
+    "gen-api-key",
+    "list-api-keys",
+    "revoke-api-key",
 )
-# API keys: a member makes its own, and either a member or the admin makes applications'
-KEYS = ("gen-api-key", "list-api-keys", "revoke-api-key")
 # the commands that print free text: their session goes on a first line of its own
 FREE_TEXT = {"publish", "validate", "sync", "gate", "serve"}
 # the workflow commands: each runs its tool from the toolchain
@@ -83,9 +102,9 @@ WORKFLOW = {
     "serve": "serve.py",
 }
 USAGE = (
-    "/symposium <setup|bootstrap|use|publish|sync|gate|validate|serve|port|admin-config|roster|"
-    "invite|rebind-key|suspect-after|purge|export|import|gen-api-key|list-api-keys|"
-    "revoke-api-key|data> [options]    "
+    "/symposium <setup|admin-config|bootstrap|use-community|use|access|publish|validate|sync|"
+    "gate|serve|invite|assign|unassign|users|rebind-key|suspect-after|purge|export|"
+    "import|port|gen-api-key|list-api-keys|revoke-api-key|data> [options]    "
     "e.g. /symposium setup --invite-file <file>"
 )
 
@@ -121,7 +140,9 @@ def command_line(command: str, rest: list, cli: list) -> list | None:
         ]
     if command == "port":  # port-ndex
         return [sys.executable, str(SKILL / "scripts" / "port_ndex.py"), *rest]
-    if command in ADMIN or command in KEYS:
+    if command == "use-community":
+        return [*cli, "context", "set", "--community", *rest[:1], *rest[1:]]
+    if command in CLI_COMMANDS:
         return [*cli, command, *rest]
     if command == "data":
         return [*cli, *rest]
@@ -142,6 +163,7 @@ def main(argv=None) -> int:
         )
         return 0
     command, sessions = argv[0], Sessions()
+    sessions.settle()
     if command == "use":
         try:
             print(json.dumps(sessions.use(argv[1:])))
@@ -159,8 +181,32 @@ def main(argv=None) -> int:
     except (SessionError, RuntimeUnavailable) as e:
         print(json.dumps(e.report))
         return 1
-    process = command_line(command, rest, cli)
     environment = {**os.environ, "SYMPOSIUM_DATA_CLI": json.dumps(cli)}
+    if session is not None and sessions.refusal(command, session) is not None:
+        # the cached access may predate a change: read it afresh before refusing
+        subprocess.run(
+            [*cli, "access"], env=environment, cwd=directory, capture_output=True
+        )
+        session = sessions.at(directory)
+        refused = sessions.refusal(command, session)
+        if refused is not None:
+            print(json.dumps(refused))
+            return 1
+    if command == "use-community":
+        url = server_url(sessions, Sessions.option(rest, "--handle"))
+        if url is None:
+            print(
+                json.dumps(
+                    {
+                        "error": "no server-wide session for "
+                        f"{Sessions.option(rest, '--handle')} on this machine: "
+                        "`/symposium use` lists the sessions"
+                    }
+                )
+            )
+            return 1
+        rest = [*rest, "--data-server-url", url]
+    process = command_line(command, rest, cli)
     if command in FREE_TEXT:
         # the session first; the report then streams through, each line as it is printed
         print(f"session: {session.label()}", flush=True)
@@ -171,7 +217,12 @@ def main(argv=None) -> int:
     result = subprocess.run(
         process, env=environment, cwd=directory, stdout=subprocess.PIPE, text=True
     )
-    if command in ("setup", "bootstrap") and result.returncode == 0:
+    if command == "use-community" and result.returncode == 0:
+        # the session knows what it may do
+        subprocess.run(
+            [*cli, "access"], env=environment, cwd=directory, capture_output=True
+        )
+    if command in ("setup", "bootstrap", "use-community") and result.returncode == 0:
         made = sessions.at(directory)
         if made is not None:
             sessions.make_current(
@@ -180,6 +231,18 @@ def main(argv=None) -> int:
             session = made
     print(named(result.stdout, session), end="")
     return result.returncode
+
+
+def server_url(sessions: Sessions, handle: str | None) -> str | None:
+    """The data server of the server-level user's server-wide session, for `use-community`;
+    None when this machine holds no such session."""
+    if not handle:
+        return None
+    context = sessions.server_session(handle) / ".symposium" / "context.json"
+    try:
+        return json.loads(context.read_text())["data-server-url"]
+    except (OSError, ValueError, KeyError):
+        return None
 
 
 def keeps_running(command: str, rest: list) -> bool:

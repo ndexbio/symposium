@@ -13,7 +13,7 @@
 #                       MAX_PER_TEST_WAIT (seconds, default 120) is the one limit on any wait
 #                       in any suite: reaching it means something hung
 #   make build          lint, then dist/Symposium_skill.zip: the symposium skill, with the
-#                       symposium-data CLI inside it (R-I8)
+#                       symposium-data CLI inside it
 #   make deploy-local   build, then install the skill from the zip into $(SKILLS)
 # The data server has its own Makefile: make -C data-server test runs its suites alone.
 
@@ -82,8 +82,12 @@ build: lint
 
 # Installs from the built zip, not the working copy, so what runs locally is what ships. It
 # removes before extracting, so a file dropped from the bundle does not live on in the install.
-deploy-local: build
+# The build's checks print only when one fails, and then nothing is installed.
+deploy-local:
 	@test -n "$(SKILLS)" || { echo "deploy-local: SKILLS is empty; refusing"; exit 1; }
+	@log=$$(mktemp) && trap 'rm -f "$$log"' EXIT && \
+		$(MAKE) --no-print-directory build > "$$log" 2>&1 || \
+		{ cat "$$log"; echo "deploy-local: the checks failed; the skill was not installed"; exit 1; }
 	@staging=$$(mktemp -d) && trap 'rm -rf "$$staging"' EXIT && \
 		python3 -m zipfile -e $(BUNDLE) "$$staging" && \
 		rm -rf "$(SKILLS)/symposium" && \

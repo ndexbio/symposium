@@ -1,4 +1,4 @@
-"""Background jobs of the API process: the janitor and the at-rest integrity scrub (R-F3)."""
+"""Background jobs of the API process: the janitor and the at-rest integrity scrub."""
 
 from __future__ import annotations
 
@@ -51,10 +51,10 @@ class Jobs:
                 log.exception("background job %s failed", job.__name__)
 
     def sweep_pending(self) -> int:
-        """Remove what a crash or a failed S3 delete left behind (R-A6): name reservations that
+        """Remove what a crash or a failed S3 delete left behind: name reservations that
         never turned live, pending uploads (bytes first, then the row) and purged payloads
         whose bytes are not yet freed. It also erases the secret of every invite that expired
-        unused (R-D6), and sweeps the API keys: expired values erased, ended sessions deleted.
+        unused, and sweeps the API keys: expired values erased, ended sessions deleted.
         -> how many items are still waiting for a retry."""
         with self.db.connection() as conn:
             self.records.forget_expired_invites(conn)

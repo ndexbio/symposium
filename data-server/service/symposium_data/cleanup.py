@@ -1,6 +1,6 @@
 """Removing payload bytes safely across S3 and PostgreSQL, which share no transaction.
 
-The rule (R-A6): the row that records the intent exists before the bytes are touched; the
+The rule: the row that records the intent exists before the bytes are touched; the
 bytes are removed first; the row is completed only after that succeeds. When S3 fails, the
 row is left as it is, still saying "these bytes are garbage", and the janitor retries. Every
 object in the bucket is therefore always accounted for by a row.
@@ -20,7 +20,7 @@ log = logging.getLogger("symposium_data.cleanup")
 class PendingBatch:
     """Payloads uploaded ahead of the one transaction that commits them all (an import, a
     port). Their heartbeat keeps the janitor away while the work goes on: it expires only work
-    that has stopped (R-A6)."""
+    that has stopped."""
 
     def __init__(self, db: Database, records: Records, interval: float):
         self.db, self.records, self.interval = db, records, interval

@@ -1,7 +1,7 @@
 """Member-side sync — keep this session's copy of the community record current.
 
-Every member can read the community's `record` collection (the roster's default grants), so
-the server's change feed IS the distribution mechanism: a member needs no git access to hold a
+Every member and observer of the community reads its `record` collection, so the server's
+change feed IS the distribution mechanism: a member needs no git access to hold a
 current copy of the record.
 
 Two things make this simple, and both come from the specification:
@@ -112,7 +112,7 @@ def message_line(m):
     """The one line that lists a Message to this member, wherever it is listed. Its sender,
     title and name are each what a Member wrote, and an agent is asked to relay this line,
     so each is put on one line first: a title cannot add a line that seems to come from the
-    admin or the gate."""
+    gate."""
     return (f"message for you from {one_line(m['from'])}: {one_line(m['title'])} "
             f"(@{one_line(m['name'])})")
 
@@ -258,9 +258,17 @@ class Sync:
         return added, dirty, deferred
 
     def replies(self, state):
-        """The gate's replies addressed to this member that have not been listed yet."""
+        """The gate's replies addressed to this member that have not been listed yet. Reading
+        `inbox` takes `publish` (or `gate`): an account holding neither, an observer, has no
+        replies, and syncs the record all the same."""
         new = []
-        for item in self.data.query("inbox", {REPLY_MARK: True}):
+        try:
+            items = self.data.query("inbox", {REPLY_MARK: True})
+        except DataError as e:
+            if e.report.get("status") == 403:
+                return new
+            raise
+        for item in items:
             if item["citation"] in state["replies"]:
                 continue
             state["replies"].append(item["citation"])

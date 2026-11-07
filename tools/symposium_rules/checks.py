@@ -11,14 +11,15 @@ def skip_reason(inbox_name: str, owner: str, declared, members) -> str | None:
     """Why the gate sets an inbox item aside without deciding it, or None to decide it.
 
     The item's inbox name, before the `@`, must be the artifact's own name; that name must
-    carry its submitter's handle as a prefix; and the submitter must be a member."""
+    carry its submitter's handle as a prefix; and the submitter must be an active member: a
+    user of the community, not removed, who holds `publish`."""
     name = inbox_name.partition("@")[0]
     if declared != name:
         return f"inbox name '{name}' is not the artifact's name '{declared}'"
     if not name.startswith(f"{owner}_"):
         return f"the name is not prefixed with its submitter's handle '{owner}_'"
     if owner not in members:
-        return f"'{owner}' is not a member of this community"
+        return f"'{owner}' is not an active member of this community"
     return None
 
 

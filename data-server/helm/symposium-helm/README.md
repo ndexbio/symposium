@@ -45,7 +45,7 @@ helm install symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm --
 | `expose.ingress.tlsSecret` | `""` | The host's TLS certificate. Leave it empty when TLS is terminated elsewhere. |
 | `expose.ingress.annotations` | `{}` | The controller's own settings for the streams and for upload size. |
 | `trustedProxy` | `127.0.0.1` | `SYMPOSIUM_SERVER_TRUSTED_PROXY`. When the server is exposed, set it to the network your gateway's or controller's pods run in. |
-| `publicUrl` | `""` | `SYMPOSIUM_SERVER_PUBLIC_URL`, for example `https://data.example.org`. |
+| `publicUrl` | `""` | `SYMPOSIUM_SERVER_PUBLIC_URL`, for example `https://data.example.org`. It is also the server address written into every invite file, so set it whenever the server is exposed. Empty, invites carry the address the request came in on. |
 | `corsOrigins` | `[]` | `SYMPOSIUM_SERVER_CORS_ORIGINS`: the browser origins allowed to call the API, for example `["https://app.example.org"]`. Empty, the API answers every request as usual and sends no CORS headers, so a browser lets only pages served from the API's own origin read its answers. |
 | `env` | `{}` | Any other `SYMPOSIUM_SERVER_*` setting, as `NAME: value`. |
 | `resources` | requests of 250m CPU and 1Gi memory | PostgreSQL, SeaweedFS and the API share the one pod. |
@@ -71,7 +71,7 @@ The server starts **non-operational** until the admin key is set. To set it:
 
 1. Run `/symposium admin-config --handle <handle> --data-server-url <url>`.
 2. Add `adminKey: {handle: <handle>}` to the values file.
-3. Upgrade with `--set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<handle>.key`.
+3. Upgrade with `--set-file adminKey.publicKey=$HOME/.symposium/admin/admin/<handle>/admin_pub_<handle>.key`.
 
 When the key changes, the pod restarts and the server binds or rebinds it. The Secret is
 mounted at `/apps/admin-key/`.

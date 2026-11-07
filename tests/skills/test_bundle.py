@@ -1,9 +1,9 @@
-"""The bundle (R-I8) and `make deploy-local` (R-J4): the zip holds the root README, the licence
+"""The bundle and `make deploy-local`: the zip holds the root README, the licence
 and the skill, with its toolchain inside it: the repository's Symposium base one for one, at its
 repository paths, so every relative link in the installed skill resolves inside it and the
 conformance suite runs from it; deploy-local installs exactly the skill; and the installed skill
 works with no repository and nothing on PATH but python3, preparing its own Python runtime once
-per agent session (R-I7), including `validate` against a data server."""
+per agent session, including `validate` against a data server."""
 
 import json
 import os
@@ -223,11 +223,19 @@ def test_deploy_local_refuses_an_empty_destination(installed):
 
 
 def test_the_installed_skill_prepares_its_runtime_once_per_session(
-    installed, admin_dir, cli, suite, tmp_path
+    installed, root_dir, cli, suite, tmp_path
 ):
-    cli.ok(admin_dir, "roster", "add", "--handle", "lyra")
-    invite = admin_dir / "lyra.invite"
-    cli.ok(admin_dir, "invite", "--handle", "lyra", "--out", invite)
+    invite = root_dir / "lyra.invite"
+    cli.ok(
+        root_dir,
+        "invite",
+        "--handle",
+        "lyra",
+        "--access",
+        "community-member:*",
+        "--out",
+        invite,
+    )
     skill = installed["skills"] / "symposium"
     env = only_python3(suite, tmp_path)
     anywhere = (

@@ -20,8 +20,8 @@ One line of JSON per event, append-only.
 
 **There is no shared filesystem between participants.** A session's log is written on
 whatever machine ran it, so member-side refusals — the most valuable half — do not reach the
-admin machine by themselves. They have to be COLLECTED: at the end of a session, the log file
-is handed over alongside the session report, and dropped into the admin's events directory.
+gate runner's machine by themselves. They have to be COLLECTED: at the end of a session, the log file
+is handed over alongside the session report, and dropped into the gate runner's events directory.
 `metrics.py` merges an arbitrary set of collected files and de-duplicates, so collection is
 nothing more than copying files into one place.
 

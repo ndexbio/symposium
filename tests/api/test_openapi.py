@@ -1,5 +1,5 @@
 """The Symposium API's contract (`api/openapi.yaml`) against the rules its design notes
-(`api/DESIGN.md`) set: every operation names its roles and its security, every listing that
+(`api/DESIGN.md`) set: every operation names its grants and its security, every listing that
 grows with the record is paged, every read of the record states its position, every error
 shares one body, and the notes' tables agree with the contract. The linter checks that the
 document is valid OpenAPI; these check that it says what Symposium needs it to say."""
@@ -16,20 +16,50 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 API = REPO / "api"
 SERVICE = REPO / "data-server" / "service"
-# the tags of the routes that set a community up; the rest read and write its data
+# the tags of the routes that set a community up and decide who has access; the rest read and
+# write its data
 CONTROL_TAGS = {
     "server",
     "sessions",
+    "users",
     "communities",
     "roster",
     "keys",
     "collections",
-    "admin",
+    "curation",
 }
-# The roles an API key may hold: `member` holds everything `non-member` holds; `admin` is the
-# server admin's session, which acts as no Member.
-ROLES = ("non-member", "member", "admin")
+# The grants an operation may name (`symposium_data/access/rbac.py`)
+GRANTS = (
+    "read",
+    "write",
+    "manage",
+    "publish",
+    "gate",
+    "members",
+    "export",
+    "communities",
+    "delegate",
+)
 METHODS = ("get", "post", "put", "patch", "delete")
+# the verbs the resource paths never use as a segment: an action is a method on a noun
+VERBS = {
+    "challenge",
+    "token",
+    "rebind",
+    "import",
+    "export",
+    "check",
+    "resolve",
+    "verify",
+    "query",
+    "find",
+    "stat",
+    "purge",
+    "promote",
+    "register",
+    "assign",
+    "unassign",
+}
 
 # The skill's commands (skills/symposium/SKILL.md) that have an API equivalent; DESIGN.md
 # must map every one, and map nothing that lacks an endpoint.
@@ -37,7 +67,7 @@ SKILL_COMMANDS = [
     "publish",
     "validate",
     "sync",
-    "roster list",
+    "users list",
 ]
 
 
@@ -96,29 +126,30 @@ def params(spec, op):
     return {deref(spec, p)["name"] for p in op.get("parameters", [])}
 
 
-def test_every_operation_names_its_roles(spec):
+def grants_line(op) -> str:
+    """The `Grants:` line an operation's description states, from `x-grants` and
+    `x-anonymous`."""
+    named = ", ".join(op["x-grants"]) or "none"
+    anonymous = {
+        "always": "; anonymous always",
+        "public": "; anonymous when the collection is public",
+    }.get(op.get("x-anonymous"), "")
+    return f"Grants: {named}{anonymous}."
+
+
+def test_every_operation_names_its_grants(spec):
     for path, method, op in operations(spec):
-        roles = op.get("x-roles")
+        grants = op.get("x-grants")
         where = f"{method.upper()} {path}"
-        assert roles and set(roles) <= set(ROLES), f"{where}: x-roles is {roles}"
-        stated = re.search(r"^Roles: (.+)$", op["description"], re.M)
-        assert stated, f"{where}: the description states no 'Roles:' line"
-        named = set(
-            re.findall(r"(?<![\w-])(non-member|member|admin)\b", stated.group(1))
-        )
-        assert named == set(roles), (
-            f"{where}: description names {named}, x-roles {roles}"
+        assert isinstance(grants, list), f"{where}: no x-grants"
+        assert set(grants) <= set(GRANTS), f"{where}: x-grants is {grants}"
+        assert f"\n{grants_line(op)}\n" in "\n" + op["description"], (
+            f"{where}: the description states no '{grants_line(op)}'"
         )
         # the credentials, in the words of the data server README's Authentication column
         assert f"\nAuthentication: {authentication(op)}.\n" in op["description"], (
             f"{where}: the description states no 'Authentication: {authentication(op)}.'"
         )
-
-
-def test_a_member_holds_everything_a_non_member_holds(spec):
-    for path, method, op in operations(spec):
-        if "non-member" in op["x-roles"]:
-            assert "member" in op["x-roles"], f"{method.upper()} {path}: skips member"
 
 
 def test_every_operation_states_its_security(spec):
@@ -138,38 +169,78 @@ def test_every_operation_states_its_security(spec):
             assert op["x-anonymous"] in ("always", "public"), (
                 f"{where}: x-anonymous is {op['x-anonymous']!r}"
             )
-            assert "non-member" in op["x-roles"], (
-                f"{where}: anonymous where a non-member is refused"
-            )
+            # an anonymous caller reads, and only reads
+            assert set(op["x-grants"]) <= {"read"}, f"{where}: anonymous beyond read"
 
 
 def test_the_api_takes_api_keys_alone(spec):
-    """One credential, an API key. The admin's session management pair is the one route under
-    `/admin`:
-    every other admin operation lives under its community, or under `/communities`."""
+    """One credential, an API key, and one sign-in for every user: a challenge, then a
+    session. Every route sits under one of the server's own resources."""
     assert list(spec["components"]["securitySchemes"]) == ["apiKey"]
-    for path, method, op in operations(spec):
-        assert not path.startswith("/admin") or path in (
-            "/admin/challenge",
-            "/admin/token",
-        ), f"{method.upper()} {path} is an admin path"
-        if op["x-roles"] == ["member"]:
-            continue  # acts as a Member, which the admin is not
-        assert "admin" in op["x-roles"], f"{method.upper()} {path} refuses the admin"
+    first = {path.split("/")[1] for path, _, _ in operations(spec)}
+    assert first == {
+        "challenges",
+        "communities",
+        "invites",
+        "me",
+        "openapi.json",
+        "openapi.yaml",
+        "registrations",
+        "roles",
+        "sessions",
+        "status",
+        "users",
+    }
 
 
-def test_every_member_operation_says_whose_key_it_needs(spec):
-    """An operation that acts as a Member says it needs a key bound to the Member, and
-    that the key's handle is checked against the community in the path on every request."""
+def test_changing_access_takes_a_signed_in_user(spec):
+    """The operations that change users, roles, invites or keys take a session key: an issued
+    key never widens what any key may do."""
     for path, method, op in operations(spec):
-        if op["x-roles"] != ["member"]:
+        name = op["operationId"]
+        changes = any(
+            w in name for w in ("Role", "Invite", "User")
+        ) and not name.startswith(("list", "get"))
+        if changes or op["operationId"] in (
+            "createApiKey",
+            "revokeApiKey",
+            "rotateKey",
+        ):
+            assert op.get("x-session"), f"{method.upper()} {path} takes an issued key"
+
+
+def test_no_path_begins_with_a_variable_and_none_names_a_verb(spec):
+    """Every resource has its own namespace: no path under `/v1` starts with a variable that
+    could overlap a literal beside it, and every segment is a noun (an action is a method)."""
+    for path, method, _ in operations(spec):
+        segments = path.strip("/").split("/")
+        assert not segments[0].startswith("{"), f"{method.upper()} {path}"
+        verbs = VERBS & set(segments)
+        assert not verbs, f"{method.upper()} {path} names {verbs}"
+
+
+def test_every_create_answers_201_with_its_location(spec):
+    """A request that creates a resource answers 201 and names it in `Location`."""
+    for path, method, op in operations(spec):
+        created = op["responses"].get("201")
+        if created is None:
             continue
-        text = " ".join(op["description"].split())
-        where = f"{method.upper()} {path}"
-        assert "Requires a key bound to a Member" in text, where
-        assert "issued for itself" in text, where
-        assert "session key" in text, where
-        assert "the community in the path" in text, where
+        created = deref(spec, created)
+        assert "Location" in created.get("headers", {}), (
+            f"{method.upper()} {path}: 201 without Location"
+        )
+
+
+def test_preconditions_are_declared_where_required(spec):
+    """Creating a file by name takes `If-None-Match: *`; replacing a role's whole value takes
+    `If-Match` with its ETag."""
+    for path, _method, op in operations(spec):
+        names = {deref(spec, p)["name"] for p in op.get("parameters", [])}
+        if op["operationId"] == "putFile":
+            assert "If-None-Match" in names and "412" in op["responses"], path
+        if op["operationId"].startswith("set") and op["operationId"].endswith("Role"):
+            assert "If-Match" in names, path
+            assert {"412", "428"} <= set(op["responses"]), path
 
 
 def test_the_api_takes_one_credential_at_one_path(spec):
@@ -281,21 +352,28 @@ def table(design, heading):
     return rows[2:]
 
 
-def test_the_role_table_matches_the_contract(spec, design):
+def grants_cell(op) -> str:
+    """An operation's grants as DESIGN.md's endpoint table writes them."""
+    if op["x-grants"]:
+        return " or ".join(f"`{g}`" for g in op["x-grants"])
+    if op.get("x-anonymous") == "always":
+        return "no key"
+    return "any key; the handler decides"
+
+
+def test_the_grant_table_matches_the_contract(spec, design):
     contract = {
-        op["operationId"]: (method.upper(), path, set(op["x-roles"]))
+        op["operationId"]: (
+            f"{method.upper()} {path}",
+            grants_cell(op),
+            "✓" if op.get("x-session") else "",
+            op.get("x-anonymous", ""),
+        )
         for path, method, op in operations(spec)
     }
-    rows = table(design, "### 3.2 Endpoint × role")
-    documented = {}
-    for operation, route, *cells in rows:
-        roles = {r for r, cell in zip(ROLES, cells) if cell.startswith("✓")}
-        documented[operation] = (route, roles)
-    assert set(documented) == set(contract)
-    for operation, (method, path, roles) in contract.items():
-        route, listed = documented[operation]
-        assert route == f"{method} {path}", operation
-        assert listed == roles, operation
+    rows = table(design, "### 3.3 Endpoint × grants")
+    documented = {operation: tuple(cells) for operation, *cells in rows}
+    assert documented == contract
 
 
 def test_the_design_maps_every_command_to_a_real_endpoint(spec, design):
@@ -390,23 +468,11 @@ README = REPO / "data-server" / "README.md"
 
 
 def authentication(op) -> str:
-    """The credentials an operation takes, in the README's words, from its `x-roles`,
-    `x-session` and `x-anonymous`: an issued key holds role `member` or `non-member`, a
-    session key a member's or the admin's."""
+    """The credentials an operation takes, in the README's words, from its `x-session` and
+    `x-anonymous`: a session key proves a signed-in user, and the grants decide the rest."""
     if op.get("x-anonymous") == "always":
         return "no key required"
-    roles, session = set(op["x-roles"]), op.get("x-session", False)
-    issued = set() if session else roles & {"member", "non-member"}
-    named = []
-    if issued == {"member", "non-member"}:
-        named.append("issued key")
-    elif issued:
-        named.append(f"{issued.pop()} issued key")
-    sessions = roles & {"member", "admin"}
-    if sessions == {"member", "admin"}:
-        named.append("session key")
-    elif sessions:
-        named.append(f"{sessions.pop()} session key")
+    named = ["session key"] if op.get("x-session") else ["issued key", "session key"]
     if op.get("x-anonymous") == "public":
         named.append("no key (public)")
     return ", ".join(named)
@@ -426,7 +492,7 @@ def readme_routes(cell: str, known: set) -> list:
     named, method, previous = [], None, None
     for text in re.findall(r"`([^`]+)`", cell):
         text = re.split(r" \{|\?", text)[0].strip()
-        if text.split(" ", 1)[0] in ("GET", "POST", "PUT", "DELETE"):
+        if text.split(" ", 1)[0] in ("GET", "POST", "PUT", "PATCH", "DELETE"):
             method, text = text.split(" ", 1)
         if text.startswith("…"):
             segments = previous.split("/")
@@ -438,7 +504,7 @@ def readme_routes(cell: str, known: set) -> list:
         elif text.startswith("/v1"):
             path = shape(text.removeprefix("/v1"))
         else:
-            path = shape("/{community}" + text)
+            path = shape("/communities/{community}" + text)
         assert (method, path) in known, f"{method} {path}: no such operation ({cell})"
         named.append((method, path))
         previous = path

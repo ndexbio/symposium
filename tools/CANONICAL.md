@@ -7,7 +7,7 @@ representation: canonical JSON
 
 # Canonical JSON for Symposium 1.0
 
-An agent authors **canonical JSON**. `/symposium publish` submits it to the community's data server as it is, and the admin's gate validates *that*.
+An agent authors **canonical JSON**. `/symposium publish` submits it to the community's data server as it is, and the gate validates *that*.
 
 This is a **profile**: narrower than the specification permits, and deliberately so. It fixes a set of addressing methods, a naming rule, and a citation form that the specification leaves open. Where this document is stricter than the specification, it says so.
 
@@ -142,7 +142,7 @@ conveys no evidential support and retracts nothing (§1.9), so work published un
 goal stands, and what it was serving stays legible.
 
 Published by a Member holding [`principal`](roles/principal.md) — a human researcher directing
-the community, on an account that is not the admin's. The party that sets what must be
+the community, on an account that is not the community admin's. The party that sets what must be
 investigated should not also decide what may be published.
 
 ### `serves_goals` (list of addresses) — bookkeeping, on any Artifact

@@ -6,7 +6,7 @@
 
 You import. You do not claim. Your job is to make outside material addressable inside the record: a paper's Results section, a supplementary table, a public database extract. What you publish is the community's only access to that material, so the fidelity of your rendering is the whole of your contribution.
 
-**The community's starting corpus enters the record through this role, not through the admin.** An import published by the operator is one no critic can contest on equal terms, because the operator also runs the gate that decides whether the contest is accepted, and it sits outside `policy/import-fidelity.md` in practice even when it complies with it in form. An import is a Member's rendering and a Member's responsibility (S1.10), and that only means something if a Member made it.
+**The community's starting corpus enters the record through this role, not through the account that runs the gate.** An import published by the operator is one no critic can contest on equal terms, because the operator also runs the gate that decides whether the contest is accepted, and it sits outside `policy/import-fidelity.md` in practice even when it complies with it in form. An import is a Member's rendering and a Member's responsibility (S1.10), and that only means something if a Member made it.
 
 ## Guidance
 

@@ -64,14 +64,14 @@ holds only implicitly. The server computes each traversal from its index (§1.3)
 
 | Specification type | API shape | URL |
 |---|---|---|
-| CommunityRecord (§1.1) | resource: the record's state | `/{community}/record` |
-| Member (§1.4) | resource; exposes its name and nothing inside it | `/{community}/members/{handle}` |
-| Artifact (§1.5), every type | resource, read-only | `/{community}/artifacts/{name}` |
-| Artifact property | sub-resource | `/{community}/artifacts/{name}/properties/{property}` |
-| Object (§1.6), every type | sub-resource of its Artifact | `/{community}/artifacts/{name}/objects/{object}` |
+| CommunityRecord (§1.1) | resource: the record's state | `/communities/{community}/record` |
+| Member (§1.4) | resource; exposes its name and nothing inside it | `/communities/{community}/members/{handle}` |
+| Artifact (§1.5), every type | resource, read-only | `/communities/{community}/artifacts/{name}` |
+| Artifact property | sub-resource | `/communities/{community}/artifacts/{name}/properties/{property}` |
+| Object (§1.6), every type | sub-resource of its Artifact | `/communities/{community}/artifacts/{name}/objects/{object}` |
 | Object property | sub-resource | `…/objects/{object}/properties/{property}` |
-| Relationship (§1.7) | listed under its Artifact; it has no address, so it gets no URL of its own | `/{community}/artifacts/{name}/relationships` |
-| Address (§1.8), schema references included | resolved | `/{community}/resolve?address=…` |
+| Relationship (§1.7) | listed under its Artifact; it has no address, so it gets no URL of its own | `/communities/{community}/artifacts/{name}/relationships` |
+| Address (§1.8), schema references included | resolved | `/communities/{community}/addresses?address=…` |
 | Content (§1.8.1) | an Object, listed with `?type=Content` | `…/objects?type=Content` |
 
 The Artifact types the specification defines, and the profile's community types, all use
@@ -101,8 +101,8 @@ the one Artifact resource. Their type-specific properties are documented on
 - **Groundability.** `groundable` is on the summary, so a client can tell from a listing
   that nothing in an Analysis, a NonGroundable, a Message or a ResearchGoal can be evidence.
 - **Attribution and import (§1.10).** `authors`, `import_method` and `published_by` are
-  header properties, read as they are. `published_by` is permanent. That is why §4.4 ties
-  a publishing key to one Member.
+  header properties, read as they are. `published_by` is permanent. That is why §4.5 ties
+  a publishing key to one user.
 - **Immutability.** No operation changes or deletes a recorded Artifact. The only writes
   are a submission into `inbox` and API keys.
 
@@ -118,10 +118,10 @@ The figure is server-wide and names no community, because `/v1/status` answers a
 index and states the index's `position` (§5.2).
 
 Each Artifact's `accepted` findings are the validator's verdict against the Artifacts before
-it, with the Members as the roster stands when the index first folds that Artifact in. On a
-server whose index is built over a record that already exists, that roster is today's, so an
-older Artifact's `accepted` findings may differ from what its gate saw on a Member address the
-roster has since changed.
+it, with the community's known handles as they stand when the index first folds that
+Artifact in. On a server whose index is built over a record that already exists, those handles
+are today's, so an older Artifact's `accepted` findings may differ from what its gate saw on a
+member address added since.
 
 A version purged on `/v1` leaves every read of the index: its Artifact answers 404, and its
 citations leave `cited-by` and supersession.
@@ -129,7 +129,7 @@ citations leave `cited-by` and supersession.
 ### 1.4 Canonical URLs
 
 Every resource body carries `url`: an absolute URL on the data server, under
-`/v1/{community}`. It is the same whichever host or application asks. This removes the
+`/v1/communities/{community}`. It is the same whichever host or application asks. This removes the
 record browser's `localhost` link problem. An application links to the API URL, or to its
 own page built from it.
 
@@ -137,12 +137,12 @@ An address maps to a URL by a fixed rule:
 
 | Address | URL |
 |---|---|
-| `@<member>` | `/{community}/members/<member>` |
-| `@<artifact>` | `/{community}/artifacts/<artifact>` |
-| `@<artifact>.<object>` | `/{community}/artifacts/<artifact>/objects/<object>` |
-| `@<artifact>.<property>` | `/{community}/artifacts/<artifact>/properties/<property>` |
+| `@<member>` | `/communities/{community}/members/<member>` |
+| `@<artifact>` | `/communities/{community}/artifacts/<artifact>` |
+| `@<artifact>.<object>` | `/communities/{community}/artifacts/<artifact>/objects/<object>` |
+| `@<artifact>.<property>` | `/communities/{community}/artifacts/<artifact>/properties/<property>` |
 | `@<artifact>.<object>.<property>` | `…/objects/<object>/properties/<property>` |
-| anything with `#<schema reference>` | `/{community}/resolve?address=<the address, URL-encoded>` |
+| anything with `#<schema reference>` | `/communities/{community}/addresses?address=<the address, URL-encoded>` |
 
 `@a.x` can name either an Object or a property. The profile forbids an Object's name from
 colliding with its Artifact's property names, so the server always knows which one is
@@ -165,11 +165,11 @@ given:
 | `RecordState.counts.findings` counts each Artifact's `accepted` findings | counting against the whole record would run the validator over every Artifact on each call |
 | `getOpenApiYaml` and `getOpenApiJson` added | the API serves its own contract to any caller |
 | `streamRecord` and `streamSubmissions` answer 400 | `Last-Event-ID` is a cursor, and a cursor this server never issued answers 400 everywhere |
-| the `admin` role, the `adminToken` scheme and the four `/admin/api-keys` operations are gone; every key belongs to one community | the API authenticates API keys alone and exposes no admin operation; keys are issued on the data server's `/v1` (§4.5), and a key acts only in its own community |
-| a `member` key carries its Member's handle, set from the Member's own session when it creates the key; `Me` answers `handle` and `label` | a submission is attributed to the Member who made the key, never to one the admin named |
+| one security scheme, `apiKey`; keys are issued on the data server's `/v1` (§4.6) | one credential, checked one way |
+| a member issued key acts as the user who issued it; `Me` answers `handle` and `label` | a submission is attributed to the user who made the key, never to one another caller named |
 | `getArtifactContent` added; `links.content` names it | an Artifact's stored bytes are reachable with the same API key. It answers those bytes untouched, so it carries no `position`; `x-stored` marks it |
 | one API: the record routes moved from `/api/v1` to `/v1`, beside the data server's own | two prefixes took two credentials and checked access two ways; one prefix takes one API key, and the collections decide access (§3, §7) |
-| the `admin` role returns, for the admin's session key; `x-session` added; `x-anonymous` is `always` or `public`; `Me` adds `kind`, `kid`, `suspect_after` and `grants` | the session management routes answer a session key, the admin's included, so the admin reads the record like any key; `getMe` replaces the data server's `whoami` |
+| `x-grants` and `x-session` added; `x-anonymous` is `always` or `public`; `Me` adds `kind`, `kid`, `suspect_after`, `roles` and the resolved `context` | every operation states the grants that may call it, and a caller reads what it holds (§3) |
 
 ## 2. The skill's commands → endpoints
 
@@ -178,294 +178,297 @@ These skill commands have an equivalent in the API. Each row names the operation
 
 | Command | Method and path | Operations |
 |---|---|---|
-| `publish <artifact.json>` | `POST /{community}/submissions` | `submitArtifact` |
-| `validate <artifact.json>` | `POST /{community}/submissions/check` | `checkSubmission` |
-| `sync` | `GET /{community}/artifacts?cursor=…`, `GET /{community}/submissions?status=rejected` | `listArtifacts`, `listSubmissions` |
-| `sync --watch` | `GET /{community}/streams/record`, `GET /{community}/streams/submissions` | `streamRecord`, `streamSubmissions` |
-| `roster list` | `GET /{community}/members` | `listMembers` |
+| `publish <artifact.json>` | `POST /communities/{community}/submissions` | `submitArtifact` |
+| `validate <artifact.json>` | `POST /communities/{community}/submission-checks` | `checkSubmission` |
+| `sync` | `GET /communities/{community}/artifacts?cursor=…`, `GET /communities/{community}/submissions?status=rejected` | `listArtifacts`, `listSubmissions` |
+| `sync --watch` | `GET /communities/{community}/record/events`, `GET /communities/{community}/submissions/events` | `streamRecord`, `streamSubmissions` |
+| `users list` | `GET /communities/{community}/users` | `listUsers` |
 
 The three key commands, `gen-api-key`, `list-api-keys` and `revoke-api-key`, call the data
-server's own `/v1/{community}/api-keys` routes (§4.5), which take a session key.
+server's own `/v1/communities/{community}/api-keys` routes (§4.6), which take a session key.
 
-## 3. Roles
+## 3. Access
 
-### 3.1 Keys, roles and collections
+### 3.1 Principals, grants and roles
 
-Every request carries one API key, or none. A key holds exactly **one** role and belongs to
-exactly **one** community; the admin's session key works in every community. A key used on
-another community answers 403.
+Every request carries one API key, or none. A key resolves to its **principal**, the identity
+that holds roles:
 
-| Role | Who holds it | Allows |
+| Principal | Its community |
+|---|---|
+| a user homed in a community (a member account) | its home community |
+| a server-level user (root and the server admins) | none: it works in every community |
+| a non-member issued key | the community it was issued in |
+
+A session key, and a member issued key, act as their user.
+
+**Grants** are fixed capabilities. `read`, `write` and `manage` are collection-scoped: each
+holds a collection value, `["*"]` (every collection), `[]` (only the collections the caller
+owns) or a list of names. The others hold no value: `publish` (submit to `inbox`), `gate`
+(read every `inbox` item, reply, promote into `record`), `members` (invite, assign roles,
+remove users and change any key of the community), `export`, `communities` (create, import
+and port communities; no quota) and `delegate` (server-level users).
+
+**Roles** are six fixed bundles of grants, defined in `symposium_data/access/rbac.py`:
+
+| Role | Held by | Grants |
 |---|---|---|
-| `non-member` | an application, with a non-member issued key, issued by a Member or the admin | every read of the record, while it may read `record` |
-| `member` | a Member: its session key, or an issued key it issued for itself | everything `non-member` has, plus publishing as its Member and reading its own submissions, with the gate's decision and reply on each, and their stream |
-| `admin` | the server admin's session | every read of the record |
+| `server-root` | root, bound from the key file | `read`, `write`, `manage` on `*`; `delegate`, `communities`, `gate`, `members`, `export` |
+| `server-admin` | server-level users | `read`, `write`, `manage` on `*`; `communities`, `gate`, `members`, `export` |
+| `community-admin` | homed users | `read`, `write`, `manage` on `*`; `gate`, `members`, `export` |
+| `gate-keeper` | homed users | `read` on `*`; `gate` |
+| `community-member` | homed users and API keys | `read`, `write` on the assignment's collection value, and for a user `read` on `record` as well; `manage` on `[]`; `publish` |
+| `community-observer` | homed users and API keys | `read` on the assignment's collection value |
 
-The role is the first gate: `x-roles` names the roles that may call an operation at all. The
-collection is the second: a request succeeds when its caller may use the collection it
-touches.
+A role assignment names a principal, a role and, for `community-member` and
+`community-observer` only, a required collection value. Assignments are sub-resources of their
+principal: `…/users/{handle}/roles/{role}` and `…/api-keys/{key_id}/roles/{role}`. `PUT` sets a
+role's whole value under `If-Match` with its `ETag`; `PUT` and `DELETE` on
+`…/roles/{role}/collections/{collection}` add or withdraw one collection, with the authority
+over that collection alone, which is how an owner shares its own.
 
-- **Record reads** take read access to `record`: its owner (the admin), a Member with a
-  `read` grant (every Member starts with one), a non-member issued key granted `read`, or
-  anyone
-  while `record` is public. A grant withdrawn on `/v1` is felt on the next request and by an
-  open stream (§5.3).
-- **Publishing** writes into `inbox`, so it takes the Member's `write` grant there, which every
-  Member starts with. A non-member issued key only reads.
-- **Submissions** are read by the Member who made them, with the gate's decision on each.
+**Users and Members are two resources.** `…/communities/{c}/users` are the community's
+accounts, with their roles; `…/communities/{c}/members` are the specification's Members, the
+record's publishers, read as the record is (anonymously while it is public). The community is never part of an
+assignment: it is the principal's own.
 
-The keys:
+### 3.2 The user context and its two check points
 
-- **A session key** is a short-lived key bound to a Member, or to the admin, obtained through
-  the session management routes (`POST /v1/{community}/auth/challenge` then
-  `POST /v1/{community}/auth/token`, or `/v1/admin/challenge` and `/v1/admin/token` for the
-  admin) with the Member's or the admin's private key file. It lasts
-  `SYMPOSIUM_SERVER_SESSION_TTL` seconds (default 900). The skill's CLI obtains one per
-  command. Routes that change access, keys or the server take a session key (`x-session`), so
-  only a session key widens what any key may do.
-- **An issued key** is one a Member or the admin issues, with a session key, for an
-  application, named by a label. It is one of two kinds:
-  - **a member issued key** (`role: member`) is one a Member issues **for itself**; a
-    Member may hold several. It carries the Member's handle, and every operation that needs
-    a Member takes it from the key: it publishes as that Member and sees that Member's own
-    traffic with the gate. Only the Member itself issues one.
-  - **a non-member issued key** (`role: non-member`) is bound to no Member, so a leaked
-    one publishes nothing. It reads the collections it is granted `read` on, by each
-    collection's owner or the admin, and any public collection.
+On every request, and at every stream beat, the server compiles the caller's live
+assignments into a `UserContext`: its principal, its community, whether it signed in with a
+session key, and a map from each grant it holds to its collection value. Values of the same
+grant merge: lists union, and `*` absorbs everything.
+
+Every check is `UserContext.allowsRequest(grant, community, collection=None)`, at two points:
+
+1. **Route.** `x-grants` lists the grants that may call an operation, any one sufficing. The
+   check asks only whether the grant is held in the request's community, with any value. An
+   empty list admits any key of the community and leaves the decision to the handler.
+2. **Handler.** Every read, write or manage of a collection, file or version asks again with
+   the collection (a file resolves to its collection first). Listings and searches return
+   only the collections that pass. The record's routes act on `record`.
+
+A collection-scoped check allows when the caller signed in with a session key and owns the
+collection (the **owner allowance**), when the caller is server-level, or when its value is
+`*` or names the collection in the caller's community. Issued keys get no owner allowance: a
+key reaches exactly the collections its own assignments list.
+
+`inbox` sits outside the collection values. A put marked as a submission takes `publish`, a
+put marked as a reply takes `gate`, and any other put is refused. `publish` holders see their
+own submissions and the replies addressed to them; `gate` holders see every item. Promotion
+is the only write into `record`, and it takes `gate`.
 
 Anonymous access needs no key: an operation that answers without one says so in
-`x-anonymous`, and its `security` includes `{}`. `always` marks the contract itself,
-`GET /v1/openapi.yaml` and `/v1/openapi.json`. `public` marks every record read, which
-answers anonymously while the community's `record` collection is public.
+`x-anonymous`, and its `security` includes `{}`. `always` marks the contract, status and
+sign-in routes. `public` marks reads that answer anonymously while the collection they touch
+is public.
 
-### 3.2 Endpoint × role
+An unknown community, collection or file answers 404; a refused check answers 403; a
+missing, unknown or expired key answers 401.
 
-`tests/api/test_openapi.py` checks this table against `x-roles` in the contract. The rows from
-`getStatus` on are the hand-written routes, the ones that set a community up and its files.
-Routes marked `x-session` in the contract also take a session key, and the collection a route
-touches decides the rest (§3.1).
+### 3.3 Endpoint × grants
 
-Each operation's description ends with a `Roles:` line and an `Authentication:` line, the
-credentials it takes in the words of the data server README's Authentication column (`issued
-key`, `member issued key`, `session key`, `member session key`, `admin session key`, `no key
-(public)`, `no key required`). Both follow from `x-roles`, `x-session` and `x-anonymous`, and
-`tests/api/test_openapi.py` checks the lines and the README against them.
+Each operation's description ends with a `Grants:` line and an `Authentication:` line, the
+credentials it takes in the words of the data server README's Authentication column. Both
+follow from `x-grants`, `x-session` and `x-anonymous`. Routes marked `x-session` take a
+signed-in user's session key, so only a signed-in user invites, assigns, issues or revokes.
 
-| Operation | Method and path | non-member | member | admin |
+| Operation | Method and path | Grants | Session | Anonymous |
 |---|---|---|---|---|
-| getOpenApiYaml | GET /openapi.yaml | ✓ | ✓ | ✓ |
-| getOpenApiJson | GET /openapi.json | ✓ | ✓ | ✓ |
-| getRecord | GET /{community}/record | ✓ | ✓ | ✓ |
-| listArtifacts | GET /{community}/artifacts | ✓ | ✓ | ✓ |
-| getArtifact | GET /{community}/artifacts/{name} | ✓ | ✓ | ✓ |
-| getArtifactContent | GET /{community}/artifacts/{name}/content | ✓ | ✓ | ✓ |
-| getArtifactProperty | GET /{community}/artifacts/{name}/properties/{property} | ✓ | ✓ | ✓ |
-| listObjects | GET /{community}/artifacts/{name}/objects | ✓ | ✓ | ✓ |
-| getObject | GET /{community}/artifacts/{name}/objects/{object} | ✓ | ✓ | ✓ |
-| getObjectProperty | GET /{community}/artifacts/{name}/objects/{object}/properties/{property} | ✓ | ✓ | ✓ |
-| listRelationships | GET /{community}/artifacts/{name}/relationships | ✓ | ✓ | ✓ |
-| listCitedBy | GET /{community}/artifacts/{name}/cited-by | ✓ | ✓ | ✓ |
-| listSupersession | GET /{community}/artifacts/{name}/supersession | ✓ | ✓ | ✓ |
-| listFindings | GET /{community}/artifacts/{name}/findings | ✓ | ✓ | ✓ |
-| resolveAddress | GET /{community}/resolve | ✓ | ✓ | ✓ |
-| listMembers | GET /{community}/members | ✓ | ✓ | ✓ |
-| getMember | GET /{community}/members/{handle} | ✓ | ✓ | ✓ |
-| listMemberArtifacts | GET /{community}/members/{handle}/artifacts | ✓ | ✓ | ✓ |
-| listMemberMessages | GET /{community}/members/{handle}/messages | ✓ | ✓ | ✓ |
-| getMe | GET /{community}/me | ✓ | ✓ | ✓ |
-| streamRecord | GET /{community}/streams/record | ✓ | ✓ | ✓ |
-| checkSubmission | POST /{community}/submissions/check |  | ✓ |  |
-| submitArtifact | POST /{community}/submissions |  | ✓ |  |
-| listSubmissions | GET /{community}/submissions |  | ✓ own |  |
-| getSubmission | GET /{community}/submissions/{submission} |  | ✓ own |  |
-| streamSubmissions | GET /{community}/streams/submissions |  | ✓ own |  |
-| getStatus | GET /status | ✓ | ✓ | ✓ |
-| adminChallenge | POST /admin/challenge | ✓ | ✓ | ✓ |
-| createAdminSession | POST /admin/token | ✓ | ✓ | ✓ |
-| listCommunities | GET /communities |  |  | ✓ |
-| createCommunity | POST /communities |  |  | ✓ |
-| importCommunity | POST /communities/import |  |  | ✓ |
-| exportCommunity | GET /{community}/export |  |  | ✓ |
-| startPortNdex | POST /{community}/port-ndex |  |  | ✓ |
-| getPortNdex | GET /{community}/port-ndex/{port_id} |  |  | ✓ |
-| challenge | POST /{community}/auth/challenge | ✓ | ✓ | ✓ |
-| createSession | POST /{community}/auth/token | ✓ | ✓ | ✓ |
-| register | POST /{community}/owners | ✓ | ✓ | ✓ |
-| rotateKey | POST /{community}/owners/{handle}/keys |  | ✓ |  |
-| rebindMember | POST /{community}/owners/{handle}/rebind |  |  | ✓ |
-| setSuspectAfter | PUT /{community}/owners/{handle}/suspect-after |  |  | ✓ |
-| listRoster | GET /{community}/roster |  | ✓ | ✓ |
-| addMember | POST /{community}/roster/{handle} |  |  | ✓ |
-| removeMember | DELETE /{community}/roster/{handle} |  |  | ✓ |
-| listInvites | GET /{community}/invites |  |  | ✓ |
-| createInvite | POST /{community}/invites |  |  | ✓ |
-| listApiKeys | GET /{community}/api-keys |  | ✓ | ✓ |
-| createApiKey | POST /{community}/api-keys |  | ✓ | ✓ |
-| getApiKey | GET /{community}/api-keys/{key_id} |  | ✓ | ✓ |
-| revokeApiKey | DELETE /{community}/api-keys/{key_id} |  | ✓ | ✓ |
-| listCollections | GET /{community}/collections | ✓ | ✓ | ✓ |
-| createCollection | POST /{community}/collections |  | ✓ | ✓ |
-| setGrant | PUT /{community}/collections/{collection}/grants |  | ✓ | ✓ |
-| setPublic | PUT /{community}/collections/{collection}/public |  | ✓ | ✓ |
-| putFile | PUT /{community}/collections/{collection}/files/{name} |  | ✓ | ✓ |
-| listFileVersions | GET /{community}/files/{file_id}/versions | ✓ | ✓ | ✓ |
-| addFileVersion | POST /{community}/files/{file_id}/versions |  | ✓ | ✓ |
-| deleteFile | DELETE /{community}/files/{file_id} |  | ✓ | ✓ |
-| getFileContent | GET /{community}/files/{file_id}/v/{ref} | ✓ | ✓ | ✓ |
-| statFileVersion | GET /{community}/files/{file_id}/v/{ref}/stat | ✓ | ✓ | ✓ |
-| purgeVersion | POST /{community}/files/{file_id}/v/{n}/purge |  |  | ✓ |
-| promoteVersion | POST /{community}/files/{file_id}/v/{n}/promote |  |  | ✓ |
-| listChanges | GET /{community}/collections/{collection}/changes | ✓ | ✓ | ✓ |
-| queryCollection | POST /{community}/collections/{collection}/query | ✓ | ✓ | ✓ |
-| findFile | GET /{community}/collections/{collection}/find | ✓ | ✓ | ✓ |
-| findByHash | GET /{community}/sha256/{sha} | ✓ | ✓ | ✓ |
-| verifyCitation | GET /{community}/verify | ✓ | ✓ | ✓ |
-
-"own" means rows about the key's Member: its submissions, and the replies addressed to it.
+| getOpenApiYaml | GET /openapi.yaml | no key |  | always |
+| getOpenApiJson | GET /openapi.json | no key |  | always |
+| getStatus | GET /status | no key |  | always |
+| createChallenge | POST /challenges | no key |  | always |
+| createSession | POST /sessions | no key |  | always |
+| getMe | GET /me | any key; the handler decides |  |  |
+| rotateKey | POST /me/keys | any key; the handler decides | ✓ |  |
+| register | POST /registrations | no key |  | always |
+| listRoles | GET /roles | any key; the handler decides |  |  |
+| getRole | GET /roles/{role} | any key; the handler decides |  |  |
+| listServerUsers | GET /users | `delegate` | ✓ |  |
+| getServerUser | GET /users/{handle} | `delegate` | ✓ |  |
+| updateServerUser | PATCH /users/{handle} | `delegate` | ✓ |  |
+| removeServerUser | DELETE /users/{handle} | `delegate` | ✓ |  |
+| rebindServerUser | POST /users/{handle}/invites | `delegate` | ✓ |  |
+| listServerUserRoles | GET /users/{handle}/roles | any key; the handler decides | ✓ |  |
+| getServerUserRole | GET /users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| setServerUserRole | PUT /users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| unsetServerUserRole | DELETE /users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| listServerInvites | GET /invites | `delegate` | ✓ |  |
+| createServerInvite | POST /invites | `delegate` | ✓ |  |
+| getServerInvite | GET /invites/{invite_id} | `delegate` | ✓ |  |
+| revokeServerInvite | DELETE /invites/{invite_id} | `delegate` | ✓ |  |
+| listCommunities | GET /communities | `communities` | ✓ |  |
+| createCommunity | POST /communities | `communities` | ✓ |  |
+| getCommunity | GET /communities/{community} | any key; the handler decides |  |  |
+| exportCommunity | GET /communities/{community}/archive | `export` | ✓ |  |
+| listUsers | GET /communities/{community}/users | any key; the handler decides |  |  |
+| getUser | GET /communities/{community}/users/{handle} | any key; the handler decides |  |  |
+| updateUser | PATCH /communities/{community}/users/{handle} | `members` | ✓ |  |
+| removeUser | DELETE /communities/{community}/users/{handle} | `members` | ✓ |  |
+| rebindUser | POST /communities/{community}/users/{handle}/invites | `members` | ✓ |  |
+| listUserRoles | GET /communities/{community}/users/{handle}/roles | any key; the handler decides | ✓ |  |
+| getUserRole | GET /communities/{community}/users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| setUserRole | PUT /communities/{community}/users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| unsetUserRole | DELETE /communities/{community}/users/{handle}/roles/{role} | any key; the handler decides | ✓ |  |
+| addUserRoleCollection | PUT /communities/{community}/users/{handle}/roles/{role}/collections/{role_collection} | any key; the handler decides | ✓ |  |
+| removeUserRoleCollection | DELETE /communities/{community}/users/{handle}/roles/{role}/collections/{role_collection} | any key; the handler decides | ✓ |  |
+| listInvites | GET /communities/{community}/invites | `members` | ✓ |  |
+| createInvite | POST /communities/{community}/invites | `members` | ✓ |  |
+| getInvite | GET /communities/{community}/invites/{invite_id} | `members` | ✓ |  |
+| revokeInvite | DELETE /communities/{community}/invites/{invite_id} | `members` | ✓ |  |
+| listApiKeyRoles | GET /communities/{community}/api-keys/{key_id}/roles | any key; the handler decides | ✓ |  |
+| getApiKeyRole | GET /communities/{community}/api-keys/{key_id}/roles/{role} | any key; the handler decides | ✓ |  |
+| setApiKeyRole | PUT /communities/{community}/api-keys/{key_id}/roles/{role} | any key; the handler decides | ✓ |  |
+| unsetApiKeyRole | DELETE /communities/{community}/api-keys/{key_id}/roles/{role} | any key; the handler decides | ✓ |  |
+| addApiKeyRoleCollection | PUT /communities/{community}/api-keys/{key_id}/roles/{role}/collections/{role_collection} | any key; the handler decides | ✓ |  |
+| removeApiKeyRoleCollection | DELETE /communities/{community}/api-keys/{key_id}/roles/{role}/collections/{role_collection} | any key; the handler decides | ✓ |  |
+| listApiKeys | GET /communities/{community}/api-keys | any key; the handler decides | ✓ |  |
+| createApiKey | POST /communities/{community}/api-keys | any key; the handler decides | ✓ |  |
+| getApiKey | GET /communities/{community}/api-keys/{key_id} | any key; the handler decides | ✓ |  |
+| revokeApiKey | DELETE /communities/{community}/api-keys/{key_id} | any key; the handler decides | ✓ |  |
+| startNdexImport | POST /communities/{community}/ndex-imports | `communities` | ✓ |  |
+| getNdexImport | GET /communities/{community}/ndex-imports/{import_id} | `communities` | ✓ |  |
+| getRecord | GET /communities/{community}/record | `read` |  | public |
+| streamRecord | GET /communities/{community}/record/events | `read` |  | public |
+| listArtifacts | GET /communities/{community}/artifacts | `read` |  | public |
+| getArtifact | GET /communities/{community}/artifacts/{name} | `read` |  | public |
+| getArtifactContent | GET /communities/{community}/artifacts/{name}/content | `read` |  | public |
+| getArtifactProperty | GET /communities/{community}/artifacts/{name}/properties/{property} | `read` |  | public |
+| listObjects | GET /communities/{community}/artifacts/{name}/objects | `read` |  | public |
+| getObject | GET /communities/{community}/artifacts/{name}/objects/{object} | `read` |  | public |
+| getObjectProperty | GET /communities/{community}/artifacts/{name}/objects/{object}/properties/{property} | `read` |  | public |
+| listRelationships | GET /communities/{community}/artifacts/{name}/relationships | `read` |  | public |
+| listCitedBy | GET /communities/{community}/artifacts/{name}/cited-by | `read` |  | public |
+| listSupersession | GET /communities/{community}/artifacts/{name}/supersession | `read` |  | public |
+| listFindings | GET /communities/{community}/artifacts/{name}/findings | `read` |  | public |
+| listMembers | GET /communities/{community}/members | `read` |  | public |
+| getMember | GET /communities/{community}/members/{handle} | `read` |  | public |
+| listMemberArtifacts | GET /communities/{community}/members/{handle}/artifacts | `read` |  | public |
+| listMemberMessages | GET /communities/{community}/members/{handle}/messages | `read` |  | public |
+| resolveAddress | GET /communities/{community}/addresses | `read` |  | public |
+| listSubmissions | GET /communities/{community}/submissions | `publish` |  |  |
+| submitArtifact | POST /communities/{community}/submissions | `publish` |  |  |
+| getSubmission | GET /communities/{community}/submissions/{submission} | `publish` |  |  |
+| streamSubmissions | GET /communities/{community}/submissions/events | `publish` |  |  |
+| checkSubmission | POST /communities/{community}/submission-checks | `publish` |  |  |
+| listCollections | GET /communities/{community}/collections | any key; the handler decides |  | public |
+| createCollection | POST /communities/{community}/collections | `write` |  |  |
+| getCollection | GET /communities/{community}/collections/{collection} | any key; the handler decides |  | public |
+| updateCollection | PATCH /communities/{community}/collections/{collection} | `manage` | ✓ |  |
+| listFiles | GET /communities/{community}/collections/{collection}/files | any key; the handler decides |  | public |
+| promoteVersion | POST /communities/{community}/collections/{collection}/files | `gate` or `manage` | ✓ |  |
+| queryCollection | POST /communities/{community}/collections/{collection}/files/search | any key; the handler decides |  | public |
+| putFile | PUT /communities/{community}/collections/{collection}/files/{name} | `write` or `publish` or `gate` |  |  |
+| listChanges | GET /communities/{community}/collections/{collection}/changes | any key; the handler decides |  | public |
+| getFile | GET /communities/{community}/files/{file_id} | any key; the handler decides |  | public |
+| deleteFile | DELETE /communities/{community}/files/{file_id} | `write` or `manage` |  |  |
+| listFileVersions | GET /communities/{community}/files/{file_id}/versions | any key; the handler decides |  | public |
+| addFileVersion | POST /communities/{community}/files/{file_id}/versions | `write` or `manage` |  |  |
+| getFileContent | GET /communities/{community}/files/{file_id}/versions/{ref} | any key; the handler decides |  | public |
+| purgeVersion | DELETE /communities/{community}/files/{file_id}/versions/{ref} | `manage` | ✓ |  |
+| statFileVersion | GET /communities/{community}/files/{file_id}/versions/{ref}/metadata | any key; the handler decides |  | public |
+| verifyCitation | GET /communities/{community}/files/{file_id}/versions/{ref}/verification | any key; the handler decides |  | public |
+| findByHash | GET /communities/{community}/versions | any key; the handler decides |  | public |
 
 ## 4. API keys
 
 ### 4.1 Format and presentation
 
 A key is `sak_` followed by the base64url of 32 random bytes (43 characters): an opaque bearer
-secret, handled like any API key. It is sent as `Authorization: Bearer sak_…`. The contract
-declares it as the `apiKey` security scheme, the API's only one; any other bearer credential
-answers 401. A key's row is its caller's identity.
+secret, sent as `Authorization: Bearer sak_…`. The contract declares it as the `apiKey`
+security scheme, the API's only one; any other bearer credential answers 401.
 
-### 4.2 The table
+### 4.2 Kinds of key
 
-Alembic migration `0009` gives the data server's PostgreSQL this table, and lets a grant name
-a key.
+- **A session key** proves a user signed in: `POST /v1/challenges` then
+  `POST /v1/sessions` with `{handle, community}` (`community` is null for a server-level
+  user), signed with the user's private key file. It lasts `SYMPOSIUM_SERVER_SESSION_TTL`
+  seconds (default 900); the skill's CLI obtains one per command.
+- **A member issued key** acts as the user who issued it, for an application or script. It
+  carries `community-member` or `community-observer` assignments of its own, which never
+  exceed its user's grants.
+- **A non-member issued key** is its own principal, for an outside application. It carries
+  `community-observer` alone, so it only reads.
+
+### 4.3 The table
 
 ```sql
 CREATE TABLE api_keys (
     id          uuid PRIMARY KEY,
     hash        text NOT NULL UNIQUE,      -- hex SHA-256 of the whole key; the lookup
     kind        text NOT NULL CHECK (kind IN ('session', 'issued')),
-    role        text NOT NULL CHECK (role IN ('admin', 'member', 'non-member')),
-    community   text,                      -- NULL for the admin's session alone
-    handle      text,                      -- the Member, or the admin; NULL for non-member
+    user_id     uuid REFERENCES users (id),-- the user it acts as; NULL for a non-member key
+    community   text,                      -- issued keys: the key's community
+    handle      text,                      -- the user's handle, for attribution
     label       text,                      -- issued keys: its issuer's name for it
     ed25519_kid text,                      -- sessions: the key whose private key file obtained it
     ciphertext  bytea,                     -- issued keys: AES-256-GCM of the key
     nonce       bytea,                     -- the 12-byte GCM nonce
     enc_kid     text,                      -- which encryption key sealed it
-    created_by  text NOT NULL,             -- the issuer, or the Member or admin it is bound to
+    created_by  text NOT NULL,             -- the issuer
     created     timestamptz NOT NULL DEFAULT now(),
     expires     timestamptz,               -- NULL: an issued key lasts until revoked
-    revoked     timestamptz,
-    revoked_by  text,
-    last_used   timestamptz,               -- refreshed at most once a minute
-    CHECK ((role = 'non-member') = (handle IS NULL)),
-    CHECK (role <> 'admin' OR kind = 'session'),
-    CHECK ((community IS NULL) = (role = 'admin')),
-    CHECK ((kind = 'session') = (ed25519_kid IS NOT NULL)),
-    CHECK ((kind = 'issued') = (label IS NOT NULL))
+    last_used   timestamptz                -- refreshed at most once a minute
 );
--- a label names one live issued key among its issuer's
-CREATE UNIQUE INDEX api_keys_label ON api_keys (community, created_by, label)
-    WHERE kind = 'issued' AND revoked IS NULL;
-
--- a grant names a roster Member, or a non-member issued key, granted `read` alone
-ALTER TABLE grants ADD COLUMN api_key_id uuid REFERENCES api_keys (id) ON DELETE CASCADE;
-ALTER TABLE grants ADD CHECK ((handle IS NULL) <> (api_key_id IS NULL));
-ALTER TABLE grants ADD CHECK (api_key_id IS NULL OR perm = 'read');
 ```
 
-`export` leaves keys out, and the grants made to them. A key is a credential for one server,
-so it does not travel with a community.
+An issued key's roles are rows of `role_assignments` naming it, deleted with the key.
+`export` leaves keys out: a key is a credential for one server.
 
-### 4.3 Encryption at rest
+### 4.4 Encryption at rest
 
 An issued key's owner must be able to read it back, so it is stored **retrievably**, and
 **never in plain text**:
 
 - **Authentication** computes SHA-256 of the presented key and looks up `hash`. It decrypts
   nothing. A 256-bit random secret needs no slow hash.
-- **The owner's listing** decrypts `ciphertext` with AES-256-GCM, from `cryptography`, which
-  is already a dependency of the service. The associated data is `id ‖ handle ‖ label ‖
-  community`, so a ciphertext copied onto another row fails to decrypt.
+- **The owner's listing** decrypts `ciphertext` with AES-256-GCM. The associated data is
+  `id ‖ handle ‖ label ‖ community`, so a ciphertext copied onto another row fails to
+  decrypt.
 - **The secret** is 32 random bytes in `API_KEY_ENC_KEY_FILE`, by default
   `/apps/data/config/api_key_enc.key`, mode 0600. `docker/scripts/start.sh` generates it on
-  first boot and writes its path into `service.env`, where the server keeps all its other
-  secrets. On Kubernetes it lives on the same `/apps` volume. A database dump alone reveals
-  no key.
+  first boot. A database dump alone reveals no key.
 - **Rotation**: `enc_kid` names the key that sealed each row. A new file becomes the key for
   new rows, and a one-off re-seal moves old rows over.
-- **Revocation** erases `ciphertext` and `nonce`, as the server already erases a used
-  invite's secret.
-- **A session key** is never shown again, so it is stored as its hash alone.
+- **A session key** is shown once, so it is stored as its hash alone.
 
-### 4.4 Who a key acts as
+### 4.5 Who a key acts as
 
-A key's `role`, `handle` and community are set when it is made, never from a request body,
-and they are the one source of the caller for every operation. These checks run at creation
-**and on every request** (and at every stream beat), so a key loses its standing the moment
-the thing it stands on changes:
+A key's user, community and roles come from the server's rows, set when it is made and
+changed only through the assignment routes; a request body never names them. The user
+context is compiled on every request, so a change applies on the next one:
 
-| Key | At creation | On every request |
+- **An assignment changes:** the next request, and the next beat of an open stream, uses the
+  new grants.
+- **A user is removed:** its assignments end, its sign-in keys retire, its sessions end, and
+  every key it issued is deleted, in one transaction. Its handle stays bound to it.
+- **A user's key file is rotated or rebound:** the sessions obtained with the old key end.
+
+A key that publishes must publish as a user, because `published_by` is permanent attribution.
+`submitArtifact` refuses a body whose `published_by` is anything other than `@<handle>`, or
+whose `name` does not carry the `<handle>_` prefix.
+
+### 4.6 Life cycle
+
+Keys are issued, listed and revoked on `/v1/communities/{community}/api-keys` with a session key.
+
+| Route | Who | What |
 |---|---|---|
-| a Member's session key | a fresh challenge signed with the Member's private key file | that key is still active, and the Member is on the roster |
-| a member issued key | the Member's own session key, in this community, while it is on the roster and **registered** | `handle` is still on the roster and registered |
-| a non-member issued key | a session key of a registered Member, or the admin's | the key is live |
-| the admin's session key | a fresh challenge signed with the admin's private key file | the admin's key is still active |
+| `POST /v1/communities/{community}/api-keys` `{label, non_member?, roles, expires_days?}` | a signed-in user of the community | an issued key carrying `roles`, each within the issuer's grants; a non-member key also takes the authority to assign each role |
+| `GET /v1/communities/{community}/api-keys` | the issuer: its own keys; a `members` holder: every key of the community | the keys with their roles, and their values for the issuer |
+| `GET /v1/communities/{community}/api-keys/{key_id}` | the issuer, or a `members` holder | one key |
+| `DELETE /v1/communities/{community}/api-keys/{key_id}` | the issuer, or a `members` holder | deletes the key and its assignments; its next request answers 401 |
 
-A key that publishes must publish as a Member, because `published_by` is permanent
-attribution. `submitArtifact` refuses a body whose `published_by` is anything other than
-`@<handle>`, or whose `name` does not carry the `<handle>_` prefix.
-
-- **A Member leaves the roster** (`DELETE /v1/{community}/roster/{handle}`): every key that
-  acts as it, and every key it issued, is revoked in the same transaction
-  (`revoked_by = 'roster-removal'`, values erased), so each stops at once and an open stream
-  on one closes. The rows stay as the record of who held which key.
-- **A Member replaces its private key file, or the admin rebinds it**: the session keys
-  obtained with the old key end. The Member's issued keys stop authenticating while it has
-  no registered public key, and work again once it registers the new one.
-- A non-member issued key is bound to no Member, so its label is only a name: a handle
-  that later joins the roster under the same name changes nothing for it.
-
-### 4.5 Life cycle
-
-Keys are issued, listed and revoked on `/v1/{community}/api-keys`, community by community,
-with a session key. Whoever issued a key owns it; the admin also owns every non-member
-issued key.
-
-| Route | With a Member's session | With the admin's session |
-|---|---|---|
-| `POST /v1/{community}/api-keys` `{label, role?, expires_days?}` | creates an issued key bound to that Member, or with `role: non-member` a non-member issued key; 403 once it is off the roster | creates a non-member issued key |
-| `GET /v1/{community}/api-keys` | the keys it issued, with their values | every issued key of the community: the non-member issued keys with their values, the Members' own without |
-| `GET /v1/{community}/api-keys/{key_id}` | one of the keys it issued | any key of the community, a Member's without its value |
-| `DELETE /v1/{community}/api-keys/{key_id}` | revokes one of the keys it issued | revokes any non-member issued key; a Member's own issued key answers 404 |
-
-Every route answers `Cache-Control: no-store` wherever it carries a key's value. A key of
-another community, or one the caller may not see, answers 404; a label already on one of
-the issuer's live keys answers 409.
-
-A non-member issued key reads what its collections' owners grant it:
-`PUT /v1/{community}/collections/{collection}/grants {api_key_id, perm: "read", granted}`,
-with the owner's session. A `write` grant to a key answers 400.
+A key's roles change through `…/api-keys/{key_id}/roles/{role}` (`PUT`, `DELETE`) and
+`…/roles/{role}/collections/{collection}` (one collection at a time), by the
+same two callers. Every route answers `Cache-Control: no-store` wherever it carries a key's
+value. A label already on one of the issuer's keys answers 409.
 
 Keys move as files, never through a terminal or a chat, because the repository's rule is
-that a credential pasted into a transcript has been disclosed (`AGENTS.md`). So both
-commands that see key values write them to a file and print only where it is.
-
-1. **`/symposium gen-api-key <label> [--non-member] [--community <c>] [--expires-days N]`**,
-   in a Member's session, issues one more of that Member's issued keys, or with
-   `--non-member` a non-member issued key; in the admin's session, a non-member issued
-   key. It writes the
-   key to the session's `api-keys/<id>.key`, mode 0600, and prints the id, community, role,
-   handle, label and that path.
-2. **`/symposium data collection grant --collection <c> --api-key <id> --perm read`** gives an
-   non-member issued key read on a collection the caller owns.
-3. **`/symposium list-api-keys [--community <c>]`** writes the keys the caller issued (and,
-   for the admin, the Members' keys without their values) to the session's
-   `api-keys/list-<timestamp>.json`, mode 0600, and prints them without values. A revoked
-   key shows `key: null`.
-4. The key's owner hands the file to its application out of band, as invite files already
-   move.
-5. **`/symposium revoke-api-key <key id> [--community <c>]`** revokes a key its caller owns.
-6. A key past `expires` fails with 401. The server erases an issued key's value at startup,
-   before every listing and on every janitor pass, which also deletes ended sessions.
+that a credential pasted into a transcript has been disclosed (`AGENTS.md`). The skill's
+`gen-api-key` and `list-api-keys` write key values to 0600 files in the session's
+`api-keys/` and print only where they are.
 
 ## 5. Paging, freshness and streams
 
@@ -514,9 +517,9 @@ Server-Sent Events on three streams, each `text/event-stream`:
 - A `heartbeat` every 30 seconds carries `position`, so a quiet stream still proves it is
   live.
 - **The key and its access are re-checked at every event and every heartbeat**, by the same
-  checks a request runs (§3.1, §4.4). A stream whose key is revoked, expires, or loses its
-  roster entry, or whose caller can no longer read the collection it follows (a withdrawn
-  grant, a record made private), closes within 30 seconds. Revocation reaches an open stream
+  checks a request runs (§3.2, §4.5). A stream whose key is deleted or expires, whose user is
+  removed, or whose caller loses read access to the collection it follows (an unassigned
+  role, a record made private), closes within 30 seconds. Revocation reaches an open stream
   as surely as a new request.
 - The client's cursor holds the stream's position, and the server's one row per open
   stream (§10.5) lives in PostgreSQL, so no worker keeps a client's state in memory. Any
@@ -527,11 +530,11 @@ Server-Sent Events on three streams, each `text/event-stream`:
 
 | Guarantee | How the API keeps it |
 |---|---|
-| Nothing enters the record without the gate | `submitArtifact` writes only to `inbox`, as `publish.py` does: the file `{name}@{when}`, metadata `{"symposium_submission": true}`, `created_by` the key's Member. The API never writes to `record`. Only the gate, run from the admin's skill, promotes. |
+| Nothing enters the record without the gate | `submitArtifact` writes only to `inbox`, as `publish.py` does: the file `{name}@{when}`, metadata `{"symposium_submission": true}`, `created_by` the key's Member. The API never writes to `record`. Only the gate, run by a holder of `gate` (a community admin or a gate-keeper), promotes. |
 | The gate's checks, before submitting | `checkSubmission` and `submitArtifact` run, in order: the naming rule (`<handle>_` prefix, the key's Member); the 250 KB limit on embedded payload (`EMBED_REFUSE`); then `tools/validate.py`, the validator the gate runs, against the record as it stands. Any refusal answers 422 with every finding. Nothing is stored. The skill's publishing roles (`--role`) are limits an agent session sets on itself, and stay in the skill. |
 | Serial `created` order | One Artifact per call. `created` must be null, and the gate stamps it at promote. The gate orders the submissions it decides, as it does today. |
-| Attribution | `published_by` must be `@<handle>`, the key's Member, and `name` must carry its prefix, so the gate's own check (the inbox name prefix is the submitter's handle, and the submitter is on the roster) passes for the same reason it passes today. |
-| One decision per submission | The gate decides, as today. The storage also enforces it: a promote writes `record/<name>` and a reply writes `inbox/<admin>_REPLY_<item>`, and the data server refuses a second file of either name with 409. |
+| Attribution | `published_by` must be `@<handle>`, the key's user, and `name` must carry its prefix, so the gate's own check (the inbox name prefix is the submitter's handle, and the submitter is an active member) passes for the same reason. |
+| One decision per submission | The gate decides, as today. The storage also enforces it: a promote writes `record/<name>` and a reply writes `inbox/<gate>_REPLY_<item>`, and the data server refuses a second file of either name with 409. |
 | Replies to rejections | The gate's reply is the same `NonGroundable` in `inbox`, readable by its recipient. The API carries it in the rejected submission's `reply` field, in `getSubmission`, `listSubmissions` and the `submission.rejected` event. A Member answers a rejection by submitting a corrected Artifact, which is the same path as today. |
 
 **Where each submission state comes from.** The server learns every state from what it
@@ -540,7 +543,7 @@ stores or computes.
 | State | Learned from |
 |---|---|
 | `pending` | an `inbox` item marked `symposium_submission`, with no record version or reply naming it |
-| `skipped` | the gate's own rule, applied by the server when it reads the item: the inbox name before `@` is the artifact's name prefixed with its submitter's handle, and the submitter is on the roster. An item failing either is `skipped`, as the gate would set it aside |
+| `skipped` | the gate's own rule, applied by the server when it reads the item: the inbox name before `@` is the artifact's name prefixed with its submitter's handle, and the submitter is an active member. An item failing either is `skipped`, as the gate would set it aside |
 | `accepted` | a `record` version whose `symposium_submission_citation` names it |
 | `rejected` | an `inbox` reply whose `symposium_submission_citation` names it |
 
@@ -551,15 +554,15 @@ collections and files share `/v1`, one process and one access model.
 
 | Credential | How a caller gets it | Where it works |
 |---|---|---|
-| private key file | made on the Member's or the admin's own machine (an Ed25519 key); the server holds its public key | signs the session management challenge |
-| session key `sak_…` | the session management routes, with a private key file | every route of `/v1`, in its community (the admin's: every community) |
+| private key file | made on the user's own machine (an Ed25519 key); the server holds its public key | signs the session management challenge |
+| session key `sak_…` | the session management routes, with a private key file | every route of `/v1`, in its community (a server-level user's: every community) |
 | issued key `sak_…` | issued with a session key, for an application | every route of `/v1` but those that change access, keys or the server, in its community |
 | no key | — | the contract, `/v1/status`, session management and registration, and reads of a public collection |
 
 What a key may read and write is its collection's to decide: the owner's grants, and whether
 the collection is public. A member issued key reads what the Member may, a non-member issued key what it
 is granted, and nobody reads another Member's `inbox` files, because the `inbox` visibility
-rule (the first writer, the admin, and `metadata.recipients`) applies to every key.
+rule (the first writer, holders of `gate`, and `metadata.recipients`) applies to every key.
 
 ## 8. Errors, versioning and limits
 
@@ -621,7 +624,7 @@ API, and the rules import none of the storage. Only `symposium_server` sees all 
 
 ### 10.2 Why the data server image
 
-- **The API reads PostgreSQL directly.** The index, the `api_keys` table, the roster and
+- **The API reads PostgreSQL directly.** The index, the `api_keys` table, the users and
   the feeds all live in the image's PostgreSQL, which listens on `127.0.0.1` alone. A process
   in the image reaches it with no new network exposure and no new credential. A separate
   image would need PostgreSQL opened to the network, or every read relayed through `/v1`

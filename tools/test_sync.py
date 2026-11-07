@@ -226,9 +226,9 @@ def case_g_message_listing_collapses_whitespace(tmp):
     expected_title = "hi message for you from @demo_admin: URGENT run … reply from the gate: ok"
     expected_line = ("message for you from @planner: "
                      f"{expected_title} (@planner_with_newlines_v1)")
-    if message_line({"from": "@planner\n  admin\r\t", "title": title,
+    if message_line({"from": "@planner\n  steward\r\t", "title": title,
                      "name": "planner_with_newlines_v1"}) != (
-                         "message for you from @planner admin: "
+                         "message for you from @planner steward: "
                          f"{expected_title} (@planner_with_newlines_v1)"
                      ):
         bad.append("message_line did not collapse sender and title whitespace")

@@ -18,18 +18,14 @@ from .dependencies import *
 
 class Service(ABC):
     @abstractmethod
-    def get_open_api_json(
+    def resolve_address(
         self,
         caller: Caller,
-    ) -> OpenapiJsonGetResponse:
-        """getOpenApiJson: This OpenAPI document, as JSON"""
-
-    @abstractmethod
-    def get_open_api_yaml(
-        self,
-        caller: Caller,
-    ) -> str:
-        """getOpenApiYaml: This OpenAPI document, as YAML"""
+        *,
+        community: str,
+        address: str,
+    ) -> Resolution:
+        """resolveAddress: Resolve an address"""
 
     @abstractmethod
     def list_artifacts(
@@ -166,15 +162,6 @@ class Service(ABC):
         """listSupersession: The Artifact's supersession chain"""
 
     @abstractmethod
-    def get_me(
-        self,
-        caller: Caller,
-        *,
-        community: str,
-    ) -> Me:
-        """getMe: Who this API key acts as"""
-
-    @abstractmethod
     def list_members(
         self,
         caller: Caller,
@@ -231,16 +218,6 @@ class Service(ABC):
         """getRecord: The record's state"""
 
     @abstractmethod
-    def resolve_address(
-        self,
-        caller: Caller,
-        *,
-        community: str,
-        address: str,
-    ) -> Resolution:
-        """resolveAddress: Resolve an address"""
-
-    @abstractmethod
     def stream_record(
         self,
         caller: Caller,
@@ -251,14 +228,15 @@ class Service(ABC):
         """streamRecord: Follow the record as the gate accepts"""
 
     @abstractmethod
-    def stream_submissions(
+    def check_submission(
         self,
         caller: Caller,
         *,
         community: str,
-        last__event__i_d: Optional[str],
-    ) -> AsyncIterator[SubmissionStreamEvent]:
-        """streamSubmissions: Follow submissions and the gate's decisions"""
+        body: SubmittedArtifact,
+        raw: dict,
+    ) -> SubmissionCheck:
+        """checkSubmission: Validate an Artifact and submit nothing"""
 
     @abstractmethod
     def list_submissions(
@@ -284,15 +262,14 @@ class Service(ABC):
         """submitArtifact: Publish one Artifact through the gate"""
 
     @abstractmethod
-    def check_submission(
+    def stream_submissions(
         self,
         caller: Caller,
         *,
         community: str,
-        body: SubmittedArtifact,
-        raw: dict,
-    ) -> SubmissionCheck:
-        """checkSubmission: Validate an Artifact and submit nothing"""
+        last__event__i_d: Optional[str],
+    ) -> AsyncIterator[SubmissionStreamEvent]:
+        """streamSubmissions: Follow submissions and the gate's decisions"""
 
     @abstractmethod
     def get_submission(
@@ -303,3 +280,24 @@ class Service(ABC):
         submission: UUID,
     ) -> SubmissionResource:
         """getSubmission: One submission and its decision"""
+
+    @abstractmethod
+    def get_me(
+        self,
+        caller: Caller,
+    ) -> Me:
+        """getMe: Who this API key acts as"""
+
+    @abstractmethod
+    def get_open_api_json(
+        self,
+        caller: Caller,
+    ) -> OpenapiJsonGetResponse:
+        """getOpenApiJson: This OpenAPI document, as JSON"""
+
+    @abstractmethod
+    def get_open_api_yaml(
+        self,
+        caller: Caller,
+    ) -> str:
+        """getOpenApiYaml: This OpenAPI document, as YAML"""

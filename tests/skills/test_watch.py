@@ -112,14 +112,14 @@ class Watch:
 
 
 @pytest.fixture
-def session(suite, cli, admin_dir):
-    """The admin's session with one Artifact accepted into the record and in its copy, so
+def session(suite, cli, root_dir):
+    """Root's session with one Artifact accepted into the record and in its copy, so
     every command has something to keep (`serve` stops on an empty record)."""
-    lyra = enroll(cli, admin_dir, "lyra")
+    lyra = enroll(cli, root_dir, "lyra")
     assert tool(suite, lyra, "publish.py", note(lyra, "lyra", "kept"))[0] == 0
-    code, out = tool(suite, admin_dir, "gate.py")
+    code, out = tool(suite, root_dir, "gate.py")
     assert code == 0 and "ACCEPTED" in out, out
-    return admin_dir
+    return root_dir
 
 
 @pytest.mark.parametrize("command", ["gate", "sync", "serve"])

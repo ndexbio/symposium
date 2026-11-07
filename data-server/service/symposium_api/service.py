@@ -32,6 +32,7 @@ from symposium_rules.validate import (
 )
 
 from symposium_data.access import Caller, standing
+from symposium_data.access.authn import context_of
 from symposium_data.errors import ApiError
 
 from .generated import models as m
@@ -144,7 +145,7 @@ class ApiService(Service):
         its `record` collection, or anyone while it is public."""
         community = self.community(conn, value)
         if not self.records.can_read_collection(
-            conn, caller.principal(), community, "record"
+            conn, caller.context, community, "record"
         ):
             if caller.anonymous:
                 raise ApiError(
@@ -168,6 +169,9 @@ class ApiService(Service):
     def base(caller: Caller) -> str:
         return caller.base_url + API
 
+    def community_url(self, caller: Caller, community: str) -> str:
+        return f"{self.base(caller)}/communities/{quote(community)}"
+
     def location_url(self, caller, community, location) -> str | None:
         """Where a `symposium-data:` location is read on this API: the cited file version's
         content. None for any other location."""
@@ -175,16 +179,16 @@ class ApiService(Service):
         if cited is None:
             return None
         file_id, n = cited
-        return f"{self.base(caller)}/{quote(community)}/files/{file_id}/v/{n}"
+        return f"{self.community_url(caller, community)}/files/{file_id}/versions/{n}"
 
     def artifact_url(self, caller, community, name) -> str:
         return (
-            f"{self.base(caller)}/{quote(community)}/artifacts/{quote(name, safe='')}"
+            f"{self.community_url(caller, community)}/artifacts/{quote(name, safe='')}"
         )
 
     def member_url(self, caller, community, handle) -> str:
         return (
-            f"{self.base(caller)}/{quote(community)}/members/{quote(handle, safe='')}"
+            f"{self.community_url(caller, community)}/members/{quote(handle, safe='')}"
         )
 
     def address_url(
@@ -194,8 +198,9 @@ class ApiService(Service):
         base, _, schema = address.partition("#")
         segs = base[1:].split(".")
         if schema or kind is None and len(segs) > 1:
-            return f"{self.base(caller)}/{quote(community)}/resolve?address=" + quote(
-                address, safe=""
+            return (
+                f"{self.community_url(caller, community)}/addresses?address="
+                + quote(address, safe="")
             )
         if kind == "member":
             return self.member_url(caller, community, segs[0])
@@ -231,6 +236,10 @@ class ApiService(Service):
     def members(self, conn, community) -> set:
         published = self.index.publishers(conn, community)
         return members_of(conn, self.records, community, published)
+
+    def submitters(self, conn, community) -> set:
+        """The handles whose submissions the gate decides (its skip rule)."""
+        return self.records.active_submitters(conn, community)
 
     # ── summaries ──────────────────────────────────────────────────────────────────────────
     def summary(self, conn, caller, community, row) -> dict:
@@ -304,10 +313,14 @@ class ApiService(Service):
             return m.RecordState.model_validate(
                 {
                     "community": community,
-                    "url": f"{self.base(caller)}/{quote(community)}/record",
+                    "url": f"{self.community_url(caller, community)}/record",
                     "position": self.position(conn, community),
                     "counts": self.index.counts(conn, community),
-                    "members": len(self.records.roster(conn, community)),
+                    "members": sum(
+                        1
+                        for u in self.records.users(conn, community)
+                        if u["removed"] is None
+                    ),
                     "first_created": iso(rows[0]["created"]) if rows else None,
                     "specification_versions": versions,
                 }
@@ -680,11 +693,13 @@ class ApiService(Service):
     def member(self, conn, caller, community, handle, roster: dict) -> dict:
         counts = self.index.member_counts(conn, community, handle)
         url = self.member_url(caller, community, handle)
+        user = roster.get(handle, {})
         return {
             "handle": handle,
             "address": f"@{handle}",
             "url": url,
-            "registered": bool(roster.get(handle, {}).get("registered")),
+            "registered": bool(user.get("registered")),
+            "removed": iso(user.get("removed")),
             "counts": counts,
             "artifacts_url": f"{url}/artifacts",
             "messages_url": f"{url}/messages",
@@ -692,7 +707,7 @@ class ApiService(Service):
         }
 
     def handles(self, conn, community) -> tuple[list, dict]:
-        roster = {r["handle"]: r for r in self.records.roster(conn, community)}
+        roster = {r["handle"]: r for r in self.records.users(conn, community)}
         published = self.index.publishers(conn, community)
         return sorted(set(roster) | published), roster
 
@@ -751,37 +766,42 @@ class ApiService(Service):
                 )
             )
 
-    def get_me(self, caller, *, community):
+    def get_me(self, caller):
+        """The caller: its user, its roles and its resolved access, in its own community (the
+        key's, or the user's home); a server-level user's has none, and no record position."""
+        community = caller.community
         with self.connection() as conn:
-            community = self.fresh(conn, community)
+            if community is not None:
+                community = self.fresh(conn, community)
             row = conn.execute(
                 "SELECT expires FROM api_keys WHERE id = %s", (caller.key_id,)
             ).fetchone()
-            if caller.role == "non-member":
-                grants = self.records.key_grants(conn, community, caller.key_id)
-            elif caller.admin:
-                grants = []
-            else:
-                grants = self.records.grants(conn, community, caller.handle)
-            member = (
-                self.records.owner(conn, community, caller.handle)
-                if caller.role == "member"
-                else None
+            user = self.records.user(conn, caller.user_id) if caller.user_id else None
+            roles = (
+                self.records.role_list(conn, user_id=caller.user_id)
+                if caller.session
+                else self.records.role_list(conn, api_key_id=caller.key_id)
             )
             out = {
                 "kind": caller.kind,
                 "handle": caller.handle,
                 "label": caller.label,
-                "role": caller.role,
                 "community": community,
                 "key_id": str(caller.key_id),
                 "kid": caller.ed25519_kid,
                 "expires": iso(row["expires"]) if row else None,
-                "suspect_after": iso(member["suspect_after"]) if member else None,
-                "grants": [{"collection": c, "perm": p} for c, p in grants],
-                "position": self.position(conn, community),
+                "suspect_after": iso(user["suspect_after"]) if user else None,
+                "roles": roles,
+                "context": caller.context.view(),
             }
-            if caller.handle and not caller.admin:
+            if community is not None:
+                out["position"] = self.position(conn, community)
+            if (
+                community is not None
+                and caller.user_id is not None
+                and user is not None
+                and user["home"] == community
+            ):
                 out["member_url"] = self.member_url(caller, community, caller.handle)
             return m.Me.model_validate(out)
 
@@ -813,7 +833,7 @@ class ApiService(Service):
         name = row["name"].partition("@")[0]
         out = {
             "id": str(row["file_id"]),
-            "url": f"{self.base(caller)}/{quote(community)}/submissions/{row['file_id']}",
+            "url": f"{self.community_url(caller, community)}/submissions/{row['file_id']}",
             "name": name,
             "submitted_by": row["created_by"],
             "submitted": iso(row["created"]),
@@ -842,7 +862,9 @@ class ApiService(Service):
                 ],
             }
         else:
-            members = members if members is not None else self.members(conn, community)
+            members = (
+                members if members is not None else self.submitters(conn, community)
+            )
             why = skip_reason(
                 row["name"], row["created_by"], header.get("name"), members
             )
@@ -855,7 +877,7 @@ class ApiService(Service):
     def submissions_after(self, conn, caller, community, since, want, status=None):
         """Visible submissions after inbox seq `since`, up to `want`. -> (items, last seq
         scanned, whether the feed has more)."""
-        members = self.members(conn, community)
+        members = self.submitters(conn, community)
         items, last = [], since
         while len(items) < want:
             rows = self.records.changes(conn, community, "inbox", last, 200)
@@ -978,7 +1000,9 @@ class ApiService(Service):
         runtime, records = self.runtime, self.records
         with self.connection() as conn:
             community = self.fresh(conn, community)
-            if not records.can_create(conn, caller.principal(), community, "inbox"):
+            if not records.can_create(
+                conn, caller.context, community, "inbox", {MARK_SUBMISSION: True}
+            ):
                 raise ApiError(403, f"'{caller.handle}' may not submit to {community}")
             # a name already in the record is a conflict, before the validator says so
             if self.index.artifact(conn, community, name) is not None:
@@ -1034,15 +1058,16 @@ class ApiService(Service):
         self, caller: Caller, community: str, collection: str | None = None
     ) -> bool:
         """The re-check at every event and heartbeat: a revoked or expired key, or one that
-        lost its standing, loses its stream, and so does a caller who can no longer read the
+        lost its standing, loses its stream, and so does a caller who loses read access to the
         collection the stream follows (a withdrawn grant, a record made private)."""
         with self.connection() as conn:
             if not caller.anonymous:
                 row = self.keys.live(conn, caller.key_id)
-                if row is None or standing(conn, self.records, row, community):
+                if row is None or standing(conn, self.records, row):
                     return False
+                caller.context = context_of(conn, self.records, row)
             return collection is None or self.records.can_read_collection(
-                conn, caller.principal(), community, collection
+                conn, caller.context, community, collection
             )
 
     def stream_record(self, caller, *, community, last__event__i_d):
@@ -1051,7 +1076,7 @@ class ApiService(Service):
             start = decode(last__event__i_d, r=int).get("r")
             if start is None:
                 start = self.index.position(conn, community)
-        stream_id = self.caps.open(caller.key_id, caller.role, caller.client_addr)
+        stream_id = self.caps.open(caller.key_id, caller.kind, caller.client_addr)
         return self.record_events(caller, community, int(start), stream_id)
 
     async def record_events(self, caller, community, seq, stream_id):
@@ -1114,7 +1139,7 @@ class ApiService(Service):
                     "i": self.records.collection_row(conn, community, "inbox")["seq"],
                     "r": self.records.collection_row(conn, community, "record")["seq"],
                 }
-        stream_id = self.caps.open(caller.key_id, caller.role, caller.client_addr)
+        stream_id = self.caps.open(caller.key_id, caller.kind, caller.client_addr)
         return self.submission_events(
             caller, community, int(start["i"]), int(start.get("r", 0)), stream_id
         )
@@ -1123,7 +1148,7 @@ class ApiService(Service):
         """The events after the (inbox, record) positions. -> [(inbox, record, event, data)]"""
         out = []
         with self.connection() as conn:
-            members = self.members(conn, community)
+            members = self.submitters(conn, community)
             for row in self.records.changes(conn, community, "inbox", inbox, 200):
                 inbox = row["seq"]
                 meta = row["metadata"] or {}

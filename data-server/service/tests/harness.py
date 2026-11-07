@@ -15,7 +15,10 @@ otherwise hang.
 
 from __future__ import annotations
 
+import base64
 import functools
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -26,6 +29,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 IMAGE = os.environ.get("SYMPOSIUM_DATA_TEST_IMAGE", "")
 VERSION = os.environ.get("SYMPOSIUM_DATA_TEST_VERSION", "")
@@ -36,7 +41,7 @@ MAX_WAIT = float(os.environ.get("SYMPOSIUM_TEST_MAX_WAIT", "120"))
 HTTP = SimpleNamespace(
     **{
         name: functools.partial(getattr(httpx, name), timeout=MAX_WAIT)
-        for name in ("get", "post", "put", "delete", "request", "stream")
+        for name in ("get", "post", "put", "patch", "delete", "request", "stream")
     }
 )
 
@@ -54,20 +59,27 @@ TEST_ENV = {
 
 SUPERVISORCTL = ("supervisorctl", "-c", "/tmp/supervisord.conf")
 
-# Run inside the container: empty every data table and the bucket, keeping the admin binding
-# and the admin's sessions, as a test's admin signed in before the reset.
+# Run inside the container: empty every data table and the bucket, keeping the root user (bound
+# from the key file), its key and role, and its sessions, as a test's root signed in before the
+# reset.
 RESET = """
 import os, psycopg
 from symposium_data.runtime import PayloadStore, Settings
 settings = Settings()
 store = PayloadStore(settings)
 with psycopg.connect(settings.database_url) as conn:
+    root = conn.execute(
+        "SELECT user_id FROM role_assignments WHERE role_id = 'server-root' AND revoked IS NULL"
+    ).fetchone()[0]
     conn.execute(
-        "TRUNCATE communities, owners, owner_keys, challenges, roster, grants, invites, "
-        "collections, files, versions, payloads, ports, api_streams, "
-        "api_index, api_citations, api_index_position CASCADE"
+        "TRUNCATE challenges, invites, versions, files, payloads, collections, ports, "
+        "api_streams, api_index, api_citations, api_index_position"
     )
-    conn.execute("DELETE FROM api_keys WHERE role <> 'admin'")
+    conn.execute("DELETE FROM api_keys WHERE user_id IS DISTINCT FROM %s", (root,))
+    conn.execute("DELETE FROM role_assignments WHERE user_id IS DISTINCT FROM %s", (root,))
+    conn.execute("DELETE FROM user_keys WHERE user_id <> %s", (root,))
+    conn.execute("DELETE FROM users WHERE id <> %s", (root,))
+    conn.execute("DELETE FROM communities")
 for page in store.s3.get_paginator("list_objects_v2").paginate(Bucket=store.bucket):
     for item in page.get("Contents", []):
         store.s3.delete_object(Bucket=store.bucket, Key=item["Key"])
@@ -161,10 +173,11 @@ class Server:
         self.volume = f"{self.name}-vol"
         self.url = ""
 
-    def start(self, key_file: Path | None = None):
-        """Create the container, copy the admin key file onto its volume when one is given (as
-        an operator places it), and start it. Without a key file it starts non-operational,
-        for a suite that onboards it the way an operator does."""
+    def start(self, key_file: Path | None = None, image: str | None = None, wait=True):
+        """Create the container from `image` (the image under test by default), copy the root
+        key file onto its volume when one is given (as an operator places it), and start it.
+        Without a key file it starts non-operational, for a suite that onboards it the way an
+        operator does."""
         # Docker assigns the host port itself: picking a "free" port first races with
         # anything else that grabs it before the container binds. The host alias lets the
         # server reach a stub a test runs on this machine.
@@ -173,14 +186,21 @@ class Server:
         cmd += ["-v", f"{self.volume}:/apps"]
         for key, value in self.env.items():
             cmd += ["-e", f"{key}={value}"]
-        docker(*cmd, IMAGE)
+        docker(*cmd, image or IMAGE)
         if key_file is not None:
             docker("cp", str(key_file), f"{self.name}:/apps/{key_file.name}")
         docker("start", self.name)
         mapped = docker("port", self.name, "8080").stdout.splitlines()[0].strip()
         self.url = f"http://127.0.0.1:{mapped.rsplit(':', 1)[1]}"
-        self.wait()
+        if wait:
+            self.wait()
         return self
+
+    def upgrade(self, wait=True):
+        """Replace the container with one of the image under test on the same volume, as an
+        operator upgrades a server in place."""
+        docker("rm", "-f", self.name, check=False)
+        return self.start(wait=wait)
 
     def wait(self):
         deadline = time.monotonic() + MAX_WAIT
@@ -246,7 +266,7 @@ class Server:
         return result.stdout + result.stderr
 
     def reset(self):
-        """Empty every community, file and payload; the admin binding stays."""
+        """Empty every community, file and payload; root's binding stays."""
         result = self.exec("/opt/venv/bin/python", "-c", RESET)
         assert result.returncode == 0, result.stderr[-2000:]
 
@@ -267,3 +287,57 @@ class Server:
     def remove(self):
         docker("rm", "-f", "-v", self.name, check=False)
         docker("volume", "rm", "-f", self.volume, check=False)
+
+
+# ── keys and file headers, as the clients make them ─────────────────────────────────────────
+class OwnerKey:
+    """An owner's Ed25519 key pair, as a member's keystore would hold it."""
+
+    def __init__(self):
+        self.private = Ed25519PrivateKey.generate()
+        raw = self.private.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )
+        self.jwk = {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": base64.urlsafe_b64encode(raw).rstrip(b"=").decode(),
+        }
+
+    def jwk_text(self) -> str:
+        return json.dumps(self.jwk)
+
+    def sign(self, message: str) -> str:
+        return (
+            base64.urlsafe_b64encode(self.private.sign(message.encode()))
+            .rstrip(b"=")
+            .decode()
+        )
+
+
+def place_key(directory: Path, handle: str, key: OwnerKey) -> Path:
+    """The public key file as `admin-config` writes it: admin_pub_<handle>.key, mode 0644."""
+    path = directory / f"admin_pub_{handle}.key"
+    path.write_text(key.jwk_text())
+    path.chmod(0o644)
+    return path
+
+
+def b64u_json(value) -> str:
+    return base64.urlsafe_b64encode(json.dumps(value).encode()).rstrip(b"=").decode()
+
+
+def repr_digest(data: bytes) -> str:
+    return "sha-256=:" + base64.b64encode(hashlib.sha256(data).digest()).decode() + ":"
+
+
+def file_headers(data: bytes, metadata=None) -> dict:
+    headers = {
+        "Repr-Digest": repr_digest(data),
+        "Content-Type": "application/octet-stream",
+        # a file is created only where its name holds none
+        "If-None-Match": "*",
+    }
+    if metadata is not None:
+        headers["X-Data-Metadata"] = b64u_json(metadata)
+    return headers

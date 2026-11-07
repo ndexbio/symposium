@@ -1,16 +1,18 @@
-"""Export and import of one community (R-J6): a tar stream of its rows, as JSON lines, and the
+"""Export and import of one community: a tar stream of its rows, as JSON lines, and the
 bytes of every payload it stores. For backups and for moving a community to another server.
 
-    manifest.json       format, community, admin handle, counts
-    owners.jsonl        every handle the community uses, with its public keys
-    roster.jsonl  collections.jsonl  grants.jsonl  files.jsonl  versions.jsonl
+    manifest.json       format, community, root handle, counts
+    users.jsonl         every user homed in the community, removed ones included, with its
+                        public keys
+    assignments.jsonl   those users' role assignments, ended ones included
+    collections.jsonl  files.jsonl  versions.jsonl
     payloads/<sha256>   each stored payload's bytes, once per sha256
 
-API keys stay on the server that issued them, and so do the grants made to non-member keys:
-an imported community's applications are issued new keys there.
+API keys, and their roles, stay on the server that issued them: an imported community's
+applications are issued new keys there.
 
 The rows come first, so an import can refuse before any bytes move. Bytes are hashed as they
-stream in and stay pending until one transaction writes every row (R-A6); if anything fails,
+stream in and stay pending until one transaction writes every row; if anything fails,
 they are removed again, bytes first and row second.
 """
 
@@ -27,11 +29,16 @@ import psycopg
 from .cleanup import Cleanup, PendingBatch
 from .records import Records
 from .runtime import Database, MultipartWriter, PayloadStore
-from .wire import valid_community, valid_sha256
+from .wire import (
+    PRIVILEGED_REFUSAL,
+    privileged_community,
+    valid_community,
+    valid_sha256,
+)
 
 FORMAT = "symposium-data-export"
-FORMAT_VERSION = 2
-TABLES = ("owners", "roster", "collections", "grants", "files", "versions")
+FORMAT_VERSION = 3
+TABLES = ("users", "assignments", "collections", "files", "versions")
 CHUNK = 1024 * 1024
 
 
@@ -79,7 +86,7 @@ class Archive:
                 "format": FORMAT,
                 "format_version": FORMAT_VERSION,
                 "community": community,
-                "admin": self.records.config(conn, "admin"),
+                "root": (self.records.root_user(conn) or {}).get("handle"),
                 "counts": {name: len(rows) for name, rows in tables.items()},
                 "payloads": len(payloads),
             }
@@ -104,19 +111,29 @@ class Archive:
 
     def snapshot(self, conn, community: str) -> tuple[dict, list]:
         q = conn.execute
+        users = q(
+            "SELECT id, handle, created, suspect_after, removed, removed_by FROM users "
+            "WHERE home = %s ORDER BY handle",
+            (community,),
+        ).fetchall()
+        for user in users:
+            user["keys"] = q(
+                "SELECT kid, jwk, active, created, retired FROM user_keys "
+                "WHERE user_id = %s ORDER BY created",
+                (user["id"],),
+            ).fetchall()
         tables = {
-            "roster": q(
-                "SELECT handle FROM roster WHERE community = %s ORDER BY handle",
+            "users": users,
+            "assignments": q(
+                "SELECT a.user_id, a.role_id, a.collections, a.created_by, a.created, "
+                "a.revoked, a.revoked_by FROM role_assignments a JOIN users u ON u.id = a.user_id "
+                "WHERE u.home = %s ORDER BY a.created",
                 (community,),
             ).fetchall(),
             "collections": q(
-                "SELECT name, owner, seq, last_created, public FROM collections "
-                "WHERE community = %s ORDER BY name",
-                (community,),
-            ).fetchall(),
-            "grants": q(
-                "SELECT collection, handle, perm FROM grants WHERE community = %s "
-                "AND handle IS NOT NULL ORDER BY collection, handle, perm",
+                "SELECT c.name, c.owner, u.handle AS owner_handle, c.seq, c.last_created, "
+                "c.public FROM collections c JOIN users u ON u.id = c.owner "
+                "WHERE c.community = %s ORDER BY c.name",
                 (community,),
             ).fetchall(),
             "files": q(
@@ -135,24 +152,6 @@ class Archive:
                 (community,),
             ).fetchall(),
         }
-        handles = sorted(
-            {r["handle"] for r in tables["roster"]}
-            | {r["owner"] for r in tables["collections"]}
-            | {r["handle"] for r in tables["grants"]}
-            | {r["created_by"] for r in tables["versions"]}
-        )
-        owners = q(
-            "SELECT handle, reserved, created, suspect_after FROM owners "
-            "WHERE community = %s AND handle = ANY(%s) ORDER BY handle",
-            (community, handles),
-        ).fetchall()
-        for owner in owners:
-            owner["keys"] = q(
-                "SELECT kid, jwk, active, created, retired FROM owner_keys "
-                "WHERE community = %s AND handle = %s ORDER BY created",
-                (community, owner["handle"]),
-            ).fetchall()
-        tables["owners"] = owners
         payloads = q(
             "SELECT DISTINCT p.sha256, p.size, p.s3_key FROM versions v "
             "JOIN files f ON f.id = v.file_id JOIN payloads p ON p.id = v.payload_id "
@@ -227,25 +226,27 @@ class Archive:
         if not valid_community(str(manifest.get("community", ""))):
             raise Malformed(
                 f"'{manifest.get('community')}' is not a community name: 1-20 letters, "
-                "digits or underscores, and not 'status', 'communities' or 'admin'"
+                "digits or underscores"
             )
+        if privileged_community(manifest["community"]):
+            raise Malformed(PRIVILEGED_REFUSAL)
         return manifest
 
-    def check_target(self, conn, manifest: dict) -> str:
-        """-> this server's admin, which takes over what the exported admin owned. Refused when
-        the community exists here: checked from the manifest, before any bytes move, and again
-        in the commit."""
+    def check_target(self, conn, manifest: dict):
+        """-> this server's root user, which owns what server-level users owned at the
+        source. Refused when the community exists here: checked from the manifest, before any
+        bytes move, and again in the commit."""
         if self.community_exists(conn, manifest["community"]):
             raise Refused(f"community '{manifest['community']}' already exists here")
-        return self.records.config(conn, "admin")
+        return self.records.root_user(conn)
 
-    def check_members(self, admin: str, tables: dict):
-        """The admin's handle is reserved in every community: no member may have it."""
-        members = {o["handle"] for o in tables["owners"]} | {
-            r["handle"] for r in tables["roster"]
-        }
-        if admin in members:
-            raise Refused(f"handle collision: '{admin}' is this server's admin")
+    def check_users(self, conn, tables: dict):
+        """A server-level handle is never used in a community: no imported user may have one."""
+        for user in tables["users"]:
+            if self.records.user_by_handle(conn, None, user["handle"]) is not None:
+                raise Refused(
+                    f"handle collision: '{user['handle']}' is a server-level user here"
+                )
 
     def stored(self, tables: dict) -> dict:
         """sha256 -> the version row describing its bytes, for every payload that travels."""
@@ -287,59 +288,71 @@ class Archive:
         duplicates = []
         try:
             with self.db.connection() as conn:
-                admin = self.check_target(conn, manifest)
-                self.check_members(admin, tables)
+                root = self.check_target(conn, manifest)
+                self.check_users(conn, tables)
                 conn.execute("INSERT INTO communities (name) VALUES (%s)", (community,))
+                ids = {}
                 handles = [
-                    self.create_owner(conn, community, o) for o in tables["owners"]
+                    self.create_user(conn, community, u, ids) for u in tables["users"]
                 ]
-                owners = {manifest["admin"]: admin}  # the exported admin's collections
-                self.write_rows(conn, community, tables, pending, duplicates, owners)
+                self.write_rows(
+                    conn, community, tables, pending, duplicates, ids, root["id"]
+                )
         except psycopg.errors.UniqueViolation as e:
             raise Refused(
                 f"part of the export already exists here: {e.diag.message_detail}"
             ) from None
-        counts = {name: len(tables[name]) for name in TABLES if name != "owners"}
+        counts = {name: len(tables[name]) for name in TABLES if name != "users"}
         return {"imported": community, **counts, "handles": handles}, duplicates
 
-    def create_owner(self, conn, community: str, owner: dict) -> dict:
-        """Recreate one exported member in the new community, with its keys (R-J6). Identity
-        is per community and the community is new, so there is nothing to merge. The server
-        admin is not a member of any community, so its keys are never exported."""
-        handle = owner["handle"]
-        conn.execute(
-            "INSERT INTO owners (community, handle, reserved, created, suspect_after) "
-            "VALUES (%s, %s, %s, %s, %s)",
+    def create_user(self, conn, community: str, user: dict, ids: dict) -> dict:
+        """Recreate one exported user in the new community, with its keys, tombstones
+        included. The community is new, so there is nothing to merge."""
+        row = conn.execute(
+            "INSERT INTO users (handle, home, created, suspect_after, removed, removed_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
             (
+                user["handle"],
                 community,
-                handle,
-                owner["reserved"],
-                owner["created"],
-                owner["suspect_after"],
+                user["created"],
+                user["suspect_after"],
+                user["removed"],
+                user["removed_by"],
             ),
-        )
-        for key in owner["keys"]:
+        ).fetchone()
+        ids[user["id"]] = row["id"]
+        for key in user["keys"]:
             conn.execute(
-                "INSERT INTO owner_keys (community, kid, handle, jwk, active, created, retired) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                "INSERT INTO user_keys (user_id, kid, jwk, active, created, retired) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
                 (
-                    community,
+                    row["id"],
                     key["kid"],
-                    handle,
                     json.dumps(key["jwk"]),
                     key["active"],
                     key["created"],
                     key["retired"],
                 ),
             )
-        return {"handle": handle, "result": "created"}
+        return {"handle": user["handle"], "result": "created"}
 
-    def write_rows(self, conn, community, tables, pending, duplicates, owners: dict):
+    def write_rows(
+        self, conn, community, tables, pending, duplicates, ids: dict, root_id
+    ):
         q = conn.execute
-        for row in tables["roster"]:
+        for row in tables["assignments"]:
             q(
-                "INSERT INTO roster (community, handle) VALUES (%s, %s)",
-                (community, row["handle"]),
+                "INSERT INTO role_assignments (user_id, role_id, collections, created_by, "
+                "created, revoked, revoked_by) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (
+                    ids[row["user_id"]],
+                    row["role_id"],
+                    row["collections"],
+                    row["created_by"],
+                    row["created"],
+                    row["revoked"],
+                    row["revoked_by"],
+                ),
             )
         for row in tables["collections"]:
             q(
@@ -348,17 +361,12 @@ class Archive:
                 (
                     community,
                     row["name"],
-                    owners.get(row["owner"], row["owner"]),
+                    # a server-level owner at the source is this server's root
+                    ids.get(row["owner"], root_id),
                     row["seq"],
                     row["last_created"],
                     row["public"],
                 ),
-            )
-        for row in tables["grants"]:
-            q(
-                "INSERT INTO grants (community, collection, handle, perm) "
-                "VALUES (%s, %s, %s, %s)",
-                (community, row["collection"], row["handle"], row["perm"]),
             )
         for row in tables["files"]:
             q(

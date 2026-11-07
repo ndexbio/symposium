@@ -21,7 +21,38 @@ router = APIRouter(tags=["record"])
 
 
 @router.get(
-    "/{community}/artifacts",
+    "/communities/{community}/addresses",
+    response_model=Resolution,
+    response_model_exclude_unset=True,
+    status_code=200,
+    operation_id="resolveAddress",
+    responses={
+        "400": {
+            "model": Error,
+        },
+        "401": {
+            "model": Error,
+        },
+        "403": {
+            "model": Error,
+        },
+        "404": {
+            "model": Error,
+        },
+    },
+)
+def resolve_address(
+    community: str,
+    address: str = ...,
+    caller: Caller = Depends(authorize("resolveAddress")),
+    service: Service = Depends(service_provider),
+) -> Resolution:
+    """Resolve an address"""
+    return service.resolve_address(caller, community=community, address=address)
+
+
+@router.get(
+    "/communities/{community}/artifacts",
     response_model=ArtifactSummaryPage,
     response_model_exclude_unset=True,
     status_code=200,
@@ -66,7 +97,7 @@ def list_artifacts(
 
 
 @router.get(
-    "/{community}/artifacts/{name}",
+    "/communities/{community}/artifacts/{name}",
     response_model=ArtifactResource,
     response_model_exclude_unset=True,
     status_code=200,
@@ -94,7 +125,7 @@ def get_artifact(
 
 
 @router.get(
-    "/{community}/artifacts/{name}/cited-by",
+    "/communities/{community}/artifacts/{name}/cited-by",
     response_model=CitationPage,
     response_model_exclude_unset=True,
     status_code=200,
@@ -130,7 +161,7 @@ def list_cited_by(
 
 
 @router.get(
-    "/{community}/artifacts/{name}/content",
+    "/communities/{community}/artifacts/{name}/content",
     response_model=CanonicalArtifact,
     response_model_exclude_unset=True,
     status_code=200,
@@ -158,7 +189,7 @@ def get_artifact_content(
 
 
 @router.get(
-    "/{community}/artifacts/{name}/findings",
+    "/communities/{community}/artifacts/{name}/findings",
     response_model=FindingPage,
     response_model_exclude_unset=True,
     status_code=200,
@@ -201,7 +232,7 @@ def list_findings(
 
 
 @router.get(
-    "/{community}/artifacts/{name}/objects",
+    "/communities/{community}/artifacts/{name}/objects",
     response_model=ObjectPage,
     response_model_exclude_unset=True,
     status_code=200,
@@ -237,7 +268,7 @@ def list_objects(
 
 
 @router.get(
-    "/{community}/artifacts/{name}/objects/{object}",
+    "/communities/{community}/artifacts/{name}/objects/{object}",
     response_model=ObjectResource,
     response_model_exclude_unset=True,
     status_code=200,
@@ -266,7 +297,7 @@ def get_object(
 
 
 @router.get(
-    "/{community}/artifacts/{name}/objects/{object}/properties/{property}",
+    "/communities/{community}/artifacts/{name}/objects/{object}/properties/{property}",
     response_model=PropertyResource,
     response_model_exclude_unset=True,
     status_code=200,
@@ -298,7 +329,7 @@ def get_object_property(
 
 
 @router.get(
-    "/{community}/artifacts/{name}/properties/{property}",
+    "/communities/{community}/artifacts/{name}/properties/{property}",
     response_model=PropertyResource,
     response_model_exclude_unset=True,
     status_code=200,
@@ -329,7 +360,7 @@ def get_artifact_property(
 
 
 @router.get(
-    "/{community}/artifacts/{name}/relationships",
+    "/communities/{community}/artifacts/{name}/relationships",
     response_model=RelationshipPage,
     response_model_exclude_unset=True,
     status_code=200,
@@ -365,7 +396,7 @@ def list_relationships(
 
 
 @router.get(
-    "/{community}/artifacts/{name}/supersession",
+    "/communities/{community}/artifacts/{name}/supersession",
     response_model=SupersessionPage,
     response_model_exclude_unset=True,
     status_code=200,
@@ -400,7 +431,7 @@ def list_supersession(
 
 
 @router.get(
-    "/{community}/record",
+    "/communities/{community}/record",
     response_model=RecordState,
     response_model_exclude_unset=True,
     status_code=200,
@@ -424,34 +455,3 @@ def get_record(
 ) -> RecordState:
     """The record's state"""
     return service.get_record(caller, community=community)
-
-
-@router.get(
-    "/{community}/resolve",
-    response_model=Resolution,
-    response_model_exclude_unset=True,
-    status_code=200,
-    operation_id="resolveAddress",
-    responses={
-        "400": {
-            "model": Error,
-        },
-        "401": {
-            "model": Error,
-        },
-        "403": {
-            "model": Error,
-        },
-        "404": {
-            "model": Error,
-        },
-    },
-)
-def resolve_address(
-    community: str,
-    address: str = ...,
-    caller: Caller = Depends(authorize("resolveAddress")),
-    service: Service = Depends(service_provider),
-) -> Resolution:
-    """Resolve an address"""
-    return service.resolve_address(caller, community=community, address=address)

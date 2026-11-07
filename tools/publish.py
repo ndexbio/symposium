@@ -1,11 +1,11 @@
 """Member-side publish tool — validate locally, then submit to the Symposium record.
 
 The rule this exists to enforce: **nothing is uploaded that the gate would reject.** The
-validator run here is the same code the admin gate runs, against the same record, so a local
+validator run here is the same code the gate runs, against the same record, so a local
 ACCEPT means the gate will accept too. A rejection should be a surprise, not the workflow.
 
 Run it as `/symposium publish …`, in the session's working directory: the context there
-(`/symposium setup` or `bootstrap`) says who you are and which community you publish to, and
+(`/symposium setup`) says who you are and which community you publish to, and
 `./record` beside it is your copy of the record (`/symposium sync` keeps it current).
 
   python publish.py --role researcher --check  argument.json   # validate only
@@ -15,13 +15,14 @@ Run it as `/symposium publish …`, in the session's working directory: the cont
   python publish.py --roles                    # list the roles
   python publish.py --roles importer           # print one in full
 
-A ROLE is not a MEMBER. One account operates in different roles in different sessions, and
-every artifact is attributed to the Member either way (roles/). --role limits which
-Artifact types this session may publish. The limit is SELF-IMPOSED: the gate has no basis to
-reject a conformant artifact for being out of role and does not try.
+A publishing ROLE is not a MEMBER, and not an access role. One account operates in different
+publishing roles in different sessions, and every artifact is attributed to the Member either
+way (roles/). --role limits which Artifact types this session may publish. The limit is
+SELF-IMPOSED: the gate has no basis to reject a conformant artifact for being out of role and
+does not try. A member with no --role publishes with no type limit.
 
-The admin publishes as `operator`, the narrowest role, when no --role is given; `--role none`
-lifts the limit. A member with no --role publishes with no type limit.
+Publishing takes the `publish` grant, which the `community-member` access role holds; an
+account without it is refused before anything is checked.
 
 It syncs first, every time, `--check` included: validation is only as good as the record it
 sees, and a stale copy can miss a name collision or an address that has not landed yet. So the
@@ -40,7 +41,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import telemetry
-from data_io import SUBMISSION_MARK, DataError, Mirror, SymposiumData
+from data_io import SUBMISSION_MARK, DataError, Mirror, SymposiumData, rbac
 from symposium_rules.checks import naming_refusal, payload_excess
 from sync import Sync, message_line
 from validate import (
@@ -140,12 +141,9 @@ def main(argv):
         return 2
     # ONE ARTIFACT PER SUBMISSION. Publication is strictly serial: the gate stamps one
     # `created` per artifact and validates each against the record as it stands at that
-    # moment (spec 1.9). Submitting several at once used to be allowed and is not, because
-    # it made the member's local ordering and the gate's stamped ordering two different
-    # things — a citation between two artifacts in the same call passed `--check`, which
-    # stamped them a second apart in argument order, and was then refused by the gate,
-    # which stamped them as one act. An Analysis and its outputs are published one at a
-    # time, the Analysis first, each waiting for acceptance (spec 2.5).
+    # moment (spec 1.9). One call submits one artifact, so the member's local ordering and
+    # the gate's stamped ordering are the same thing. An Analysis and its outputs are
+    # published one at a time, the Analysis first, each waiting for acceptance (spec 2.5).
     if len(paths) > 1:
         print(f"! {len(paths)} artifacts given; publication is strictly serial and takes one.\n"
               f"  Publish them one at a time, in the order their addresses require, waiting for\n"
@@ -154,20 +152,18 @@ def main(argv):
               f"  Given: {', '.join(Path(p).name for p in paths)}")
         return 2
 
-    # WHO you are comes from this directory's context. Then a sync pass, `--check` included:
-    # validation runs against the record as it stands NOW, and against every member (the
-    # roster and the admin, fetched live), exactly as the gate will.
+    # WHO you are comes from this directory's context, and publishing takes the `publish`
+    # grant (community-member). Then a sync pass, `--check` included: validation runs against
+    # the record as it stands NOW, and against every known handle (the community's users and
+    # the server-level users, fetched live), exactly as the gate will.
     data = SymposiumData()
     try:
         context = data.context()
     except DataError as e:
-        print(f"! {e}")            # no context here: it names setup and bootstrap
+        print(f"! {e}")            # no context here: it names setup
         return 1
     account = context["handle"]
-    # The admin holds the narrowest role unless it says otherwise: `operator` by default, and
-    # `--role none` lifts the limit. A member with no --role has no limit.
-    if role is None and context.get("role") == "admin":
-        role = "operator"
+    # With no --role a member publishes with no type limit; `--role none` says so explicitly.
     if role == "none":
         role = None
     sync = Sync(data, quiet=True, lists_messages=True)
@@ -176,6 +172,11 @@ def main(argv):
         print("! the data server could not be reached — nothing was checked and nothing was "
               "submitted.\n  Validation needs the current record and roster; try again once "
               "it answers.")
+        return 1
+    try:
+        data.require(rbac.PUBLISH, "publishing")
+    except DataError as e:
+        print(f"! {e}")
         return 1
     # Listed here, at once, and not only by `sync`: a member asked only to publish never runs
     # sync, and this pass is the one that brings a Message into its copy of the record. Printed
@@ -335,7 +336,7 @@ def main(argv):
         a["artifact"]["created"] = None            # the gate owns the timestamp
         name = a["artifact"]["name"]
         # A submission is a file in the community's `inbox`, readable by its submitter and the
-        # admin. Its name carries the moment of submission, so a resubmission after a
+        # gate. Its name carries the moment of submission, so a resubmission after a
         # rejection is a new file; the gate finds it by its mark.
         when = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         try:

@@ -7,61 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
-## [Symposium Skill 0.1.4] - Unreleased
+## [Symposium Skill 0.2.0] - Unreleased
 
-For Data Server 0.1.3.
+Works with Data Server 0.2.0. Connected to a server from another release, it stops and says
+which skill that server needs.
 
 ### Added
 
-- **Messages addressed to you are listed.** `sync` prints one line for each Message whose
-  `recipients` include the member, once: `message for you from @<sender>: <title> (@<name>)`.
-  `publish` and `validate` print the same lines after their sync, and `setup` returns them in
-  its JSON as `messages_for_you`. The gate's own sync lists none. The sender, title and name
-  are each put on one line, control characters removed, so a Message cannot print a line that
-  seems to come from the admin or the gate.
-- **Agents are told to report them.** `MEMBER-AGENT-INSTRUCTIONS.md` has a "Messages addressed
-  to you" section, and `SKILL.md` asks agents to report each Message and to run
-  `sync --watch` in long sessions.
-- **Filters on the record browser's overview.** Its legend entries for members, artifact
-  types and edge kinds show and hide them, by mouse or keyboard, and the choice is
-  remembered. Prose citations (`cites`) and Messages start hidden, with a notice under the
-  graph that says how many and brings them back.
-- **`serve` reports how long each build took.**
+- **Access roles.** Everyone works under an access role: root, server admin, community admin,
+  gate-keeper, community member or community observer. Members and observers can be limited to
+  particular collections. You can see your own roles and what they allow, and a command your
+  roles don't allow is refused with an explanation of what it needs.
+- **Delegated administration.** Root sets up the server and invites server admins. A server
+  admin creates communities, each with its own community admin, who invites members, assigns
+  roles and runs the gate. Root is not needed to run a community.
+- **Managing people.** Commands to invite people with roles, assign and remove roles, list and
+  remove users, and let a server admin work in any community. API keys carry roles too.
+- **Messages addressed to you are shown** when you join, sync, publish or validate, each once,
+  on one line that cannot pass itself off as a message from the gate or the server. Agents are
+  asked to report them.
+- **Record browser filters.** The overview can show and hide members, artifact types and kinds
+  of links. Prose citations and messages start hidden. Each rebuild reports how long it took.
 
 ### Changed
 
-- **A ResearchGoal is recognised.** `validate` and the gate no longer flag the profile's
-  `ResearchGoal` type as not defined by the specification. One that does not declare
-  `groundable: false` draws a REVIEW instead, so what the gate accepts is unchanged. Data
-  Server 0.1.2 still flags every ResearchGoal as not defined, in its submission checks and
-  findings; 0.1.3 runs the same rules as this skill.
-- **The claim map shows the whole verdict.** Purpose and rationale are sections the reader
-  opens, and an Expand control opens the whole pane.
-- **The overview's caption describes its citation-depth layout,** and its graph fills the
-  window below the header.
+- **Upgrading from 0.1 takes no steps.** Keys and sessions carry over, and nobody rejoins.
+- **Several server admins can share one machine.** Root and each server admin keep their own
+  sessions, so one never replaces another's. Commands that open a community's session work as
+  whoever you are currently working as, and you can name another person instead. Existing
+  sessions are moved into place by the first command.
+- **A server admin can invite a community's admin without opening that community first,** by
+  naming the community in the invite. Leaving it out explains what's missing instead of being
+  refused for lack of a permission.
+- **Joining with access to only some collections works.** You join and work without a local copy
+  of the record.
+- **A gate that runs continuously stops when its gate role is removed,** and says how to
+  resume.
+- **Research goals are recognised** as a type the profile defines. One that doesn't declare
+  itself non-groundable gets a review note, which refuses nothing.
+- **The claim map** opens its purpose and rationale on demand and can be expanded to the whole
+  pane. The overview explains its layout, and its graph fills the window.
 
 ### Fixed
 
-- **A reply is listed once when `sync --watch` runs beside other commands.** Sync passes now
-  run one at a time, each reading the session's saved state when it starts, so the watcher no
-  longer lists again what `publish`, `validate` or a foreground `sync` listed while it waited.
+- A reply from the gate is listed once, even when a continuous sync runs beside other commands.
 
-## [Data Server 0.1.3] - Unreleased
+## [Data Server 0.2.0] - Unreleased
+
+A breaking release: it needs Symposium Skill 0.2.0, and clients of 0.1 can no longer connect.
+
+### Added
+
+- **Role-based access.** Six fixed roles, given to people and to API keys, decide what each may
+  do. Members and observers can be limited to particular collections. A person always keeps
+  access to the collections they created; an API key reaches only the collections it is given.
+- **Delegated administration.** Root, set by the server's key file, appoints server admins.
+  Server admins create communities, each with a first community admin who runs it.
+- **People as users.** Everyone is a user of one community, or of the server as a whole.
+  Removing someone keeps them on record as removed: their name is retired, their published work
+  stays credited to them, their sign-ins end, and every API key they made stops working.
+- **Invites carry roles.** The roles are kept on the server and given when the person joins.
+  Pending invites can be listed, issued again and cancelled.
+- **Automatic upgrade.** A 0.1 server upgrades itself on its first start as 0.2.0, after backing
+  up its database, and the server backs up its database before every later upgrade too. The 0.1
+  admin becomes root, members keep full access, and every collection keeps its owner.
+- **Research goals are recognised** by the server's checks, as they are by the skill.
 
 ### Changed
 
-- **The rules recognise a ResearchGoal.** The server validates with the gate's rules
-  (`symposium_rules`): `POST /v1/{community}/submissions`, `POST
-  /v1/{community}/submissions/check` and an artifact's findings. A ResearchGoal, a type the
-  profile defines, no longer draws the STRUCT REVIEW "not defined by the specification". One
-  that does not declare `groundable: false` draws a STRUCT REVIEW saying it must. A REVIEW
-  refuses nothing, so what the server accepts is unchanged.
+- **The API is reorganised** into one consistent structure: each community's data sits under
+  that community, and every address names a thing rather than an action. Any community name is
+  allowed except "admin".
+- **Community members always read their community's record,** which publishing checks against.
+- **Creating a community names its first community admin.**
+- **Sharing a collection** means giving someone read access to it.
+- **The server's status shows who root is.**
 
 ## [Symposium Helm 0.1.2] - Unreleased
 
 ### Changed
 
-- **Deploys Data Server 0.1.3** (`appVersion`).
+- **Deploys Data Server 0.2.0,** which upgrades an existing server in place on its first start.
+- **Allows up to 10 minutes for the first start of a new release,** time for the database
+  backup and upgrade.
+- **The public address setting is documented** as the address written into invite files.
 
 ## [Symposium Skill 0.1.3] - 2026-10-14
 

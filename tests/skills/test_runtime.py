@@ -1,4 +1,4 @@
-"""The skill's Python runtime (R-I7): the CLI's environment, `<skill>/.venv`, is built once per
+"""The skill's Python runtime: the CLI's environment, `<skill>/.venv`, is built once per
 machine and recorded once per agent session; a later command in the session only reads the
 record. Each case runs on a stand-in skill whose CLI needs no packages, so a real environment
 is built with `venv` and pip without the network."""

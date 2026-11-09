@@ -191,46 +191,24 @@ server's own `/v1/communities/{community}/api-keys` routes (§4.6), which take a
 
 ### 3.1 Principals, grants and roles
 
-Every request carries one API key, or none. A key resolves to its **principal**, the identity
-that holds roles:
+This section and the next implement the access model in
+[`data-server/RBAC.md`](../data-server/RBAC.md): the grants, the six roles, collection values, API
+keys, and who may change access are defined there, and nowhere here.
 
-| Principal | Its community |
-|---|---|
-| a user homed in a community (a member account) | its home community |
-| a server-level user (root and the server admins) | none: it works in every community |
-| a non-member issued key | the community it was issued in |
+Every request carries one API key, or none. A key resolves to its **principal**: a user homed in
+a community, a server-level user, or a non-member issued key. A session key, and a member
+issued key, act as their user. The roles are a static registry in
+`symposium_data/access/rbac.py`; a role assignment names a principal, a role and, where the role
+takes one, its collection value.
 
-A session key, and a member issued key, act as their user.
-
-**Grants** are fixed capabilities. `read`, `write` and `manage` are collection-scoped: each
-holds a collection value, `["*"]` (every collection), `[]` (only the collections the caller
-owns) or a list of names. The others hold no value: `publish` (submit to `inbox`), `gate`
-(read every `inbox` item, reply, promote into `record`), `members` (invite, assign roles,
-remove users and change any key of the community), `export`, `communities` (create, import
-and port communities; no quota) and `delegate` (server-level users).
-
-**Roles** are six fixed bundles of grants, defined in `symposium_data/access/rbac.py`:
-
-| Role | Held by | Grants |
-|---|---|---|
-| `server-root` | root, bound from the key file | `read`, `write`, `manage` on `*`; `delegate`, `communities`, `gate`, `members`, `export` |
-| `server-admin` | server-level users | `read`, `write`, `manage` on `*`; `communities`, `gate`, `members`, `export` |
-| `community-admin` | homed users | `read`, `write`, `manage` on `*`; `gate`, `members`, `export` |
-| `gate-keeper` | homed users | `read` on `*`; `gate` |
-| `community-member` | homed users and API keys | `read`, `write` on the assignment's collection value, and for a user `read` on `record` as well; `manage` on `[]`; `publish` |
-| `community-observer` | homed users and API keys | `read` on the assignment's collection value |
-
-A role assignment names a principal, a role and, for `community-member` and
-`community-observer` only, a required collection value. Assignments are sub-resources of their
-principal: `…/users/{handle}/roles/{role}` and `…/api-keys/{key_id}/roles/{role}`. `PUT` sets a
-role's whole value under `If-Match` with its `ETag`; `PUT` and `DELETE` on
-`…/roles/{role}/collections/{collection}` add or withdraw one collection, with the authority
-over that collection alone, which is how an owner shares its own.
+Assignments are sub-resources of their principal: `…/users/{handle}/roles/{role}` and
+`…/api-keys/{key_id}/roles/{role}`. `PUT` sets a role's whole value under `If-Match` with its
+`ETag`; `PUT` and `DELETE` on `…/roles/{role}/collections/{collection}` add or withdraw one
+collection, with the authority over that collection alone.
 
 **Users and Members are two resources.** `…/communities/{c}/users` are the community's
 accounts, with their roles; `…/communities/{c}/members` are the specification's Members, the
-record's publishers, read as the record is (anonymously while it is public). The community is never part of an
-assignment: it is the principal's own.
+record's publishers, read as the record is (anonymously while it is public).
 
 ### 3.2 The user context and its two check points
 
@@ -253,10 +231,10 @@ collection (the **owner allowance**), when the caller is server-level, or when i
 `*` or names the collection in the caller's community. Issued keys get no owner allowance: a
 key reaches exactly the collections its own assignments list.
 
-`inbox` sits outside the collection values. A put marked as a submission takes `publish`, a
-put marked as a reply takes `gate`, and any other put is refused. `publish` holders see their
-own submissions and the replies addressed to them; `gate` holders see every item. Promotion
-is the only write into `record`, and it takes `gate`.
+`inbox` sits outside the collection values: the handler checks a put by its mark (a
+submission against `publish`, a reply against `gate`, anything else refused), and filters
+`inbox` listings to the caller's own items and the replies addressed to it unless the caller
+holds `gate`. Promotion is the only write into `record`, checked against `gate`.
 
 Anonymous access needs no key: an operation that answers without one says so in
 `x-anonymous`, and its `security` includes `{}`. `always` marks the contract, status and

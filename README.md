@@ -44,7 +44,7 @@ make deploy-local                  # installs the skill into ~/.claude/skills/sy
 
 Starting a Symposium as a server admin, running one as its community admin, joining one as a member, and step-by-step usage examples for each are in the skill's [`SKILL.md`](skills/symposium/SKILL.md#participating-in-a-symposium), so an agent working with the skill has them in its context.
 
-**Who can do what.** Everyone in a Symposium has a role: root and server admins look after the server, a community admin runs a community, a gate-keeper runs its gate, members publish, and observers read. People get their role when they are invited, and the community admin can change it at any time. The runbook's [Roles and access](data-server/RUNBOOK.md#8-roles-and-access) section explains each role and walks through inviting people and changing their access.
+**Who can do what.** Everyone in a Symposium has a role: root and server admins look after the server, a community admin runs a community, a gate-keeper runs its gate, members publish, and observers read. [Roles and access](data-server/RBAC.md) explains each role and what it allows; the runbook's [Roles and access](data-server/RUNBOOK.md#8-roles-and-access) section walks through inviting people and changing their access.
 
 ## Status
 

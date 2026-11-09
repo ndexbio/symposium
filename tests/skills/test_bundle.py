@@ -19,6 +19,9 @@ from harness import MAX_WAIT
 from skills.test_workflow import note
 from suite import REPO
 
+sys.path.insert(0, str(REPO / "tools"))
+import bundle  # noqa: E402
+
 BUNDLE = REPO / "dist" / "Symposium_skill.zip"
 CLI = "skills/symposium/toolchain/tools/symposium-data"
 # the repository's Symposium base, shipped whole at its repository paths under toolchain/
@@ -29,7 +32,6 @@ SHIPPED_FILES = (
     "data-server/helm",
 )
 NOT_SHIPPED = {"tools/bundle.py", "tools/pyproject.toml", "data-server/README.md"}
-LINK = re.compile(r"\]\(([^)\s]+)\)")
 
 
 def make(*args) -> subprocess.CompletedProcess:
@@ -98,7 +100,10 @@ def test_the_bundle_holds_the_skill_with_its_toolchain_and_the_stamped_cli(insta
         n in ("README.md", "LICENSE") or n.startswith("skills/symposium/")
         for n in names
     )
-    assert readme == (REPO / "README.md").read_bytes()  # the repository's, at the root
+    # the repository's, at the root, with only its links moved to where the zip holds each
+    assert bundle.LINK.sub("", readme.decode()) == bundle.LINK.sub(
+        "", (REPO / "README.md").read_text(encoding="utf-8")
+    )
     with zipfile.ZipFile(BUNDLE) as zf:
         assert zf.read("LICENSE") == (REPO / "LICENSE").read_bytes()
     for required in (
@@ -168,22 +173,54 @@ def test_the_installed_skill_holds_the_repositorys_symposium_base_one_for_one(
         assert (toolchain / path).read_bytes() == (REPO / path).read_bytes(), path
 
 
-def test_every_relative_link_in_the_installed_skill_resolves_inside_it(installed):
-    skill = (installed["skills"] / "symposium").resolve()
-    broken = []
-    for doc in sorted(skill.rglob("*.md")):
-        if any(part.startswith(".venv") for part in doc.relative_to(skill).parts):
-            continue  # the runtime's packages, not the skill's documents
-        for target in LINK.findall(doc.read_text(encoding="utf-8")):
-            path = target.split("#", 1)[0]
-            if not path or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", path):
-                continue  # an anchor in the same document, or a URL
-            if path.startswith(("@", "<")):
-                continue  # a Symposium artifact address, written as a link
-            resolved = (doc.parent / path).resolve()
-            if not resolved.exists() or skill not in (resolved, *resolved.parents):
-                broken.append(f"{doc.relative_to(skill)} -> {target}")
-    assert broken == []
+def test_every_relative_link_in_the_bundle_resolves_inside_it(installed):
+    """The build's own check, run again on what it wrote: every Markdown link of the zip, its
+    README included, names a file or folder the zip holds."""
+    with zipfile.ZipFile(BUNDLE) as zf:
+        names = zf.namelist()
+        documents = {n: zf.read(n).decode("utf-8") for n in names if n.endswith(".md")}
+    assert bundle.dead_links(documents, bundle.zip_exists(names)) == []
+    readme = documents["README.md"]
+    assert "](skills/symposium/toolchain/data-server/RBAC.md)" in readme
+    assert f"]({bundle.GITHUB}AGENTS.md)" in readme  # not shipped: its GitHub address
+
+
+def test_a_dead_link_fails_the_build_and_writes_no_zip(tmp_path, monkeypatch):
+    entries = bundle.Bundle.entries
+
+    def with_a_dead_link(self):
+        out = entries(self)
+        out["skills/symposium/NOTES.md"] = b"See [the guide](missing/GUIDE.md#start).\n"
+        return out
+
+    monkeypatch.setattr(bundle.Bundle, "entries", with_a_dead_link)
+    out = tmp_path / "Symposium_skill.zip"
+    result = bundle.Bundle().write(out)
+    assert result["dead"] == [
+        {
+            "file": "skills/symposium/NOTES.md",
+            "link": "missing/GUIDE.md#start",
+            "resolved": "skills/symposium/missing/GUIDE.md",
+        }
+    ]
+    assert not out.exists() and list(tmp_path.iterdir()) == []
+
+
+def test_every_relative_link_in_the_repository_resolves():
+    """The same check on the repository's own documents, shipped or not; a skill document's
+    `toolchain/…` link names the repository path the bundle ships there."""
+    documents = {
+        name: (REPO / name).read_text(encoding="utf-8")
+        for name in tracked(":(glob)**/*.md")
+        if not name.startswith("examples/") and name != "CHANGELOG.md"
+    }
+
+    def exists(path: str) -> bool:
+        if path.startswith(bundle.SHIPPED):
+            path = path[len(bundle.SHIPPED) :]
+        return (REPO / path).exists()
+
+    assert bundle.dead_links(documents, exists) == []
 
 
 def test_the_conformance_suite_runs_from_the_installed_skill(installed):

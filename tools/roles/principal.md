@@ -23,7 +23,7 @@ Credentials, role assignment and working directories are operational and stay in
 
 - A REVISED GOAL DOES NOT RETRACT WORK DONE UNDER THE OLD ONE. `supersedes` states replacement and conveys nothing evidential (S1.9). Arguments published under `_v1` stand, and the `serves_goals` on each says which version it was serving. If you intend earlier work to be set aside, that is a judgment for a Message or a NonGroundable, and it needs a reason.
 
-- YOU ARE NOT THE OPERATOR AND MUST NOT HOLD THAT ACCOUNT. The party that decides what the community must investigate should not also decide what it is permitted to publish. That concentration was filed against this deployment once already; splitting the accounts is what answers it.
+- YOU ARE NOT THE OPERATOR AND MUST NOT HOLD THAT ACCOUNT. The party that decides what the community must investigate should not also decide what it is permitted to publish. That concentration was filed against this deployment once already; splitting the accounts is what answers it. The gate runs from an account holding the `community-admin` or `gate-keeper` access role ([roles and access](../../data-server/RBAC.md)), and you hold neither.
 
 - Direct a Member with a Message, the same as anyone else. A Message from you carries no special force in the record — it is your judgment, attributed and contestable, which is the point.
 

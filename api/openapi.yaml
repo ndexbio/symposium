@@ -4348,13 +4348,17 @@ components:
   schemas:
     RoleInfo:
       type: object
-      required: [role, assignable_to, takes_collections, keys_may_carry, assignable, grants]
+      required: [role, assignable_to, takes_collections, keys_may_carry, assignable, user_reads, grants]
       properties:
         role: {type: string}
         assignable_to: {type: array, items: {type: string}}
         takes_collections: {type: boolean}
         keys_may_carry: {type: boolean}
         assignable: {type: boolean}
+        user_reads:
+          type: array
+          items: {type: string}
+          description: The collections a user holding the role always reads, whatever its collection value; an issued key reads only what it is given.
         grants:
           type: object
           additionalProperties: true
@@ -5958,7 +5962,7 @@ components:
           type: array
           items:
             type: object
-            required: [role, assignable_to, takes_collections, keys_may_carry, assignable, grants]
+            required: [role, assignable_to, takes_collections, keys_may_carry, assignable, user_reads, grants]
             properties:
               role:
                 type: string
@@ -5972,6 +5976,11 @@ components:
                 type: boolean
               assignable:
                 type: boolean
+              user_reads:
+                type: array
+                items:
+                  type: string
+                description: The collections a user holding the role always reads, whatever its collection value; an issued key reads only what it is given.
               grants:
                 type: object
                 description: |

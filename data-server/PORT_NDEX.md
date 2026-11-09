@@ -1,8 +1,7 @@
 # Porting a community from NDEx
 
 The port-ndex copies a Symposium community's record from an NDEx server into an **empty**
-community on a running Symposium Data server. A holder of the `communities` grant (root or a
-server admin) starts it with a route. It runs in the
+community on a running Symposium Data server. A holder of the `communities` grant ([RBAC.md](RBAC.md#grants)) starts it with a route. It runs in the
 background, inside the service. It is not a sync: a community that already holds files is
 refused, so each community is ported once.
 

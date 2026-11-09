@@ -16,6 +16,12 @@ The zip holds:
                              the data server's operator docs (its top-level *.md but its
                              developer README) and its Helm chart, data-server/helm/
 
+The zip's README.md is the repository's front page with its links moved to where the zip holds
+each document: a shipped one under skills/symposium/toolchain/, any other at its GitHub address.
+Every relative link in every Markdown file of the zip must name a file or folder the zip holds:
+a dead one fails the build, and no zip is written (`dead_links`, which the repository's own
+link test shares).
+
 Only repository-maintenance files stay out: this script (NOT_SHIPPED), and everything outside
 TOOLCHAIN (AGENTS.md, CLAUDE.md, the Makefile, CI, tests, and the data server's source; the
 server ships as its image).
@@ -27,6 +33,7 @@ always builds the same zip. Standard library only, Python 3.9+.
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import stat
 import sys
@@ -48,6 +55,56 @@ TOOLCHAIN = (
 NOT_SHIPPED = {"tools/bundle.py", "tools/pyproject.toml", "data-server/README.md"}
 SKIPPED = {"__pycache__", "tests", ".pytest_cache", ".ruff_cache", ".DS_Store"}
 DATE = (1980, 1, 1, 0, 0, 0)
+# where the bundle's own skill folder holds the repository's Symposium base
+SHIPPED = "skills/symposium/toolchain/"
+GITHUB = "https://github.com/ndexbio/symposium/blob/main/"
+# a Markdown link's target: [text](target "title")
+LINK = re.compile(r"\[[^\]\n]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+FENCE = re.compile(r"^\s*(```|~~~)")
+
+
+def link_targets(text: str):
+    """Each relative link target of a Markdown text, outside fenced code: (target, the path
+    it names, its #anchor removed). Web, mail and in-page links are not files, and neither is
+    a Symposium address: `(@name)`, or one in angle brackets, `(<address>)`."""
+    fenced = False
+    for line in text.splitlines():
+        if FENCE.match(line):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        for match in LINK.finditer(line):
+            target = match.group(1)
+            if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target) or target[:1] in ("#", "@", "<"):
+                continue
+            path = target.split("#", 1)[0]
+            if path:
+                yield target, path
+
+
+def dead_links(documents: dict, exists) -> list:
+    """Every relative link in `documents` ({posix path: Markdown text}) whose path `exists`
+    (a posix path -> bool) rejects, each as {file, link, resolved}."""
+    dead = []
+    for name in sorted(documents):
+        for target, path in link_targets(documents[name]):
+            resolved = posixpath.normpath(posixpath.join(posixpath.dirname(name), path))
+            if not exists(resolved):
+                dead.append({"file": name, "link": target, "resolved": resolved})
+    return dead
+
+
+def zip_exists(names) -> callable:
+    """Whether a posix path is a file of the zip, or a folder holding one."""
+    files = set(names)
+    folders = set()
+    for name in files:
+        parent = posixpath.dirname(name)
+        while parent and parent not in folders:
+            folders.add(parent)
+            parent = posixpath.dirname(parent)
+    return lambda path: path in files or path in folders
 
 
 class Bundle:
@@ -70,8 +127,8 @@ class Bundle:
                 yield path, relative
 
     def entries(self) -> dict:
-        """zip path -> source path (or bytes, for the generated stamp)."""
-        out = {"README.md": self.repo / "README.md", "LICENSE": self.repo / "LICENSE"}
+        """zip path -> source path (or bytes, for the generated files)."""
+        out = {"LICENSE": self.repo / "LICENSE"}
         for path, relative in self.files(SKILL):
             out[f"skills/symposium/{relative.as_posix()}"] = path
         for item in TOOLCHAIN:
@@ -87,7 +144,28 @@ class Bundle:
             json.dumps({"data_server_version": self.data_server_version()}, indent=2)
             + "\n"
         ).encode()
+        out["README.md"] = self.readme(zip_exists(out))
         return out
+
+    def readme(self, shipped) -> bytes:
+        """The repository's README, its links moved to where the zip holds each document:
+        under skills/symposium/toolchain/ when shipped there, else its GitHub address."""
+
+        def moved(match) -> str:
+            target = match.group(1)
+            link = match.group(0)
+            if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target) or target[:1] in ("#", "@", "<"):
+                return link
+            path, _, anchor = target.partition("#")
+            anchor = f"#{anchor}" if anchor else ""
+            if shipped(path):
+                return link
+            if shipped(SHIPPED + path):
+                return link.replace(f"({target}", f"({SHIPPED}{path}{anchor}", 1)
+            return link.replace(f"({target}", f"({GITHUB}{path}{anchor}", 1)
+
+        text = (self.repo / "README.md").read_text(encoding="utf-8")
+        return LINK.sub(moved, text).encode("utf-8")
 
     def data_server_version(self) -> str:
         pyproject = (
@@ -114,6 +192,15 @@ class Bundle:
                     mode = 0o755 if source.stat().st_mode & stat.S_IXUSR else 0o644
                     info.external_attr = (stat.S_IFREG | mode) << 16
                     zf.writestr(info, source.read_bytes())
+        with zipfile.ZipFile(partial) as zf:
+            names = zf.namelist()
+            documents = {
+                n: zf.read(n).decode("utf-8", "replace") for n in names if n.endswith(".md")
+            }
+        dead = dead_links(documents, zip_exists(names))
+        if dead:
+            partial.unlink()
+            return {"error": f"{len(dead)} dead link(s) in the bundle; no zip written", "dead": dead}
         partial.replace(out)
         return {"bundle": str(out), "files": len(entries)}
 
@@ -123,8 +210,9 @@ def main(argv=None) -> int:
     if len(argv) != 1:
         print(json.dumps({"error": "usage: bundle.py <out.zip>"}))
         return 1
-    print(json.dumps(Bundle().write(Path(argv[0]))))
-    return 0
+    result = Bundle().write(Path(argv[0]))
+    print(json.dumps(result))
+    return 1 if "error" in result else 0
 
 
 if __name__ == "__main__":

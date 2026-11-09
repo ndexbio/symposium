@@ -169,3 +169,79 @@ def test_the_wording_states_what_is():
 def test_admin_names_the_role_it_means():
     hits = found(ADMIN, allowed=ADMIN_ALLOWED)
     assert not hits, f"{len(hits)} × a bare 'admin':\n" + "\n".join(hits)
+
+
+# roles and grants are defined in one document, data-server/RBAC.md; every other document
+# names them and links there
+RBAC_DOC = "data-server/RBAC.md"
+ROLE_NAMES = (
+    "server-root",
+    "server-admin",
+    "community-admin",
+    "gate-keeper",
+    "community-member",
+    "community-observer",
+)
+GRANT_NAMES = (
+    "read",
+    "write",
+    "manage",
+    "publish",
+    "gate",
+    "members",
+    "export",
+    "communities",
+    "delegate",
+)
+# the documents the skill bundle ships, as tools/bundle.py gathers them (its generated command
+# reference aside, which the CLI's help text writes)
+SHIPPED_DOC = re.compile(
+    r"^(README\.md|skills/symposium/.*\.md|(spec|tools|server)/.*\.md|data-server/[^/]+\.md)$"
+)
+NOT_SHIPPED_DOCS = {
+    "data-server/README.md",
+    "tools/symposium-data/reference/COMMANDS.md",
+}
+
+
+def markdown() -> list[str]:
+    return [f for f in tracked() if f.endswith(".md") and f != RBAC_DOC]
+
+
+def test_roles_and_grants_are_defined_only_in_rbac_md():
+    """No document but RBAC.md holds a table of what a role grants, or of what a grant
+    allows: a row led by a role that lists two or more grants, or a table whose first column
+    is the grants."""
+    hits = []
+    for rel in markdown():
+        rows = (REPO / rel).read_text(encoding="utf-8").splitlines()
+        column = ""
+        for number, line in enumerate(rows, 1):
+            if number < len(rows) and rows[number].startswith("|---"):
+                column = line.strip("|").split("|")[0].strip().lower()
+                continue
+            if not line.startswith("| `"):
+                continue
+            first = line.strip("|").split("|")[0]
+            led = set(re.findall(r"`([^`]+)`", first))
+            rest = line[len(first) + 1 :]
+            grants = {g for g in GRANT_NAMES if f"`{g}`" in rest}
+            if (led & set(ROLE_NAMES) and len(grants) >= 2) or (
+                column.startswith("grant") and led & set(GRANT_NAMES)
+            ):
+                hits.append(f"{rel}:{number}: {line.strip()[:120]}")
+    assert not hits, (
+        f"{len(hits)} × a role or grant defined outside {RBAC_DOC}:\n" + "\n".join(hits)
+    )
+
+
+def test_shipped_documents_naming_an_access_role_link_to_rbac_md():
+    missing = [
+        rel
+        for rel in markdown()
+        if SHIPPED_DOC.match(rel)
+        and rel not in NOT_SHIPPED_DOCS
+        and any(role in (REPO / rel).read_text(encoding="utf-8") for role in ROLE_NAMES)
+        and "RBAC.md" not in (REPO / rel).read_text(encoding="utf-8")
+    ]
+    assert not missing, f"name an access role without linking {RBAC_DOC}: {missing}"

@@ -210,37 +210,7 @@ The server reads `admin_pub_<handle>.key` at every start-up, from `/apps/` or `/
 
 ### 8.1 The model
 
-Every user and every API key holds **access roles**. A role is a fixed set of **grants**, and every request is checked against the grants its caller holds. The community is the caller's own: a user belongs to one community (or, as root and the server admins, to the whole server), and an API key to the community it was issued in.
-
-| Role | Held by | What it allows |
-|---|---|---|
-| `server-root` | root, bound from the key file | everything, in every community, and creating server admins (`delegate`) |
-| `server-admin` | server-level users root invites | everything in every community: create, import, export and port communities, run any community |
-| `community-admin` | a community's users | run its community: read, write and manage every collection, invite users, assign roles, remove users, export, run the gate |
-| `gate-keeper` | a community's users | read every collection, and run the gate |
-| `community-member` | a community's users, and API keys | read and write its collections, manage the collections it owns, and publish; a user also reads `record`, which publishing validates against |
-| `community-observer` | a community's users, and API keys | read its collections |
-
-`community-member` and `community-observer` take a **collection value**, always given:
-
-| Value | Written | Meaning |
-|---|---|---|
-| every collection | `:*` | every collection of the community |
-| none by name | `:` | only the collections the user owns |
-| some | `:c1,c2` | the collections named, plus the ones the user owns |
-
-When signed in, a user always keeps access to the collections it owns. An API key reaches exactly the collections its own roles name.
-
-| Need | Assignment |
-|---|---|
-| run a community | `community-admin` |
-| a member who publishes and works across the community | `community-member:*` |
-| a member who publishes, reads the record, and works only in collections it creates | `community-member:` |
-| a read-only member | `community-observer:*` |
-| a reader of some collections, a person or an application key | `community-observer:c1,c2` |
-| run the gate | `gate-keeper` |
-
-`/symposium access` shows the six roles and the caller's own roles and grants.
+Every user and API key holds **access roles** (`server-root`, `server-admin`, `community-admin`, `gate-keeper`, `community-member`, `community-observer`); each role is a fixed set of **grants**, and `community-member` and `community-observer` take a **collection value** (`:*`, `:` or `:c1,c2`). [RBAC.md](RBAC.md) defines them all: what each grant allows, which roles hold it, API keys, and who may change whose access. This section is the procedures. `/symposium access` shows the roles as the server defines them, and the caller's own.
 
 ### 8.2 From an empty cluster to communities run by their own community admins
 
@@ -257,10 +227,10 @@ Each step says where it runs, who runs it, the commands, and the check that prov
    - Check: `/symposium invite list --out-dir <dir> --server` lists the pending invite for `<h>`.
 4. **Server admin, own workstation: join.**
    - Run `/symposium setup --invite-file <h>.invite`. The key is generated there, and the server-wide session is set up.
-   - Check: `/symposium access` shows `server-admin`, with every collection of every community and no `delegate`; root's `/symposium users list --server` shows `<h>` registered.
+   - Check: `/symposium access` shows `server-admin`; root's `/symposium users list --server` shows `<h>` registered.
    - Root's part ends here. Only root removes this server admin later, with `/symposium users remove --handle <h> --server`.
 5. **Server admin: create each community.**
-   - Write `community.json` with `community`, `admin` (the community admin's handle) and `data-server-url: https://<host>` (see `server/community.example.json`), and run `/symposium bootstrap --community-file community.json`. It writes the community admin's invite file under `~/.symposium/admin/<community>/<your handle>/`, to hand over out of band. On a machine that holds several server-level users (root and a server admin, say), name yours with `--handle <your handle>`.
+   - Write `community.json` with `community`, `admin` (the community admin's handle) and `data-server-url: https://<host>` (see [`community.example.json`](../server/community.example.json)), and run `/symposium bootstrap --community-file community.json`. It writes the community admin's invite file under `~/.symposium/admin/<community>/<your handle>/`, to hand over out of band. On a machine that holds several server-level users (root and a server admin, say), name yours with `--handle <your handle>`.
    - Repeat for each further community, each with its own community admin.
    - Check: `/symposium data communities list` shows each community, and `/symposium invite list --out-dir <dir>` shows each community admin's pending invite.
 
@@ -268,7 +238,7 @@ Everyone from here on works from their own workstation, with the skill installed
 
 6. **Community admin: join.**
    - Run `/symposium setup --invite-file <community>-<handle>.invite`. It generates the community admin's key on this machine (encrypted, in the OS keychain, or under `SYMPOSIUM_KEY_PASSPHRASE` on a headless machine), registers it with the server, which assigns `community-admin` from the stored invite, creates the session `~/.symposium/member/<community>/<handle>/` and syncs `record/`.
-   - Check: `/symposium access` shows `community-admin` in `<community>`, with `read`, `write` and `manage` on every collection, and `gate`, `members` and `export`; `/symposium users list` shows the community admin registered.
+   - Check: `/symposium access` shows `community-admin` in `<community>`; `/symposium users list` shows the community admin registered.
 7. **Community admin: invite members.**
    - Run `/symposium invite --handle <h> --access community-member:* --out <h>.invite` for each member. Use `--access community-observer:*` for a read-only member, or `--access community-member:` for a member limited to the collections it creates.
    - Hand each file over out of band.
@@ -283,14 +253,14 @@ Everyone from here on works from their own workstation, with the skill installed
    - Use `/symposium gate` for a single pass, and `/symposium gate --verify` to compare the local `record/` with the server.
    - Check: the member's next `/symposium sync` shows the decision.
 10. **Community admin (optional): hand the gate on.**
-    - Run `/symposium assign --handle <h> --access gate-keeper`. That user runs step 9 from its own session, holding `read` and `gate`.
+    - Run `/symposium assign --handle <h> --access gate-keeper`. That user runs step 9 from its own session.
     - `/symposium unassign --handle <h> --access gate-keeper` stops its next gate pass.
 
 One shared server now hosts several communities, each run by its own community admin, with no further part for root or the server admins.
 
 ### 8.3 API keys
 
-Every key is issued from a signed-in session with `/symposium gen-api-key`, and carries access roles. A **member key** acts as the member, within the member's own grants. A **non-member key** (`--non-member`) is an identity of its own, for an outside application, and carries `community-observer` alone. Key values go to 0600 files in the session's `api-keys/`.
+Every key is issued from a signed-in session with `/symposium gen-api-key`, as a member key or a non-member key (`--non-member`); [RBAC.md](RBAC.md#api-keys) says what each may carry and who may change it. Key values go to 0600 files in the session's `api-keys/`.
 
 1. **An application reads some of a member's collections.**
    - Create the collections if needed: `/symposium data collection create --name <c1>`. The member owns what it creates.
@@ -305,7 +275,7 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
 3. **A member's upload script:** `/symposium gen-api-key <uploader> --access community-member:files` reads and writes `files` only; a key reaches only the collections its roles name, whatever the member owns.
 4. **Refusals:** a read-only key gets 403 on a submission and on an upload. An issued key gets 403 on `gen-api-key`, `assign` and `invite`: changing access takes a signed-in user.
 5. **Revoke a key.**
-   - `/symposium revoke-api-key <id>`, by the key's issuer, or by a community admin for any key of the community, deletes it. Its next request answers 401, and `list-api-keys` lists it no more.
+   - `/symposium revoke-api-key <id>`, by the key's issuer, or by a holder of `members` for any key of the community, deletes it. Its next request answers 401, and `list-api-keys` lists it no more.
    - A new key is issued when one is needed again.
    - Another member's `revoke-api-key` on it answers 403.
 
@@ -319,22 +289,19 @@ Every key is issued from a signed-in session with `/symposium gen-api-key`, and 
    - Root removes one with `/symposium users remove --handle ana --server`. Ana's next command reports the removal; Ben and every community carry on.
 2. **A community admin adds a read-only member.**
    - `/symposium invite --handle olive --access community-observer:* --out olive.invite`; Olive runs `setup`.
-   - Check: Olive's `access` shows `community-observer` with `read` on every collection; `sync` and `serve` work; `publish` and `validate` are refused, naming `publish`; `/symposium data collection create` is refused, naming `write`.
+   - Check: Olive's `access` shows `community-observer:*`; `sync` and `serve` work; `publish` and `validate` are refused, naming `publish`; `/symposium data collection create` is refused, naming `write`.
    - To make Olive a full member: `/symposium assign --handle olive --access community-member:*`, then `/symposium unassign --handle olive --access community-observer`.
 3. **A member changes the collections on its own key.** Lyra's member key holds `community-member:files`.
    - Add `c4`: `/symposium assign --api-key <id> --access community-member:c4`. Remove `files`: `/symposium unassign --api-key <id> --access community-member:files`.
    - Check: `list-api-keys` shows `community-member: [c4]`; the key's next upload to `c4` succeeds, and to `files` answers 403.
-   - Only the key's issuer, or a community admin, changes a key; anyone else gets 403.
+   - Another member running either command on Lyra's key gets 403.
 4. **An owner shares, then withdraws, read access to its collection.**
-   - Lyra owns `c2`: `/symposium assign --handle olive --access community-observer:c2`. Olive's next read of `c2` answers 200.
+   - Olive already reads Mia's `c1` (`community-observer:c1`). Lyra owns `c2`: `/symposium assign --handle olive --access community-observer:c2`. Olive's next read of `c2` answers 200.
    - Withdraw: `/symposium unassign --handle olive --access community-observer:c2`. Olive's next read of `c2` answers 403.
    - Lyra changes only the names she manages: unassigning a collection Mia owns, or the whole role, answers 403.
 5. **A community admin removes a member.**
    - `/symposium users remove --handle lyra`.
-   - Check: `users list` still shows `lyra`, marked removed with the date; her next command reports the removal; every API key she issued is deleted and answers 401; the gate's next pass skips her pending submissions as "not an active member"; her collections keep her as owner, and the community admin manages them.
-   - The record keeps her authorship: her artifacts stay listed with `published_by: @lyra`, `/v1/communities/<community>/members/lyra` shows `removed: true`, and artifacts citing `@lyra` still validate.
-   - Her handle stays hers: `invite --handle lyra` answers 409. A returning person joins under a new handle.
-   - Removing the community's last community admin answers 409: appoint another first.
+   - Check: `users list` still shows `lyra`, marked removed with the date, and her next command reports the removal. [RBAC.md](RBAC.md#removing-someone) says what removal keeps and what it ends.
 
 ### 8.5 Changing someone's access
 
@@ -361,7 +328,7 @@ People's access changes over time: a student starts as a reader and later publis
 /symposium assign --handle lyra --access community-member:c1
 ```
 
-`c1` must already exist. She still reads the community's record, which every member needs in order to publish.
+`c1` must already exist.
 
 **Open a member up to the whole community.** Lyra works in `c1` only and should now work everywhere:
 
@@ -383,7 +350,7 @@ Mia keeps any other role she holds, so she can still publish as a member. To sto
 /symposium assign --handle mia --access community-admin
 ```
 
-Publishing comes with the member role, so if Mia also publishes her own work, she keeps her `community-member` role alongside.
+If Mia also publishes her own work, she keeps her `community-member` role alongside.
 
 **Step down as community admin.** Appoint the next community admin first, as above, then remove your own role:
 
@@ -391,35 +358,33 @@ Publishing comes with the member role, so if Mia also publishes her own work, sh
 /symposium unassign --handle steward --access community-admin
 ```
 
-Every community always has at least one community admin: removing the last one is refused, with a message saying to appoint another first.
 
 **Change a server admin (root only).** Root removes a server admin's role with `/symposium unassign --handle ana --server --access server-admin`, or removes the person entirely with `/symposium users remove --handle ana --server`. A new server admin always joins by invite, as in §8.2.
 
-**Members share their own collections.** A member who created a collection can let a colleague read it, and take that back, without the community admin: `/symposium assign --handle olive --access community-observer:c2`, then `/symposium unassign --handle olive --access community-observer:c2`. This is the only change a member makes to someone else's access.
+**Members share their own collections.** A member who created a collection can let a colleague read it, and take that back, without the community admin: `/symposium assign --handle olive --access community-observer:c2`, then `/symposium unassign --handle olive --access community-observer:c2`.
 
 ### 8.6 Commands
 
-| Command | Does | Takes |
+Each command takes the grant named; [RBAC.md](RBAC.md) says what each grant allows and which roles hold it.
+
+| Command | Does | Grant |
 |---|---|---|
 | `access` | the six roles, and your own roles and grants | any user |
-| `invite --handle <h> --access <role>[:<collections>] … --out <file>` | an invite file; the server applies its roles when `<h>` joins | `members` in the community, or `delegate` for `server-admin` |
-| `invite list --out-dir <dir>` | every pending invite, written again as files | `members` |
-| `assign`, `unassign` `(--handle <h> \| --api-key <id>) --access …` | add or remove roles, or some collections of one | per role: `members`; `manage` on each named collection for `community-observer:<names>`; `delegate` for `server-admin` |
-| `users list` | every user of the community, removed ones marked, with roles, and the server-level users | any user of the community (`delegate` with `--server`) |
-| `users remove --handle <h>` | remove a user: a tombstone | `members` (`delegate` with `--server`) |
-| `gen-api-key`, `list-api-keys`, `revoke-api-key` | issued keys, with their roles | a signed-in user |
+| `invite --handle <h> --access <role>[:<collections>] [--community <c>] --out <file>` | an invite file; the server gives its roles when `<h>` joins | `members`; `delegate` for `server-admin` |
+| `invite list --out-dir <dir> [--server]` | every pending invite, written again as files | `members`; `delegate` with `--server` |
+| `assign`, `unassign` `(--handle <h> \| --api-key <id>) [--server] --access …` | add or remove roles, or some collections of one | by role: [who may change access](RBAC.md#who-may-change-access) |
+| `users list [--server]` | every user of the community, removed ones marked, with roles, and the server-level users | any user of the community; `delegate` with `--server` |
+| `users remove --handle <h> [--server]` | remove a user | `members`; `delegate` with `--server` |
+| `gen-api-key`, `list-api-keys`, `revoke-api-key` | issued keys, with their roles | a signed-in user; `members` to list or revoke another user's key |
 | `rebind-key --handle <h> --out <file>` | retire a user's keys, and a fresh invite for the same roles | `members` |
 | `suspect-after --handle <h> --at <time>` | flag the user's writes after an instant | `members` |
+| `bootstrap --community-file <file>` | create a community with its first community admin, and its invites | `communities` |
 | `use-community <community>` | a server-level user's session for an existing community | a server-level user |
+| `import --from <archive> --community-file <file>`, `port <credentials> <url>` | create a community from an export, or from an NDEx record (port-ndex) | `communities` |
+| `export --out <file>` | export the community | `export` |
+| `purge --cite <citation>` | free one version's content | `manage` |
 
-### 8.7 What refuses an action
-
-- **Assignment authority:** each role is assigned by whoever holds what it takes (§8.6); `server-root` is assigned by none.
-- **Key limits:** a key carries only `community-member` or `community-observer`, never more than its issuer holds, and only its issuer or a community admin changes it.
-- **The last community admin:** removing or demoting it answers 409.
-- **`inbox`:** a submission takes `publish`, a reply takes `gate`, and nothing else goes in.
-
-### 8.8 Other operations
+### 8.7 Other operations
 
 - **Communities.** Names are 1–20 letters, digits or underscores, unique ignoring case. Each community's routes are under `/v1/communities/<community>/…`, and its API keys and file ids are refused in any other. Content is deduplicated within a community, and quota is per member per community.
 - **A user's lost or compromised key.** `/symposium rebind-key --handle <h> --out <file>` retires the user's keys and writes a fresh invite that registers a new key with the same roles. `/symposium suspect-after --handle <h> --at 2026-10-01T12:00:00+00:00` flags every version the user wrote after that instant (`"suspect": true` in `stat`); the versions stay.
@@ -428,7 +393,7 @@ Every community always has at least one community admin: removing the last one i
 
 ## 9. Maintenance
 
-- **Purge** frees one version's content, with `manage` on its collection.
+- **Purge** frees one version's content, with the `manage` grant on its collection ([RBAC.md](RBAC.md#grants)).
   - **What stays:** the version stays addressable and answers `410` with its metadata.
   - **What goes:** its bytes are deleted only when no other live version shares them. If the file store refuses, the route reports `"bytes_freed": false` and the janitor finishes the job.
 
@@ -438,14 +403,14 @@ Every community always has at least one community admin: removing the last one i
 
 - **The janitor** runs in the background. It removes what a crash mid-write leaves behind (uploads that never completed, names reserved but never used) once they are older than `SYMPOSIUM_SERVER_PENDING_TTL`, and retries failed deletes. Work in progress keeps refreshing its timestamps, so the janitor never removes it.
 - **The scrub** re-hashes stored content on a schedule. It records a mismatch and never repairs one: `stat` reports `"integrity": "mismatch"`.
-- **Back up** with export, which works however the server runs. It exports one community, with `export` (a community admin, or a server admin), while the server runs: one consistent snapshot of its users, their roles, its rows and its payloads, without invites or API keys.
+- **Back up** with export, which works however the server runs. It exports one community, with the `export` grant ([RBAC.md](RBAC.md#grants)), while the server runs: one consistent snapshot of its users, their roles, its rows and its payloads, without invites or API keys.
 
   ```bash
   curl -fsS -H "Authorization: Bearer <session key>" -o demo.tar https://data.example.org/v1/communities/demo/archive
   ```
 
   To back up the whole server, stop it and copy its `/apps` directory. On Kubernetes, that means snapshotting its PVC, where the cluster supports CSI volume snapshots.
-- **Import** an export into an operational server, with `communities` (a server admin). Each user is created in the new community with its roles, and signs in with the private key file it already holds.
+- **Import** an export into an operational server, with the `communities` grant ([RBAC.md](RBAC.md#grants)). Each user is created in the new community with its roles, and signs in with the private key file it already holds.
   - **What it needs:** the community must not exist there yet, and none of its handles may be a server-level user's, or a removed user's, there.
   - **What it does:** everything the exported root owned becomes this server's root's.
   - **On failure:** the import is one transaction, so nothing is written. It answers `409` when refused, and `400` when the stream is damaged or the name isn't valid.

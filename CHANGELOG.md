@@ -47,6 +47,9 @@ which skill that server needs.
   itself non-groundable gets a review note, which refuses nothing.
 - **The claim map** opens its purpose and rationale on demand and can be expanded to the whole
   pane. The overview explains its layout, and its graph fills the window.
+- **One document describes roles and access:** every role, what each permission allows, API
+  keys, and who may change whose access. The other guides link to it. Every link in the skill
+  package is checked each time the package is built.
 
 ### Fixed
 
@@ -79,6 +82,7 @@ A breaking release: it needs Symposium Skill 0.2.0, and clients of 0.1 can no lo
   that community, and every address names a thing rather than an action. Any community name is
   allowed except "admin".
 - **Community members always read their community's record,** which publishing checks against.
+  The list of roles shows this alongside each role's permissions.
 - **Creating a community names its first community admin.**
 - **Sharing a collection** means giving someone read access to it.
 - **The server's status shows who root is.**

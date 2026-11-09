@@ -24,13 +24,13 @@ session reuses it.
 opens a community with `bootstrap` or `use-community`. Every other command works in the
 session one of these makes, and a command run before any says which one to run.
 
-**Access roles** decide what each person may do: `server-root` and `server-admin` run the
-server, `community-admin` runs a community (invites, roles, the gate), `gate-keeper` runs the
-gate, `community-member` publishes, reads the record and works in its collections, and
-`community-observer` reads. `community-member` and `community-observer` take a collection value: `:*` every
-collection, `:` only your own, `:c1,c2` those named. `/symposium access` shows yours, and a
-command your roles do not allow is refused with the grant it takes. The data server's runbook,
-"Roles and access" (`toolchain/data-server/RUNBOOK.md` §8), covers them in full.
+**Access roles** decide what each person may do: `server-root`, `server-admin`,
+`community-admin`, `gate-keeper`, `community-member` and `community-observer`, each a fixed set
+of **grants**, the last two taking a **collection value** (`:*`, `:` or `:c1,c2`).
+[`toolchain/data-server/RBAC.md`](toolchain/data-server/RBAC.md) defines them all.
+`/symposium access` shows yours, and a command your roles do not allow is refused with the
+grant it takes. The procedures are in the data server's runbook, "Roles and access"
+([`toolchain/data-server/RUNBOOK.md`](toolchain/data-server/RUNBOOK.md#8-roles-and-access)).
 
 **Sessions are kept by the skill**, under `~/.symposium/`, so a command works from any
 directory and nobody creates or enters one:
@@ -72,19 +72,19 @@ the community's record.
 | `/symposium serve [<record dir>] [--port N]` | Browse the session's `record/` (or the record directory given) at `http://localhost:8760` (or `--port`), rebuilt whenever it changes. It stops with an error when there is no the session's `record/`: run `sync` first. |
 | `/symposium data <command> …` | Direct data work through the CLI: `put`, `get`, `version`, `delete`, `stat`, `versions`, `changes`, `find name\|hash\|meta`, `verify`, `collection list\|create\|set-public`, `owner whoami\|rotate`. `/symposium data <command> --help` shows its options. |
 | `/symposium access` | Your access roles and grants in this session, and the six roles. |
-| `/symposium invite --handle <h> --access <role>[:<collections>] --out <file> [--hours N]` | `community-admin` (in its community) or a server admin: one invite file, carrying access roles the server applies when `<h>` joins; root invites server admins with `--access server-admin`. `invite list --out-dir <dir>` writes every pending one. |
-| `/symposium assign\|unassign (--handle <h>\|--api-key <id>) --access <role>[:<collections>]` | Add or remove access roles, or some collections of one: `community-admin` for any community role; a collection's owner for `community-observer` on its own collections, which is how it shares them read-only. |
-| `/symposium users list` | Anyone in the community: its users, removed ones marked, each with its roles, and the server-level users; `--server`, a server admin's view of the server-level users. |
-| `/symposium users remove --handle <h>` | `community-admin`, server admins: removing a user keeps it as a tombstone, its handle retired and its work kept, and deletes every key it issued. |
-| `/symposium rebind-key --handle <h> --out <file>` | `community-admin`: a user's key is lost or compromised. Their keys are retired, and the new invite file lets them register a new one, with the same roles. |
+| `/symposium invite --handle <h> --access <role>[:<collections>] --out <file> [--hours N]` | `community-admin` (in its community) or a server admin: one invite file, carrying access roles the server applies when `<h>` joins; root invites server admins with `--access server-admin`. From a server-wide session, `--community <c>` names the community. `invite list --out-dir <dir>` writes every pending one. |
+| `/symposium assign\|unassign (--handle <h>\|--api-key <id>) --access <role>[:<collections>]` | Add or remove access roles, or some collections of one; who may change what is in [RBAC.md](toolchain/data-server/RBAC.md#who-may-change-access). A collection's owner shares it read-only this way. |
+| `/symposium users list` | Anyone in the community: its users, removed ones marked, each with its roles, and the server-level users; `--server`, root's view of the server-level users and their roles. |
+| `/symposium users remove --handle <h> [--server]` | `community-admin`, server admins (root, with `--server`, for a server admin): remove a user; [RBAC.md](toolchain/data-server/RBAC.md#removing-someone) says what removal keeps and ends. |
+| `/symposium rebind-key --handle <h> --out <file>` | `community-admin`, server admins: a user's key is lost or compromised. Their keys are retired, and the new invite file lets them register a new one, with the same roles. |
 | `/symposium suspect-after --handle <h> --at <instant>` | `community-admin`: flag everything the user writes after an instant (ISO 8601 with a timezone). The versions stay. |
 | `/symposium purge --cite <citation>` | `community-admin`: free one version's content; it then answers that it was purged, with its metadata. |
 | `/symposium export`, `/symposium import` | Server admins (`export` also a community admin): see section 4. |
 | `/symposium admin-config …` | Root: see section 2. |
 | `/symposium use-community <community>` | Server admins: a session for an existing community. |
-| `/symposium gen-api-key <label> --access <role>[:<collections>] [--non-member] [--community <c>] [--expires-days N]` | An issued key for the data server (`/v1`), bound to one community (the session's, or `--community`), named by `<label>`, unique among your keys, and carrying the access roles `--access` names. **A member key** (the default) acts as you, never beyond your own grants: with `community-member:*` a web app holding it publishes, reads and writes as you. **With `--non-member`**, a key of its own for an application, carrying `community-observer` on the collections it names (yours, or any with `community-admin`). The key goes to a 0600 file in the session's `api-keys/`; only its id, community, roles, label and the file's path are printed. Hand the file to the app out of band. |
+| `/symposium gen-api-key <label> --access <role>[:<collections>] [--non-member] [--community <c>] [--expires-days N]` | An issued key for the data server (`/v1`), bound to one community (the session's, or `--community`), named by `<label>`, unique among your keys, and carrying the access roles `--access` names: a member key (the default), or with `--non-member` a key of its own for an application ([API keys](toolchain/data-server/RBAC.md#api-keys)). The key goes to a 0600 file in the session's `api-keys/`; only its id, community, roles, label and the file's path are printed. Hand the file to the app out of band. |
 | `/symposium list-api-keys [--community <c>]` | The keys you issued, with their roles, written with their values to a 0600 file in the session's `api-keys/`, and printed without values. A community admin's listing shows every key of the community. |
-| `/symposium revoke-api-key <key id> [--community <c>]` | Delete one of your keys, or with `community-admin` any key of the community: its next request answers 401. Removing a user deletes every key it issued. |
+| `/symposium revoke-api-key <key id> [--community <c>]` | Delete one of your keys, or with the `members` grant any key of the community: its next request answers 401. |
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit code
 is the result (0 = done; `serve`, `sync --watch` and `gate --watch` run until stopped). Every other command

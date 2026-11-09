@@ -284,3 +284,20 @@ def test_narrowing_the_issuer_narrows_its_keys_on_the_next_request(server):
     assert (
         put.status_code == 403
     )  # the issuer writes nothing now, and neither does its key
+
+
+def test_the_role_listing_names_what_a_members_user_always_reads(server):
+    """`GET /v1/roles` shows each role's grants, and the collections a user holding it always
+    reads: `record`, for a `community-member` user, whatever its collection value."""
+    root = init_root(server)
+    r = HTTP.get(f"{server.url}/v1/roles", headers=root.headers())
+    assert r.status_code == 200, r.text
+    reads = {role["role"]: role["user_reads"] for role in r.json()["roles"]}
+    assert reads == {
+        "server-root": [],
+        "server-admin": [],
+        "community-admin": [],
+        "gate-keeper": [],
+        "community-member": ["record"],
+        "community-observer": [],
+    }

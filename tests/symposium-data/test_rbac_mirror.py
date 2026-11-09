@@ -44,12 +44,33 @@ def test_allows_request_decides_every_case_as_the_server_does():
         assert not ours.allowsRequest("gate", asked)
 
 
-def test_the_runbooks_role_table_names_the_six_roles():
-    """RUNBOOK.md §8.1 describes exactly the roles the server defines."""
+def rbac_doc_table(heading: str) -> dict:
+    """A table of RBAC.md, by its first column's name: {name: the row's other cells}."""
     from suite import REPO
 
-    runbook = (REPO / "data-server" / "RUNBOOK.md").read_text(encoding="utf-8")
-    section = runbook.split("### 8.1 The model", 1)[1].split("###", 1)[0]
-    rows = [line for line in section.splitlines() if line.startswith("| `")]
-    named = {line.split("`")[1] for line in rows if line.split("`")[1] in server.ROLES}
-    assert named == set(server.ROLES)
+    doc = (REPO / "data-server" / "RBAC.md").read_text(encoding="utf-8")
+    section = doc.split(f"## {heading}\n", 1)[1].split("\n## ", 1)[0]
+    rows = {}
+    for line in section.splitlines():
+        if line.startswith("| `"):
+            cells = [cell.strip() for cell in line.strip("|").split("|")]
+            rows[cells[0].strip("`")] = cells[1:]
+    return rows
+
+
+def test_rbac_md_defines_the_nine_grants():
+    """RBAC.md's grants table names exactly the grants the server defines."""
+    assert set(rbac_doc_table("Grants")) == set(server.GRANTS)
+
+
+def test_rbac_md_gives_each_role_the_servers_grants():
+    """RBAC.md's roles table names exactly the six roles, each with exactly its grants, and
+    with the collections a user holding it always reads."""
+    roles = rbac_doc_table("Roles")
+    assert set(roles) == set(server.ROLES)
+    for role in server.ROLES.values():
+        grants_cell = roles[role.id][1]
+        named = {g for g in server.GRANTS if f"`{g}`" in grants_cell}
+        assert named == set(role.grants), role.id
+        for collection in role.user_reads:
+            assert f"always reads `{collection}`" in grants_cell, role.id

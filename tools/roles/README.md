@@ -92,7 +92,7 @@ supersession, so a reader can see a goal change; a goal changed by re-prompting 
 cannot show changing.
 
 It is a **separate account from the community admin**, the account holding the
-`community-admin` access role and running the gate. The party that decides what must be
+`community-admin` access role ([roles and access](../../data-server/RBAC.md)) and running the gate. The party that decides what must be
 investigated
 should not also decide what may be published, which is the concentration a critic already filed
 against this deployment.
@@ -104,7 +104,8 @@ answer: what was this Member doing when they imported that data?
 ## The operator publishes from a member account
 
 The account that runs the gate, holding the `community-admin` or `gate-keeper` access role,
-publishes nothing: those access roles hold no `publish`. The operator's governance artifacts are
+publishes nothing, since administrative roles hold no `publish`
+([roles and access](../../data-server/RBAC.md#roles)). The operator's governance artifacts are
 published from a separate member account, holding `community-member`, in the `operator` role
 (`operator.md`), the narrowest one. The party that runs the gate does not publish the material
 the community reasons over: a critic's contest against the gate-runner's own import would be

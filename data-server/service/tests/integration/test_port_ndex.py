@@ -414,6 +414,7 @@ PORT_LINES = {
     "service/symposium_data/app.py",
     "README.md",
     "RUNBOOK.md",
+    "RBAC.md",
 }
 # what tools and runs make, never source: caches, the pinned tools, and dist/ (the chart package
 # and the logs of a test run, written while this suite runs)

@@ -22,6 +22,7 @@ A single Docker image that runs Symposium Data, the versioned file store Symposi
 | `helm/symposium-helm/` | The Helm chart: the server on Kubernetes, on a single ReadWriteOnce PVC, exposed through a Gateway API HTTPRoute or an Ingress, with the root key from its values. Its `README.md` lists every value. |
 | [`RUNBOOK.md`](RUNBOOK.md) | How to choose a deployment and run it (Docker, Docker Desktop's Kubernetes or a remote cluster, with the chart), place the root key, port a community off NDEx (port-ndex), host many communities, export and import, verify and tear down. |
 | [`PORT_NDEX.md`](PORT_NDEX.md) | The port-ndex: copying a community's record from NDEx into an empty community here. |
+| [`RBAC.md`](RBAC.md) | Roles and access: the grants, the six roles, collection values, API keys, and who may change whose access. |
 
 ## Make targets
 
@@ -75,7 +76,7 @@ A 0.1.x server upgrades in place. Run the 0.2.0 image on the same `/apps` volume
 
 - **Operator:** move the deployment to the 0.2.0 image. For a Podman Quadlet unit, set `Image=docker.io/ndexbio/symposium-data:0.2.0` and restart the unit; for Helm, run `helm upgrade` with the chart that deploys 0.2.0 (`RUNBOOK.md` §5.4). `/v1/status` then answers `version: 0.2.0` and `root: <the admin's handle>`.
 - **Skill users:** install skill 0.2.0. Keys and sessions carry over as they are: the first command in each session completes its settings for 0.2.0, and access is read from the server on the next command. A skill of another version reports the version the server needs.
-- **The admin:** start `gate --watch` again with skill 0.2.0. Publishing takes a member account, since administrative roles hold no `publish`.
+- **The admin:** start `gate --watch` again with skill 0.2.0. Publishing takes a member account ([RBAC.md](RBAC.md#roles)).
 
 **Rolling back:** restore the backup inside the running 0.2.0 container, then return the deployment to the 0.1.x image on the same volume. Files and their content stay in place; anything written after the upgrade is left out of the restored database.
 
@@ -112,12 +113,9 @@ Every `/symposium` command that calls the data server, and the `symposium-data` 
 ### Issued key
 An issued key is an API key a signed-in user issues for an application or script. It lasts until it is revoked, or until an optional expiry. The issuer runs `/symposium gen-api-key <label> --access <role>:<collections>`; the key goes to a file on the issuer's machine, and the issuer hands that file to the application's owner.
 
-An issued key carries its own access roles, `community-member` or `community-observer`, and is one of two kinds:
+An issued key carries access roles of its own, as a member key or a non-member key (`--non-member`); [`RBAC.md`](RBAC.md#api-keys) says what each kind may carry and who may change it.
 
-- **member issued key**: acts as the user who issued it, within that user's grants. With `community-member` it publishes as that user.
-- **non-member issued key**: issued with `--non-member`, for an outside application. It is its own identity and carries `community-observer` alone, so it reads the collections its assignment names. A collection's owner issues one for its own collections; a community admin issues one for any.
-
-An issued key reaches exactly the collections its roles list. The issuer lists its keys with `/symposium list-api-keys` and revokes one with `/symposium revoke-api-key <key id>`, which deletes it: its next request answers `401`. A community admin lists and revokes any key of the community. Removing a user deletes every key it issued.
+The issuer lists its keys with `/symposium list-api-keys` and revokes one with `/symposium revoke-api-key <key id>`, which deletes it: its next request answers `401`.
 
 ### API keys in requests
 
@@ -137,19 +135,9 @@ The data server serves one REST API at `/v1`. Its routes fall in two groups: the
 
 ### Access
 
-Every caller's access comes from its **access roles**. Users and issued keys are assigned roles; a role is a fixed set of **grants**, and a request succeeds when the caller holds the grant it needs in the community it touches:
+Every caller's access comes from its **access roles**, each a fixed set of **grants**; a request succeeds when the caller holds the grant it needs in the community it touches. [`RBAC.md`](RBAC.md) defines the roles, the grants, collection values and who may change access; the route tables below name the grant each route takes.
 
-| Role | Grants |
-|---|---|
-| `server-root`, `server-admin` | every grant in every community; `server-root` also `delegate` (server-level users) |
-| `community-admin` | `read`, `write`, `manage` on every collection; `gate`, `members`, `export` |
-| `gate-keeper` | `read` on every collection; `gate` |
-| `community-member` | `read`, `write` on its collections, and a user reads `record` whatever its collections; `manage` on the collections it owns; `publish` |
-| `community-observer` | `read` on its collections |
-
-`community-member` and `community-observer` take a collection value: `*` (every collection), empty (only the collections the user owns) or a list of names. A signed-in user always keeps access to the collections it owns; an issued key reaches exactly the collections its roles name. A collection's owner, or a community admin, can also make it public, so anyone reads it without a key. [`RUNBOOK.md`](RUNBOOK.md), "Roles and access", covers assigning roles.
-
-All data lives in collections: Artifacts in `record`, submissions and the gate's replies in `inbox`, data files in `files` or in a collection a member creates. `inbox` takes submissions from `publish` holders and replies from `gate` holders, and only the gate writes into `record`.
+All data lives in collections: Artifacts in `record`, submissions and the gate's replies in `inbox`, data files in `files` or in a collection a member creates.
 
 ### Data API
 
@@ -178,7 +166,7 @@ Every route is under `/v1/communities/{community}`. Record listings page with `c
 | `GET /members`, `/members/{handle}` | The community's Members and what each has published | issued key, session key, no key (public) |
 | `GET /members/{handle}/artifacts`, `/members/{handle}/messages` | A Member's Artifacts, and the Messages addressed to them | issued key, session key, no key (public) |
 
-**Publishing.** These routes take `publish`, which `community-member` holds: the member's session key, or a member issued key carrying `community-member`.
+**Publishing.** These routes take `publish`: a member's session key, or a member issued key carrying `community-member`.
 
 | Route | Does | Authentication |
 |---|---|---|
@@ -280,7 +268,7 @@ Every answer that carries a key's value is sent `Cache-Control: no-store`.
 
 | Route | Does | Grants | Authentication |
 |---|---|---|---|
-| `POST /v1/communities/{community}/collections {name}` | Creates a collection, owned by the caller's user, who reaches it through the owner allowance; `201` with its `Location` | `write` | issued key, session key |
+| `POST /v1/communities/{community}/collections {name}` | Creates a collection, owned by the caller's user; `201` with its `Location` | `write` | issued key, session key |
 | `PATCH /v1/communities/{community}/collections/{collection} {public}` | Opens a collection to reads without a key, or closes it again. `inbox` stays private | `manage` | session key |
 
 A collection's owner shares it read-only by adding it to someone's `community-observer` role (`PUT …/roles/community-observer/collections/{collection}`).

@@ -9,7 +9,7 @@ ported once.
 ## Before you start
 - **A data server, operational**, with root's key in place (`/symposium admin-config`, see
   the skill's README, section 2), and a server admin's session: porting takes the
-  `communities` grant. The data server itself connects to NDEx, so it needs outbound
+  `communities` grant ([roles and access](../toolchain/data-server/RBAC.md#grants)). The data server itself connects to NDEx, so it needs outbound
   access to the NDEx server.
 - **Drain the gate.** Run the gate on NDEx until nothing is waiting. A member's submission the
   gate has not decided is not ported, because the NDEx community admin's account does not own it.

@@ -758,6 +758,8 @@ def role_info(r) -> dict:
         "takes_collections": r.takes_collections,
         "keys_may_carry": r.key_assignable,
         "assignable": r.assignable,
+        # the collections a user holding the role always reads, whatever its collection value
+        "user_reads": list(r.user_reads),
         "grants": {
             g: ("assignment" if v is rbac.VALUE else None if v is None else list(v))
             for g, v in r.grants.items()

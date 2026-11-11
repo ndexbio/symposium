@@ -31,7 +31,7 @@ SHIPPED_FILES = (
     ":(glob)data-server/*.md",
     "data-server/helm",
 )
-NOT_SHIPPED = {"tools/bundle.py", "tools/pyproject.toml", "data-server/README.md"}
+NOT_SHIPPED = {"tools/bundle.py", "data-server/README.md"}
 
 
 def make(*args) -> subprocess.CompletedProcess:

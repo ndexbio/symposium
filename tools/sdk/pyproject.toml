@@ -1,0 +1,36 @@
+# Builds `symposium`, the Python API other skills use to work in a community record: the
+# session a command runs in, the record mirror, and validation. The skill ships this directory
+# inside its bundle, and a dependent skill installs it from there rather than from an index, so
+# it always runs against the Symposium installed beside it.
+#
+# `symposium_rules` stays its own distribution (../pyproject.toml), depended on rather than
+# absorbed: the data server takes it as a path dependency and widening it would change that
+# dependency graph.
+#
+# The core is standard library only and imports on a bare interpreter, because the skill's own
+# scripts and the toolchain's tools run that way. Only `symposium.data`, the data-server client,
+# needs third-party packages, so nothing imports it eagerly.
+[project]
+name = "symposium"
+version = "1.0.0"
+description = "The Python API for working in a Symposium community record"
+license = "MIT"
+requires-python = ">=3.9"
+dependencies = [
+    "symposium-rules",
+    "cryptography>=42",
+    "keyring>=24",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["symposium"]
+
+# `symposium-rules` is the sibling project at `../`, and is installed from there rather than from
+# an index. No `[tool.uv.sources]`: that is uv's, and the install this is built for is `pip`, which
+# ignores it. The installer names both local projects in one command —
+# `pip install <toolchain>/tools <toolchain>/tools/sdk` — and pip satisfies the requirement from
+# the one it is already installing.

@@ -51,8 +51,10 @@ TOOLCHAIN = (
     "data-server/*.md",
     "data-server/helm",
 )
-# inside TOOLCHAIN, but repository maintenance: never shipped
-NOT_SHIPPED = {"tools/bundle.py", "tools/pyproject.toml", "data-server/README.md"}
+# inside TOOLCHAIN, but repository maintenance: never shipped. `tools/pyproject.toml` IS shipped:
+# it builds `symposium-rules`, which `tools/sdk` depends on, and a skill built on Symposium
+# installs both from the bundle rather than from an index.
+NOT_SHIPPED = {"tools/bundle.py", "data-server/README.md"}
 SKIPPED = {"__pycache__", "tests", ".pytest_cache", ".ruff_cache", ".DS_Store"}
 DATE = (1980, 1, 1, 0, 0, 0)
 # where the bundle's own skill folder holds the repository's Symposium base

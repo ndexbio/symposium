@@ -23,15 +23,31 @@ Standard library only until something third-party is actually asked for. Python 
 
 from __future__ import annotations
 
-__all__ = ["Session", "SessionError", "Sessions", "validate"]
+__all__ = [
+    "Record",
+    "Result",
+    "Session",
+    "SessionError",
+    "Sessions",
+    "ToolchainError",
+    "validate",
+]
 
 
 def __getattr__(name: str):
     """Resolve a public name on first use, so importing the package costs nothing."""
-    if name in ("Session", "SessionError", "Sessions"):
+    if name in ("Result", "Session", "SessionError", "Sessions"):
         from . import session
 
         return getattr(session, name)
+    if name == "Record":
+        from .record import Record
+
+        return Record
+    if name == "ToolchainError":
+        from .toolchain import ToolchainError
+
+        return ToolchainError
     if name == "validate":
         from .validation import validate
 

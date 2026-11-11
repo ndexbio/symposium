@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .agent_process import AgentProcess
+from .record import Record
 
 NO_SESSION = (
     "no Symposium session on this machine: run `/symposium setup --invite-file <file>` (with "
@@ -52,6 +53,17 @@ class SessionError(Exception):
     def __init__(self, report: dict):
         super().__init__(report["error"])
         self.report = report
+
+
+@dataclass(frozen=True)
+class Result:
+    """What one of the Symposium tools answered. The tools print for a person to read and carry
+    their verdict in the exit code, so that is what is passed on rather than a parse of their
+    prose: `ok` to branch on, `output` to show or to record."""
+
+    ok: bool
+    code: int
+    output: str
 
 
 @dataclass(frozen=True)
@@ -99,6 +111,37 @@ class Session:
             "directory": str(self.directory),
             "use": self.use_command(),
         }
+
+    # ── working in the record ────────────────────────────────────────────────────────────
+    @property
+    def record(self) -> Record:
+        """The local copy of this community's record, for reading."""
+        return Record(self.directory / "record")
+
+    def sync(self) -> Result:
+        """Bring the local copy of the record up to date with the server."""
+        return self._run("sync.py", [])
+
+    def check(self, artifact: Path | str, role: str | None = None) -> Result:
+        """What the gate would say about an artifact, uploading nothing. A refusal is an
+        answer rather than a failure, so it comes back as `ok` false with the reasons in
+        `output`, and only a broken toolchain raises."""
+        return self._run("publish.py", [*self._role(role), "--check", artifact])
+
+    def publish(self, artifact: Path | str, role: str | None = None) -> Result:
+        """Submit one artifact to the gate. One per call, because the gate stamps one `created`
+        per artifact and validates each against the record as it stood at that moment."""
+        return self._run("publish.py", [*self._role(role), artifact])
+
+    @staticmethod
+    def _role(role: str | None) -> list:
+        return ["--role", role] if role else []
+
+    def _run(self, tool: str, args: list) -> Result:
+        from . import toolchain
+
+        code, output = toolchain.run(tool, args, self.directory)
+        return Result(ok=code == 0, code=code, output=output)
 
 
 class Sessions:

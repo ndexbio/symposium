@@ -30,7 +30,7 @@ RUN set -eu; \
       arm64) sum="${SEAWEEDFS_SHA256_ARM64}" ;; \
       *) echo "unsupported architecture: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
-    curl -fsSL -o /tmp/weed.tgz \
+    curl -fsSL --retry 10 --retry-delay 30 --retry-all-errors -o /tmp/weed.tgz \
       "https://github.com/seaweedfs/seaweedfs/releases/download/${SEAWEEDFS_VERSION}/linux_${TARGETARCH}.tar.gz"; \
     echo "${sum}  /tmp/weed.tgz" | sha256sum -c -; \
     tar -xzf /tmp/weed.tgz -C /usr/local/bin weed; \

@@ -49,7 +49,7 @@ test: PREBUILT := 1
 lint:
 	$(UV) python data-server/service/codegen/generate.py --check
 	$(UV) ruff check .
-	$(UV) ruff format --check data-server tools/symposium-data tests skills
+	$(UV) ruff format --check data-server tools/sdk tools/symposium-data tests skills
 	cd tools && python3 conformance.py
 
 api-lint:

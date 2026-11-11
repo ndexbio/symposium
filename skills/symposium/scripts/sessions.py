@@ -1,30 +1,18 @@
-"""The skill's sessions: where each agent session's state lives, and which session a
-command works in. Nobody creates or enters a session directory; the skill keeps them under
-`~/.symposium/`, beside the keystore, one folder per community and user (`admin`, the one name
-no community may take, holds the server-wide sessions):
+"""Which session a `/symposium` command works in, and how its command line is read.
 
-    ~/.symposium/admin/admin/<handle>/           a server-level user's server-wide session
-                                                 (admin-config for root, with root's public key
-                                                 file; setup for a server admin)
-    ~/.symposium/admin/<community>/<handle>/     a server-level user's session for a community
-                                                 (bootstrap, use-community, import)
-    ~/.symposium/member/<community>/<handle>/    a community user's session (setup, from the
-                                                 invite)
-    ~/.symposium/current/<pid>.json              each agent session's current session
+Where the sessions live, how one is found and which one this agent session chose is
+`symposium.session`, in the package the bundle ships: a skill built on Symposium resolves the
+same session this one does, from one implementation. What is here is the part that only a
+dispatcher has — which commands name their own session, which take a grant, and which arguments
+are the caller's paths:
 
-A session directory holds what a working directory holds for the CLI and the tools: the context
-(`.symposium/context.json`, with the access the server resolved for its user), the runtime
-record, the copy of the record (`record/`), the invite files and the event log. The skill runs
-every command in its session's directory.
-
-`setup`, `bootstrap`, `use-community`, `import` and `admin-config` name their session
-themselves; `bootstrap`, `use-community` and `import` work as the server-level user named
-with `--handle`, else the current session's, else the machine's only one. Every other command works in the agent session's current session: the one
-`/symposium use` chose, or the one `setup`, `bootstrap` or `use-community` made; when the agent
-session has chosen none, the machine's only session. The choice is kept per agent process
-(agent_process.py), so two agent sessions on one machine never change each other's. Relative
-paths on a command line are the caller's: they are resolved against the directory the agent ran
-the command in, before the command moves into its session.
+`setup`, `bootstrap`, `use-community`, `import` and `admin-config` name their session themselves;
+`bootstrap`, `use-community` and `import` work as the server-level user named with `--handle`,
+else the current session's, else the machine's only one. Every other command works in the agent
+session's current session: the one `/symposium use` chose, or the one `setup`, `bootstrap` or
+`use-community` made; when the agent session has chosen none, the machine's only session.
+Relative paths on a command line are the caller's: they are resolved against the directory the
+agent ran the command in, before the command moves into its session.
 
 A command that takes a grant (`REQUIRES`) is checked against the session's cached access first,
 so the refusal names the grant and the sessions that hold it.
@@ -35,21 +23,35 @@ Standard library only, Python 3.9+.
 from __future__ import annotations
 
 import json
-import re
-from dataclasses import dataclass
+import sys
 from pathlib import Path
 
-from agent_process import AgentProcess
+SKILL = Path(__file__).resolve().parents[1]
+# Installed from the bundle the toolchain sits inside the skill; in a checkout it is the
+# repository itself. Same resolution as main.py, which cannot be imported from here.
+TOOLCHAIN = SKILL / "toolchain" if (SKILL / "toolchain").is_dir() else SKILL.parents[1]
+sys.path.insert(0, str(TOOLCHAIN / "tools" / "sdk"))
 
-NO_SESSION = (
-    "no Symposium session on this machine: run `/symposium setup --invite-file <file>` (with "
-    "an invite) or, as root, `/symposium admin-config` first"
+from symposium.session import (  # noqa: E402
+    COMMUNITY,
+    HANDLE,
+    NO_SESSION,
+    SERVER,
+    Session,
+    SessionError,
 )
-# the scope of the server-wide sessions under admin/: the one name no community may take
-SERVER = "admin"
-# names that may name a session directory: a community (a slug) and a handle
-COMMUNITY = re.compile(r"^[A-Za-z0-9_]{1,20}$")
-HANDLE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+from symposium.session import Sessions as Discovered  # noqa: E402
+
+__all__ = [
+    "COMMUNITY",
+    "HANDLE",
+    "NO_SESSION",
+    "SERVER",
+    "Session",
+    "SessionError",
+    "Sessions",
+]
+
 # commands that name their own session, from their own arguments
 NAMED = {"admin-config", "bootstrap", "import", "setup", "use-community"}
 # the NAMED commands that work as a server-level user in a community's session
@@ -109,140 +111,8 @@ FLAGS = {
 }
 
 
-class SessionError(Exception):
-    """A command whose session cannot be chosen: `report` says why, and how to choose."""
-
-    def __init__(self, report: dict):
-        super().__init__(report["error"])
-        self.report = report
-
-
-@dataclass(frozen=True)
-class Session:
-    directory: Path
-    community: str  # "" for a server-wide session
-    handle: str
-    home: str  # "" for a server-level user
-    access: dict
-
-    def label(self) -> str:
-        return f"{self.community or 'server'}/{self.handle}"
-
-    def use_command(self) -> str:
-        if not self.community:
-            return f"/symposium use {self.handle}"
-        return f"/symposium use {self.community} {self.handle}"
-
-    def grants(self) -> dict | None:
-        """The grants the server last resolved for this session's user, or None before the
-        session has read them (`/symposium access`)."""
-        context = (self.access or {}).get("context")
-        return None if context is None else context.get("grants") or {}
-
-    def holds(self, grants) -> bool | None:
-        """Whether the cached access holds any of `grants` in this session's community; None
-        when nothing is cached."""
-        held = self.grants()
-        if held is None:
-            return None
-        return any(g in held for g in grants)
-
-    def view(self) -> dict:
-        return {
-            "community": self.community or None,
-            "handle": self.handle,
-            "server_level": not self.home,
-            "roles": [r["role"] for r in (self.access or {}).get("roles", [])],
-            "directory": str(self.directory),
-            "use": self.use_command(),
-        }
-
-
-class Sessions:
-    def __init__(
-        self,
-        root: Path | None = None,
-        caller: Path | None = None,
-        agent: AgentProcess | None = None,
-    ):
-        self.root = root or Path.home() / ".symposium"
-        self.caller = caller or Path.cwd()
-        self.agent = agent or AgentProcess()
-
-    # ── the sessions on this machine ─────────────────────────────────────────────────────
-    def all(self) -> list:
-        return [
-            s
-            for context in sorted(self.root.glob("admin/*/*/.symposium/context.json"))
-            + sorted(self.root.glob("member/*/*/.symposium/context.json"))
-            if (s := self.at(context.parents[1])) is not None
-        ]
-
-    def settle(self):
-        """Give each server-level session its user's own folder: a session whose context sits
-        directly in `admin/<community>/` moves to `admin/<community>/<handle>/`, and one in
-        `admin/` itself (the server-wide session, with root's public key files and API key
-        files) to `admin/admin/<handle>/`."""
-        folder = self.root / "admin"
-        if not folder.is_dir():
-            return
-        for directory in sorted(p for p in folder.iterdir() if p.is_dir()):
-            handle = self.handle_in(directory)
-            if directory.name == SERVER or handle is None:
-                continue
-            moving = folder / f".{directory.name}.moving"
-            directory.rename(moving)
-            directory.mkdir()
-            moving.rename(directory / handle)
-        handle = self.handle_in(folder)
-        if handle is None:
-            return
-        target = self.server_session(handle)
-        if (target / ".symposium").exists():
-            return
-        target.mkdir(parents=True)
-        for entry in list(folder.iterdir()):
-            if entry.name == SERVER or (
-                entry.is_dir() and any(entry.glob("*/.symposium/context.json"))
-            ):
-                continue
-            entry.rename(target / entry.name)
-
-    @staticmethod
-    def handle_in(directory: Path) -> str | None:
-        """The handle of the session whose context is directly in `directory`, or None."""
-        try:
-            handle = json.loads(
-                (directory / ".symposium" / "context.json").read_text()
-            ).get("handle")
-        except (OSError, ValueError):
-            return None
-        return handle if isinstance(handle, str) and HANDLE.match(handle) else None
-
-    def at(self, directory: Path) -> Session | None:
-        """The session in a directory, from its context, or None."""
-        try:
-            held = json.loads((directory / ".symposium" / "context.json").read_text())
-        except (OSError, ValueError):
-            return None
-        # a session the 0.1 skill made names no home until the CLI's next command writes it:
-        # a member's session sits under member/, in its home community
-        home = held.get("home")
-        if "home" not in held and held.get("role") == "member":
-            home = held.get("community")
-        return Session(
-            directory,
-            held.get("community") or "",
-            held.get("handle", ""),
-            home or "",
-            held.get("access") or {},
-        )
-
-    def server_session(self, handle: str) -> Path:
-        return self.root / "admin" / SERVER / handle
-
-    def admin_session(self, community: str, handle: str) -> Path:
-        return self.root / "admin" / community / handle
+class Sessions(Discovered):
+    """The sessions on this machine, read as a `/symposium` command line reads them."""
 
     def server_handle(self, rest: list) -> str:
         """The server-level user a command works as: `--handle`, else the current session's
@@ -279,60 +149,6 @@ class Sessions:
                 "sessions": [s.view() for s in wide],
             }
         )
-
-    def member_session(self, community: str, handle: str) -> Path:
-        return self.root / "member" / community / handle
-
-    # ── this agent session's current session ─────────────────────────────────────────────
-    def current(self) -> Session | None:
-        """What this agent session chose, while its record matches the agent process."""
-        agent = self.agent.find()
-        if agent is None:
-            return None
-        try:
-            record = json.loads(self.record(agent.pid).read_text())
-        except (OSError, ValueError):
-            return None
-        if record.get("started") != agent.started:
-            return None  # the PID was reused: the record belongs to an ended process
-        found = [
-            s
-            for s in self.all()
-            if s.community == record.get("community")
-            and s.handle == record.get("handle")
-        ]
-        return found[0] if found else None
-
-    def make_current(self, session: Session):
-        """Record `session` as this agent session's current one, and purge the records of
-        agent processes that have ended (or whose PID is now another process's)."""
-        agent = self.agent.find()
-        if agent is None:
-            return
-        directory = self.root / "current"
-        directory.mkdir(parents=True, exist_ok=True)
-        for record in directory.glob("*.json"):
-            if record.stem == str(agent.pid) or not record.stem.isdigit():
-                continue
-            try:
-                started = json.loads(record.read_text()).get("started")
-            except (OSError, ValueError):
-                started = None
-            if started is None or self.agent.started(int(record.stem)) != started:
-                record.unlink(missing_ok=True)
-        self.record(agent.pid).write_text(
-            json.dumps(
-                {
-                    "community": session.community,
-                    "handle": session.handle,
-                    "started": agent.started,
-                }
-            )
-            + "\n"
-        )
-
-    def record(self, pid: int) -> Path:
-        return self.root / "current" / f"{pid}.json"
 
     def use(self, rest: list) -> dict:
         """`/symposium use <community> <handle>` (or `use <handle>`, a server-wide session):
@@ -406,24 +222,6 @@ class Sessions:
             "hold: `/symposium access` shows what it holds; switch with `/symposium use`",
             "sessions": [s.view() for s in self.all() if s.holds(grants)],
         }
-
-    def chosen(self) -> Session:
-        """The current session, or the machine's only one."""
-        current = self.current()
-        if current is not None:
-            return current
-        sessions = self.all()
-        if len(sessions) == 1:
-            return sessions[0]
-        if not sessions:
-            raise SessionError({"error": NO_SESSION})
-        raise SessionError(
-            {
-                "error": "this machine holds several Symposium sessions: choose one for this "
-                "agent session with `/symposium use <community> <handle>`",
-                "sessions": [s.view() for s in sessions],
-            }
-        )
 
     def named(self, command: str, rest: list) -> Path | None:
         """The session a NAMED command names: the server-wide one for admin-config; the

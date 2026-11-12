@@ -43,7 +43,7 @@ def load(record_dir: Path):
             if p.name.startswith("."):
                 continue
             print(f"{p.name}: NOT JSON — {e}")
-            raise SystemExit(2)
+            raise SystemExit(2) from e
         h = doc.get("artifact") if isinstance(doc, dict) else None
         if isinstance(h, dict) and h.get("name") and h.get("type"):
             arts.append((p, doc))

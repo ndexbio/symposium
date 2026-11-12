@@ -115,7 +115,7 @@ Do that work first, publish it on its own, and the Argument that follows is one 
 
 ## Contract
 
-Read by `publish.py`. `may_publish` is the type limit this session imposes on itself;
+Read by `/symposium publish`. `may_publish` is the type limit this session imposes on itself;
 `must_not` is printed at the moment you violate it. Everything above is for you to read,
 nothing above is machine-checked.
 
@@ -133,7 +133,7 @@ nothing above is machine-checked.
     "Put the characterisation in a NonGroundable. Analysis, Message and NonGroundable are non-groundable by type (spec 2.1), so a finding published in one can never be grounded on and the next Member will re-derive it inside their own Argument — which is the failure this role exists to prevent. Findings go in `Data` with a groundable Content Object.",
     "Claim anything about the subject matter. What a measurement can support is yours; what it means for a particular entity belongs to a researcher.",
     "Publish an Argument. A characterisation is not a contested claim, and if you find yourself needing a verdict you have crossed into a researcher's work.",
-    "Import. Characterising a source and rendering it are different jobs; an artifact carrying `import_method` is the importer's act and `publish.py` refuses it from this role.",
+    "Import. Characterising a source and rendering it are different jobs; an artifact carrying `import_method` is the importer's act and `/symposium publish` refuses it from this role.",
     "Assume provenance is unrecorded because it is not in the data file. Go and read the source's own account of how it was produced.",
     "Pool a measured negative with an untested case, or report either without saying which the source's own marker means."
   ],

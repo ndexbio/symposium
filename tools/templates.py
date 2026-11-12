@@ -37,12 +37,15 @@ HTML_TEMPLATE = r"""<!doctype html>
   }}
   * {{ box-sizing: border-box; }}
   html, body {{ margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }}
-  header {{ padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }}
+  /* Header, verdict pane and claim map stack in one column. The pane takes the height its
+     content needs, and the claim map takes the rest, never less than 360px; past that the
+     page scrolls instead of the pane being cut short. */
+  body {{ display: flex; flex-direction: column; }}
+  header {{ flex: none; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }}
   header h1 {{ font-size: 15px; margin: 0 0 2px; font-weight: 650; }}
   header .sub {{ font-size: 12px; color: var(--muted); }}
   header .sub .genre {{ color: var(--ink); font-weight: 600; }}
-  #app {{ display: flex; height: calc(100% - 52px); }}
-  body.has-intro #app {{ height: calc(100% - 52px - var(--introh, 60px)); }}
+  #app {{ display: flex; flex: 1 1 0; min-height: 360px; }}
   #graphwrap {{ position: relative; flex: 1 1 62%; min-width: 0; }}
   /* White behind the graph, not the page grey: a dotted grey citation edge on a grey
      ground was very nearly invisible, and the edge that says 'this is a reference,
@@ -79,13 +82,29 @@ HTML_TEMPLATE = r"""<!doctype html>
   #verdictpanel {{ background: var(--panel); border: 1px solid var(--line);
     border-left: 4px solid var(--accent); border-radius: 6px;
     padding: 10px 14px; margin: 0 0 10px; }}
+  #verdictpanel .vhead {{ display: flex; align-items: center; gap: 12px; }}
   #verdictpanel .vlabel {{ font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
     color: var(--muted); font-weight: 700; }}
-  #verdictpanel .vtext {{ font-size: 14px; font-weight: 600; margin: 2px 0 6px; }}
+  #verdictpanel .vhead a {{ font-size: 12px; }}
+  #verdictpanel .vhead button {{ margin-left: auto; font-size: 12px; padding: 3px 10px; border: 1px solid var(--line);
+    background: #fff; border-radius: 6px; cursor: pointer; }}
+  #verdictpanel .vhead button:hover {{ background: #eef1f5; }}
+  #verdictpanel .vhead button:focus-visible, #verdictpanel summary:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
+  /* The verdict is never height-capped: it is the one thing a reader came for. */
+  #verdictpanel .vtext {{ font-size: 14px; font-weight: 600; line-height: 1.5; margin: 2px 0 6px; }}
+  #verdictpanel details.vsec {{ margin-top: 4px; }}
+  #verdictpanel summary {{ cursor: pointer; font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; padding: 2px 0; }}
+  /* An opened section scrolls within a third of the window, so opening one does not push the
+     claim map off the screen; Expand lifts that limit and shows the pane at full height. */
+  #verdictpanel .vbody {{ margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap;
+    max-height: 33vh; overflow-y: auto; }}
   #verdictpanel dl {{ margin: 0; }}
   #verdictpanel dt {{ font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
     color: var(--muted); font-weight: 700; margin-top: 6px; }}
   #verdictpanel dd {{ margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }}
+  #intro .intro-prose {{ max-height: 6em; overflow-y: auto; }}
+  body.intro-expanded #verdictpanel .vbody, body.intro-expanded #intro .intro-prose {{ max-height: none; overflow: visible; }}
   /* claim sections in the detail panel */
   #detail .section {{ margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }}
   #detail .section:first-of-type {{ border-top: none; margin-top: 6px; padding-top: 0; }}
@@ -128,8 +147,8 @@ HTML_TEMPLATE = r"""<!doctype html>
   /* The Argument's own framing prose. It carries the author's citations, and a
      citation is the one place nuance goes into prose rather than into vocabulary —
      so it has to be readable and its links have to work. */
-  #intro {{ padding:8px 16px; background:#fbfcfd; border-bottom:1px solid var(--line);
-            font-size:13px; line-height:1.5; max-height:96px; overflow-y:auto; }}
+  #intro {{ flex:none; padding:8px 16px; background:#fbfcfd; border-bottom:1px solid var(--line);
+            font-size:13px; line-height:1.5; }}
   #intro p {{ margin:0 0 6px; }} #intro p:last-child {{ margin-bottom:0; }}
   #intro a {{ color:var(--accent); }}
   #intro .cite-dead {{ border-bottom:1px dotted var(--muted); color:var(--muted); cursor:help; }}
@@ -242,7 +261,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       {{ selector: 'node[?navigable]', style: {{ 'border-style': 'dashed' }} }},
       // No per-claim verdict encoding: one judgment covers the Argument and
       // is stated in the header. Colouring claims here would imply the author
-      // judged each one separately, which the record no longer says.
+      // judged each one separately, which the record does not say.
       // Source = an evidence element (a figure panel, excerpt, or object). Kept
       // lighter / subordinate to claims: a small slate cut-rectangle, its intuitive
       // name (e.g. "Fig 1C") drawn beside it.
@@ -942,6 +961,37 @@ HTML_TEMPLATE = r"""<!doctype html>
     // re-fit once the container has its final size (avoids an off-frame first paint)
     requestAnimationFrame(function () {{ cy.resize(); cy.fit(undefined, 30); deepLink(); }});
   }});
+
+  // ---- the verdict pane: Expand opens every section at full height ----
+  //
+  // The verdict is always shown whole; purpose and rationale start closed. Expand opens
+  // them all and lifts the height limit on an opened section, so the pane stands at its
+  // full height above the claim map, and Collapse returns it. The choice is one viewer's
+  // reading preference, remembered across Arguments in localStorage; every access is
+  // wrapped, because storage throws outright in some privacy modes.
+  (function () {{
+    var btn = document.getElementById('btn-intro');
+    function refit() {{ requestAnimationFrame(function () {{ cy.resize(); }}); }}
+    document.querySelectorAll('#intro details.vsec').forEach(function (d) {{
+      d.addEventListener('toggle', refit);
+    }});
+    if (!btn) {{ return; }}
+    var KEY = 'symposium:intro-expanded';
+    function setExpanded(open, remember) {{
+      document.body.classList.toggle('intro-expanded', open);
+      document.querySelectorAll('#intro details.vsec').forEach(function (d) {{ d.open = open; }});
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.textContent = open ? 'Collapse' : 'Expand';
+      if (remember) {{ try {{ localStorage.setItem(KEY, open ? '1' : '0'); }} catch (e) {{}} }}
+      refit();
+    }}
+    var saved = null;
+    try {{ saved = localStorage.getItem(KEY); }} catch (e) {{ saved = null; }}
+    setExpanded(saved === '1', false);
+    btn.addEventListener('click', function () {{
+      setExpanded(!document.body.classList.contains('intro-expanded'), true);
+    }});
+  }})();
   window.__cy = cy; // expose for headless/console verification
 }})();
 </script>
@@ -976,12 +1026,16 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
   * {{ box-sizing:border-box; }}
   html,body {{ margin:0; height:100%; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:var(--ink); background:var(--bg); }}
-  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  /* Header and graph stack in one column, the graph taking whatever height the header
+     leaves. A fixed allowance for the header put the graph's bottom edge, and anything
+     anchored there, below the window whenever the caption wrapped. */
+  body {{ display:flex; flex-direction:column; }}
+  header {{ flex:none; padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
   header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
   header .sub {{ font-size:12px; color:var(--muted); }}
   .uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
   .uplink:hover {{ text-decoration:underline; }}
-  #app {{ display:flex; height:calc(100% - 50px); }}
+  #app {{ display:flex; flex:1 1 0; min-height:360px; }}
   #graphwrap {{ position:relative; flex:1 1 66%; min-width:0; }}
   /* White behind the graph: a grey citation edge on the page grey is invisible. */
   #cy {{ position:absolute; inset:0; background:#ffffff; }}
@@ -992,6 +1046,15 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   .lg.filter {{ cursor:pointer; user-select:none; padding:2px 6px; border-radius:6px; }}
   .lg.filter.off {{ opacity:.35; text-decoration:line-through; }}
   .lg.filter:hover {{ background:#eef1f5; }}
+  .lg.filter:focus-visible {{ outline:2px solid var(--accent); outline-offset:1px; }}
+  /* Says how many links the current filter leaves out, with the one click that restores
+     them: hiding `cites` can hide the only link between two artifacts. */
+  .ctxnote {{ position:absolute; left:8px; bottom:8px; z-index:10; display:none; align-items:center; gap:8px;
+             max-width:calc(100% - 16px); font-size:12px; color:var(--ink); background:#fffbeb;
+             border:1px solid #fcd34d; border-radius:6px; padding:5px 9px; }}
+  .ctxnote.on {{ display:flex; }}
+  .ctxnote button {{ flex:none; white-space:nowrap; font-size:12px; padding:3px 9px; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; }}
+  .ctxnote button:hover {{ background:#eef1f5; }}
   .sw {{ width:12px; height:12px; border-radius:3px; display:inline-block; border:1px solid rgba(0,0,0,.15); }}
   .swl {{ width:20px; height:0; border-top-width:3px; border-top-style:solid; display:inline-block; }}
   #detail {{ flex:1; overflow:auto; padding:12px 14px; font-size:13px; }}
@@ -1015,10 +1078,11 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 <body>
 <header>
   <h1>Symposium community &middot; {corpus_title}</h1>
-  <div class="sub">{uplink}{exlink}Every artifact is a node (coloured by Member, shaped by type); every edge is a cross-artifact reference, derived from an <b>address</b> held in a property &mdash; a Ground's address, a provenance field, or a citation in prose. Columns run left&rarr;right in <b>publication order</b> (<b>earlier&nbsp;&larr;</b> left), so reference edges point <i>back</i> in time and the record is only ever built on what already existed. Rows group artifacts by type. Click an artifact for detail; open an <b>Argument</b> for its claim map, or any other artifact for the content a claim finally rests on.</div>
+  <div class="sub">{uplink}{exlink}Every artifact is a node (coloured by Member, shaped by type); every edge is a cross-artifact reference, derived from an <b>address</b> held in a property &mdash; a Ground's address, a provenance field, or a citation in prose. Columns run left&rarr;right by <b>citation depth</b>: each artifact stands right of everything it cites or rests on, so edges point <i>left</i>, to what already existed. Prose citations (<code>cites</code>) are context, not evidence, and start hidden, as do Messages, which link to what they discuss only in prose. Click an artifact for detail; open an <b>Argument</b> for its claim map, or any other artifact for the content a claim rests on.</div>
 </header>
 <div id="app">
   <div id="graphwrap">
+    <div id="ctxnote" class="ctxnote" role="status" aria-live="polite"></div>
     <div class="toolbar"><button id="btn-fit">Fit</button><button id="btn-export">Export PNG</button><button id="btn-export-svg" title="Vector, for print. Exports exactly what is on screen now, with hidden nodes left out.">Export SVG</button><button id="btn-hide">Hide node</button><button id="btn-showall">Show all</button><button id="btn-note" title="Place a caption on the graph. Captions are presenter annotations, not part of the record.">Add note</button><button id="btn-savepos" title="Download the current arrangement and captions as .browser_layout.json; drop it beside the record and it survives every rebuild">Save layout</button><button id="btn-resetpos" title="Return every node to its computed position">Reset layout</button><span id="postate" style="font-size:11px;color:var(--muted);align-self:center;user-select:none">alt-click a node to hide it &middot; drag to rearrange</span></div>
     <div id="cy"></div>
     <div id="tip" class="tip"></div>
@@ -1090,8 +1154,8 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
       // Long edges are the ones that were unreadable: a `cites` edge spanning four columns
       // passes near unrelated nodes however the layer ordering is chosen. Bowing it by an
       // amount proportional to its span separates it from both the straight short edges and
-      // from its own neighbours, so two long edges running between the same columns no longer
-      // lie on top of each other.
+      // from its own neighbours, so two long edges running between the same columns lie
+      // apart.
       {{ selector:'edge[span > 1]', style: {{
         'control-point-distances':'data(cpd)', 'control-point-weights':0.5,
         'line-style':'solid', 'opacity':0.75 }} }},
@@ -1217,8 +1281,7 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 
   // ---- manual arrangement, saved beside the record ----
   //
-  // Dragging a node used to be lost on the next build, because the page held the only copy
-  // of where it had been put. The arrangement is a reading aid, not part of the record, so
+  // A dragged node keeps its place across builds. The arrangement is a reading aid, not part of the record, so
   // it is written to a sidecar file the build reads back rather than into any artifact.
   //
   // The page cannot write to the filesystem, so "Save layout" hands over a download; the
@@ -1310,36 +1373,129 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   }};
   posState();
 
-  // ---- legend + member filter ----
+  // ---- legend: Member, artifact-type and edge-kind filters ----
+  //
+  // Each legend entry is a toggle. A node is hidden when its Member or its type is, and an
+  // edge when its kind is or when either end is hidden. `cites` (a citation in prose) starts
+  // hidden: it is context, not evidence, and at a few dozen artifacts it is most of the
+  // edges, burying the evidential structure the overview is for. Messages start hidden too:
+  // a Message links to what it discusses only in prose, so with `cites` hidden it would be a
+  // node connected to nothing. The defaults come from the build (meta.default_hidden_rels,
+  // meta.default_hidden_types), so the page and the tests read one value, and the notice
+  // under the graph says what they hide and restores it in one click.
+  //
+  // A viewer's choices are a reading preference, not part of the record, so they live in
+  // this browser's localStorage. Every access is wrapped: storage throws outright in some
+  // privacy modes, and the page must then still work, from the defaults.
   var mem=DATA.meta.members||{{}}, c=DATA.meta.counts;
-  var hidden={{}};
+  var FILTER_KEY='symposium:overview-filters:'+(document.title||'');
+  var hidden={{mem:{{}}, type:{{}}, rel:{{}}}};
+  (DATA.meta.default_hidden_rels||[]).forEach(function(r){{ hidden.rel[r]=true; }});
+  (DATA.meta.default_hidden_types||[]).forEach(function(t){{ hidden.type[t]=true; }});
+  function loadFilters(){{
+    var saved=null;
+    try {{ saved=JSON.parse(localStorage.getItem(FILTER_KEY)||'null'); }} catch (e) {{ saved=null; }}
+    if(!saved || typeof saved!=='object') return;
+    ['mem','type','rel'].forEach(function(k){{
+      var m=saved[k]; if(!m || typeof m!=='object') return;
+      Object.keys(m).forEach(function(v){{ hidden[k][v]=!!m[v]; }});
+    }});
+  }}
+  function saveFilters(){{
+    try {{ localStorage.setItem(FILTER_KEY, JSON.stringify(hidden)); }} catch (e) {{}}
+  }}
+  loadFilters();
+  var relCount={{}}; cy.edges().forEach(function(e){{ var r=e.data('rel'); relCount[r]=(relCount[r]||0)+1; }});
+  // what the defaults hide, present in this record, each with the reason it starts hidden
+  var DEFAULTS=[];
+  (DATA.meta.default_hidden_types||[]).forEach(function(t){{
+    var n=(c.by_type||{{}})[t]||0;
+    if(n) DEFAULTS.push({{kind:'type', val:t, n:n, one:t, many:t+'s',
+      why: t==='Message' ? 'a Message links to what it discusses only in prose' : ''}});
+  }});
+  (DATA.meta.default_hidden_rels||[]).forEach(function(r){{
+    var n=relCount[r]||0;
+    if(n) DEFAULTS.push({{kind:'rel', val:r, n:n,
+      one: r==='cites' ? 'context link' : r+' link', many: r==='cites' ? 'context links' : r+' links',
+      why: r==='cites' ? 'prose citations are context, not evidence' : ''}});
+  }});
+  function joined(parts){{
+    return parts.length<2 ? parts.join('') : parts.slice(0,-1).join(', ')+' and '+parts[parts.length-1];
+  }}
+  var ctxnote=document.getElementById('ctxnote');
+  function updateNote(){{
+    if(!DEFAULTS.length){{ ctxnote.className='ctxnote'; ctxnote.innerHTML=''; return; }}
+    ctxnote.className='ctxnote on';
+    var off=DEFAULTS.filter(function(d){{ return hidden[d.kind][d.val]; }});
+    var shown=off.length ? off : DEFAULTS;
+    var counts=joined(shown.map(function(d){{ return '<b>'+d.n+'</b> '+esc(d.n===1?d.one:d.many); }}));
+    var names=joined(shown.map(function(d){{ return esc(d.many); }}));
+    var why=shown.map(function(d){{ return d.why; }}).filter(Boolean);
+    ctxnote.innerHTML = off.length
+      ? '<span>'+counts+' hidden'+(why.length ? ' &mdash; '+esc(why.join('; '))+'.' : '.')+'</span>'
+        +'<button type="button" data-ctx="show">Show '+names+'</button>'
+      : '<span>'+counts+' shown.</span>'
+        +'<button type="button" data-ctx="hide">Hide '+names+'</button>';
+  }}
   function applyFilter(){{
-    cy.nodes().forEach(function(n){{ n.toggleClass('hidden', !!hidden[n.data('member')]); }});
+    cy.nodes().forEach(function(n){{
+      var nt=n.data('ntype');
+      if(nt==='Annotation' || nt==='TimeTick') return;      // never an artifact, never filtered
+      n.toggleClass('hidden', !!(hidden.mem[n.data('member')] || hidden.type[nt]));
+    }});
     cy.edges().forEach(function(e){{
-      e.toggleClass('hidden', e.source().hasClass('hidden')||e.target().hasClass('hidden')); }});
+      e.toggleClass('hidden', !!hidden.rel[e.data('rel')]
+        || e.source().hasClass('hidden') || e.target().hasClass('hidden')); }});
+    legend.querySelectorAll('.filter').forEach(function(el){{
+      var k=el.getAttribute('data-kind'), v=el.getAttribute('data-val'), off=!!hidden[k][v];
+      el.classList.toggle('off', off);
+      el.setAttribute('aria-pressed', off ? 'false' : 'true');
+    }});
+    updateNote();
+  }}
+  function chip(kind, val, swatch, text){{
+    return '<span class="lg filter" role="button" tabindex="0" aria-pressed="true" data-kind="'+kind
+      +'" data-val="'+esc(val).replace(/"/g,'&quot;')+'" title="click, Enter or Space to show or hide">'+swatch+text+'</span>';
   }}
   var legend=document.getElementById('legend');
-  var relsPresent={{}}; cy.edges().forEach(function(e){{ relsPresent[e.data('rel')]=1; }});
   var html='<b>Members ('+Object.keys(mem).length+') — click to filter</b>';
   Object.keys(mem).sort().forEach(function(h){{
-    html+='<span class="lg filter" data-mem="'+esc(h)+'"><span class="sw" style="border-radius:50%;background:'+mem[h]+'"></span>'
-      +esc(h)+' ('+((c.by_member||{{}})[h]||0)+')</span>';
+    html+=chip('mem', h, '<span class="sw" style="border-radius:50%;background:'+mem[h]+'"></span>',
+      esc(h)+' ('+((c.by_member||{{}})[h]||0)+')');
   }});
-  html+='<b>Publication order</b>';
-  html+='<div class="hint" style="margin:0 0 4px">'+esc(c.time_span||'')+' &middot; '+c.sessions+(c.sessions==1?' session':' sessions')+' (earlier &larr; left) &middot; rows = type</div>';
-  html+='<b>Artifact types ('+c.artifacts+')</b>';
+  html+='<b>Layout</b>';
+  html+='<div class="hint" style="margin:0 0 4px">columns = citation depth (cited &larr; left) &middot; shape = type'
+    +(c.time_span ? ' &middot; published '+esc(c.time_span) : '')
+    +' &middot; '+c.sessions+(c.sessions==1?' session':' sessions')+'</div>';
+  html+='<b>Artifact types ('+c.artifacts+') — click to filter</b>';
   Object.keys(c.by_type||{{}}).sort().forEach(function(cl){{
-    html+='<span class="lg">'+esc(cl)+' <b style="display:inline;color:var(--ink)">'+c.by_type[cl]+'</b></span>';
+    html+=chip('type', cl, '', esc(cl)+' <b style="display:inline;color:var(--ink)">'+c.by_type[cl]+'</b>');
   }});
-  html+='<b>Cross-artifact edges ('+c.cross_edges+')</b>';
-  Object.keys(relsPresent).sort().forEach(function(r){{
-    html+='<span class="lg"><span class="swl" style="border-top-color:'+(REL_COLORS[r]||'#94a3b8')+'"></span>'+esc(r)+'</span>';
+  html+='<b>Cross-artifact edges ('+c.cross_edges+') — click to filter</b>';
+  Object.keys(relCount).sort().forEach(function(r){{
+    html+=chip('rel', r, '<span class="swl" style="border-top-color:'+(REL_COLORS[r]||'#94a3b8')+'"></span>',
+      esc(r)+' ('+relCount[r]+')');
   }});
   legend.innerHTML=html;
+  function toggle(el){{
+    var k=el.getAttribute('data-kind'), v=el.getAttribute('data-val');
+    hidden[k][v]=!hidden[k][v]; saveFilters(); applyFilter();
+  }}
   legend.addEventListener('click',function(e){{
-    var el=e.target.closest?e.target.closest('.filter'):null; if(!el) return;
-    var m=el.getAttribute('data-mem'); hidden[m]=!hidden[m]; el.classList.toggle('off',!!hidden[m]); applyFilter();
+    var el=e.target.closest?e.target.closest('.filter'):null; if(el) toggle(el);
   }});
+  legend.addEventListener('keydown',function(e){{
+    if(e.key!=='Enter' && e.key!==' ') return;
+    var el=e.target.closest?e.target.closest('.filter'):null; if(!el) return;
+    e.preventDefault(); toggle(el);
+  }});
+  ctxnote.addEventListener('click',function(e){{
+    var b=e.target.closest?e.target.closest('button[data-ctx]'):null; if(!b) return;
+    var hide=b.getAttribute('data-ctx')==='hide';
+    DEFAULTS.forEach(function(d){{ hidden[d.kind][d.val]=hide; }});
+    saveFilters(); applyFilter();
+  }});
+  applyFilter();
 
   cy.ready(function(){{ cy.fit(undefined,40);
     // re-fit once the container has its final size (avoids an off-frame first paint)
@@ -1372,11 +1528,11 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 # Rendering
 # --------------------------------------------------------------------------- #
 
-import csv as _csv            # noqa: E402
-import html as _html          # noqa: E402
-import io as _io              # noqa: E402
-import json as _json          # noqa: E402
-import re as _re              # noqa: E402
+import csv as _csv  # noqa: E402
+import html as _html  # noqa: E402
+import io as _io  # noqa: E402
+import json as _json  # noqa: E402
+import re as _re  # noqa: E402
 
 #: Colours for the DERIVED cross-artifact edges on the overview. The record stores no
 #: cross-artifact relationship, so each of these names a way an address got into a
@@ -1389,7 +1545,7 @@ OVERVIEW_REL_COLORS = {
 }
 
 
-def _verdict_panel(meta):
+def _verdict_panel(meta, reading_href=None, has_prose=False):
     """The Argument's judgment, rendered once at the top of its page.
 
     A verdict drawn from a closed set could be a colour on a node. The specification
@@ -1398,34 +1554,55 @@ def _verdict_panel(meta):
     header rather than in a click-to-open panel reflects that: a reader should not
     be able to look at an Argument without seeing what its author concluded, and
     for what purpose.
+
+    So the verdict is shown whole and never sits in a height-capped box. The pane once
+    shared one 96px strip between verdict, purpose and rationale, which on c037_2 showed
+    about two lines of a fourteen-line verdict. Purpose and rationale are longer and read
+    second, so they sit in sections that start closed, and one control (Expand) opens them
+    and shows the pane at its full height.
     """
     verdict = (meta.get("verdict") or "").strip()
     purpose = (meta.get("purpose") or "").strip()
     rationale = (meta.get("rationale") or "").strip()
-    if not (verdict or purpose or rationale):
+    sup = meta.get("supersedes") or []
+    if not (verdict or purpose or rationale or reading_href):
         return ""
-    out = ['<div id="verdictpanel">']
-    out.append('<div class="vlabel">Verdict</div>')
+    pages = meta.get("addr_pages", {})
+    out = ['<div id="verdictpanel">', '<div class="vhead"><span class="vlabel">Verdict</span>']
+    if reading_href:
+        out.append(f'<a href="{_html.escape(reading_href)}"><b>Read this Argument as a document '
+                   '&rarr;</b></a><span class="hint">verdict, purpose, rationale and every Ground '
+                   'in one place</span>')
+        n = meta.get("cited_by")
+        if n:
+            out.append(f'<a href="{_html.escape(reading_href)}#cited-by">cited by {n}</a>')
+    if purpose or rationale or has_prose:
+        out.append('<button type="button" id="btn-intro" aria-expanded="false" aria-controls="intro" '
+                   'title="Open every section and show this pane at its full height">Expand</button>')
+    out.append('</div>')
     out.append('<div class="vtext">' + (_html.escape(verdict) or
                '<span style="color:#9ca3af">(none stated)</span>') + '</div>')
-    out.append('<dl>')
     if purpose:
-        out.append('<dt>Purpose and stakes</dt><dd>' + md_to_html(purpose, meta.get('addr_pages', {})) + '</dd>')
+        out.append('<details class="vsec"><summary>Purpose and stakes</summary><div class="vbody">'
+                   + md_to_html(purpose, pages) + '</div></details>')
     if rationale:
-        out.append('<dt>Rationale</dt><dd>' + md_to_html(rationale, meta.get('addr_pages', {})) + '</dd>')
-    sup = meta.get("supersedes") or []
+        out.append('<details class="vsec"><summary>Rationale</summary><div class="vbody">'
+                   + md_to_html(rationale, pages) + '</div></details>')
     if sup:
-        out.append('<dt>Supersedes</dt><dd>' + _html.escape("; ".join(str(x) for x in sup))
+        out.append('<dl><dt>Supersedes</dt><dd>' + _html.escape("; ".join(str(x) for x in sup))
                    + (' — ' + _html.escape(meta.get("supersedes_rationale", ""))
-                      if meta.get("supersedes_rationale") else "") + '</dd>')
-    out.append('</dl></div>')
+                      if meta.get("supersedes_rationale") else "") + '</dd></dl>')
+    out.append('</div>')
     return "".join(out)
 
 
-def render_claim_html(elements, meta, cytoscape_rel_path, intro_html=""):
+def render_claim_html(elements, meta, cytoscape_rel_path, intro_html="", reading_href=None):
+    """`intro_html` is the Argument's own framing prose (its `description` and `text`);
+    `reading_href` is its reading page, linked from the verdict pane."""
     payload = {"elements": elements, "meta": meta}
     genre = meta.get("genre_line", "")
-    intro_html = _verdict_panel(meta) + (intro_html or "")
+    prose = f'<div class="intro-prose">{intro_html}</div>' if intro_html else ""
+    intro_html = _verdict_panel(meta, reading_href, has_prose=bool(prose)) + prose
     return HTML_TEMPLATE.format(
         title=_html.escape(meta["title"]),
         review_id=_html.escape(meta["review_id"]),
@@ -1440,12 +1617,18 @@ def render_claim_html(elements, meta, cytoscape_rel_path, intro_html=""):
     )
 
 
-def render_overview_html(elements, meta, cytoscape_rel_path, corpus_title="community record"):
+#: The header link to the Rounds page, on the pages that link to it: only when the record has
+#: a ResearchGoal, because a community without goals has no rounds to show (plan, risks).
+ROUNDS_LINK = '<a class="uplink" href="rounds.html">rounds &rarr;</a> &middot; '
+
+
+def render_overview_html(elements, meta, cytoscape_rel_path, corpus_title="community record",
+                         has_rounds=False):
     return OVERVIEW_TEMPLATE.format(
         cyto_src=_html.escape(cytoscape_rel_path),
         corpus_title=_html.escape(corpus_title),
         uplink='<a class="uplink" href="contents.html">contents &rarr;</a> &middot; ',
-        exlink="",
+        exlink=ROUNDS_LINK if has_rounds else "",
         graph_json=_json.dumps({"elements": elements, "meta": meta}, ensure_ascii=False),
     )
 
@@ -1485,7 +1668,7 @@ CONTENTS_TEMPLATE = """<!doctype html>
 <header>
   <h1>Symposium community &middot; {corpus_title}</h1>
   <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
-  Everything in the record, newest first within each type. An <b>Argument</b> is where a claim is
+  {roundslink}Everything in the record, newest first within each type. An <b>Argument</b> is where a claim is
   made and judged; its verdict opens below it. <b>Data</b> and <b>Model</b> hold what an Argument
   can stand on. <b>Analysis</b>, <b>Message</b> and <b>NonGroundable</b> are non-groundable by
   type: they may be read and cited in prose and may never be used as evidence.</div>
@@ -1551,6 +1734,10 @@ READING_TEMPLATE = """<!doctype html>
   h3.evh {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
             margin:28px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px;
             font-weight:650; }}
+  main > h2#cited-by {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em;
+                        color:var(--muted); margin:28px 0 8px; border-bottom:1px solid var(--line);
+                        padding-bottom:5px; }}
+{cited_css}
 </style>
 </head>
 <body>
@@ -1577,10 +1764,10 @@ def render_reading_html(title, byline, map_href, body):
     a scientist came to read and needs a page that simply scrolls."""
     return READING_TEMPLATE.format(
         title=_html.escape(title), byline=_html.escape(byline),
-        map_href=_html.escape(map_href), body=body)
+        map_href=_html.escape(map_href), body=body, cited_css=CITED_CSS)
 
 
-def render_contents_html(entries, corpus_title="community record"):
+def render_contents_html(entries, corpus_title="community record", has_rounds=False):
     """A plain reading list of the record.
 
     The overview is a reference graph, which answers "how does this record hang together"
@@ -1614,7 +1801,134 @@ def render_contents_html(entries, corpus_title="community record"):
                     extra=extra, name=_html.escape(e["name"]), verdict=verdict))
         out.append(f"<h2>{_html.escape(t)} ({len(rows)})</h2>" + "".join(items))
     return CONTENTS_TEMPLATE.format(corpus_title=_html.escape(corpus_title),
-                                    sections="".join(out))
+                                    sections="".join(out),
+                                    roundslink=ROUNDS_LINK if has_rounds else "")
+
+
+#: The grouping of a Rounds column and of a goal page's "Serving this goal": the goal, the
+#: plan, the material, the work, what the work produced, the judgment, the talk. A Data
+#: artifact whose `produced_by` names something is a result; one without is imported material.
+ROUND_GROUPS = [("ResearchGoal", "Goals"), ("AnalysisPlan", "Plans"),
+                ("ScientificPublication", "Publications"), ("Data", "Data"),
+                ("Analysis", "Analyses"), ("result", "Results"), ("Model", "Models"),
+                ("Argument", "Arguments"), ("Message", "Messages")]
+
+
+def grouped_entries_html(entries):
+    """A goal's artifacts as groups of entries, in ROUND_GROUPS order, then any other type by
+    name. Each entry: {group, title, href, member, color, created, verdict, shared}."""
+    known = [g for g, _ in ROUND_GROUPS]
+    labels = dict(ROUND_GROUPS)
+    order = known + sorted({e["group"] for e in entries} - set(known))
+    out = []
+    for g in order:
+        rows = [e for e in entries if e["group"] == g]
+        if not rows:
+            continue
+        items = []
+        for e in rows:
+            shared = ""
+            if e.get("shared"):
+                also = ", ".join(e["shared"])
+                shared = (f' &middot; <span class="shared" title="also serves {_html.escape(also)}">'
+                          f'shared &middot; also {_html.escape(also)}</span>')
+            verdict = (f'<div class="rverdict">{_html.escape(e["verdict"])}</div>'
+                       if e.get("verdict") else "")
+            items.append(
+                '<li class="ritem"><a href="{href}">{title}</a><div class="rmeta">'
+                '<span class="mbadge" style="background:{color}"></span>{member} &middot; '
+                '{created}{shared}</div>{verdict}</li>'.format(
+                    href=_html.escape(e["href"]), title=_html.escape(e["title"]),
+                    color=_html.escape(e.get("color", "#9ca3af")),
+                    member=_html.escape(e["member"]), created=_html.escape(e["created"][:16]),
+                    shared=shared, verdict=verdict))
+        out.append(f'<div class="rgroup"><h3>{_html.escape(labels.get(g, g))} ({len(rows)})</h3>'
+                   f'<ul>{"".join(items)}</ul></div>')
+    return "".join(out) or '<p class="hint">Nothing in the record names it yet.</p>'
+
+
+#: Entries in a Rounds column and on a goal page, shared by both pages.
+ROUND_CSS = """
+  .rgroup h3 { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+               margin:12px 0 4px; font-weight:650; }
+  .rgroup ul { list-style:none; margin:0; padding:0; }
+  .ritem { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+           padding:7px 10px; margin-bottom:5px; font-size:13px; line-height:1.35; }
+  .ritem a { color:var(--accent); text-decoration:none; font-weight:600; }
+  .ritem a:hover { text-decoration:underline; }
+  .rmeta { font-size:11px; color:var(--muted); margin-top:3px; }
+  .rverdict { font-size:12px; line-height:1.45; margin-top:5px; padding-left:8px;
+              border-left:3px solid var(--line); color:#374151; }
+  .shared { font-weight:650; color:#7c3aed; }
+"""
+
+
+ROUNDS_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symposium community — rounds</title>
+<style>
+  :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
+  * {{ box-sizing:border-box; }}
+  html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+               color:var(--ink); background:var(--bg); font-size:14px; }}
+  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
+  header .sub {{ font-size:12px; color:var(--muted); line-height:1.5; }}
+  a.uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
+  .mbadge {{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px;
+             vertical-align:middle; border:1px solid rgba(0,0,0,.15); }}
+  .hint {{ font-size:12px; color:var(--muted); }}
+  /* One column per goal, side by side, scrolled sideways when they do not fit: the point of the
+     page is to read the rounds against each other. Focusable so the keyboard can scroll it. */
+  .rounds {{ display:grid; grid-auto-flow:column; grid-auto-columns:minmax(260px, 1fr);
+             gap:14px; padding:14px 16px 40px; overflow-x:auto; align-items:start; }}
+  .rounds:focus-visible {{ outline:2px solid var(--accent); outline-offset:-2px; }}
+  .rcol {{ min-width:0; }}
+  .rcol > h2 {{ font-size:14px; margin:0; line-height:1.35; }}
+  .rcol > h2 a {{ color:var(--ink); text-decoration:none; }}
+  .rcol > h2 a:hover {{ text-decoration:underline; }}
+  .rnum {{ display:block; font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+           color:var(--muted); font-weight:650; margin-bottom:2px; }}
+  .rcol.corpus > h2 {{ color:var(--muted); }}
+  .rcount {{ font-size:12px; color:var(--muted); margin:3px 0 6px;
+             border-bottom:1px solid var(--line); padding-bottom:6px; }}
+{round_css}
+</style>
+</head>
+<body>
+<header>
+  <h1>Symposium community &middot; {corpus_title} &middot; rounds</h1>
+  <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
+  <a class="uplink" href="contents.html">contents</a> &middot;
+  One column per <b>ResearchGoal</b>, oldest first, holding the artifacts whose
+  <code>serves_goals</code> name it, grouped by type. An artifact naming several goals is in each
+  of their columns, marked <span class="shared">shared</span>. The first column holds what names
+  no goal: the corpus the rounds draw on, the goals themselves, and anything unassigned.</div>
+</header>
+<main class="rounds" tabindex="0" aria-label="Research rounds, one column per goal">{columns}</main>
+</body>
+</html>
+"""
+
+
+def render_rounds_html(columns, corpus_title="community record"):
+    """The Rounds page (R3): `columns` = [{label, title, href, count, entries, corpus}]."""
+    out = []
+    for c in columns:
+        head = (f'<a href="{_html.escape(c["href"])}">{_html.escape(c["title"])}</a>'
+                if c.get("href") else _html.escape(c["title"]))
+        out.append(
+            f'<section class="rcol{" corpus" if c.get("corpus") else ""}" '
+            f'aria-label="{_html.escape(c["label"])}"><h2><span class="rnum">'
+            f'{_html.escape(c["label"])}</span>{head}</h2>'
+            f'<div class="rcount">{c["count"]} artifact{"" if c["count"] == 1 else "s"}'
+            f'{(" &middot; " + _html.escape(c["created"][:16])) if c.get("created") else ""}</div>'
+            + grouped_entries_html(c["entries"]) + "</section>")
+    return ROUNDS_TEMPLATE.format(corpus_title=_html.escape(corpus_title),
+                                  columns="".join(out), round_css=ROUND_CSS)
 
 
 # --------------------------------------------------------------------------- #
@@ -1665,14 +1979,18 @@ def _mark_grounded(escaped, spans):
     `text_span` address resolves to. Two things fall out of this that are worth
     having: a Ground deep-links to the exact sentence, and an imported source shows
     at a glance which of it is load-bearing and which was never used."""
-    for quote, citer in spans or []:
+    for item in spans or []:
+        # (quote, citers) or, from the compiler, (quote, citers, row id in "Cited by", count)
+        quote, citer = item[0], item[1]
+        href, count = (item[2], item[3]) if len(item) > 3 else (None, 1)
         needle = _html.escape(quote)
         if needle and needle in escaped:
             anchor = _html.escape(f'text_span.quote="{quote}"')
+            tip = _html.escape(f"Cited by {citer}")
+            badge = (f'<a class="cmark" href="#{_html.escape(href)}" title="{tip}" '
+                     f'aria-label="{tip}">{count}</a>' if href else "")
             escaped = escaped.replace(
-                needle,
-                f'<mark id="{anchor}" title="grounded on by {_html.escape(citer)}">'
-                f'{needle}</mark>', 1)
+                needle, f'<mark id="{anchor}" title="{tip}">{needle}</mark>{badge}', 1)
     return escaped
 
 
@@ -1682,7 +2000,7 @@ def preformatted(text, spans=None):
     Still passed through `_mark_grounded`, because a Content Object may declare a
     `text_span` method over code and a Ground through it has to land on the line it
     quotes — the same reason every other rendering path marks."""
-    return (f"<pre class='code'><code>"
+    return ("<pre class='code'><code>"
             + _mark_grounded(_html.escape(text or ""), spans) + "</code></pre>")
 
 
@@ -1712,7 +2030,7 @@ def md_to_html(md, pages=None, spans=None):
             # split out line by line rather than by testing the block as a whole.
             para = []
 
-            def flush():
+            def flush(para=para):
                 if para:
                     out.append("<p>" + "<br>".join(para) + "</p>")
                     para.clear()
@@ -1730,7 +2048,19 @@ def md_to_html(md, pages=None, spans=None):
     return "".join(out)
 
 
-def csv_table(text, max_rows=None, method="csv"):
+def _cited_cell(anchor, cited):
+    """(class attribute, badge) for an element whose id is `anchor`: a mark when a Ground on
+    this page's "Cited by" list addresses it, else nothing."""
+    entries = (cited or {}).get(anchor)
+    if not entries:
+        return "", ""
+    tip = _html.escape("Cited by " + "; ".join(t for _i, t in entries))
+    return (' class="cited"',
+            f'<a class="cmark" href="#{_html.escape(entries[0][0])}" title="{tip}" '
+            f'aria-label="{tip}">{len(entries)}</a>')
+
+
+def csv_table(text, max_rows=None, method="csv", cited=None):
     """Render an embedded CSV property as a table, with each cell carrying the id a
     `csv` address resolves to — so a Ground's reference deep-links straight to the cell
     it names, and a reader can check the quote against the number.
@@ -1739,7 +2069,11 @@ def csv_table(text, max_rows=None, method="csv"):
     ordinary in these imports — `"19113 genes per arm, identifier sets identical bar one"`
     is one cell of one survey — and splitting it in two shifts every cell to its right by a
     column, so the anchors this function writes would deep-link a Ground to the wrong
-    value while looking perfectly correct."""
+    value while looking perfectly correct.
+
+    Rows and columns carry ids too, `<method>.row=<key>` and `<method>.col=<name>`, because a
+    Ground may address a whole row or column. `cited` (anchor -> the Grounds addressing it)
+    marks each cell, row and column a Ground on the page's "Cited by" list cites."""
     src = (text or "").replace("\r\n", "\n")
     try:
         rows = [r for r in _csv.reader(_io.StringIO(src)) if any(c.strip() for c in r)]
@@ -1754,20 +2088,29 @@ def csv_table(text, max_rows=None, method="csv"):
     for r in rows[1:limit + 1]:
         cells = [c.strip() for c in r]
         rk = cells[0] if cells else ""
-        tds = "".join(
-            '<td id="{}">{}</td>'.format(
-                _html.escape(f"{method}.row={rk}&col={hdr[i]}" if i < len(hdr) else ""),
-                _html.escape(c))
-            for i, c in enumerate(cells))
-        body.append(f"<tr>{tds}</tr>")
+        row_cls, row_badge = _cited_cell(f"{method}.row={rk}", cited)
+        tds = []
+        for i, c in enumerate(cells):
+            anchor = f"{method}.row={rk}&col={hdr[i]}" if i < len(hdr) else ""
+            cls, badge = _cited_cell(anchor, cited)
+            if i == 0:
+                badge += row_badge
+            cell_id, value = _html.escape(anchor), _html.escape(c)
+            tds.append(f'<td id="{cell_id}"{cls}>{value}{badge}</td>')
+        body.append('<tr id="{}"{}>{}</tr>'.format(
+            _html.escape(f"{method}.row={rk}"), row_cls, "".join(tds)))
     # Every row is rendered by default. A truncated table silently breaks the one thing
     # these ids exist for: a Ground addressing row 400 of a 714-row table would resolve in
     # the validator and land the reader at the top of the page. What bounds the size here
     # is policy/embedding-and-size.md, which bounds the artifact.
-    more = ("<tr><td colspan='%d' class='hint'>… %d further row(s) not shown; an address "
-            "into them will not resolve on this page</td></tr>"
-            % (len(hdr), len(rows) - 1 - limit)) if len(rows) - 1 > limit else ""
-    head = "".join(f"<th>{_html.escape(c)}</th>" for c in hdr)
+    more = (f"<tr><td colspan='{len(hdr)}' class='hint'>… {len(rows) - 1 - limit} further row(s) "
+            "not shown; an address into them will not resolve on this page</td></tr>"
+            ) if len(rows) - 1 > limit else ""
+    head = ""
+    for c in hdr:
+        cls, badge = _cited_cell(f"{method}.col={c}", cited)
+        head += '<th id="{}"{}>{}{}</th>'.format(
+            _html.escape(f"{method}.col={c}"), cls, _html.escape(c), badge)
     return (f"<p class='hint'>Addressed as <code>#{_html.escape(method)}"
             f".row=&lt;{_html.escape(key)}&gt;"
             f"&amp;col=&lt;column&gt;</code></p>"
@@ -1788,8 +2131,7 @@ def internal_graph_section(ig, artifact_name, artifact_type):
     counts = ig["counts"]
     legend = ig["legend"]
     types_html = "".join(
-        '<span class="olg"><span class="osw" style="background:{}"></span>{}</span>'.format(
-            _html.escape(c), _html.escape(t))
+        f'<span class="olg"><span class="osw" style="background:{_html.escape(c)}"></span>{_html.escape(t)}</span>'
         for t, c in sorted(legend["types"].items()))
     rels_html = "".join(
         '<span class="olg"><span class="oln" style="background:{}"></span>{}</span>'.format(
@@ -1914,6 +2256,38 @@ another artifact. <b>Click a node or an edge</b> for every property its author w
 </script>"""
 
 
+#: "Cited by" and the marks on cited content (R1, R2), shared by artifact and reading pages. A
+#: cited cell is tinted AND carries a numbered link, so colour is never the only sign (N6).
+CITED_CSS = """
+  td.cited, th.cited { background:#ecfdf5; box-shadow:inset 0 -2px 0 #16a34a; }
+  tr.cited > td { background:#f0fdf4; }
+  h2.cited { color:#166534; }
+  .cmark { display:inline-block; margin-left:5px; padding:0 6px; border-radius:8px; font-size:10px;
+           font-weight:650; line-height:15px; color:#fff; background:#15803d; text-decoration:none;
+           vertical-align:1px; text-transform:none; letter-spacing:0; white-space:nowrap; }
+  .cmark:hover { background:#166534; }
+  .cmark:focus-visible { outline:2px solid #1d4ed8; outline-offset:1px; }
+  table.data tr:target > td, h2:target { background:#fef3c7; }
+  h3.cbh { font-size:13px; margin:16px 0 2px; color:var(--ink); }
+  table.citedby { border-collapse:collapse; width:100%; table-layout:fixed; font-size:13px;
+                  background:var(--panel); border:1px solid var(--line); margin:4px 0; }
+  table.citedby th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+                     color:var(--muted); padding:6px 10px; border-bottom:1px solid var(--line); }
+  table.citedby td { vertical-align:top; padding:7px 10px; border-bottom:1px solid var(--line);
+                     overflow-wrap:anywhere; line-height:1.45; }
+  table.citedby th:nth-child(1) { width:30%; }
+  table.citedby th:nth-child(3) { width:22%; }
+  table.citedby th:nth-child(4) { width:12%; }
+  table.citedby tr:target td { background:#fef9c3; }
+  ul.citedby { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+               padding:8px 12px 8px 30px; margin:4px 0; font-size:13px; line-height:1.45; }
+  ul.citedby li { margin:5px 0; }
+  .badge { display:inline-block; font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+           border:1px solid var(--line); border-radius:9px; padding:0 7px; color:var(--muted); }
+  .badge.test { border-color:#16a34a; color:#166534; background:#f0fdf4; font-weight:650; }
+"""
+
+
 ARTIFACT_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
@@ -1926,6 +2300,10 @@ ARTIFACT_TEMPLATE = """<!doctype html>
   html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
                color:var(--ink); background:var(--bg); }}
   header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }}
+  /* The header is sticky, so a link to a place on this page (a Ground's row or cell, Cited by,
+     a mark's badge) would land under it. This keeps the target below a one-line header; the
+     page script below sizes it to the header as it stands. */
+  html {{ scroll-padding-top:68px; }}
   header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
   header .sub {{ font-size:12px; color:var(--muted); }}
   .uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
@@ -1997,6 +2375,8 @@ ARTIFACT_TEMPLATE = """<!doctype html>
   mark {{ background:#dcfce7; border-bottom:2px solid #16a34a; padding:1px 0; }}
   mark:target {{ background:#fef08a; border-bottom-color:#d97706; }}
   ul {{ padding-left:20px; }}
+{cited_css}
+{round_css}
 </style>
 </head>
 <body>
@@ -2013,6 +2393,19 @@ ARTIFACT_TEMPLATE = """<!doctype html>
 <script src="{cyto_src}"></script>
 <script src="vendor/cytoscape-svg.js"></script>
 <script>
+/* Keep link targets clear of the sticky header: size the scroll padding to the header, which
+   grows when a long title wraps, and re-place a target the page was opened at, since the
+   browser scrolled to it before this ran. */
+(function () {{
+  var header = document.querySelector('header'), root = document.documentElement;
+  function pad() {{ root.style.scrollPaddingTop = (header.offsetHeight + 12) + 'px'; }}
+  pad();
+  window.addEventListener('resize', pad);
+  var id = null;
+  try {{ id = decodeURIComponent(location.hash.slice(1)); }} catch (e) {{ /* malformed */ }}
+  var target = id && document.getElementById(id);
+  if (target) target.scrollIntoView();
+}})();
 /* Live reload while the record is growing. serve.py answers /__build with the current
    build number; a static host does not, and the fetch simply fails and stops. Nothing
    about the page depends on this — the compiled HTML is complete on its own. */

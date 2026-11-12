@@ -23,13 +23,13 @@ Credentials, role assignment and working directories are operational and stay in
 
 - A REVISED GOAL DOES NOT RETRACT WORK DONE UNDER THE OLD ONE. `supersedes` states replacement and conveys nothing evidential (S1.9). Arguments published under `_v1` stand, and the `serves_goals` on each says which version it was serving. If you intend earlier work to be set aside, that is a judgment for a Message or a NonGroundable, and it needs a reason.
 
-- YOU ARE NOT THE OPERATOR AND MUST NOT HOLD THAT ACCOUNT. The party that decides what the community must investigate should not also decide what it is permitted to publish. That concentration was filed against this deployment once already; splitting the accounts is what answers it.
+- YOU ARE NOT THE OPERATOR AND MUST NOT HOLD THAT ACCOUNT. The party that decides what the community must investigate should not also decide what it is permitted to publish. That concentration was filed against this deployment once already; splitting the accounts is what answers it. The gate runs from an account holding the `community-admin` or `gate-keeper` access role ([roles and access](../../data-server/RBAC.md)), and you hold neither.
 
 - Direct a Member with a Message, the same as anyone else. A Message from you carries no special force in the record — it is your judgment, attributed and contestable, which is the point.
 
 ## Contract
 
-Read by `publish.py`. `may_publish` is the type limit this session imposes on itself;
+Read by `/symposium publish`. `may_publish` is the type limit this session imposes on itself;
 `must_not` is printed at the moment you violate it. Everything above is for you to read,
 nothing above is machine-checked.
 
@@ -45,7 +45,7 @@ nothing above is machine-checked.
   "must_not": [
     "Assert anything about the science. A goal says what to investigate, never what is true.",
     "Publish groundable material of any kind. A `ResearchGoal` declares `groundable: false` and so does every Content Object in it.",
-    "Hold the admin account or run the gate. Setting what must be investigated and deciding what may be published are two hands, and they belong to two accounts.",
+    "Hold the community-admin access role or run the gate. Setting what must be investigated and deciding what may be published are two hands, and they belong to two accounts.",
     "Revise a goal out of band. A goal that changes without a superseding artifact is a goal the record cannot show changing."
   ],
   "sop": []

@@ -12,6 +12,15 @@ ARG SEAWEEDFS_VERSION=4.48
 ARG SEAWEEDFS_SHA256_AMD64=4a7d108384d044d95212d1342cdda9533fa55842c1c9b41f606ca3c8a9561124
 ARG SEAWEEDFS_SHA256_ARM64=557e92c38c5c7d180748eb8e2b2b45e426f8e5282a4caca8e098a90d09f03a07
 ENV PATH="/usr/lib/postgresql/${POSTGRES_VERSION}/bin:${PATH}"
+# start.sh refuses a cluster written by another major rather than letting postgres fail obscurely
+ENV PG_MAJOR="${POSTGRES_VERSION}"
+# Fixed ids, created before the package that would otherwise pick its own. Debian assigns a
+# system account whatever id the base image leaves free, and that moved when bookworm-slim
+# gained systemd-journal and systemd-network: postgres went from 100 to 997. The id is
+# written into every file of a cluster, so a volume from one image then becomes unreadable
+# to the next. These are the ids every published image has used.
+RUN groupadd -g 102 postgres \
+    && useradd -u 100 -g postgres -d /var/lib/postgresql -s /bin/bash postgres
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
     && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
@@ -36,6 +45,9 @@ RUN set -eu; \
     tar -xzf /tmp/weed.tgz -C /usr/local/bin weed; \
     rm /tmp/weed.tgz; \
     chmod +x /usr/local/bin/weed
+# Dynamic, unlike postgres above: gid 999, which the published images gave symposium, now
+# belongs to systemd-journal in the base image. Nothing rests on it — Phase 2 of start.sh
+# chowns /apps/data and /apps/seaweed to this account on every boot, whatever its id is.
 RUN groupadd -r symposium && useradd -r -g symposium -d /apps/data -s /usr/sbin/nologin symposium
 
 # ── Builder: the locked dependencies and the service, installed as a wheel into /opt/venv ──

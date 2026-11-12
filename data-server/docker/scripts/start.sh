@@ -37,7 +37,11 @@ export SYMPOSIUM_SERVER_WORKERS="${SYMPOSIUM_SERVER_WORKERS:-1}"
 mkdir -p /apps/data/config /apps/postgres/config /apps/postgres/data \
          /apps/seaweed/config /apps/seaweed/data
 chown -R symposium:symposium /apps/data /apps/seaweed
-chown postgres:postgres /apps/postgres/data /apps/postgres/config
+# Recursive, as /apps/data above: the postgres account's id is assigned when the image is
+# built, and it has moved between base images, so a cluster written by an earlier image can
+# belong to an id this one does not have. Taking ownership of what is on the volume is what
+# lets a server upgrade in place; without it PostgreSQL cannot read its own postgresql.conf.
+chown -R postgres:postgres /apps/postgres
 chmod 700 /apps/postgres/data
 
 gen() { head -c 48 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 32 || true; }
@@ -83,6 +87,15 @@ if ! grep -q '^API_KEY_ENC_KEY_FILE=' "$CFG"; then
 fi
 
 # ── Phase 4: PostgreSQL ───────────────────────────────────────────────────────────────────────
+# A cluster is readable only by the major version that wrote it. The image pins one
+# (PG_MAJOR), so say which two met rather than leaving a bare "incompatible" from postgres
+# in a log nobody reads: moving between majors takes pg_upgrade and a maintenance window.
+cluster_major=$(cat /apps/postgres/data/PG_VERSION 2>/dev/null || true)
+if [[ -n "$cluster_major" && "$cluster_major" != "$PG_MAJOR" ]]; then
+  log "FATAL: this image runs PostgreSQL $PG_MAJOR, the cluster on /apps is $cluster_major; pg_upgrade is required"
+  exit 1
+fi
+
 if [[ ! -f /apps/postgres/config/.initialized ]]; then
   log "first boot: initialising PostgreSQL"
   PG_PASS="$(cat /apps/postgres/config/superuser.pw)"

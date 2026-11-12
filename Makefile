@@ -14,6 +14,8 @@
 #                       in any suite: reaching it means something hung
 #   make build          lint, then dist/Symposium_skill.zip: the symposium skill, with the
 #                       symposium-data CLI inside it
+#                       VERSION=<semver> is stamped into the skill's frontmatter; the release
+#                       job passes the tag's, and a build given none says 0.0.0-dev
 #   make deploy-local   build, then install the skill from the zip into $(SKILLS)
 # The data server has its own Makefile: make -C data-server test runs its suites alone.
 
@@ -35,6 +37,9 @@ NO_DOCKER_SUITES := tests/skills/test_agent_process.py tests/skills/test_session
 # The OpenAPI linter for the API contract (api/openapi.yaml), pinned; it runs through npx.
 REDOCLY := 2.59.0
 BUNDLE := dist/Symposium_skill.zip
+# stamped into skills/symposium/SKILL.md's frontmatter by the build; release.yml passes the
+# release tag's version, and a local build stays 0.0.0-dev
+VERSION ?= 0.0.0-dev
 SKILLS ?= $(HOME)/.claude/skills
 
 include make/side-by-side.mk
@@ -78,7 +83,7 @@ top-suite:
 		SYMPOSIUM_TEST_MAX_WAIT=$(MAX_PER_TEST_WAIT) $(UV) pytest -c tests/pytest.ini $(SUITES)
 
 build: lint
-	python3 tools/bundle.py $(BUNDLE)
+	python3 tools/bundle.py $(BUNDLE) $(VERSION)
 
 # Installs from the built zip, not the working copy, so what runs locally is what ships. It
 # removes before extracting, so a file dropped from the bundle does not live on in the install.

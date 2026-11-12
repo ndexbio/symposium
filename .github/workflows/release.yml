@@ -6,7 +6,8 @@ name: release
 #                              oci://registry-1.docker.io/ndexbio/symposium-helm and attaches it
 #                              to the release; refused unless <version> is the chart's own and
 #                              the image it deploys (its appVersion) is already on Docker Hub.
-#   symposium-v<version>       attaches dist/Symposium_skill.zip from make build.
+#   symposium-v<version>       attaches dist/Symposium_skill.zip from make build, with <version>
+#                              stamped into the skill's frontmatter.
 # Release them in that order: the image, the chart that deploys it, then the skill, whose
 # compat.json names that image.
 # Each job checks out the release's tag, and the tag reaches every shell line through `env`.
@@ -42,7 +43,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: make build
+      - run: make build VERSION="${TAG#symposium-v}"
+        env:
+          TAG: ${{ github.event.release.tag_name }}
       - run: gh release upload "$TAG" dist/Symposium_skill.zip --clobber
         env:
           GH_TOKEN: ${{ github.token }}

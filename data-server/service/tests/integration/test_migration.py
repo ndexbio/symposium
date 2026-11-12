@@ -82,3 +82,30 @@ def test_a_previous_release_upgrades_in_place_on_first_start(previous):
     # a later start finds the schema current: no second backup
     server.restarted()
     assert len(server.exec("ls", "/apps/data/backups").stdout.split()) == 1
+
+
+def test_an_upgrade_takes_ownership_of_a_cluster_written_under_other_ids(previous):
+    """A cluster whose files belong to an id this image does not use still opens.
+
+    The postgres account's id is assigned when an image is built and has moved between base
+    images, so a volume written by an earlier release can belong to an id the new one does
+    not have. Phase 2 of start.sh takes ownership of /apps/postgres for that reason; without
+    it postgres cannot read its own postgresql.conf and the server never starts.
+
+    The id here is one no build uses, so this holds whatever the two images happen to carry
+    — which is what the test above cannot do, since it passes whenever they happen to agree.
+    """
+    seed(previous, ROOT)
+    previous.exec("chown", "-R", "1234:1234", "/apps/postgres")
+    assert (
+        previous.exec("stat", "-c", "%u", "/apps/postgres/data").stdout.strip()
+        == "1234"
+    )
+
+    server = previous.upgrade()
+
+    assert server.status()["mode"] == "operational"
+    owner = server.exec(
+        "stat", "-c", "%u", "/apps/postgres/data/postgresql.conf"
+    ).stdout.strip()
+    assert owner == server.exec("id", "-u", "postgres").stdout.strip()

@@ -1,6 +1,7 @@
 ---
 name: symposium
 description: Work in a Symposium community on a Symposium Data server — join it with an invite (setup), bring it up as a server admin and run it as its community admin (bootstrap, invite, assign), publish artifacts and keep a copy of the record (publish, validate, sync, serve), decide submissions (gate), manage its users, access roles and data, and port, export or import a community. Use whenever the user mentions Symposium, a community record, an invite file, community.json, or the symposium-data CLI.
+version: 0.0.0-dev
 ---
 
 # Symposium

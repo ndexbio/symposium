@@ -155,6 +155,30 @@ class Output:
         return self.text()
 
 
+# What a line looks like when it says why something failed. supervisord restarts a program
+# that dies, so the same line arrives again every few seconds: each is reported once, with a
+# count, which is also what tells a one-off apart from a loop.
+TROUBLE = re.compile(
+    r"FATAL|PANIC|CRIT|ERROR|Permission denied|exited: \S+ \(exit status"
+)
+
+
+def diagnose(log: str, context: int = 1200) -> str:
+    """The lines of `log` that say why, each once, then its last `context` characters."""
+    counts = {}
+    for line in log.splitlines():
+        line = line.strip()
+        if TROUBLE.search(line):
+            counts[line] = counts.get(line, 0) + 1
+    said = [
+        f"{line}{f'  (x{n})' if n > 1 else ''}" for line, n in list(counts.items())[:25]
+    ]
+    if len(counts) > 25:
+        said.append(f"… and {len(counts) - 25} more")
+    heading = "\n".join(said) if said else "(nothing in the log says why)"
+    return f"{heading}\n\n--- the last {context} characters ---\n{log[-context:]}"
+
+
 def docker(*args, check=True, input=None):
     result = subprocess.run(
         ["docker", *args], capture_output=True, text=True, input=input, timeout=MAX_WAIT
@@ -212,7 +236,7 @@ class Server:
             except httpx.HTTPError:
                 pass
             time.sleep(0.2)
-        raise RuntimeError(f"{self.name} never became healthy:\n{self.logs()[-2000:]}")
+        raise RuntimeError(f"{self.name} never became healthy:\n{self.diagnosis()}")
 
     def api_status(self) -> str:
         """supervisord's line for the API process: its state and pid."""
@@ -264,6 +288,24 @@ class Server:
     def logs(self) -> str:
         result = docker("logs", self.name, check=False)
         return result.stdout + result.stderr
+
+    def diagnosis(self, context: int = 1200) -> str:
+        """Why the container is not working: the lines that say so, then the tail.
+
+        The tail alone is no use. SeaweedFS prints a heartbeat every 30 seconds while a
+        failing program dies in the first one, so whatever went wrong is thousands of lines
+        above the end, however much of the end is shown."""
+        return diagnose(self.logs(), context)
+
+    def wait_for_log(self, text: str) -> str:
+        """Wait until the container's log holds `text`. -> the line that carries it."""
+        deadline = time.monotonic() + MAX_WAIT
+        while time.monotonic() < deadline:
+            line = next((ln for ln in self.logs().splitlines() if text in ln), None)
+            if line is not None:
+                return line
+            time.sleep(0.2)
+        raise RuntimeError(f"{self.name} never logged {text!r}:\n{self.diagnosis()}")
 
     def reset(self):
         """Empty every community, file and payload; root's binding stays."""

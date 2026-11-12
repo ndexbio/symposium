@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """Build the Symposium bundle, dist/Symposium_skill.zip: `make build` runs this.
 
-    python3 tools/bundle.py dist/Symposium_skill.zip
+    python3 tools/bundle.py dist/Symposium_skill.zip [version]
+
+The version is the release tag's, passed by `make build VERSION=<semver>`, and it is written
+into skills/symposium/SKILL.md's frontmatter on the way into the zip, so an installed skill
+says which release it came from. A build that is given none says 0.0.0-dev.
 
 The zip holds:
   README.md                  the repository's README: Symposium, installing it, and participating
@@ -60,6 +64,10 @@ SHIPPED = "skills/symposium/toolchain/"
 GITHUB = "https://github.com/ndexbio/symposium/blob/main/"
 # a Markdown link's target: [text](target "title")
 LINK = re.compile(r"\[[^\]\n]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+# what a build with no version of its own stamps, so a working-tree install says so
+DEV_VERSION = "0.0.0-dev"
+# the frontmatter's version line, which every build rewrites
+VERSION_LINE = re.compile(r"^version:.*$", re.MULTILINE)
 FENCE = re.compile(r"^\s*(```|~~~)")
 
 
@@ -108,8 +116,9 @@ def zip_exists(names) -> callable:
 
 
 class Bundle:
-    def __init__(self, repo: Path = REPO):
+    def __init__(self, repo: Path = REPO, version: str = DEV_VERSION):
         self.repo = repo
+        self.version = version
 
     def files(self, root: Path):
         """Every file under `root` worth shipping, as (path, path relative to `root`)."""
@@ -144,8 +153,21 @@ class Bundle:
             json.dumps({"data_server_version": self.data_server_version()}, indent=2)
             + "\n"
         ).encode()
+        out["skills/symposium/SKILL.md"] = self.skill_md()
         out["README.md"] = self.readme(zip_exists(out))
         return out
+
+    def skill_md(self) -> bytes:
+        """The skill's entry document, its frontmatter version set to this build's. Only the
+        frontmatter is rewritten: a `version:` line in the body is prose."""
+        text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        end = text.find("\n---\n", 3)
+        if not text.startswith("---\n") or end < 0:
+            raise SystemExit("skills/symposium/SKILL.md has no frontmatter")
+        front, found = VERSION_LINE.subn(f"version: {self.version}", text[:end], count=1)
+        if not found:
+            raise SystemExit("skills/symposium/SKILL.md frontmatter has no version line")
+        return (front + text[end:]).encode("utf-8")
 
     def readme(self, shipped) -> bytes:
         """The repository's README, its links moved to where the zip holds each document:
@@ -202,15 +224,16 @@ class Bundle:
             partial.unlink()
             return {"error": f"{len(dead)} dead link(s) in the bundle; no zip written", "dead": dead}
         partial.replace(out)
-        return {"bundle": str(out), "files": len(entries)}
+        return {"bundle": str(out), "files": len(entries), "version": self.version}
 
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if len(argv) != 1:
-        print(json.dumps({"error": "usage: bundle.py <out.zip>"}))
+    if not 1 <= len(argv) <= 2:
+        print(json.dumps({"error": "usage: bundle.py <out.zip> [version]"}))
         return 1
-    result = Bundle().write(Path(argv[0]))
+    version = argv[1] if len(argv) > 1 else DEV_VERSION
+    result = Bundle(version=version).write(Path(argv[0]))
     print(json.dumps(result))
     return 1 if "error" in result else 0
 

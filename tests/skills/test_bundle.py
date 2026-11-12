@@ -150,6 +150,8 @@ def test_the_bundle_holds_the_skill_with_its_toolchain_and_the_stamped_cli(insta
         or n == f"{CLI}/symposium-data"
     ]
     assert re.match(r"^---\nname: symposium\n", skill_md)
+    # make deploy-local builds with no version of its own, so the install says so
+    assert "\nversion: 0.0.0-dev\n" in skill_md
     version = re.search(
         r'^version = "([^"]+)"',
         (REPO / "data-server" / "service" / "pyproject.toml").read_text(),
@@ -204,6 +206,31 @@ def test_a_dead_link_fails_the_build_and_writes_no_zip(tmp_path, monkeypatch):
         }
     ]
     assert not out.exists() and list(tmp_path.iterdir()) == []
+
+
+def test_the_build_stamps_its_version_into_the_skills_frontmatter(tmp_path):
+    """The release tag's version reaches the installed skill, which otherwise cannot say
+    which release it is. The body is left alone."""
+    out = tmp_path / "Symposium_skill.zip"
+    result = bundle.Bundle(version="1.2.3").write(out)
+    assert result["version"] == "1.2.3"
+    with zipfile.ZipFile(out) as zf:
+        skill_md = zf.read("skills/symposium/SKILL.md").decode()
+    assert re.match(r"^---\nname: symposium\n", skill_md)
+    assert "\nversion: 1.2.3\n" in skill_md
+    source = (REPO / "skills" / "symposium" / "SKILL.md").read_text(encoding="utf-8")
+    assert skill_md.split("\n---\n", 1)[1] == source.split("\n---\n", 1)[1]
+
+
+def test_a_skill_document_with_no_version_line_fails_the_build(tmp_path, monkeypatch):
+    """Without the line there is nothing to rewrite, and the build would ship whatever the
+    repository happens to carry."""
+    skill = tmp_path / "skills" / "symposium"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: symposium\n---\n\n# Symposium\n")
+    monkeypatch.setattr(bundle, "SKILL", skill)
+    with pytest.raises(SystemExit, match="no version line"):
+        bundle.Bundle(version="1.2.3").skill_md()
 
 
 def test_every_relative_link_in_the_repository_resolves():

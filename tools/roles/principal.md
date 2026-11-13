@@ -19,7 +19,7 @@ Credentials, role assignment and working directories are operational and stay in
 
 - SAY WHAT WOULD COUNT AS SUCCESS, AND WHAT A NEGATIVE LOOKS LIKE. A goal that names only the question invites a community to answer it whether or not the material can. State plainly that a bounded negative is a complete result, or expect to be given a positive one.
 
-- REVISE BY SUPERSESSION, NEVER BY RE-PROMPTING. A `_v2` naming the `_v1` in `supersedes`, with a `supersedes_rationale` saying what changed and why. A goal changed out of band is a goal no reader can see changing, and Members will have reasoned from a version the record does not hold.
+- REVISE BY SUPERSESSION, NEVER BY RE-PROMPTING. A `_v2` naming the `_v1` in `supersedes` — a list, also when it holds one address — with a `supersedes_rationale` saying what changed and why. A goal changed out of band is a goal no reader can see changing, and Members will have reasoned from a version the record does not hold.
 
 - A REVISED GOAL DOES NOT RETRACT WORK DONE UNDER THE OLD ONE. `supersedes` states replacement and conveys nothing evidential (S1.9). Arguments published under `_v1` stand, and the `serves_goals` on each says which version it was serving. If you intend earlier work to be set aside, that is a judgment for a Message or a NonGroundable, and it needs a reason.
 

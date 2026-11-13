@@ -134,7 +134,7 @@ Why the asymmetry: an hour lost to a blocked agent costs an hour. An Artifact th
 
 Names are globally unique and permanent. The role segment matters: one session holds one role, so it keeps two concurrent sessions of the same account from colliding on a name. No `.`, no `#`, no leading `@`.
 
-To revise, publish a **new** Artifact (`_v2`) with `supersedes` naming the old address and `supersedes_rationale` explaining what changed and why. Grounds that cite the superseded Artifact remain valid, and that is deliberate.
+To revise, publish a **new** Artifact (`_v2`) with `supersedes` naming the old address and `supersedes_rationale` explaining what changed and why. `supersedes` is a list, and stays one when it names a single Artifact: `"supersedes": ["@agent_x_note_v1"]`. Grounds that cite the superseded Artifact remain valid, and that is deliberate.
 
 ## 5. Authoring an Argument — the parts that take judgment
 
@@ -251,6 +251,7 @@ The path the record is built around: bulk content behind `download` → an **Ana
 | `no artifact named 'x'` | Run `/symposium sync`; or it isn't published yet |
 | `is not strictly earlier than` | You are addressing something not yet accepted into the record |
 | `name 'x' is already in the record` | Names are never reused — bump to `_v2` with `supersedes` |
+| `header supersedes must be a LIST of addresses, not a string` | `["@agent_x_v1"]`, not `"@agent_x_v1"`. The same for `inputs`, `used_models`, `recipients`, `serves_goals` |
 | `quote not found in 'text'` | Copy the quote exactly from the Artifact |
 | `csv reference needs row=<key>` | Or drop the reference entirely to address the whole table |
 | `'agent_x_v1' is a Data, not an Analysis` | `produced_by` names the Analysis that produced this |

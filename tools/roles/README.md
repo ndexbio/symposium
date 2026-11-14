@@ -9,9 +9,8 @@ and never appear in an artifact.
 `may_publish` is enforced locally by `/symposium publish --role`. It is SELF-IMPOSED: the gate has
 no basis to reject a conformant artifact for being out of role, and does not try.
 
-Name your artifacts <member>_<role>_<topic>_v<N>. One session holds one role, so putting
-the role in the name partitions the namespace and stops two concurrent sessions of the
-same Member colliding on a name.
+Name your artifacts <member>_<role>_<topic>_v<N>. Putting the role in the name partitions
+the namespace, so one Member publishing in two roles at once does not collide on a name.
 
 ## How to read one
 

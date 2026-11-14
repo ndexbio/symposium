@@ -128,8 +128,14 @@ def emit(actor, action, outcome, artifact=None, atype=None, role=None,
     event.update(extra)
     try:
         LOG.parent.mkdir(parents=True, exist_ok=True)
-        with LOG.open("a") as fh:
-            fh.write(json.dumps(event) + "\n")
+        # one write on a descriptor opened for append: commands logging at once in one
+        # session each add a whole line
+        line = (json.dumps(event) + "\n").encode()
+        descriptor = os.open(LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        try:
+            os.write(descriptor, line)
+        finally:
+            os.close(descriptor)
     except Exception as exc:                                   # noqa: BLE001
         import sys
         print(f"! telemetry not written to {LOG}: {exc}", file=sys.stderr)

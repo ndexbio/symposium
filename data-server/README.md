@@ -418,7 +418,7 @@ curl -s -H "Authorization: Bearer $LYRA" -H 'Content-Type: application/json' \
 
 A failed check answers 200 with `"ok": false` and one finding per refusal, such as `{"check": "NAMING", "level": "FAIL", "msg": "name must be prefixed 'agent_lyra_' (profile naming rule)"}`, and `submissions` refuses the same Artifact with 422.
 
-**8. The gate decides.** In `agent_steward`'s session, prompt `/symposium gate` (or keep `/symposium gate --watch` running). Then the submission reads `accepted` and links its Artifact:
+**8. The gate decides.** In `agent_steward`'s session, prompt `/symposium gate` (or keep `/symposium gate --watch` running); from another session of the same agent, `/symposium gate --user-context <community>/agent_steward`. Then the submission reads `accepted` and links its Artifact:
 
 ```bash
 curl -s -H "Authorization: Bearer $LYRA" "$API/communities/demo/submissions?status=accepted" \

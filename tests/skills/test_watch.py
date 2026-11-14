@@ -1,7 +1,8 @@
 """The commands that keep running, against the suite's data server: `gate.py --watch`,
 `sync.py --watch` and `serve.py` each run until stopped, stop on a signal with exit code 0 well
-before their wait would end (their poll is ten times MAX_WAIT here), even mid-decision, and a
-restart takes over from the one still running on the session. Readiness is the state each
+before their wait would end (their poll is ten times MAX_WAIT here), even mid-decision. A
+second `gate --watch` or `sync --watch` stands by and watches when the first ends, or stops it
+with `--take-over`; a second `serve` on a port takes it over. Readiness is the state each
 command leaves (the lock it holds, its state file, `serve`'s `/__build`) or the line it prints
 when it is done, never a guess at how long anything takes."""
 
@@ -50,13 +51,16 @@ class Watch:
     """One command that keeps running, in a session's directory. `serve` takes a free port of
     its own (`--port 0`) unless it is given one, and `port` is the one it says it serves on."""
 
-    def __init__(self, suite, cwd: Path, command: str, port: int = 0, env=None):
+    def __init__(
+        self, suite, cwd: Path, command: str, port: int = 0, env=None, take_over=False
+    ):
         script, args = {
             "gate": ("gate.py", ["--watch"]),
             "sync": ("sync.py", ["--watch"]),
             "serve": ("serve.py", ["--port", str(port)]),
         }[command]
-        self.command, self.cwd = command, cwd
+        args = [*args, "--take-over"] if take_over else args
+        self.command, self.cwd, self.home = command, cwd, Path(suite.env["HOME"])
         self.started = time.time()
         self.process = subprocess.Popen(
             [sys.executable, str(TOOLS / script), *args],
@@ -78,13 +82,17 @@ class Watch:
         self.lock = f"serve-{self.port}" if command == "serve" else command
 
     def holds_the_lock(self) -> bool:
-        """This process is the session's watcher: its pid is in the lock's pid file, which is
-        written once its stop handlers are installed, just before its first pass."""
+        """This process is the watcher: its pid is in the lock's pid file, which is written
+        once it holds the lock, just before its first pass. The gate's lock is its
+        community's, kept for the machine; `sync` and `serve` keep theirs in the session."""
+        if self.command == "gate":
+            files = list((self.home / ".symposium" / "gate").glob("*.watch.pid"))
+        else:
+            files = [self.cwd / ".symposium" / f"{self.lock}.pid"]
         try:
-            pid = int((self.cwd / ".symposium" / f"{self.lock}.pid").read_text())
-        except (OSError, ValueError):
+            return self.process.pid in [int(f.read_text().split()[0]) for f in files]
+        except (OSError, ValueError, IndexError):
             return False
-        return pid == self.process.pid
 
     def passed_once(self) -> bool:
         """This process has finished a pass: it holds the lock, and the state a pass leaves
@@ -189,13 +197,38 @@ def test_a_stop_during_a_decision_waits_for_it_and_shows_it(
         watch.kill()
 
 
-@pytest.mark.parametrize("command", ["gate", "sync", "serve"])
-def test_a_restarted_watch_takes_over_and_exactly_one_runs(suite, session, command):
+@pytest.mark.parametrize("command", ["gate", "sync"])
+def test_a_second_watch_stands_by_and_watches_when_the_first_ends(
+    suite, session, command
+):
     first = Watch(suite, session, command)
     second = None
     try:
         poll(first.passed_once, f"the first {command} never finished its first pass")
-        second = Watch(suite, session, command, port=first.port)
+        second = Watch(suite, session, command)
+        second.output.wait_for("standing by")
+        assert first.process.poll() is None and first.holds_the_lock()
+        assert first.stop() == 0, first.ended()
+        poll(second.holds_the_lock, f"the standing-by {command} never took the lock")
+        second.output.wait_for("this one is watching now")
+        poll(second.passed_once, f"the second {command} never ran a pass")
+    finally:
+        for watch in (first, second):
+            if watch is not None:
+                watch.kill()
+
+
+@pytest.mark.parametrize("command", ["gate", "sync", "serve"])
+def test_take_over_stops_the_watch_that_is_running_and_exactly_one_runs(
+    suite, session, command
+):
+    first = Watch(suite, session, command)
+    second = None
+    try:
+        poll(first.passed_once, f"the first {command} never finished its first pass")
+        second = Watch(
+            suite, session, command, port=first.port, take_over=command != "serve"
+        )
         assert first.process.wait(MAX_WAIT) == 0, first.ended()
         assert "stopped" in first.ended()
         poll(second.holds_the_lock, f"the second {command} never took the lock")
@@ -207,3 +240,17 @@ def test_a_restarted_watch_takes_over_and_exactly_one_runs(suite, session, comma
         for watch in (first, second):
             if watch is not None:
                 watch.kill()
+
+
+def test_a_single_pass_waits_its_turn_behind_a_watching_gates_pass(suite, session):
+    """One gate decides for a community at a time: a pass run beside a watching gate takes
+    the community's pass lock, and both leave the gate's state whole."""
+    watch = Watch(suite, session, "gate")
+    try:
+        poll(watch.passed_once, "the gate never finished its first pass")
+        code, out = tool(suite, session, "gate.py")
+        assert code == 0 and "Traceback" not in out, out
+        json.loads((session / "record" / ".gate_state.json").read_text())
+        assert watch.process.poll() is None and watch.holds_the_lock()
+    finally:
+        watch.kill()

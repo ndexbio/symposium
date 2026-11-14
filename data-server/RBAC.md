@@ -160,7 +160,7 @@ Removing a community user takes `members` in their community; removing a server 
 
 `/symposium access` lists the six roles with their grants, as the server defines them, and the
 collections a user holding each always reads (`record`, for `community-member`), followed by your
-own roles and grants in the current session. `/symposium users list` shows everyone's roles,
+own roles and grants in the session the command works in. `/symposium users list` shows everyone's roles,
 and `/symposium list-api-keys` each key's.
 
 How the data server enforces these rules on every request is described for developers in

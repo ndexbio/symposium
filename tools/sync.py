@@ -18,15 +18,20 @@ community, and `./record` beside it is the copy it keeps.
 
   python sync.py              # one pass
   python sync.py --messages   # one pass, then every Message addressed to you, newest first
+  python sync.py --replies    # one pass, then every reply from the gate to you, newest first
   python sync.py --watch      # a pass every SYMPOSIUM_POLL seconds (default 30)
 
 `--watch` runs until stopped, with no time limit of its own: run it in the background. ctrl-c,
 SIGTERM or (Windows) CTRL_BREAK stops it within a second, with exit code 0, even mid-pass. A restart
-resumes where the copy left off, and takes over from a sync still watching this session, which
-it stops.
+resumes where the copy left off. One sync watches a session at a time: a `--watch` started while
+another watches it stands by, says which is watching, and watches from the moment that one ends;
+`--watch --take-over` stops the one watching and watches in its place.
 
 A pass also lists the gate's replies addressed to you (a rejected submission): they are never
-part of the record.
+part of the record. Each is listed once, by the first pass that reads it. `sync --replies`
+lists them all, newest first, marking `new` each one no pass had listed, and names the artifact
+each is about: several callers working as one member each find the decision on their own
+submission there, by its name. An accepted submission is in the copy, under its name.
 
 And it lists each Message in the record whose `recipients` include you, one line apiece:
 
@@ -60,6 +65,7 @@ from datetime import datetime, timezone
 
 from data_io import (
     IN_REPLY_TO,
+    LOCKS,
     RECORD_MARK,
     REPLY_MARK,
     DataError,
@@ -68,7 +74,7 @@ from data_io import (
     file_lock,
     pause,
     stop_on_signals,
-    take_over,
+    watch_alone,
 )
 from validate import parse_address, passed, validate
 
@@ -154,6 +160,8 @@ class Sync:
         self.lists_messages = (not quiet) if lists_messages is None else lists_messages
         # and whether the pass prints them itself: only when the caller left it to the pass
         self.prints_messages = lists_messages is None and not quiet
+        # whether the pass prints the gate's replies itself: `sync --replies` lists them all
+        self.prints_replies = True
         self.members = set()  # fetched live on every pass
         self.handle = None  # this session's own handle, read once from its context
 
@@ -307,7 +315,7 @@ class Sync:
         for name, why in deferred:
             self.say(f"  deferred {name}: {why[0] if why else 'unresolved'}")
         replies = self.replies(state)
-        for name, about in replies:
+        for name, about in replies if self.prints_replies else ():
             self.say(f"  reply from the gate: {name} (re {about}) — not part of the record")
         held = self.mirror.load()
         total = len(held)
@@ -359,9 +367,43 @@ def list_messages(sync):
     return 1 if result is None else 0
 
 
+def list_replies(sync):
+    """`sync --replies`: a pass, then every reply from the gate addressed to you, newest first,
+    each one no pass had listed before marked `new`, with the artifact it is about. -> exit
+    code (1 when the server could not be reached: the replies are held there)."""
+    before = set(sync.load_state()["replies"])
+    sync.prints_replies = False  # this command lists them itself, all of them, after the pass
+    if sync.once() is None:
+        return 1
+    try:
+        items = sync.data.query("inbox", {REPLY_MARK: True})
+    except DataError as e:
+        if e.report.get("status") != 403:
+            print(f"! {e}")
+            return 1
+        items = []  # an account that reads no inbox has no replies
+    if not items:
+        print("  no reply from the gate is addressed to you")
+        return 0
+    fresh = sum(1 for item in items if item["citation"] not in before)
+    print(f"  {len(items)} reply(ies) from the gate addressed to you, newest first"
+          + (f"; {fresh} new since they were last listed:" if fresh else ":"))
+    for item in reversed(items):
+        mark = "new" if item["citation"] not in before else "   "
+        about = (item.get("metadata") or {}).get(IN_REPLY_TO, "?")
+        print(f"  {mark}  reply from the gate: {one_line(item['name'])} "
+              f"(re {one_line(about)}) — not part of the record")
+    return 0
+
+
 def main(argv):
-    if "--messages" in argv and "--watch" in argv:
-        print("! --messages lists once; run `/symposium sync --watch` on its own to keep watching")
+    listings = [flag for flag in ("--messages", "--replies") if flag in argv]
+    if len(listings) > 1:
+        print("! --messages and --replies each list on their own: give one")
+        return 2
+    if listings and "--watch" in argv:
+        print(f"! {listings[0]} lists once; run `/symposium sync --watch` on its own to keep "
+              "watching")
         return 2
     # with --messages this command lists the Messages itself, all of them, after the pass
     sync = Sync(lists_messages=True if "--messages" in argv else None)
@@ -374,6 +416,8 @@ def main(argv):
 
     if "--messages" in argv:
         return list_messages(sync)
+    if "--replies" in argv:
+        return list_replies(sync)
 
     if "--watch" not in argv:
         result = sync.once()
@@ -384,10 +428,14 @@ def main(argv):
         return 0
 
     stop_on_signals()
-    lock = take_over("sync")  # noqa: F841 — held for as long as this sync watches
-    print(f"watching {sync.mirror.root}/ (every {POLL}s) — ctrl-c to stop", flush=True)
     misses = 0
     try:
+        # held for as long as this sync watches: the one sync watcher of this session
+        context = sync.data.context()
+        lock = watch_alone(  # noqa: F841
+            "sync", LOCKS / "sync.lock", f"{context.get('community')}/{context.get('handle')}",
+            replace="--take-over" in argv)
+        print(f"watching {sync.mirror.root}/ (every {POLL}s) — ctrl-c to stop", flush=True)
         while True:
             try:
                 if sync.once() is None:

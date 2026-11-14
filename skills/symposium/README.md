@@ -7,15 +7,79 @@ server admins, community admins and members alike run `/symposium <command>`, an
 does the rest through the `symposium-data` CLI. Nobody runs a tool script or a CLI command by hand, and nobody needs a
 shell on the server.
 
-**Install** the skill from the Symposium bundle: `make deploy-local` from a clone of the
-repository, or unzip a release's `Symposium_skill.zip` and copy its `skills/symposium/` into
-`~/.claude/skills/`. The skill's `toolchain/` holds the repository's Symposium base at its
+**Install** the skill from a release's zip, as
+[Installing from the release zip](#installing-from-the-release-zip) sets out, or with
+`make deploy-local` from a clone of the repository. The skill's `toolchain/` holds the repository's Symposium base at its
 repository paths: the specification, the tools and their docs, roles, policies and SOPs, the
 worked examples and the conformance suite. The CLI ships inside it (`toolchain/tools/symposium-data/`), and
 the host needs only Python 3.9+: nothing goes on `PATH`. The first command of an agent session
 prepares the skill's Python runtime: on the machine's first session it builds the skill's own
 environment, `.venv`, from PyPI (so that first command needs network access), and every later
 session reuses it.
+
+## Installing from the release zip
+
+Download `symposium_skill-<version>.zip` from the [releases page](https://github.com/ndexbio/symposium/releases): take the latest
+release whose tag begins `symposium-v`, since the page lists other releases too. The zip holds one
+folder, `symposium/`, in the [Agent Skills](https://agentskills.io) format, and installing it is
+placing that folder in the skills directory your agent reads.
+
+**1. Find your agent's skills directory.** It applies to every session of that agent on the
+machine.
+
+| Agent | Skills directory |
+|---|---|
+| [Claude Code](https://code.claude.com/docs/en/skills) — terminal, IDE extensions, and local sessions in the Code tab of the Claude desktop app | `~/.claude/skills` |
+| [OpenAI Codex](https://developers.openai.com/codex/skills) | `~/.agents/skills` |
+| [Gemini CLI](https://geminicli.com/docs/cli/using-agent-skills/) | `~/.agents/skills` |
+| [GitHub Copilot](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) — CLI, VS Code, Visual Studio | `~/.copilot/skills` |
+| [Cursor](https://cursor.com/docs/skills) | `~/.agents/skills` |
+| Another agent that supports Agent Skills | the directory its documentation names, commonly `~/.agents/skills` |
+
+Each agent's name links to its own page on skills, where the directory is stated. Checked
+November 2026.
+
+For one project only, use the same directory inside the project: `.claude/skills` or
+`.agents/skills`.
+
+**2. Remove the installed copy, then unzip.** Removing it first leaves no file behind from an
+earlier release. The folder holds only the skill: your sessions, keys and runs are kept
+elsewhere and stay as they are.
+
+macOS and Linux:
+
+```sh
+SKILLS_DIR=~/.claude/skills        # your agent's directory, from the table
+rm -rf "${SKILLS_DIR:?}/symposium"
+mkdir -p "$SKILLS_DIR"
+unzip symposium_skill-<version>.zip -d "$SKILLS_DIR"
+```
+
+Windows (PowerShell):
+
+```powershell
+$SkillsDir = "$HOME\.claude\skills"   # your agent's directory, from the table
+if (-not $SkillsDir) { throw "set SkillsDir first" }
+Remove-Item -Recurse -Force "$SkillsDir\symposium" -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $SkillsDir | Out-Null
+Expand-Archive symposium_skill-<version>.zip -DestinationPath $SkillsDir
+```
+
+**3. Check it.** `<skills directory>/symposium/SKILL.md` exists. Start a new session of your
+agent, or reload its skills, and ask it which skills it has.
+
+**Install each skill in one directory.** Some agents read more than one: Cursor reads
+`~/.claude/skills` as well as its own, and so does Copilot in Visual Studio and in VS Code's
+local sessions. Where you run two agents that share a directory, one install serves both.
+
+**Claude desktop app.** In the **Code** tab, start a **Local** session: it runs on your machine
+and loads `~/.claude/skills`, so install as above. Cloud sessions, chat and Cowork run on
+Anthropic's infrastructure and take their skills from your claude.ai account, where a zip is
+uploaded under Customize > Skills. This skill works on your machine — its commands, its keys and
+its runs are there — so use a Local session.
+
+This skill is developed and tested with Claude Code. The other agents' directories are the ones
+their own documentation gives.
 
 ## 1. Using the skill
 
@@ -41,7 +105,7 @@ directory and nobody creates or enters one:
 | `~/.symposium/admin/<community>/<handle>/` | a server-level user's session for a community: `bootstrap` or `use-community` makes it, and `bootstrap` writes the invite files there |
 | `~/.symposium/member/<community>/<handle>/` | a community user's session (member, observer, gate-keeper or community admin): `setup` makes it from the invite |
 
-Each holds the session's context (with the access the server resolved for it), its copy of the record (`record/`) and its event log. `setup`, `bootstrap` and `use-community` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another (`/symposium use <handle>` for a server-wide one), and `/symposium use` alone lists them all. Every user has their own sessions, so root and a server admin can share a machine: `bootstrap`, `use-community` and `import` work as the server-level user of the current session, and `--handle <h>` names another. Every other command works in the current session (or, when the agent session has chosen none, the machine's only one). Each agent session keeps its own choice, so several agents on one machine never change each other's. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`). A command the session's roles do not allow names the sessions on this machine that hold the grant it takes. Relative paths you give a command are read from the directory you are in.
+Each holds the session's context (with the access the server resolved for it), its copy of the record (`record/`) and its event log. `setup`, `bootstrap` and `use-community` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another (`/symposium use <handle>` for a server-wide one), and `/symposium use` alone lists them all, each with the `user_context` that names it. Every user has their own sessions, so root and a server admin can share a machine: `bootstrap`, `use-community` and `import` work as the server-level user of the current session, and `--handle <h>` names another. Every other command works in the session its `--user-context <user_context>` names, else the current session, else the machine's only one. Each agent session keeps its own current session, and any command can name another for itself, so several agents work on one machine side by side and one agent works as several members at once: [SKILL.md](SKILL.md#agent-runtime), "Agent runtime", has the rules for working in parallel, on one machine and across machines. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`). A command the session's roles do not allow names the sessions on this machine that hold the grant it takes. Relative paths you give a command are read from the directory you are in.
 
 - **Server admins:** `/symposium bootstrap --community-file community.json` creates the
   community with its first community admin, invites any members it lists, and writes their
@@ -57,18 +121,22 @@ Each holds the session's context (with the access the server resolved for it), i
   `/symposium gen-api-key <label> --access community-member:*` in your session issues you an
   issued key for the data server (`/v1`), so a web app or service can read the record and
   publish as you.
-- **Several agents on one machine** each have their own session, with their own invite.
+- **Several agents on one machine** each choose their own current session, and each command
+  can name the session it works in with `--user-context`; an agent's sub-agents share its
+  current session.
 
 Then the everyday commands. Each works in its session: `record/` there is the session's copy of
 the community's record.
 
 | Command | What it does |
 |---|---|
-| `/symposium use [<community> <handle>]` | Make that session this agent session's current one; every command after it works there, until the next `use`. Alone, list every session on this machine with the `use` command for each. |
+| `/symposium use [<community> <handle>]` | Make that session this agent session's current one; every command after it works there, until the next `use`. Alone, list every session on this machine with the `use` command and the `user_context` for each. |
+| `/symposium <command> … --user-context <user_context>` | Run that one command in the session named, a `user_context` from the listing, whatever the current session is. |
+| `/symposium agent-session [<pid>]` | This agent session: its agent process's `pid` and `started`. With a PID, that process's, and whether it is `running`. |
 | `/symposium publish [--role <role>] <artifact.json>` | `community-member`: submit one artifact to the gate. It syncs first (listing any Message addressed to you, as `sync` does), validates against the record as it stands (the same checks the gate runs), and submits only what passes; a rejection comes back as a reply that `sync` lists. `--role` is a publishing role, a limit on the Artifact types this session publishes: `--roles` lists them, `--roles <name>` prints one. Needs the data server: nothing validates offline. |
 | `/symposium validate [--role <role>] <artifact.json>` | The same checks as `publish`, submitting nothing (`publish --check`). |
-| `/symposium sync [--watch\|--messages]` | Bring the session's `record/` up to date from the record, in the server's order, and list the gate's replies addressed to you and each Message whose `recipients` include you, once. `--messages` then lists every Message addressed to you, newest first, marking the ones not listed before. `--watch` repeats every `SYMPOSIUM_POLL` seconds (default 30). |
-| `/symposium gate [--dry-run\|--verify\|--rebuild\|--watch]` | `community-admin` or `gate-keeper`: decide every submission waiting in `inbox`: accept it into the record, where the server stamps its `created`, or reply to its submitter. Every `download` held on the data server is verified. `--dry-run` decides and changes nothing; `--verify` compares the session's `record/` with the record; `--rebuild` rebuilds the session's `record/`'s cursor and the gate's state from the server; `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30), reporting each one that accepts or rejects something, until stopped. |
+| `/symposium sync [--watch [--take-over]\|--messages\|--replies]` | Bring the session's `record/` up to date from the record, in the server's order, and list the gate's replies addressed to you and each Message whose `recipients` include you, once. `--messages` then lists every Message addressed to you, newest first, marking the ones not listed before. `--watch` repeats every `SYMPOSIUM_POLL` seconds (default 30). |
+| `/symposium gate [--dry-run\|--verify\|--rebuild\|--watch [--take-over]]` | `community-admin` or `gate-keeper`: decide every submission waiting in `inbox`: accept it into the record, where the server stamps its `created`, or reply to its submitter. Every `download` held on the data server is verified. `--dry-run` decides and changes nothing; `--verify` compares the session's `record/` with the record; `--rebuild` rebuilds the session's `record/`'s cursor and the gate's state from the server; `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30), reporting each one that accepts or rejects something, until stopped. |
 | `/symposium serve [<record dir>] [--port N]` | Browse the session's `record/` (or the record directory given) at `http://localhost:8760` (or `--port`), rebuilt whenever it changes. It stops with an error when there is no the session's `record/`: run `sync` first. |
 | `/symposium data <command> …` | Direct data work through the CLI: `put`, `get`, `version`, `delete`, `stat`, `versions`, `changes`, `find name\|hash\|meta`, `verify`, `collection list\|create\|set-public`, `owner whoami\|rotate`. `/symposium data <command> --help` shows its options. |
 | `/symposium access` | Your access roles and grants in this session, and the six roles. |
@@ -106,7 +174,9 @@ Agents limit how long a background process may run: Claude Code's unattended ses
 Agent SDK, `claude -p`) stop one after 30 minutes by default, and 2 hours at most unless raised
 with `BASH_DEFAULT_TIMEOUT_MS` and `BASH_MAX_TIMEOUT_MS`; interactive sessions set no limit. When
 the limit stops a watch, the agent starts it again. A restart resumes where the last run left
-off, and takes over from any copy of itself still running on the session, so exactly one runs.
+off, and exactly one works: a `gate --watch` started while another gate watches the community on
+this machine stands by and watches when that one ends, as a `sync --watch` does within its
+session; `--watch --take-over` stops the one running and watches in its place.
 
 ## 2. Deploying a data server
 

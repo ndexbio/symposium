@@ -7,7 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
-## [Symposium Skill 0.2.0] - Unreleased
+## [Symposium Skill 0.3.0] - 2026-11-13
+
+Works with Data Server 0.2.0.
+
+### Added
+
+- **Working in parallel on one machine.** Any command takes `--user-context
+  <community>/<handle>` and runs as that session, whatever the agent session's current one is,
+  so one agent session, sub-agents included, works as several members at once. `/symposium use`
+  alone lists every session with the `user_context` that names it, and `/symposium
+  agent-session` reports the agent session. The skill's "Agent runtime" section states what is
+  safe in parallel on one machine and across machines.
+- **One gate decides for a community at a time on a machine.** A `gate --watch` started while
+  another watches stands by and watches when that one ends; `sync --watch` does the same within
+  its session. `--watch --take-over` stops the one running.
+- **`sync --replies`** lists every reply from the gate to you, with the artifact each is about.
+
+### Changed
+
+- **One document describes roles and access:** every role, what each permission allows, API
+  keys, and who may change whose access. The other guides link to it. Every link in the skill
+  package is checked each time the package is built.
+- **`supersedes` is documented as a list of addresses** wherever an artifact's shape is
+  described, with an example and the refusal a single address gets.
+- **The release zip is `symposium_skill-<version>.zip`** and holds one folder, `symposium/`, in
+  the Agent Skills format, with the skill's README and licence inside it. It unzips straight
+  into an agent's skills directory.
+- **The skill's frontmatter holds the Agent Skills fields**: `license`, and its version under
+  `metadata`.
+
+### Fixed
+
+- Commands running at once in one session each write whole files: the session's context, its
+  copy of the record, its event log, and the skill's runtime.
+
+### Installing Skill
+
+[Installing from the release zip](README.md#installing-from-the-release-zip): the skills
+directory for Claude Code, Codex, Gemini CLI, GitHub Copilot and Cursor, and the commands that
+remove an installed copy and unzip this release.
+
+## [Symposium Skill 0.2.0] - 2026-11-06
 
 Works with Data Server 0.2.0. Connected to a server from another release, it stops and says
 which skill that server needs.
@@ -47,15 +88,11 @@ which skill that server needs.
   itself non-groundable gets a review note, which refuses nothing.
 - **The claim map** opens its purpose and rationale on demand and can be expanded to the whole
   pane. The overview explains its layout, and its graph fills the window.
-- **One document describes roles and access:** every role, what each permission allows, API
-  keys, and who may change whose access. The other guides link to it. Every link in the skill
-  package is checked each time the package is built.
-
 ### Fixed
 
 - A reply from the gate is listed once, even when a continuous sync runs beside other commands.
 
-## [Data Server 0.2.0] - Unreleased
+## [Data Server 0.2.0] - 2026-11-06
 
 A breaking release: it needs Symposium Skill 0.2.0, and clients of 0.1 can no longer connect.
 
@@ -87,7 +124,7 @@ A breaking release: it needs Symposium Skill 0.2.0, and clients of 0.1 can no lo
 - **Sharing a collection** means giving someone read access to it.
 - **The server's status shows who root is.**
 
-## [Symposium Helm 0.1.2] - Unreleased
+## [Symposium Helm 0.1.2] - 2026-11-06
 
 ### Changed
 

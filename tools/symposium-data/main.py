@@ -572,8 +572,12 @@ class Context:
         return out
 
     def save(self, context: dict):
+        """Whole or not at all: a sibling file named for this process, then an atomic rename,
+        so a command reading the context beside this one reads a whole one."""
         self.PATH.parent.mkdir(exist_ok=True)
-        self.PATH.write_text(json.dumps(context, indent=2) + "\n")
+        staged = self.PATH.with_name(f"{self.PATH.name}.{os.getpid()}.tmp")
+        staged.write_text(json.dumps(context, indent=2) + "\n")
+        os.replace(staged, self.PATH)
 
 
 def scope_of(context: dict) -> str:

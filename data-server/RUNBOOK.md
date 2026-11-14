@@ -234,7 +234,7 @@ Each step says where it runs, who runs it, the commands, and the check that prov
    - Repeat for each further community, each with its own community admin.
    - Check: `/symposium data communities list` shows each community, and `/symposium invite list --out-dir <dir>` shows each community admin's pending invite.
 
-Everyone from here on works from their own workstation, with the skill installed (`make deploy-local` from a clone, or the release's `Symposium_skill.zip`). Each receives an invite file out of band, as a file, and keeps it out of any chat.
+Everyone from here on works from their own workstation, with the skill installed (`make deploy-local` from a clone, or a release's `symposium_skill-<version>.zip`, unzipped into the agent's skills directory: [installing from the release zip](https://github.com/ndexbio/symposium#installing-from-the-release-zip)). Each receives an invite file out of band, as a file, and keeps it out of any chat.
 
 6. **Community admin: join.**
    - Run `/symposium setup --invite-file <community>-<handle>.invite`. It generates the community admin's key on this machine (encrypted, in the OS keychain, or under `SYMPOSIUM_KEY_PASSPHRASE` on a headless machine), registers it with the server, which assigns `community-admin` from the stored invite, creates the session `~/.symposium/member/<community>/<handle>/` and syncs `record/`.
@@ -246,10 +246,10 @@ Everyone from here on works from their own workstation, with the skill installed
 8. **Each member: join and publish.**
    - Run `/symposium setup --invite-file <h>.invite`. The key is generated on the member's machine, the server assigns the roles stored on the invite, and the session is created and synced.
    - Check: `/symposium access` shows the roles invited; the community admin's `/symposium users list` shows `<h>` registered.
-   - Work: `/symposium sync` brings the record copy up to date; `/symposium validate --role <publishing role> <artifact.json>` runs the gate's own checks; `/symposium publish --role <publishing role> <artifact.json>` submits one artifact to the community's `inbox`. A member holding several sessions picks one with `/symposium use <community> <h>`.
-9. **Community admin: run the gate.**
-   - In the community admin's session, start `/symposium gate --watch` as a long-running background process. It polls the community's `inbox` every `SYMPOSIUM_POLL` seconds (default 30), validates each submission against the record, then accepts it (promotes it into `record`) or rejects it (a reply only the submitter reads), printing one line per decision.
-   - It runs while the community admin's agent session is open. Started again, it resumes where it left off, and decides each submission once.
+   - Work: `/symposium sync` brings the record copy up to date; `/symposium validate --role <publishing role> <artifact.json>` runs the gate's own checks; `/symposium publish --role <publishing role> <artifact.json>` submits one artifact to the community's `inbox`. A member holding several sessions picks one with `/symposium use <community> <h>`, or names one on a command with `--user-context <community>/<h>`.
+9. **Community admin or gate-keeper: run the gate.**
+   - In the session of a user holding `gate`, start `/symposium gate --watch` as a long-running background process. It polls the community's `inbox` every `SYMPOSIUM_POLL` seconds (default 30), validates each submission against the record, then accepts it (promotes it into `record`) or rejects it (a reply only the submitter reads), printing one line per decision.
+   - It runs while the agent session that started it is open. Started again, it resumes where it left off, and decides each submission once. One gate decides for a community at a time on a machine: a second `gate --watch` there stands by and watches when the first ends. Run a community's gate from one machine.
    - Use `/symposium gate` for a single pass, and `/symposium gate --verify` to compare the local `record/` with the server.
    - Check: the member's next `/symposium sync` shows the decision.
 10. **Community admin (optional): hand the gate on.**
@@ -365,7 +365,7 @@ If Mia also publishes her own work, she keeps her `community-member` role alongs
 
 ### 8.6 Commands
 
-Each command takes the grant named; [RBAC.md](RBAC.md) says what each grant allows and which roles hold it.
+Each command takes the grant named; [RBAC.md](RBAC.md) says what each grant allows and which roles hold it. Each works in the agent session's current session, or in the one `--user-context <community>/<handle>` names on it; `/symposium use` lists the sessions this machine holds.
 
 | Command | Does | Grant |
 |---|---|---|

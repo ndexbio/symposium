@@ -19,10 +19,15 @@ every command in its session's directory.
 
 `setup`, `bootstrap`, `use-community`, `import` and `admin-config` name their session
 themselves; `bootstrap`, `use-community` and `import` work as the server-level user named
-with `--handle`, else the current session's, else the machine's only one. Every other command works in the agent session's current session: the one
-`/symposium use` chose, or the one `setup`, `bootstrap` or `use-community` made; when the agent
-session has chosen none, the machine's only session. The choice is kept per agent process
-(agent_process.py), so two agent sessions on one machine never change each other's. Relative
+with `--handle`, else the current session's, else the machine's only one. Every other command
+works in the session its `--user-context` names: a session's `user_context`, which is
+`<community>/<handle>`, or the handle alone for a server-wide one, as `/symposium use` lists
+them. The option decides for that one command and leaves the current session as it is, so one
+agent session works as several users at once. A command that carries none works in the agent
+session's current session: the one `/symposium use` chose, or the one `setup`, `bootstrap` or
+`use-community` made; when the agent session has chosen none, the machine's only session. The
+choice is kept per agent process (agent_process.py), so two agent sessions on one machine never
+change each other's; `/symposium agent-session` reports that process. Relative
 paths on a command line are the caller's: they are resolved against the directory the agent ran
 the command in, before the command moves into its session.
 
@@ -35,6 +40,7 @@ Standard library only, Python 3.9+.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +53,12 @@ NO_SESSION = (
 )
 # the scope of the server-wide sessions under admin/: the one name no community may take
 SERVER = "admin"
+# the option that names the session one command works in: a session's `user_context`
+USER_CONTEXT = "--user-context"
+NOT_ON_THIS_COMMAND = (
+    "`{command}` names its own session and takes no `--user-context`: the option goes on a "
+    "command that works in a session this machine already holds"
+)
 # names that may name a session directory: a community (a slug) and a handle
 COMMUNITY = re.compile(r"^[A-Za-z0-9_]{1,20}$")
 HANDLE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
@@ -133,6 +145,11 @@ class Session:
             return f"/symposium use {self.handle}"
         return f"/symposium use {self.community} {self.handle}"
 
+    def user_context(self) -> str:
+        """The value `--user-context` takes for this session: `<community>/<handle>`, or the
+        handle alone for a server-wide session (a handle holds no slash)."""
+        return f"{self.community}/{self.handle}" if self.community else self.handle
+
     def grants(self) -> dict | None:
         """The grants the server last resolved for this session's user, or None before the
         session has read them (`/symposium access`)."""
@@ -155,6 +172,7 @@ class Session:
             "roles": [r["role"] for r in (self.access or {}).get("roles", [])],
             "directory": str(self.directory),
             "use": self.use_command(),
+            "user_context": self.user_context(),
         }
 
 
@@ -276,12 +294,25 @@ class Sessions:
             {
                 "error": "this machine holds the server-level users "
                 f"{', '.join(handles)}: name one with --handle",
-                "sessions": [s.view() for s in wide],
+                "sessions": self.listing(wide),
             }
         )
 
     def member_session(self, community: str, handle: str) -> Path:
         return self.root / "member" / community / handle
+
+    def listing(self, sessions: list | None = None) -> list:
+        """The views of `sessions` (every session on this machine when none are given), each
+        saying whether it is this agent session's current one. `user_context` in a view is the
+        value `--user-context` takes."""
+        current = self.current()
+        return [
+            {
+                **s.view(),
+                "current": current is not None and s.directory == current.directory,
+            }
+            for s in (self.all() if sessions is None else sessions)
+        ]
 
     # ── this agent session's current session ─────────────────────────────────────────────
     def current(self) -> Session | None:
@@ -315,12 +346,15 @@ class Sessions:
             if record.stem == str(agent.pid) or not record.stem.isdigit():
                 continue
             try:
-                started = json.loads(record.read_text()).get("started")
-            except (OSError, ValueError):
-                started = None
-            if started is None or self.agent.started(int(record.stem)) != started:
+                started = json.loads(record.read_text())["started"]
+            except (OSError, ValueError, KeyError, TypeError):
+                continue  # a record is removed only once it reads whole
+            if self.agent.started(int(record.stem)) != started:
                 record.unlink(missing_ok=True)
-        self.record(agent.pid).write_text(
+        # whole or not at all: a sibling file named for this process, then an atomic rename
+        target = self.record(agent.pid)
+        staged = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+        staged.write_text(
             json.dumps(
                 {
                     "community": session.community,
@@ -330,15 +364,41 @@ class Sessions:
             )
             + "\n"
         )
+        os.replace(staged, target)
 
     def record(self, pid: int) -> Path:
         return self.root / "current" / f"{pid}.json"
+
+    def agent_session(self, rest: list) -> dict:
+        """`/symposium agent-session`: the agent session these commands run in, as the PID
+        and start time of its agent process. `/symposium agent-session <pid>`: that process's
+        start time, and whether it is running. A skill that keeps state per agent session
+        keys it on the two values, and compares `started` to tell whether the agent session
+        that wrote a record is still the one running under that PID."""
+        if not rest:
+            agent = self.agent.find()
+            return {
+                "pid": agent.pid if agent else None,
+                "started": agent.started if agent else None,
+            }
+        if len(rest) != 1 or not rest[0].isdigit():
+            raise SessionError(
+                {
+                    "error": "usage: /symposium agent-session, or /symposium agent-session <pid>"
+                }
+            )
+        started = self.agent.started(int(rest[0]))
+        return {"pid": int(rest[0]), "started": started, "running": started is not None}
 
     def use(self, rest: list) -> dict:
         """`/symposium use <community> <handle>` (or `use <handle>`, a server-wide session):
         make that session this agent session's current one. With no arguments, or a session
         that does not exist, list them all."""
         sessions = self.all()
+        if self.names_user_context(rest):
+            raise SessionError({"error": NOT_ON_THIS_COMMAND.format(command="use")})
+        if not rest and sessions:
+            return {"sessions": self.listing(sessions)}
         if len(rest) in (1, 2):
             community, handle = ("", rest[0]) if len(rest) == 1 else rest
             for session in sessions:
@@ -357,7 +417,69 @@ class Sessions:
         raise SessionError(
             {
                 "error": error if sessions else NO_SESSION,
-                "sessions": [s.view() for s in sessions],
+                "sessions": self.listing(sessions),
+            }
+        )
+
+    # ── the user context a command names ─────────────────────────────────────────────────
+    @staticmethod
+    def names_user_context(rest: list) -> bool:
+        return any(arg.partition("=")[0] == USER_CONTEXT for arg in rest)
+
+    def selected(self, rest: list) -> tuple:
+        """-> (the session `--user-context` names, or None when the command carries none; the
+        arguments without the option). The option decides for this one command and leaves the
+        agent session's current context as it is. A value this machine holds no session for
+        is refused, with every session it does hold."""
+        value, out, skip = None, [], False
+        for i, arg in enumerate(rest):
+            if skip:
+                skip = False
+                continue
+            key, equals, given = arg.partition("=")
+            if key != USER_CONTEXT:
+                out.append(arg)
+                continue
+            if equals:
+                value = given
+            else:
+                value = rest[i + 1] if i + 1 < len(rest) else ""
+                skip = True
+        if value is None:
+            return None, rest
+        community, slash, handle = value.rpartition("/")
+        well_formed = (
+            bool(HANDLE.match(handle))
+            and (not slash or bool(COMMUNITY.match(community)))
+            and "/" not in community
+        )
+        if not well_formed:
+            raise SessionError(
+                {
+                    "error": f"`{USER_CONTEXT}` takes <community>/<handle>, or <handle> for a "
+                    f"server-wide session, and got {value!r}: take the value from "
+                    "`user_context` in `/symposium use`",
+                    "sessions": self.listing(),
+                }
+            )
+        found = [
+            s
+            for s in self.all()
+            if s.community.lower() == community.lower() and s.handle == handle
+        ]
+        if len(found) == 1:
+            return found[0], out
+        where = community or "the server-wide sessions"
+        raise SessionError(
+            {
+                "error": (
+                    f"this machine holds {len(found)} sessions for {handle} in {where}: "
+                    f"`{USER_CONTEXT}` takes one that `/symposium use` lists once"
+                    if found
+                    else f"no session for {handle} in {where} on this machine: "
+                    f"`{USER_CONTEXT}` takes a `user_context` that `/symposium use` lists"
+                ),
+                "sessions": self.listing(found or None),
             }
         )
 
@@ -365,6 +487,9 @@ class Sessions:
     def place(self, command: str, rest: list) -> tuple:
         """-> (the command's session directory, created when needed; its Session, or None
         when it has none yet; its arguments, with the caller's paths resolved)."""
+        if command in NAMED and self.names_user_context(rest):
+            raise SessionError({"error": NOT_ON_THIS_COMMAND.format(command=command)})
+        named, rest = self.selected(rest)
         rest = self.resolve(command, rest)
         if command in NAMED:
             if (
@@ -382,14 +507,20 @@ class Sessions:
                 )  # the tool reports what is wrong with its file
             directory.mkdir(parents=True, exist_ok=True)
             return directory, self.at(directory), rest
-        session = self.chosen()
+        session = named or self.chosen()
         if command in COMMUNITY_COMMANDS and not session.community:
             raise SessionError(
                 {
-                    "error": f"`{command}` works in a community, and this agent session works "
-                    f"server-wide as {session.handle}: choose a community's session with "
-                    "`/symposium use-community <community>`, or `/symposium use`",
-                    "sessions": [s.view() for s in self.all() if s.community],
+                    "error": f"`{command}` works in a community, and "
+                    + (
+                        f"`{USER_CONTEXT} {session.user_context()}` names a server-wide "
+                        "session: name a community's, from `user_context` in `/symposium use`"
+                        if named
+                        else f"this agent session works server-wide as {session.handle}: "
+                        "choose a community's session with `/symposium use-community "
+                        f"<community>`, or `/symposium use`, or name one with `{USER_CONTEXT}`"
+                    ),
+                    "sessions": self.listing([s for s in self.all() if s.community]),
                 }
             )
         return session.directory, session, rest
@@ -403,8 +534,9 @@ class Sessions:
         named = " or ".join(f"`{g}`" for g in grants)
         return {
             "error": f"`{command}` takes the {named} grant, which {session.label()} does not "
-            "hold: `/symposium access` shows what it holds; switch with `/symposium use`",
-            "sessions": [s.view() for s in self.all() if s.holds(grants)],
+            "hold: `/symposium access` shows what it holds; switch with `/symposium use`, or "
+            f"name one of these on the command with `{USER_CONTEXT}`",
+            "sessions": self.listing([s for s in self.all() if s.holds(grants)]),
         }
 
     def chosen(self) -> Session:
@@ -420,8 +552,9 @@ class Sessions:
         raise SessionError(
             {
                 "error": "this machine holds several Symposium sessions: choose one for this "
-                "agent session with `/symposium use <community> <handle>`",
-                "sessions": [s.view() for s in sessions],
+                "agent session with `/symposium use <community> <handle>`, or name one on the "
+                f"command with `{USER_CONTEXT} <user_context>`",
+                "sessions": self.listing(sessions),
             }
         )
 

@@ -1,7 +1,9 @@
 """The skill's sessions: every agent session's directory is kept under
 `~/.symposium/`; `/symposium use` chooses this agent session's current one, kept per agent
-process (its PID and start time); each command finds its session; the paths a caller gives stay
-the caller's. On a temporary `~/.symposium/` and an injected process table, with no server."""
+process (its PID and start time), and lists them all; `--user-context` names the session of
+one command; `/symposium agent-session` reports the agent process; each command finds its
+session; the paths a caller gives stay the caller's. On a temporary `~/.symposium/` and an
+injected process table, with no server."""
 
 import json
 import sys
@@ -186,6 +188,7 @@ def test_several_sessions_need_a_choice(root, caller, table):
     with pytest.raises(SessionError) as several:
         agent_session(root, caller, table, 300).place("sync", [])
     assert "/symposium use <community> <handle>" in several.value.report["error"]
+    assert "--user-context <user_context>" in several.value.report["error"]
     assert sorted(s["use"] for s in several.value.report["sessions"]) == [
         "/symposium use demo demo-admin",
         "/symposium use demo lyra",
@@ -209,19 +212,186 @@ def test_use_switches_this_agent_session_only(root, caller, table):
     assert records == ["200.json", "400.json"]
 
 
-def test_use_with_no_arguments_or_no_such_session_lists_them_and_changes_nothing(
+def test_use_with_no_arguments_lists_every_session_and_changes_nothing(
     root, caller, table
 ):
     session(
         root, "admin", "demo", "demo-admin", handle="demo-admin", grants=ROOT_GRANTS
     )
+    session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
+    session(root, "admin", "admin", "root", handle="root", grants=ROOT_GRANTS)
     sessions = agent_session(root, caller, table, 300)
-    for args in ([], ["demo", "nobody"]):
-        with pytest.raises(SessionError) as refused:
-            sessions.use(args)
-        listed = refused.value.report["sessions"]
-        assert listed[0]["use"] == "/symposium use demo demo-admin"
+    listed = sessions.use([])["sessions"]
+    # `user_context` is the value `--user-context` takes: a server-wide one is its handle
+    assert sorted(s["user_context"] for s in listed) == [
+        "demo/demo-admin",
+        "demo/lyra",
+        "root",
+    ]
+    assert not any(s["current"] for s in listed)
     assert not (root / "current").exists()
+    sessions.use(["demo", "lyra"])
+    current = [s["user_context"] for s in sessions.use([])["sessions"] if s["current"]]
+    assert current == ["demo/lyra"]
+
+
+def test_use_of_a_session_this_machine_does_not_hold_lists_them(root, caller, table):
+    session(
+        root, "admin", "demo", "demo-admin", handle="demo-admin", grants=ROOT_GRANTS
+    )
+    sessions = agent_session(root, caller, table, 300)
+    with pytest.raises(SessionError) as refused:
+        sessions.use(["demo", "nobody"])
+    assert (
+        refused.value.report["sessions"][0]["use"] == "/symposium use demo demo-admin"
+    )
+    assert not (root / "current").exists()
+
+
+def test_user_context_names_the_session_of_one_command(root, caller, table):
+    """`--user-context` decides for the command that carries it, over what `use` chose, and
+    leaves the agent session's current context as it is."""
+    steward = session(
+        root, "admin", "demo", "demo-admin", handle="demo-admin", grants=ROOT_GRANTS
+    )
+    lyra = session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
+    sessions = agent_session(root, caller, table, 300)
+    # with no current context, and with several sessions on the machine
+    directory, chosen, rest = sessions.place(
+        "sync", ["--watch", "--user-context", "demo/lyra"]
+    )
+    assert (directory, chosen.label(), rest) == (lyra, "demo/lyra", ["--watch"])
+    assert not (root / "current").exists()
+    sessions.use(["demo", "lyra"])
+    before = (root / "current" / "200.json").read_text()
+    directory, chosen, rest = sessions.place(
+        "gate", ["--user-context=Demo/demo-admin", "--watch"]
+    )
+    assert (directory, chosen.label(), rest) == (
+        steward,
+        "demo/demo-admin",
+        ["--watch"],
+    )
+    assert (root / "current" / "200.json").read_text() == before
+    assert (
+        sessions.place("sync", [])[0] == lyra
+    )  # the next command: the current context
+
+
+def test_user_context_takes_a_server_wide_session_by_its_handle(root, caller, table):
+    wide = session(root, "admin", "admin", "root", handle="root", grants=ROOT_GRANTS)
+    session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
+    sessions = agent_session(root, caller, table, 300)
+    directory, chosen, rest = sessions.place(
+        "users", ["list", "--user-context", "root"]
+    )
+    assert (directory, chosen.user_context(), rest) == (wide, "root", ["list"])
+    with pytest.raises(SessionError) as refused:
+        sessions.place("publish", ["--user-context", "root"])
+    assert "names a server-wide session" in refused.value.report["error"]
+    assert [s["user_context"] for s in refused.value.report["sessions"]] == [
+        "demo/lyra"
+    ]
+
+
+@pytest.mark.parametrize(
+    "value, said",
+    [
+        ("demo/nobody", "no session for nobody in demo on this machine"),
+        ("nobody", "no session for nobody in the server-wide sessions"),
+        ("", "takes <community>/<handle>"),
+        ("a/b/c", "takes <community>/<handle>"),
+        ("demo/", "takes <community>/<handle>"),
+        ("not a slug/lyra", "takes <community>/<handle>"),
+    ],
+)
+def test_a_user_context_this_machine_does_not_hold_is_refused_with_the_listing(
+    root, caller, table, value, said
+):
+    session(
+        root, "admin", "demo", "demo-admin", handle="demo-admin", grants=ROOT_GRANTS
+    )
+    session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
+    sessions = agent_session(root, caller, table, 300)
+    with pytest.raises(SessionError) as refused:
+        sessions.place("publish", ["a.json", f"--user-context={value}"])
+    report = refused.value.report
+    assert said in report["error"]
+    # the refusal carries every value the option takes
+    assert sorted(s["user_context"] for s in report["sessions"]) == [
+        "demo/demo-admin",
+        "demo/lyra",
+    ]
+    with pytest.raises(SessionError):  # the option with no value after it
+        sessions.place("publish", ["a.json", "--user-context"])
+
+
+def test_two_sessions_for_one_user_context_are_refused_and_named(root, caller, table):
+    as_admin = session(root, "admin", "demo", "lyra", handle="lyra", grants=ROOT_GRANTS)
+    as_member = session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
+    with pytest.raises(SessionError) as refused:
+        agent_session(root, caller, table, 300).place(
+            "sync", ["--user-context", "demo/lyra"]
+        )
+    assert "holds 2 sessions for lyra in demo" in refused.value.report["error"]
+    assert sorted(s["directory"] for s in refused.value.report["sessions"]) == sorted(
+        [str(as_admin), str(as_member)]
+    )
+
+
+@pytest.mark.parametrize(
+    "command, rest",
+    [
+        ("setup", ["--invite-file", "lyra.invite"]),
+        ("bootstrap", ["--community-file", "community.json"]),
+        ("use-community", ["demo"]),
+        ("import", ["--community-file", "community.json"]),
+        ("admin-config", ["--handle", "a"]),
+    ],
+)
+def test_a_command_that_names_its_own_session_takes_no_user_context(
+    root, caller, table, command, rest
+):
+    session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
+    sessions = agent_session(root, caller, table, 300)
+    with pytest.raises(SessionError) as refused:
+        sessions.place(command, [*rest, "--user-context", "demo/lyra"])
+    assert f"`{command}` names its own session" in refused.value.report["error"]
+    with pytest.raises(SessionError) as refused:
+        sessions.use(["--user-context", "demo/lyra"])
+    assert "`use` names its own session" in refused.value.report["error"]
+
+
+def test_agent_session_reports_the_agent_process(root, caller, table):
+    sessions = agent_session(root, caller, table, 300)
+    assert sessions.agent_session([]) == {"pid": 200, "started": "a1"}
+    assert sessions.agent_session(["400"]) == {
+        "pid": 400,
+        "started": "a2",
+        "running": True,
+    }
+    del table.rows[400]  # that agent session ends
+    assert sessions.agent_session(["400"]) == {
+        "pid": 400,
+        "started": None,
+        "running": False,
+    }
+    with pytest.raises(SessionError):
+        sessions.agent_session(["not-a-pid"])
+
+
+def test_a_record_being_written_survives_another_agent_sessions_clean_up(
+    root, caller, table
+):
+    """A record is removed only once it reads whole and its process has ended."""
+    session(root, "member", "demo", "lyra", handle="lyra", grants=MEMBER)
+    (root / "current").mkdir(parents=True)
+    (root / "current" / "400.json").write_text('{"community": "demo", "hand')
+    agent_session(root, caller, table, 300).use(["demo", "lyra"])
+    assert sorted(p.name for p in (root / "current").iterdir()) == [
+        "200.json",
+        "400.json",
+    ]
 
 
 def test_no_session_names_setup_and_admin_config(root, caller, table):

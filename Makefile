@@ -12,10 +12,11 @@
 #                       and tests/api)
 #                       MAX_PER_TEST_WAIT (seconds, default 120) is the one limit on any wait
 #                       in any suite: reaching it means something hung
-#   make build          lint, then dist/Symposium_skill.zip: the symposium skill, with the
-#                       symposium-data CLI inside it
-#                       VERSION=<semver> is stamped into the skill's frontmatter; the release
-#                       job passes the tag's, and a build given none says 0.0.0-dev
+#   make build          lint, then dist/symposium_skill-<version>.zip: one folder, symposium/,
+#                       the skill with the symposium-data CLI inside it
+#                       VERSION=<semver> names the zip and is stamped into the skill's
+#                       frontmatter (metadata.version); the release job passes the tag's, and
+#                       a build given none says 0.0.0-dev
 #   make deploy-local   build, then install the skill from the zip into $(SKILLS)
 # The data server has its own Makefile: make -C data-server test runs its suites alone.
 
@@ -36,10 +37,10 @@ NO_DOCKER_SUITES := tests/skills/test_agent_process.py tests/skills/test_session
 	tests/skills/test_runtime.py tests/api
 # The OpenAPI linter for the API contract (api/openapi.yaml), pinned; it runs through npx.
 REDOCLY := 2.59.0
-BUNDLE := dist/Symposium_skill.zip
-# stamped into skills/symposium/SKILL.md's frontmatter by the build; release.yml passes the
-# release tag's version, and a local build stays 0.0.0-dev
+# names the zip and is stamped into skills/symposium/SKILL.md's frontmatter by the build;
+# release.yml passes the release tag's version, and a local build stays 0.0.0-dev
 VERSION ?= 0.0.0-dev
+BUNDLE := dist/symposium_skill-$(VERSION).zip
 SKILLS ?= $(HOME)/.claude/skills
 
 include make/side-by-side.mk
@@ -86,7 +87,7 @@ build: lint
 	python3 tools/bundle.py $(BUNDLE) $(VERSION)
 
 # Installs from the built zip, not the working copy, so what runs locally is what ships. It
-# removes before extracting, so a file dropped from the bundle does not live on in the install.
+# removes before extracting, so a file dropped from the zip does not live on in the install.
 # The build's checks print only when one fails, and then nothing is installed.
 deploy-local:
 	@test -n "$(SKILLS)" || { echo "deploy-local: SKILLS is empty; refusing"; exit 1; }
@@ -97,7 +98,7 @@ deploy-local:
 		python3 -m zipfile -e $(BUNDLE) "$$staging" && \
 		rm -rf "$(SKILLS)/symposium" && \
 		mkdir -p "$(SKILLS)" && \
-		mv "$$staging/skills/symposium" "$(SKILLS)/symposium"
+		mv "$$staging/symposium" "$(SKILLS)/symposium"
 	@echo "/symposium skill installed in $(SKILLS)/symposium"
 	@echo "  usage: /symposium <setup|bootstrap|use|publish|sync|gate|validate|serve|port|admin-config|…> [options]    e.g. /symposium setup --invite-file <file>"
 	@echo "  full instructions: $(SKILLS)/symposium/README.md"

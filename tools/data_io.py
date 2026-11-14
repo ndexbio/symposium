@@ -45,8 +45,13 @@ SUBMISSION_CITATION = "symposium_submission_citation"
 
 # ── the commands that keep running (`gate --watch`, `sync --watch`, `serve`) ────────────────
 WINDOWS = os.name == "nt"
-# where a session keeps its watchers' locks: beside the context, in the session's directory
+# where a session keeps its own watchers' locks (`sync --watch`, `serve`): beside the context,
+# in the session's directory
 LOCKS = Path(".symposium")
+# where a machine keeps each community's gate locks, shared by every session on it that holds
+# `gate` there: `<community>.lock` is held for the length of one pass, and
+# `<community>.watch.lock` by the gate that is watching
+GATE_LOCKS = Path.home() / ".symposium" / "gate"
 
 
 def stop_on_signals():
@@ -101,10 +106,11 @@ def pause(seconds: float):
 
 
 def replace_text(path: Path, text: str, attempts: int = 20):
-    """Write `path` whole or not at all: a sibling `.tmp` file, then an atomic rename. A stop
-    at any point leaves the old file or the new one. On Windows the rename fails while
-    another process holds the file open, so it is retried every 0.1 s, for up to 2 s."""
-    staged = path.with_name(path.name + ".tmp")
+    """Write `path` whole or not at all: a sibling file named for this process, then an atomic
+    rename. A stop at any point leaves the old file or the new one, and two processes writing
+    one path each stage their own file. On Windows the rename fails while another process
+    holds the file open, so it is retried every 0.1 s, for up to 2 s."""
+    staged = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     staged.write_text(text)
     for attempt in range(attempts):
         try:
@@ -182,15 +188,58 @@ def _end(pid: int, hard: bool):
         pass  # it has ended already
 
 
-def take_over(name: str, wait: float = 10.0):
-    """Become the one `name` watcher of this session. A watcher still running, an orphan an
-    agent left behind or one it restarted, is asked to stop (SIGTERM; Windows has only
-    TerminateProcess), and after `wait` seconds it is killed. The lock is the OS's, so it
-    falls to whoever runs next the moment its holder dies, however it died; a pid is
-    signalled only while its lock is held, so a reused pid is never hit. -> the open lock
-    file, which the caller keeps for as long as it runs."""
-    LOCKS.mkdir(exist_ok=True)
-    lock_file, pid_file = LOCKS / f"{name}.lock", LOCKS / f"{name}.pid"
+def _who(pid_file: Path) -> str:
+    """What the holder of a lock said it is (a user context), or "" when it said nothing."""
+    try:
+        return " ".join(pid_file.read_text().split()[1:])
+    except OSError:
+        return ""
+
+
+def watch_alone(name: str, lock_file: Path, who: str, replace: bool = False):
+    """Become the one `name` watcher behind `lock_file`, and stand by while another holds it.
+
+    The lock is the OS's: it falls to whoever waits next the moment its holder ends, however
+    it ended. So a watcher that finds it held says which watcher is running, waits, and
+    watches from the moment that one ends; it does nothing while it waits, and a stop signal
+    ends the wait within a second. With `replace` (`--take-over`, for a watcher that has
+    hung) the holder is stopped first, as `take_over` stops it. `who` is this watcher's user
+    context, kept beside the lock for the next one to print. -> the open lock file, which the
+    caller keeps for as long as it runs."""
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file = lock_file.with_suffix(".pid")
+    if replace:
+        return take_over(name, lock_file=lock_file, who=who)
+    handle = open(lock_file, "a+")
+    if not _locked(handle):
+        pid, running = _holder(pid_file), _who(pid_file)
+        print(f"standing by: a {name} watcher is running"
+              + (f" (pid {pid}{', ' + running if running else ''})" if pid else "")
+              + " and this one watches when it ends", flush=True)
+        try:
+            while not _locked(handle):
+                time.sleep(0.5)
+        except BaseException:
+            handle.close()
+            raise
+        print(f"the {name} watcher that was running has ended: this one is watching now",
+              flush=True)
+    replace_text(pid_file, f"{os.getpid()} {who}\n")
+    return handle
+
+
+def take_over(name: str, wait: float = 10.0, lock_file: Path | None = None, who: str = ""):
+    """Become the one `name` watcher behind a lock (this session's own, unless `lock_file`
+    names another) by stopping the one that holds it. A watcher still running is asked to
+    stop (SIGTERM; Windows has only TerminateProcess), and after `wait` seconds it is killed.
+    The lock is the OS's, so it falls to whoever runs next the moment its holder dies, however
+    it died; a pid is signalled only while its lock is held, so a reused pid is never hit.
+    -> the open lock file, which the caller keeps for as long as it runs."""
+    if lock_file is None:
+        LOCKS.mkdir(exist_ok=True)
+        lock_file = LOCKS / f"{name}.lock"
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    pid_file = lock_file.with_suffix(".pid")
     handle = open(lock_file, "a+")
     pid, hard, deadline = None, False, time.monotonic() + wait
     while not _locked(handle):
@@ -210,7 +259,7 @@ def take_over(name: str, wait: float = 10.0):
             sys.exit(f"! the {name} watcher (pid {pid}) would not stop")
         time.sleep(0.2)
     # the pid sits in its own file: on Windows a locked byte cannot be read by anyone else
-    replace_text(pid_file, f"{os.getpid()}\n")
+    replace_text(pid_file, f"{os.getpid()} {who}".rstrip() + "\n")
     return handle
 
 

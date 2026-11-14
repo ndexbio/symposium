@@ -99,8 +99,9 @@ def test_help_names_the_data_server_image_and_prepares_nothing(skill, suite, tmp
 def test_usage_and_an_unknown_command(skill, tmp_path):
     usage = skill.ok(tmp_path, "--help")
     assert usage["usage"].startswith(
-        "/symposium <setup|admin-config|bootstrap|use-community|use|access|publish"
+        "/symposium <setup|admin-config|bootstrap|use-community|use|agent-session|access|"
     )
+    assert "[--user-context <user_context>]" in usage["usage"]
     code, out = skill(tmp_path, "frobnicate")
     assert code == 1 and "unknown command 'frobnicate'" in out["error"]
 
@@ -173,13 +174,42 @@ def test_use_lists_switches_and_refuses_what_a_session_does_not_hold(
     )
     assert code == 1 and "`members` or `delegate`" in out["error"]
     assert [s["use"] for s in out["sessions"]] == [f"/symposium use demo {ROOT}"]
-    code, out = skill(
-        tmp_path, "use"
-    )  # alone: every session, with the command for each
-    assert code == 1 and sorted(s["use"] for s in out["sessions"]) == [
-        f"/symposium use demo {ROOT}",
-        "/symposium use demo lyra",
+    # alone: every session, with the command for each and the `user_context` that names it
+    listed = skill.ok(tmp_path, "use")["sessions"]
+    assert sorted((s["use"], s["user_context"], s["current"]) for s in listed) == [
+        (f"/symposium use demo {ROOT}", f"demo/{ROOT}", False),
+        ("/symposium use demo lyra", "demo/lyra", True),
     ]
+    # `--user-context` names the session of one command, and the current one stays
+    as_root = skill.ok(tmp_path, "users", "list", "--user-context", f"demo/{ROOT}")
+    assert as_root["session"] == f"demo/{ROOT}"
+    invited = skill.ok(
+        tmp_path,
+        "invite",
+        "--handle",
+        "vega",
+        "--access",
+        "community-member:*",
+        "--out",
+        tmp_path / "vega.invite",
+        f"--user-context=demo/{ROOT}",
+    )
+    assert invited["session"] == f"demo/{ROOT}"
+    assert skill.ok(tmp_path, "users", "list")["session"] == "demo/lyra"
+    code, out = skill(tmp_path, "users", "list", "--user-context", "demo/nobody")
+    assert code == 1 and "no session for nobody in demo on this machine" in out["error"]
+    assert sorted(s["user_context"] for s in out["sessions"]) == [
+        f"demo/{ROOT}",
+        "demo/lyra",
+    ]
+    code, out = skill(tmp_path, "use", "demo", "lyra", "--user-context", "demo/lyra")
+    assert code == 1 and "`use` names its own session" in out["error"]
+    agent = skill.ok(tmp_path, "agent-session")
+    assert isinstance(agent["pid"], int) and agent["started"]
+    assert skill.ok(tmp_path, "agent-session", str(agent["pid"])) == {
+        **agent,
+        "running": True,
+    }
     code, out = skill(tmp_path, "use", "demo", "nobody")
     assert code == 1 and "no session for nobody in demo" in out["error"]
     chosen = skill.ok(tmp_path, "use", "demo", ROOT)

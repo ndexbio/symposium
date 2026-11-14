@@ -31,11 +31,22 @@ Works with Data Server 0.2.0.
   package is checked each time the package is built.
 - **`supersedes` is documented as a list of addresses** wherever an artifact's shape is
   described, with an example and the refusal a single address gets.
+- **The release zip is `symposium_skill-<version>.zip`** and holds one folder, `symposium/`, in
+  the Agent Skills format, with the skill's README and licence inside it. It unzips straight
+  into an agent's skills directory.
+- **The skill's frontmatter holds the Agent Skills fields**: `license`, and its version under
+  `metadata`.
 
 ### Fixed
 
 - Commands running at once in one session each write whole files: the session's context, its
   copy of the record, its event log, and the skill's runtime.
+
+### Installing Skill
+
+[Installing from the release zip](README.md#installing-from-the-release-zip): the skills
+directory for Claude Code, Codex, Gemini CLI, GitHub Copilot and Cursor, and the commands that
+remove an installed copy and unzip this release.
 
 ## [Symposium Skill 0.2.0] - 2026-11-06
 

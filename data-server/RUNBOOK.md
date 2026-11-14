@@ -234,7 +234,7 @@ Each step says where it runs, who runs it, the commands, and the check that prov
    - Repeat for each further community, each with its own community admin.
    - Check: `/symposium data communities list` shows each community, and `/symposium invite list --out-dir <dir>` shows each community admin's pending invite.
 
-Everyone from here on works from their own workstation, with the skill installed (`make deploy-local` from a clone, or the release's `Symposium_skill.zip`). Each receives an invite file out of band, as a file, and keeps it out of any chat.
+Everyone from here on works from their own workstation, with the skill installed (`make deploy-local` from a clone, or a release's `symposium_skill-<version>.zip`, unzipped into the agent's skills directory: [installing from the release zip](https://github.com/ndexbio/symposium#installing-from-the-release-zip)). Each receives an invite file out of band, as a file, and keeps it out of any chat.
 
 6. **Community admin: join.**
    - Run `/symposium setup --invite-file <community>-<handle>.invite`. It generates the community admin's key on this machine (encrypted, in the OS keychain, or under `SYMPOSIUM_KEY_PASSPHRASE` on a headless machine), registers it with the server, which assigns `community-admin` from the stored invite, creates the session `~/.symposium/member/<community>/<handle>/` and syncs `record/`.

@@ -46,7 +46,10 @@ def test_callers_at_once_in_one_folder_and_across_folders_are_each_decided_once(
     admin_gate = Watch(suite, root_dir, "gate", env=fast)
     keeper_gate = None
     try:
-        poll(admin_gate.passed_once, "the admin's gate never finished its first pass")
+        poll(
+            admin_gate.passed_once,
+            "the community admin's gate never finished its first pass",
+        )
         # a second gate, under another user context of the community: it stands by
         keeper_gate = Watch(suite, keeper, "gate", env=fast)
         keeper_gate.output.wait_for("standing by")
@@ -70,25 +73,35 @@ def test_callers_at_once_in_one_folder_and_across_folders_are_each_decided_once(
                 )
             )
         twice = note(lyra, "lyra", "twice")
-        running += [start(suite, lyra, "publish.py", twice) for _ in range(2)]
+        both = [start(suite, lyra, "publish.py", twice) for _ in range(2)]
         outputs = [(p.communicate(timeout=MAX_WAIT)[0], p.returncode) for p in running]
         assert all(code == 0 for _, code in outputs), [o for o, c in outputs if c]
-        assert not any("Traceback" in out for out, _ in outputs)
+        # one name submitted twice is used once. The second is refused where it is caught:
+        # by its own check, when the gate has already accepted the first, or by the gate,
+        # with a reply
+        doubled = [(p.communicate(timeout=MAX_WAIT)[0], p.returncode) for p in both]
+        submitted = [out for out, code in doubled if code == 0]
+        refused = [out for out, code in doubled if code != 0]
+        assert submitted, doubled
+        assert all("is already in the record" in out for out in refused), refused
+        replies = len(submitted) - 1
+        assert not any("Traceback" in out for out, _ in outputs + doubled)
 
         every = sorted([*wanted, "lyra_note_twice_v1"])
         poll(
             lambda: record_names(cli, root_dir) == every,
             f"the record never held each name once: {record_names(cli, root_dir)}",
         )
-        # the name submitted twice: accepted once, and rejected once with one reply
+        # the name submitted twice: accepted once, and each further submission of it that
+        # reached the gate rejected with one reply
         poll(
             lambda: (
                 tool(suite, lyra, "sync.py", "--replies")[1].count(
                     "(re lyra_note_twice_v1)"
                 )
-                == 1
+                == replies
             ),
-            "the second submission of one name never got its one reply",
+            "a second submission of one name never got its one reply",
         )
 
         # the gate that was deciding ends: the one standing by decides from there on
@@ -109,10 +122,8 @@ def test_callers_at_once_in_one_folder_and_across_folders_are_each_decided_once(
             lambda: record_names(cli, root_dir) == every,
             "the gate that took over never decided the late submissions",
         )
-        assert (
-            tool(suite, lyra, "sync.py", "--replies")[1].count("reply from the gate")
-            == 1
-        )
+        listed = tool(suite, lyra, "sync.py", "--replies")[1]
+        assert listed.count("reply from the gate") == replies
     finally:
         for watch in (admin_gate, keeper_gate):
             if watch is not None:

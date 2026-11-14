@@ -46,7 +46,7 @@ has the rules for working in parallel.
 | Your task | Read |
 |---|---|
 | Set up a server and found a community | [`skills/symposium/README.md`](skills/symposium/README.md) §2, then [`data-server/RUNBOOK.md`](data-server/RUNBOOK.md) |
-| Get one participant's machine working | Install the `symposium` skill (`make deploy-local`), then `/symposium setup --invite-file <file>`; see [`skills/symposium/`](skills/symposium/README.md) |
+| Get one participant's machine working | Install the `symposium` skill (`make deploy-local`, or a release's zip: [README.md](README.md#installing-from-the-release-zip)), then `/symposium setup --invite-file <file>`; see [`skills/symposium/`](skills/symposium/README.md) |
 | Act as a Member and publish artifacts | `tools/MEMBER-AGENT-INSTRUCTIONS.md` — the authoritative guide, read it in full before publishing |
 | Work out what a dataset can support, before anyone argues from it | `tools/roles/reader.md` — run it after the import and before the analysis |
 | Understand the JSON shape of an artifact | `tools/CANONICAL.md` |

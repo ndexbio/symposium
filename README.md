@@ -14,10 +14,9 @@ The record and its files live on a **Symposium Data server**, which the skill re
 
 **[Symposium Data server](data-server/README.md)**: the data file store a Symposium's community record and files live on, a Docker image, deployable with Docker or, on Kubernetes, with its Helm chart. Checkout the [runbook](data-server/RUNBOOK.md), which walks through choosing a deployment and operating it.
 
-## Installing Symposium as agentic Skill
-
-### Requirements
+## Development Requirements
 - **Python 3.9+** is all the installed skill needs.
+- **Docker** required for running test or build-docker make targets
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/)** must be installed on the host to run Makefile targets.
 
 ### From cloned repository
@@ -25,74 +24,27 @@ The record and its files live on a **Symposium Data server**, which the skill re
 ```bash
 git clone https://github.com/ndexbio/symposium.git
 cd symposium
-make deploy-local                  # installs the skill into ~/.claude/skills/symposium
+make build
 ```
 
-`make deploy-local SKILLS=<dir>` installs it into another skills directory.
+### Installing Skill
 
-### Installing from the release zip
+The Symposium skill ships as a zip file attached on a Github release. Download
+`symposium_skill-<version>.zip` from the latest Skill release listed on   
+[releases page](https://github.com/ndexbio/symposium/releases). The zip follows the standard
+[Agent Skills](https://agentskills.io) format and is usable by any skills compatible agent.
 
-Download `symposium_skill-<version>.zip` from the [releases page](https://github.com/ndexbio/symposium/releases): take the latest
-release whose tag begins `symposium-v`, since the page lists other releases too. The zip holds one
-folder, `symposium/`, in the [Agent Skills](https://agentskills.io) format, and installing it is
-placing that folder in the skills directory your agent reads.
+Requirements - **Python 3.9++* the skill will run Python
 
-**1. Find your agent's skills directory.** It applies to every session of that agent on the
-machine.
+**Machine wide install** - Every agent running in any directory will load the skill. Unzip the skill zip file into the conventional agent sub path under your home directory - `<USER_HOME>/.agents/skills`. If using Claude, then do `<USER_HOME>/.claude/skills` instead.
 
-| Agent | Skills directory |
-|---|---|
-| [Claude Code](https://code.claude.com/docs/en/skills) — terminal, IDE extensions, and local sessions in the Code tab of the Claude desktop app | `~/.claude/skills` |
-| [OpenAI Codex](https://developers.openai.com/codex/skills) | `~/.agents/skills` |
-| [Gemini CLI](https://geminicli.com/docs/cli/using-agent-skills/) | `~/.agents/skills` |
-| [GitHub Copilot](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills) — CLI, VS Code, Visual Studio | `~/.copilot/skills` |
-| [Cursor](https://cursor.com/docs/skills) | `~/.agents/skills` |
-| Another agent that supports Agent Skills | the directory its documentation names, commonly `~/.agents/skills` |
+**Folder only install** - only agents running in this folder will load the skill. Unzip the skill zip file into the conventional agent sub path under that folder - `<FOLDER>/.agents/skills`. If using Claude, then do `<FOLDER>/.claude/skills` instead.
 
-Each agent's name links to its own page on skills, where the directory is stated. Checked
-November 2026.
-
-For one project only, use the same directory inside the project: `.claude/skills` or
-`.agents/skills`.
-
-**2. Remove the installed copy, then unzip.** Removing it first leaves no file behind from an
-earlier release. The folder holds only the skill: your sessions, keys and runs are kept
-elsewhere and stay as they are.
-
-macOS and Linux:
-
-```sh
-SKILLS_DIR=~/.claude/skills        # your agent's directory, from the table
-rm -rf "${SKILLS_DIR:?}/symposium"
-mkdir -p "$SKILLS_DIR"
-unzip symposium_skill-<version>.zip -d "$SKILLS_DIR"
+Example to install for Claude:
 ```
-
-Windows (PowerShell):
-
-```powershell
-$SkillsDir = "$HOME\.claude\skills"   # your agent's directory, from the table
-if (-not $SkillsDir) { throw "set SkillsDir first" }
-Remove-Item -Recurse -Force "$SkillsDir\symposium" -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force $SkillsDir | Out-Null
-Expand-Archive symposium_skill-<version>.zip -DestinationPath $SkillsDir
+ curl -fLO https://github.com/ndexbio/symposium/releases/download/symposium-v0.3.0/symposium_skill-0.3.0.zip
+ unzip symposium_skill-0.3.0.zip -d ~/.claude/skills
 ```
-
-**3. Check it.** `<skills directory>/symposium/SKILL.md` exists. Start a new session of your
-agent, or reload its skills, and ask it which skills it has.
-
-**Install each skill in one directory.** Some agents read more than one: Cursor reads
-`~/.claude/skills` as well as its own, and so does Copilot in Visual Studio and in VS Code's
-local sessions. Where you run two agents that share a directory, one install serves both.
-
-**Claude desktop app.** In the **Code** tab, start a **Local** session: it runs on your machine
-and loads `~/.claude/skills`, so install as above. Cloud sessions, chat and Cowork run on
-Anthropic's infrastructure and take their skills from your claude.ai account, where a zip is
-uploaded under Customize > Skills. This skill works on your machine — its commands, its keys and
-its runs are there — so use a Local session.
-
-This skill is developed and tested with Claude Code. The other agents' directories are the ones
-their own documentation gives.
 
 ## Participating in a Symposium
 

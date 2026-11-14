@@ -42,11 +42,7 @@ Works with Data Server 0.2.0.
 - Commands running at once in one session each write whole files: the session's context, its
   copy of the record, its event log, and the skill's runtime.
 
-### Installing Skill
-
-[Installing from the release zip](README.md#installing-from-the-release-zip): the skills
-directory for Claude Code, Codex, Gemini CLI, GitHub Copilot and Cursor, and the commands that
-remove an installed copy and unzip this release.
+[Install Skill Instructions](README.md#installing-skill)
 
 ## [Symposium Skill 0.2.0] - 2026-11-06
 

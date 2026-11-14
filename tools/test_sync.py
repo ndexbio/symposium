@@ -30,8 +30,8 @@ import unicodedata
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from data_io import RECORD_MARK, Mirror  # noqa: E402
-from sync import Sync, list_messages, message_line  # noqa: E402
+from data_io import IN_REPLY_TO, RECORD_MARK, REPLY_MARK, Mirror  # noqa: E402
+from sync import Sync, list_messages, list_replies, message_line  # noqa: E402
 
 V = "1.0"
 MEMBERS = {"ana", "res", "planner"}
@@ -67,6 +67,7 @@ class FakeData:
         self.handle = handle
         self.docs = {}       # citation -> artifact
         self.feed = []       # change items, in order
+        self.replies = []    # the gate's replies to this member, oldest first
 
     def publish(self, doc):
         citation = f"record/{doc['artifact']['name']}"
@@ -82,8 +83,14 @@ class FakeData:
     def get_json(self, citation):
         return self.docs[citation]
 
+    def reject(self, name):
+        """The gate's reply to this member's submission `name`."""
+        self.replies.append({"citation": f"inbox/reply-{len(self.replies)}",
+                             "name": f"gate_REPLY_{name}",
+                             "metadata": {REPLY_MARK: True, IN_REPLY_TO: name}})
+
     def query(self, collection, contains):
-        return []            # no gate replies in these cases
+        return list(self.replies)
 
     def context(self):
         return {"handle": self.handle, "community": "test"}
@@ -302,6 +309,41 @@ def case_h_messages_lists_all_newest_first(tmp):
     return not bad, "--messages lists all, newest first, new ones marked once", bad
 
 
+def case_i_replies_lists_all_newest_first(tmp):
+    """`sync --replies` lists every reply from the gate to the member, newest first, the ones
+    a pass listed before included, marks `new` only those it is the first to list, and names
+    the artifact each is about."""
+    data, root = FakeData("ana"), tmp / "i"
+    data.reject("ana_note_one_v1")
+    _result, text = run_pass(data, root)                   # a plain pass lists the first
+    data.reject("ana_note_two_v1")
+
+    def listing():
+        sync = Sync(data, Mirror(root))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = list_replies(sync)
+        return code, [ln.strip() for ln in out.getvalue().splitlines()
+                      if "reply from the gate" in ln]
+
+    bad = []
+    if "(re ana_note_one_v1)" not in text:
+        bad.append(f"the plain pass did not list the first reply: {text!r}")
+    code, first = listing()
+    got = [("new" if ln.startswith("new") else "", ln.split("(re ", 1)[1].split(")")[0])
+           for ln in first]
+    want = [("new", "ana_note_two_v1"), ("", "ana_note_one_v1")]
+    if code != 0 or got != want:
+        bad.append(f"first listing {got} (exit {code}), want {want}")
+    _code, again = listing()
+    if any(ln.startswith("new") for ln in again) or len(again) != 2:
+        bad.append(f"second listing marked new or lost one: {again}")
+    _result, text = run_pass(data, root)
+    if "reply from the gate" in text:
+        bad.append(f"a plain sync after it listed a reply again: {text!r}")
+    return not bad, "--replies lists all, newest first, new ones marked once", bad
+
+
 CASES = [
     ("a Message to you is listed once, and only to you", case_a_listed_once_and_only_to_its_recipient),
     ("what was listed survives a restart", case_b_survives_a_restart),
@@ -312,6 +354,7 @@ CASES = [
     ("a Message's title, sender or name cannot add or rewrite a line", case_g_message_listing_collapses_whitespace),
     ("a watcher does not repeat a foreground pass's Message", case_watcher_reloads_foreground_state),
     ("sync --messages lists them all, newest first, new ones marked", case_h_messages_lists_all_newest_first),
+    ("sync --replies lists them all, newest first, new ones marked", case_i_replies_lists_all_newest_first),
 ]
 
 

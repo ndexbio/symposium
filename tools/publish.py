@@ -267,8 +267,8 @@ def main(argv):
                   f"that role.")
             fatal = True
             kinds.add("role")
-        # one session holds one role, so the role segment partitions the namespace and keeps
-        # two concurrent sessions of the same Member from colliding on a name
+        # the role segment partitions the namespace, so one Member publishing in two roles at
+        # once does not collide on a name
         if role and f"_{role}_" not in str(name):
             print(f"  {name}: note  name does not carry the role segment "
                   f"('{account}_{role}_<topic>_v1'); concurrent sessions may collide")

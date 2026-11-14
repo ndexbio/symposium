@@ -1,7 +1,8 @@
-"""The bundle and `make deploy-local`: the zip holds the root README, the licence
-and the skill, with its toolchain inside it: the repository's Symposium base one for one, at its
-repository paths, so every relative link in the installed skill resolves inside it and the
-conformance suite runs from it; deploy-local installs exactly the skill; and the installed skill
+"""The release zip and `make deploy-local`: the zip holds one folder, `symposium/`, the skill
+with its licence and its toolchain inside it: the repository's Symposium base one for one, at
+its repository paths, so every relative link in the installed skill resolves inside it and the
+conformance suite runs from it; its name carries its version; it unzips straight into a skills
+directory; deploy-local installs exactly the skill; and the installed skill
 works with no repository and nothing on PATH but python3, preparing its own Python runtime once
 per agent session, including `validate` against a data server."""
 
@@ -22,8 +23,9 @@ from suite import REPO
 sys.path.insert(0, str(REPO / "tools"))
 import bundle  # noqa: E402
 
-BUNDLE = REPO / "dist" / "Symposium_skill.zip"
-CLI = "skills/symposium/toolchain/tools/symposium-data"
+# what `make deploy-local` builds: a build given no version of its own
+BUNDLE = REPO / "dist" / "symposium_skill-0.0.0-dev.zip"
+CLI = "symposium/toolchain/tools/symposium-data"
 # the repository's Symposium base, shipped whole at its repository paths under toolchain/
 SHIPPED_FOLDERS = ("spec", "tools", "server", "examples")
 # and the data server's operator docs (its top-level *.md but its developer README) and chart
@@ -93,46 +95,39 @@ def run_skill(skill: Path, cwd: Path, env: dict, *args) -> subprocess.CompletedP
 def test_the_bundle_holds_the_skill_with_its_toolchain_and_the_stamped_cli(installed):
     with zipfile.ZipFile(BUNDLE) as zf:
         names = set(zf.namelist())
-        skill_md = zf.read("skills/symposium/SKILL.md").decode()
+        skill_md = zf.read("symposium/SKILL.md").decode()
         compat = json.loads(zf.read(f"{CLI}/compat.json"))
-        readme = zf.read("README.md")
-    assert all(
-        n in ("README.md", "LICENSE") or n.startswith("skills/symposium/")
-        for n in names
-    )
-    # the repository's, at the root, with only its links moved to where the zip holds each
-    assert bundle.LINK.sub("", readme.decode()) == bundle.LINK.sub(
-        "", (REPO / "README.md").read_text(encoding="utf-8")
-    )
-    with zipfile.ZipFile(BUNDLE) as zf:
-        assert zf.read("LICENSE") == (REPO / "LICENSE").read_bytes()
+        licence = zf.read("symposium/LICENSE")
+    # one folder at the zip's root, named for the skill: it unzips into a skills directory
+    assert {n.split("/", 1)[0] for n in names} == {"symposium"}
+    assert licence == (REPO / "LICENSE").read_bytes()
     for required in (
-        "skills/symposium/SKILL.md",
-        "skills/symposium/README.md",
-        "skills/symposium/scripts/main.py",
-        "skills/symposium/scripts/runtime.py",
-        "skills/symposium/toolchain/tools/setup.py",
-        "skills/symposium/toolchain/tools/publish.py",
-        "skills/symposium/toolchain/tools/sync.py",
-        "skills/symposium/toolchain/tools/gate.py",
-        "skills/symposium/toolchain/tools/validate.py",
-        "skills/symposium/toolchain/tools/data_io.py",
-        "skills/symposium/toolchain/tools/telemetry.py",
-        "skills/symposium/toolchain/tools/browse.py",
-        "skills/symposium/toolchain/tools/serve.py",
-        "skills/symposium/toolchain/tools/figures.py",
-        "skills/symposium/toolchain/tools/templates.py",
-        "skills/symposium/toolchain/tools/vendor/cytoscape.min.js",
-        "skills/symposium/toolchain/tools/vendor/cytoscape-svg.js",
-        "skills/symposium/toolchain/tools/CANONICAL.md",
-        "skills/symposium/toolchain/server/bootstrap.py",
-        "skills/symposium/toolchain/tools/MEMBER-AGENT-INSTRUCTIONS.md",
-        "skills/symposium/toolchain/tools/roles/README.md",
-        "skills/symposium/toolchain/spec/symposium_specification.md",
-        "skills/symposium/toolchain/data-server/RUNBOOK.md",
-        "skills/symposium/toolchain/data-server/helm/symposium-helm/Chart.yaml",
-        "skills/symposium/toolchain/data-server/helm/symposium-helm/values.yaml",
-        "skills/symposium/toolchain/data-server/helm/symposium-helm/templates/deployment.yaml",
+        "symposium/SKILL.md",
+        "symposium/README.md",
+        "symposium/scripts/main.py",
+        "symposium/scripts/runtime.py",
+        "symposium/toolchain/tools/setup.py",
+        "symposium/toolchain/tools/publish.py",
+        "symposium/toolchain/tools/sync.py",
+        "symposium/toolchain/tools/gate.py",
+        "symposium/toolchain/tools/validate.py",
+        "symposium/toolchain/tools/data_io.py",
+        "symposium/toolchain/tools/telemetry.py",
+        "symposium/toolchain/tools/browse.py",
+        "symposium/toolchain/tools/serve.py",
+        "symposium/toolchain/tools/figures.py",
+        "symposium/toolchain/tools/templates.py",
+        "symposium/toolchain/tools/vendor/cytoscape.min.js",
+        "symposium/toolchain/tools/vendor/cytoscape-svg.js",
+        "symposium/toolchain/tools/CANONICAL.md",
+        "symposium/toolchain/server/bootstrap.py",
+        "symposium/toolchain/tools/MEMBER-AGENT-INSTRUCTIONS.md",
+        "symposium/toolchain/tools/roles/README.md",
+        "symposium/toolchain/spec/symposium_specification.md",
+        "symposium/toolchain/data-server/RUNBOOK.md",
+        "symposium/toolchain/data-server/helm/symposium-helm/Chart.yaml",
+        "symposium/toolchain/data-server/helm/symposium-helm/values.yaml",
+        "symposium/toolchain/data-server/helm/symposium-helm/templates/deployment.yaml",
         f"{CLI}/cli.py",
         f"{CLI}/main.py",
         f"{CLI}/keystore.py",
@@ -149,9 +144,19 @@ def test_the_bundle_holds_the_skill_with_its_toolchain_and_the_stamped_cli(insta
         or "/.venv" in n
         or n == f"{CLI}/symposium-data"
     ]
-    assert re.match(r"^---\nname: symposium\n", skill_md)
+    # the Agent Skills frontmatter: its keys, and the version under `metadata`
+    front = skill_md.split("\n---\n", 1)[0]
+    assert re.match(r"^---\nname: symposium\n", front)
+    assert [line.split(":")[0] for line in front.splitlines()[1:]] == [
+        "name",
+        "description",
+        "license",
+        "metadata",
+        "  version",
+    ]
+    assert "\nlicense: MIT\n" in front
     # make deploy-local builds with no version of its own, so the install says so
-    assert "\nversion: 0.0.0-dev\n" in skill_md
+    assert front.endswith('\nmetadata:\n  version: "0.0.0-dev"')
     version = re.search(
         r'^version = "([^"]+)"',
         (REPO / "data-server" / "service" / "pyproject.toml").read_text(),
@@ -176,15 +181,13 @@ def test_the_installed_skill_holds_the_repositorys_symposium_base_one_for_one(
 
 
 def test_every_relative_link_in_the_bundle_resolves_inside_it(installed):
-    """The build's own check, run again on what it wrote: every Markdown link of the zip, its
-    README included, names a file or folder the zip holds."""
+    """The build's own check, run again on what it wrote: every Markdown link of the zip
+    names a file or folder the zip holds."""
     with zipfile.ZipFile(BUNDLE) as zf:
         names = zf.namelist()
         documents = {n: zf.read(n).decode("utf-8") for n in names if n.endswith(".md")}
     assert bundle.dead_links(documents, bundle.zip_exists(names)) == []
-    readme = documents["README.md"]
-    assert "](skills/symposium/toolchain/data-server/RBAC.md)" in readme
-    assert f"]({bundle.GITHUB}AGENTS.md)" in readme  # not shipped: its GitHub address
+    assert "](toolchain/data-server/RBAC.md)" in documents["symposium/README.md"]
 
 
 def test_a_dead_link_fails_the_build_and_writes_no_zip(tmp_path, monkeypatch):
@@ -192,17 +195,17 @@ def test_a_dead_link_fails_the_build_and_writes_no_zip(tmp_path, monkeypatch):
 
     def with_a_dead_link(self):
         out = entries(self)
-        out["skills/symposium/NOTES.md"] = b"See [the guide](missing/GUIDE.md#start).\n"
+        out["symposium/NOTES.md"] = b"See [the guide](missing/GUIDE.md#start).\n"
         return out
 
     monkeypatch.setattr(bundle.Bundle, "entries", with_a_dead_link)
-    out = tmp_path / "Symposium_skill.zip"
+    out = tmp_path / "symposium_skill-0.0.0-dev.zip"
     result = bundle.Bundle().write(out)
     assert result["dead"] == [
         {
-            "file": "skills/symposium/NOTES.md",
+            "file": "symposium/NOTES.md",
             "link": "missing/GUIDE.md#start",
-            "resolved": "skills/symposium/missing/GUIDE.md",
+            "resolved": "symposium/missing/GUIDE.md",
         }
     ]
     assert not out.exists() and list(tmp_path.iterdir()) == []
@@ -211,15 +214,50 @@ def test_a_dead_link_fails_the_build_and_writes_no_zip(tmp_path, monkeypatch):
 def test_the_build_stamps_its_version_into_the_skills_frontmatter(tmp_path):
     """The release tag's version reaches the installed skill, which otherwise cannot say
     which release it is. The body is left alone."""
-    out = tmp_path / "Symposium_skill.zip"
+    out = tmp_path / "symposium_skill-1.2.3.zip"
     result = bundle.Bundle(version="1.2.3").write(out)
     assert result["version"] == "1.2.3"
     with zipfile.ZipFile(out) as zf:
-        skill_md = zf.read("skills/symposium/SKILL.md").decode()
+        skill_md = zf.read("symposium/SKILL.md").decode()
     assert re.match(r"^---\nname: symposium\n", skill_md)
-    assert "\nversion: 1.2.3\n" in skill_md
+    assert '\nmetadata:\n  version: "1.2.3"\n---\n' in skill_md
     source = (REPO / "skills" / "symposium" / "SKILL.md").read_text(encoding="utf-8")
     assert skill_md.split("\n---\n", 1)[1] == source.split("\n---\n", 1)[1]
+
+
+def test_make_build_names_the_zip_for_the_version_it_stamps(tmp_path):
+    """`make build VERSION=<semver>` writes dist/symposium_skill-<semver>.zip: the file a
+    release attaches says which release it is, as the skill inside it does."""
+    out = REPO / "dist" / "symposium_skill-9.9.9.zip"
+    out.unlink(missing_ok=True)
+    try:
+        result = make("build", "VERSION=9.9.9")
+        assert result.returncode == 0, result.stdout + result.stderr
+        with zipfile.ZipFile(out) as zf:
+            assert '  version: "9.9.9"\n' in zf.read("symposium/SKILL.md").decode()
+    finally:
+        out.unlink(missing_ok=True)
+
+
+def test_the_zip_unzips_straight_into_a_skills_directory(installed, tmp_path):
+    """The install a release's instructions give: remove the installed copy, then unzip into
+    the skills directory. The skill lands at <skills>/symposium, and nothing an earlier
+    install left there remains."""
+    skills = tmp_path / "skills"
+    (skills / "symposium" / "toolchain").mkdir(parents=True)
+    stale = skills / "symposium" / "toolchain" / "dropped-in-this-release.md"
+    stale.write_text("left by an earlier install\n")
+    beside = skills / "another-skill"
+    beside.mkdir()
+    shutil.rmtree(skills / "symposium")
+    with zipfile.ZipFile(BUNDLE) as zf:
+        zf.extractall(skills)
+    assert (skills / "symposium" / "SKILL.md").is_file()
+    assert not stale.exists() and beside.is_dir()
+    assert sorted(p.name for p in skills.iterdir()) == ["another-skill", "symposium"]
+    assert files_under(skills / "symposium") == files_under(
+        installed["skills"] / "symposium"
+    )
 
 
 def test_a_skill_document_with_no_version_line_fails_the_build(tmp_path, monkeypatch):
@@ -229,7 +267,7 @@ def test_a_skill_document_with_no_version_line_fails_the_build(tmp_path, monkeyp
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("---\nname: symposium\n---\n\n# Symposium\n")
     monkeypatch.setattr(bundle, "SKILL", skill)
-    with pytest.raises(SystemExit, match="no version line"):
+    with pytest.raises(SystemExit, match="no metadata.version line"):
         bundle.Bundle(version="1.2.3").skill_md()
 
 
@@ -269,7 +307,7 @@ def test_deploy_local_installs_exactly_the_skill_and_says_so(installed):
     skills = installed["skills"]
     with zipfile.ZipFile(BUNDLE) as zf:
         names = zf.namelist()
-    expected = {n[len("skills/symposium/") :] for n in names if n.startswith("skills/")}
+    expected = {n[len("symposium/") :] for n in names}
     assert files_under(skills / "symposium") == expected
     # after lint and build report, deploy-local ends with its three lines
     assert installed["output"].splitlines()[-3:] == [

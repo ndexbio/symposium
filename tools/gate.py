@@ -34,9 +34,18 @@ is sent twice.
                               pass that accepts or rejects something. It runs until stopped,
                               with no time limit of its own: run it in the background. ctrl-c,
                               SIGTERM or (Windows) CTRL_BREAK stops it within a second, with
-                              exit code 0, even mid-pass. A restart resumes where it left off,
-                              and takes over from a gate still watching this session, which it
-                              stops. A pass that finds `gate` unassigned stops it, exit code 1.
+                              exit code 0, even mid-pass. A restart resumes where it left off.
+                              A pass that finds `gate` unassigned stops it, exit code 1.
+  python gate.py --watch --take-over
+                              stop the gate that is watching the community on this machine,
+                              then watch: for a gate that has hung.
+
+ONE GATE DECIDES FOR A COMMUNITY AT A TIME, ON ONE MACHINE. Every pass that decides (a watching
+gate's, or a single one) and `--rebuild` hold the community's pass lock for their length, kept
+for the machine under `~/.symposium/gate/`, so a gate run in any session that holds `gate` for
+the community waits its turn. A `--watch` started while another gate watches the community
+stands by: it says which gate is watching, decides nothing, and watches from the moment that one
+ends. `--dry-run` and `--verify` write nothing and take no lock.
 
 Everything goes through the `symposium-data` CLI. Exit 0 = the pass ran; 1 = no context
 in this directory (the message names `/symposium setup` and `bootstrap`), the data server could
@@ -52,9 +61,11 @@ import json
 import re
 import sys
 from datetime import timedelta
+from pathlib import Path
 
 import telemetry
 from data_io import (
+    GATE_LOCKS,
     IN_REPLY_TO,
     RECORD_MARK,
     REPLY_MARK,
@@ -63,11 +74,12 @@ from data_io import (
     DataError,
     Mirror,
     SymposiumData,
+    file_lock,
     pause,
     rbac,
     stop_on_signals,
-    take_over,
     uninterrupted,
+    watch_alone,
 )
 from symposium_rules.checks import skip_reason
 from sync import POLL, Sync
@@ -157,6 +169,7 @@ class Gate:
         self.dry = dry
         self.decided = 0  # submissions accepted or rejected since the last look
         self.refused = False  # a pass found the session without `gate`
+        self.context = None  # this session's context, read once
 
     # ── state: a cache of what the server says ────────────────────────────────────────────
     def load_state(self):
@@ -187,6 +200,14 @@ class Gate:
 
     # ── one pass ──────────────────────────────────────────────────────────────────────────
     def once(self) -> int:
+        """One pass. A pass that decides holds the community's pass lock for its length; a
+        dry run writes nothing and takes none."""
+        if self.dry:
+            return self.decide()
+        with self.alone():
+            return self.decide()
+
+    def decide(self) -> int:
         try:
             self.data.require(rbac.GATE, "the gate")
         except DataError as e:
@@ -386,17 +407,41 @@ class Gate:
         print(f"    reply sent to {sub['owner']}")
         return True
 
-    def watch(self) -> int:
-        """A pass every POLL seconds until stopped. A pass's report is printed when it accepted
+    # ── one gate decides for a community at a time, on one machine ────────────────────────
+    def who(self) -> str:
+        """This gate's user context, as `/symposium use` lists it."""
+        if self.context is None:
+            self.context = self.data.context()
+        return f"{self.context.get('community')}/{self.context.get('handle')}"
+
+    def locks(self, kind: str) -> Path:
+        """A lock of this community's gate on this machine: `lock`, held for one pass by
+        whichever gate runs it (a watcher's, or a single pass), and `watch.lock`, held by the
+        gate that is watching. Every session on the machine that holds `gate` for the
+        community shares them."""
+        community = self.who().partition("/")[0].lower()
+        return GATE_LOCKS / f"{community}.{kind}"
+
+    def alone(self):
+        """Hold the community's pass lock: this gate decides, and any other waits its turn."""
+        return file_lock(self.locks("lock"))
+
+    def watch(self, take_over: bool = False) -> int:
+        """A pass every POLL seconds until stopped, as the community's one watching gate on
+        this machine: standing by first while another watches, or stopping it with
+        `take_over`. A pass's report is printed when it accepted
         or rejected something; a pass that fails is reported on the 1st, 5th and every 20th
         failure in a row. A stop mid-pass prints what the pass had decided so far: each line
         is a decision the gate's runner must see."""
         stop_on_signals()
-        lock = take_over("gate")  # noqa: F841 — held for as long as this gate watches
-        print(f"watching inbox (every {POLL}s) — ctrl-c to stop", flush=True)
         misses = 0
         report = io.StringIO()
         try:
+            # held for as long as this gate watches: the one watching gate of the community
+            # on this machine, whichever session it runs in
+            lock = watch_alone(  # noqa: F841
+                "gate", self.locks("watch.lock"), self.who(), replace=take_over)
+            print(f"watching inbox (every {POLL}s) — ctrl-c to stop", flush=True)
             while True:
                 report = io.StringIO()
                 with contextlib.redirect_stdout(report):
@@ -449,20 +494,21 @@ class Gate:
         """Discard the copy's cursor and the gate's state, and rebuild both from the server.
         Decides nothing: the next pass reads `inbox` from the start, skipping every
         submission the server already holds a decision for."""
-        for name in (SYNC_STATE, STATE):
-            (self.mirror.root / name).unlink(missing_ok=True)
-        sync = Sync(self.data, self.mirror, quiet=True)
-        synced = sync.once()
-        if synced is None:
-            print("! the data server could not be reached — nothing was rebuilt")
-            return 1
-        state = self.load_state()
-        try:
-            self.refresh(state)
-        except DataError as e:
-            print(f"! {e}")
-            return 1
-        self.mirror.write_state(STATE, state)
+        with self.alone():
+            for name in (SYNC_STATE, STATE):
+                (self.mirror.root / name).unlink(missing_ok=True)
+            sync = Sync(self.data, self.mirror, quiet=True)
+            synced = sync.once()
+            if synced is None:
+                print("! the data server could not be reached — nothing was rebuilt")
+                return 1
+            state = self.load_state()
+            try:
+                self.refresh(state)
+            except DataError as e:
+                print(f"! {e}")
+                return 1
+            self.mirror.write_state(STATE, state)
         print(f"rebuilt {self.mirror.root}/ from the server: {synced['artifacts']} artifact(s), "
               f"{len(state['decisions'])} decision(s)")
         return 0
@@ -475,11 +521,14 @@ def main(argv) -> int:
     except DataError as e:
         print(f"! {e}")
         return 1
+    if "--take-over" in argv and "--watch" not in argv:
+        print("! --take-over goes with --watch: it stops the gate that is watching and watches")
+        return 2
     if "--watch" in argv:
         if "--verify" in argv or "--rebuild" in argv:
             print("! --watch runs passes; it does not combine with --verify or --rebuild")
             return 2
-        return gate.watch()
+        return gate.watch(take_over="--take-over" in argv)
     if "--rebuild" in argv:
         return gate.rebuild()
     if "--verify" in argv:

@@ -62,6 +62,15 @@ Required of every Artifact (§1.5):
 
 Optional on any Artifact: `title`, `description`, `text`, `authors`, `supersedes`, `supersedes_rationale`, `import_method`, `produced_by`.
 
+`supersedes` is a **list of addresses**, and stays a list when it names one Artifact. A bare string is refused:
+
+```json
+"supersedes": ["@agent_vega_plan_v1"],
+"supersedes_rationale": "Corrects the panel count."
+```
+
+The same holds for every header property that names other Artifacts in the plural: `inputs`, `used_models`, `recipients` and `serves_goals` are each a list of addresses, however many they hold.
+
 `authors` is **required** when the content is groundable or was authored by anyone other than the publishing Member (§1.10) — so always on an Argument, a Data, a ScientificPublication. `import_method` is **required** when the Artifact is imported. `supersedes_rationale` is required whenever `supersedes` is present.
 
 Members may publish Artifacts with properties this profile does not name. Nothing rejects a property it does not recognise.
@@ -137,7 +146,8 @@ failure this prevents is an Argument that grounds a claim on the fact that someb
 Declare a `text_span` Content, also non-groundable, so a Member can point at the clause they are
 serving rather than at the whole document.
 
-Revision is supersession: a `_v2` naming `_v1`, with a `supersedes_rationale`. `supersedes`
+Revision is supersession: a `_v2` naming `_v1` in its `supersedes` list, with a
+`supersedes_rationale`. `supersedes`
 conveys no evidential support and retracts nothing (§1.9), so work published under the earlier
 goal stands, and what it was serving stays legible.
 
@@ -323,7 +333,7 @@ Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. B
 
 ## 5. What the gate enforces
 
-**Structural, per Artifact.** Required header fields present; `type` known; `name` carries the account prefix and no address delimiter; `published_by` is a bare Member address; Object names unique and not colliding with a property; relationship endpoints exist and are locally owned; `supersedes` accompanied by a rationale; `extracted_from` accompanied by an `extraction_method`; `groundable` a real boolean.
+**Structural, per Artifact.** Required header fields present; `type` known; `name` carries the account prefix and no address delimiter; `published_by` is a bare Member address; Object names unique and not colliding with a property; relationship endpoints exist and are locally owned; `supersedes` a list of addresses and accompanied by a rationale; `inputs`, `used_models`, `recipients` and `serves_goals` each a list of addresses; `extracted_from` accompanied by an `extraction_method`; `groundable` a real boolean.
 
 **Argument-specific.** Exactly one primary Assertion, named by `primary_assertion`; `depends_on` acyclic; nothing depends on the primary; every Assertion has a basis; every Ground and Assumption bears on exactly one Assertion; a Ground's `citation` does not name content inside its own Argument; only the three defined relationships and the four permitted Object types.
 

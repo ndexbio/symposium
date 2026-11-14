@@ -13,23 +13,32 @@ the `symposium-data` CLI. What a person may run follows from their access roles
                                            server admins: a session for an existing community
                                            (--handle: which server-level user, when this machine
                                            holds several)
-    use [<community>] <handle>             choose this agent session's session; alone, list them
+    use [<community>] <handle>             choose this agent session's current session; alone,
+                                           list every session on this machine, each with the
+                                           `user_context` that names it
+    agent-session [<pid>]                  this agent session: its agent process's PID and start
+                                           time; with a PID, that process's, and whether it runs
     access                                 your access roles and grants, and the six roles
     publish [--role <role>] <artifact.json>
                                            community-member: submit an artifact to the gate
                                            (`--check`: validate only)
     validate <artifact.json>               community-member: validate only, `publish --check`
-    sync [--watch|--messages]              bring ./record, this session's copy of the record, up to
+    sync [--watch [--take-over]|--messages|--replies]
+                                           bring ./record, this session's copy of the record, up to
                                            date; list the gate's replies and the Messages addressed
-                                           to you (`--messages`: all of them, newest first)
-    gate [--dry-run|--verify|--rebuild|--watch]
+                                           to you (`--messages`, `--replies`: all of them, newest
+                                           first)
+    gate [--dry-run|--verify|--rebuild|--watch [--take-over]]
                                            community-admin, gate-keeper: decide the submissions
                                            waiting in inbox
     serve [<record dir>] [--port N]        browse ./record (or a record dir), rebuilt as it changes
                                            `--watch` and `serve` run until stopped, with no time
                                            limit of their own: start them in the background, and
-                                           again if the agent's limit stops them; a restart resumes
-                                           and takes over. SIGINT or SIGTERM stops one within a second.
+                                           again if the agent's limit stops them; a restart
+                                           resumes. A `gate --watch` or `sync --watch` started
+                                           beside one already watching stands by until it ends;
+                                           `--take-over` stops it. SIGINT or SIGTERM stops one
+                                           within a second.
     invite | assign | unassign | users | rebind-key | suspect-after
                                            community-admin (in its community), server admins: users
                                            and their access roles; anyone in the community lists its users, and
@@ -43,14 +52,17 @@ the `symposium-data` CLI. What a person may run follows from their access roles
     data <symposium-data command …>        direct data work: put, get, collection, find, …
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit
-code is the result (0 = done); every other command prints one JSON object. Every command names
+code is the result (0 = done); every other command prints one JSON object. Any command that
+works in a session this machine holds takes `--user-context <user_context>` and works in the
+one it names (a `user_context` from `use`). Every command names
 the session it worked in: a `session` key in its JSON object, or a first line
 `session: <community>/<handle>` before its free text, which then streams through as it comes.
 
 Every command runs in its session's directory, which the skill keeps under ~/.symposium/
 (sessions.py): `setup`, `bootstrap`, `use-community`, `import` and `admin-config` name theirs,
-and make theirs this agent session's current one; any other command works in the current
-session (`use` chooses it), or the machine's only one. The first command of a session prepares
+and make theirs this agent session's current one; any other command works in the session its
+`--user-context <user_context>` names, else the current session (`use` chooses it), else the
+machine's only one. The first command of a session prepares
 the CLI's Python runtime (runtime.py) before anything else; later commands in the session reuse
 it. Every tool started here gets the CLI command in SYMPOSIUM_DATA_CLI.
 
@@ -102,9 +114,10 @@ WORKFLOW = {
     "serve": "serve.py",
 }
 USAGE = (
-    "/symposium <setup|admin-config|bootstrap|use-community|use|access|publish|validate|sync|"
-    "gate|serve|invite|assign|unassign|users|rebind-key|suspect-after|purge|export|"
-    "import|port|gen-api-key|list-api-keys|revoke-api-key|data> [options]    "
+    "/symposium <setup|admin-config|bootstrap|use-community|use|agent-session|access|publish|"
+    "validate|sync|gate|serve|invite|assign|unassign|users|rebind-key|suspect-after|purge|"
+    "export|import|port|gen-api-key|list-api-keys|revoke-api-key|data> [options] "
+    "[--user-context <user_context>]    "
     "e.g. /symposium setup --invite-file <file>"
 )
 
@@ -164,9 +177,10 @@ def main(argv=None) -> int:
         return 0
     command, sessions = argv[0], Sessions()
     sessions.settle()
-    if command == "use":
+    if command in ("use", "agent-session"):
+        answer = sessions.use if command == "use" else sessions.agent_session
         try:
-            print(json.dumps(sessions.use(argv[1:])))
+            print(json.dumps(answer(argv[1:])))
         except SessionError as e:
             print(json.dumps(e.report))
             return 1

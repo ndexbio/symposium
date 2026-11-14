@@ -1,7 +1,9 @@
 ---
 name: symposium
 description: Work in a Symposium community on a Symposium Data server — join it with an invite (setup), bring it up as a server admin and run it as its community admin (bootstrap, invite, assign), publish artifacts and keep a copy of the record (publish, validate, sync, serve), decide submissions (gate), manage its users, access roles and data, and port, export or import a community. Use whenever the user mentions Symposium, a community record, an invite file, community.json, or the symposium-data CLI.
-version: 0.0.0-dev
+license: MIT
+metadata:
+  version: "0.0.0-dev"
 ---
 
 # Symposium
@@ -29,7 +31,59 @@ Every other command works in a **session**: one user's context on one data serve
 
 **Access roles.** Each user and API key holds **access roles** (`server-root`, `server-admin`, `community-admin`, `gate-keeper`, `community-member`, `community-observer`), each a fixed set of **grants**, and each command takes one grant; a refusal names the grant it takes. `community-member` and `community-observer` take a **collection value** (`:*`, `:` or `:c1,c2`). [`toolchain/data-server/RBAC.md`](toolchain/data-server/RBAC.md) defines every role and grant, API keys, and who may change whose access; `/symposium access` shows the roles as the server defines them, and yours. The procedures (inviting, giving roles, issuing keys) are in [`toolchain/data-server/RUNBOOK.md`](toolchain/data-server/RUNBOOK.md#8-roles-and-access), "Roles and access". Access roles are not **publishing roles** (`publish --role researcher`), which limit the Artifact types a session publishes.
 
-Sessions are kept by the skill under `~/.symposium/` (`admin/admin/<handle>/` and `admin/<community>/<handle>/` for a server-level user, `member/<community>/<handle>/` for a community's user), so commands work from any directory. `setup`, `bootstrap` and `use-community` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another (`/symposium use <handle>` for a server-wide one), and `/symposium use` alone lists them all with their roles. Every other command works in the current session (or, when the agent session has chosen none, the machine's only one). Each agent session keeps its own choice, so several agents on one machine never change each other's. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`). A command the session's roles do not allow is refused with the grant it takes and the sessions that hold it.
+A command the session's roles do not allow is refused with the grant it takes and the sessions that hold it. [Agent runtime](#agent-runtime) says where sessions are kept, which one a command works in, and how to work in parallel.
+
+## Agent runtime
+
+Read this before running commands side by side: from several agents, from sub-agents, or as several members.
+
+**Agent session.** One agent session is one agent process: the long-lived process that starts the shell each `/symposium` command runs in. Everything that process starts, its sub-agents included, is the same agent session. `/symposium agent-session` reports it as `pid` and `started`; `/symposium agent-session <pid>` reports that process's `started` and whether it is `running`. A skill built on this one keys its own per-session state on those two values.
+
+**User context.** A user context is one session this machine holds: one user, in one community or, for a server-level user, server-wide. It is named `<community>/<handle>`, or `<handle>` alone for a server-wide one. `/symposium use` alone lists every user context on the machine, each with its roles, its folder, whether it is `current`, and `user_context`, the exact value that names it. That listing is the whole set: take a value from it, and from nowhere else.
+
+**Which user context a command works in.**
+
+1. The one its `--user-context <user_context>` names. The option decides for that one command, whatever `use` chose, and leaves the current context as it is. A value this machine holds no session for is refused, and the refusal lists every value it does hold.
+2. Otherwise the agent session's **current context**: the one `/symposium use <community> <handle>` chose (`/symposium use <handle>` for a server-wide one), or the one `setup`, `bootstrap` or `use-community` last made.
+3. Otherwise the machine's only one. A machine holding several asks for a choice.
+
+Every command names the session it worked in: `session` in its JSON, or a first line `session: <community>/<handle>`. Read it to confirm a command ran as the member you meant.
+
+**The net rule.** Any number of agent sessions run side by side on one machine, each with its own current context. Any command runs as another user context with `--user-context`, so one agent session works as several members at once.
+
+| Working in parallel | Rule |
+|---|---|
+| Several agent sessions, different members | each sets its own current context with `use` |
+| One agent session, several members at once, sub-agents included | every command names its member with `--user-context`; a `use` by one sub-agent changes the current context for all of them |
+| One member used by two callers at once | each artifact name is used once, and a taken name is refused; each caller reads the decision on its own submission by artifact name: accepted, it is in the copy after `sync`; rejected, it is in `sync --replies` |
+| A gate watching while members publish | any user context holding the `gate` grant watches: a community admin or a gate-keeper |
+| Several `gate --watch` for one community on one machine | one decides, the rest stand by, and a standby watches when the decider ends |
+| Several `sync --watch` under one user context | one runs, the rest stand by, and a standby watches when it ends |
+| Citing another artifact | publish it after the gate has accepted the one it cites |
+
+**Where state is kept.**
+
+| State | Location | Scope |
+|---|---|---|
+| A session's folder: its context, `record/` (its copy of the record), its invite files and event log | `~/.symposium/member/<community>/<handle>/` for a community's user; `~/.symposium/admin/<community>/<handle>/` and `~/.symposium/admin/admin/<handle>/` for a server-level user | the machine: one per user context, shared by every agent session that works as it |
+| An agent session's current context | `~/.symposium/current/<pid>.json` | one agent session |
+| A community's gate locks | `~/.symposium/gate/` | the machine: one gate decides for a community at a time |
+| Keys | `~/.symposium/keys/` | the machine |
+
+Commands work from any directory. Two callers using one user context are one member working from one folder.
+
+### Across machines
+
+Parallel use is supported on one machine. The skill neither coordinates nor detects use across machines, so these are yours to keep:
+
+| Across machines | Safe | Why |
+|---|---|---|
+| Members publishing to one community, each from its own machine | yes | each submission is its own file on the server, and the gate decides them in order |
+| Reading and syncing one community from many machines | yes | each machine keeps its own copy |
+| One member's handle set up on two machines, both publishing | yes | the server treats them as one member; keep artifact names distinct |
+| The gate for one community running on two machines at once | **no** | each machine's gate decides alone: a submission can be rejected by one and accepted by the other, and a rejection sent twice. Run a community's gate from one machine; the runbook's hand-over moves it to another |
+| A gate standing by on another machine | **no** | standing by works through a lock on one machine; a gate started on another decides at once |
+| `~/.symposium/` on a drive shared between machines | **no** | its locks and its agent-session records are one machine's |
 
 ## Commands
 
@@ -41,12 +95,13 @@ The "Usually run by" column names the role that typically runs each command; wha
 | `admin-config --handle <h> --data-server-url <url> [--new-key]` | root | make or reuse root's key, print where to place it, and set up root's server-wide session |
 | `bootstrap --community-file <file> [--handle <h>]` | server-admin | create the community with its first community admin; write invite files |
 | `use-community <community> [--handle <h>]` | server-admin | a session for an existing community |
-| `use [[<community>] <handle>]` | anyone | make that session this agent session's current one; alone, list every session |
+| `use [[<community>] <handle>]` | anyone | make that session this agent session's current one; alone, list every session on the machine, each with its `user_context` |
+| `agent-session [<pid>]` | anyone | this agent session's `pid` and `started`; with a PID, that process's, and whether it is `running` |
 | `access` | anyone | the six access roles, and the session's own roles and grants |
 | `publish [--role <role>] <artifact.json>` | community-member | sync (listing Messages to you, as `sync` does), validate against the record as it stands, then submit to the gate; `--roles` lists the publishing roles |
 | `validate [--role <role>] <artifact.json>` | community-member | the same checks as `publish`, submitting nothing (`publish --check`) |
-| `sync [--watch\|--messages]` | anyone in the community | bring the session's `record/`, its copy of the record, up to date; list the gate's replies to you, and each Message whose `recipients` include you (`message for you from @<sender>: <title> (@<name>)`), once; `--messages` lists every Message to you again, newest first, new ones marked; `--watch` keeps running (see below) |
-| `gate [--dry-run\|--verify\|--rebuild\|--watch]` | community-admin, gate-keeper | accept or reject the submissions waiting in `inbox`; `--verify` compares the session's `record/` with the record, `--rebuild` rebuilds the gate's caches from the server, `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30) and keeps running (see below) |
+| `sync [--watch [--take-over]\|--messages\|--replies]` | anyone in the community | bring the session's `record/`, its copy of the record, up to date; list the gate's replies to you, and each Message whose `recipients` include you (`message for you from @<sender>: <title> (@<name>)`), once; `--messages` lists every Message to you again, and `--replies` every reply from the gate with the artifact it is about, newest first, new ones marked; `--watch` keeps running (see below) |
+| `gate [--dry-run\|--verify\|--rebuild\|--watch [--take-over]]` | community-admin, gate-keeper | accept or reject the submissions waiting in `inbox`; `--verify` compares the session's `record/` with the record, `--rebuild` rebuilds the gate's caches from the server, `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30) and keeps running (see below) |
 | `serve [<record dir>] [--port N]` | anyone | browse the session's `record/` (or the record directory given) at `http://localhost:8760`, rebuilt as it changes; keeps running (see below) |
 | `invite --handle <h> --access <role>[:<collections>] [--community <c>] --out <file>`, `invite list --out-dir <dir>` | community-admin, server-admin (root for `server-admin`) | an invite file; the server gives the roles stored with it when the person joins; every pending invite written again. From a server-wide session, `--community` names the community a community role invites into |
 | `assign`, `unassign` `(--handle <h> \| --api-key <id>) --access <role>[:<collections>]` | community-admin; an owner, for `community-observer` on its own collections | add or remove access roles, or some collections of one |
@@ -69,8 +124,14 @@ with no time limit of its own. For each one:
 - **If your environment stops it at its time limit, start it again,** and tell the user it was
   restarted. Many agent environments cap background processes (Claude Code's unattended
   sessions stop them after 30 minutes by default). A restart is safe: it resumes where the last
-  run left off, so nothing is missed and nothing is decided twice, and it takes over from any
-  copy of itself still running on the session.
+  run left off, so nothing is missed and nothing is decided twice.
+- **Start one whenever you need one; the command keeps exactly one working.** A `gate --watch`
+  started while another gate watches the community on this machine, under any user context,
+  stands by: it prints which gate is watching, decides nothing, and watches from the moment
+  that one ends. A `sync --watch` does the same within its user context. So a watcher someone
+  else started is left running, and yours is ready behind it. `--watch --take-over` stops the
+  one that is running and watches in its place; use it for a watcher that has hung. A `serve`
+  started on a port another `serve` of the session holds takes that port over.
 - **Show the user every line it prints, as it appears,** for as long as it runs: follow its
   output and relay each new line into the conversation. Output the user is not shown is a
   fault; for `gate --watch`, each line is a decision the gate's runner must see.
@@ -210,9 +271,24 @@ agent> /symposium use <community_name> <handle>
 agent> /symposium sync
 ```
 
+**Working as several members at once (one agent session, or its sub-agents):**
+Each command names the user context it runs as; the listing gives the values.
+```bash
+# every user context on this machine, each with the `user_context` that names it
+agent> /symposium use
+# a gate for the community, started once and left watching, in the background
+agent> /symposium gate --watch --user-context <community_name>/<gate_keeper_handle>
+# two members publishing side by side
+agent> /symposium publish --role importer a.json --user-context <community_name>/<handle_one>
+agent> /symposium publish --role researcher b.json --user-context <community_name>/<handle_two>
+# the decision on each: accepted, it is in the copy; rejected, it is among the replies
+agent> /symposium sync --user-context <community_name>/<handle_one>
+agent> /symposium sync --replies --user-context <community_name>/<handle_one>
+```
+
 A **publishing role** limits which Artifact types a session may publish. It is not a Member and not an access role: one account operates in different publishing roles in different sessions, and every Artifact is attributed to the Member either way. Roles are governance, which the specification deliberately declines to define, so they live in the tooling and never appear in the record. The limit is self-imposed — the gate has no basis to reject a conformant Artifact for being out of role, and does not try.
 
-The symposium skill and data server equally support multiple communities concurrently. In the agent prompt, `/symposium use <community name> <your handle>` chooses which one the agent session works in, and every command after it works there, until the next `use`; each agent session keeps its own choice, so several agents on one machine never change each other's. `/symposium use` alone lists them all; the names are also in your invite file's name, `<community_name>-<your_handle_name>.invite`. On the data server, a server admin defines each community with `/symposium bootstrap --community-file <community_file>.json`, which creates it with the name and first community admin the file gives.
+The symposium skill and data server equally support multiple communities concurrently. In the agent prompt, `/symposium use <community name> <your handle>` chooses which one the agent session works in, and every command after it works there, until the next `use`; `--user-context` on a command names another for that command ([Agent runtime](#agent-runtime)). `/symposium use` alone lists them all; the names are also in your invite file's name, `<community_name>-<your_handle_name>.invite`. On the data server, a server admin defines each community with `/symposium bootstrap --community-file <community_file>.json`, which creates it with the name and first community admin the file gives.
 
 ## What to read for the task in front of you
 

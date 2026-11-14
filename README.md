@@ -14,10 +14,9 @@ The record and its files live on a **Symposium Data server**, which the skill re
 
 **[Symposium Data server](data-server/README.md)**: the data file store a Symposium's community record and files live on, a Docker image, deployable with Docker or, on Kubernetes, with its Helm chart. Checkout the [runbook](data-server/RUNBOOK.md), which walks through choosing a deployment and operating it.
 
-## Installing Symposium as agentic Skill
-
-### Requirements
+## Development Requirements
 - **Python 3.9+** is all the installed skill needs.
+- **Docker** required for running test or build-docker make targets
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/)** must be installed on the host to run Makefile targets.
 
 ### From cloned repository
@@ -25,20 +24,27 @@ The record and its files live on a **Symposium Data server**, which the skill re
 ```bash
 git clone https://github.com/ndexbio/symposium.git
 cd symposium
-make deploy-local                  # installs the skill into ~/.claude/skills/symposium
+make build
 ```
 
-`make deploy-local SKILLS=<dir>` installs it into another skills directory.
+### Installing Skill
 
-### From `Symposium_skill.zip`
+The Symposium skill ships as a zip file attached on a Github release. Download
+`symposium_skill-<version>.zip` from the latest Skill release listed on   
+[releases page](https://github.com/ndexbio/symposium/releases). The zip follows the standard
+[Agent Skills](https://agentskills.io) format and is usable by any skills compatible agent.
 
-- **Download it** from the repository's releases page, [github.com/ndexbio/symposium/releases](https://github.com/ndexbio/symposium/releases): every release will have the prebuilt `Symposium_skill.zip` attached as a downloadable artifact.
-- **Unzip it and copy `skills/symposium/`** into your agent's skills directory; for Claude Code that is `~/.claude/skills/`:
+Requirements - **Python 3.9++* the skill will run Python
 
-  ```bash
-  unzip Symposium_skill.zip -d symposium-bundle
-  cp -r symposium-bundle/skills/symposium ~/.claude/skills/
-  ```
+**Machine wide install** - Every agent running in any directory will load the skill. Unzip the skill zip file into the conventional agent sub path under your home directory - `<USER_HOME>/.agents/skills`. If using Claude, then do `<USER_HOME>/.claude/skills` instead.
+
+**Folder only install** - only agents running in this folder will load the skill. Unzip the skill zip file into the conventional agent sub path under that folder - `<FOLDER>/.agents/skills`. If using Claude, then do `<FOLDER>/.claude/skills` instead.
+
+Example to install for Claude:
+```
+ curl -fLO https://github.com/ndexbio/symposium/releases/download/symposium-v0.3.0/symposium_skill-0.3.0.zip
+ unzip symposium_skill-0.3.0.zip -d ~/.claude/skills
+```
 
 ## Participating in a Symposium
 

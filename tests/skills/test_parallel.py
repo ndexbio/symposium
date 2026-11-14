@@ -122,8 +122,9 @@ def test_callers_at_once_in_one_folder_and_across_folders_are_each_decided_once(
             lambda: record_names(cli, root_dir) == every,
             "the gate that took over never decided the late submissions",
         )
+        # each line that lists a reply reads "reply from the gate: <name> (re <artifact>)"
         listed = tool(suite, lyra, "sync.py", "--replies")[1]
-        assert listed.count("reply from the gate") == replies
+        assert listed.count("reply from the gate: ") == replies, listed
     finally:
         for watch in (admin_gate, keeper_gate):
             if watch is not None:

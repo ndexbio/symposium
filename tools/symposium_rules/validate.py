@@ -10,6 +10,7 @@ Severity:
 
 Conforms to spec/symposium_specification.md and tools/CANONICAL.md.
 """
+
 from __future__ import annotations
 
 import csv
@@ -19,9 +20,16 @@ import re
 from datetime import datetime, timezone
 
 SPEC_VERSION = "1.0"
-ARTIFACT_TYPES = {"Argument", "Data", "ScientificPublication", "Analysis", "Model",
-                  "NonGroundable", "Message"}
-NON_GROUNDABLE_TYPES = {"Analysis", "NonGroundable", "Message"}            # spec 2.1
+ARTIFACT_TYPES = {
+    "Argument",
+    "Data",
+    "ScientificPublication",
+    "Analysis",
+    "Model",
+    "NonGroundable",
+    "Message",
+}
+NON_GROUNDABLE_TYPES = {"Analysis", "NonGroundable", "Message"}  # spec 2.1
 # Artifact types this profile defines (CANONICAL.md 2.1), beyond the specification's own. The
 # specification allows types it does not define (spec 2); these are the ones this profile
 # does, so they draw no "not defined" finding. A ResearchGoal is non-groundable because it
@@ -34,11 +42,14 @@ PROFILE_GROUNDABLE = {"ResearchGoal": False}
 # for the Ground's rationale and the Argument's rationale, not a type-level prohibition.
 ARGUMENT_OBJECTS = {"Assertion", "Ground", "Assumption", "Content"}
 RELS = {"depends_on", "grounded_by", "assumes"}
-REL_TARGET_TYPE = {"depends_on": "Assertion", "grounded_by": "Ground",
-                   "assumes": "Assumption"}
+REL_TARGET_TYPE = {
+    "depends_on": "Assertion",
+    "grounded_by": "Ground",
+    "assumes": "Assumption",
+}
 BASIS_RELS = {"depends_on", "grounded_by", "assumes"}
 STD_METHODS = {"text_span", "csv", "rest", "download", "graph"}
-VERIFIABLE_METHODS = {"text_span", "csv", "graph"}                         # gate can check content
+VERIFIABLE_METHODS = {"text_span", "csv", "graph"}  # gate can check content
 
 
 def method_of(name):
@@ -65,6 +76,7 @@ def method_of(name):
         if n.endswith("_" + m) and len(n) > len(m) + 1:
             return m
     return None
+
 
 # ---------------------------------------------------------------- embedded payload size
 # In this profile embedded content lives in a string property, so nothing can query it — an
@@ -104,7 +116,13 @@ def parse_address(addr):
     segs = base[1:].split(".")
     if not segs or not segs[0]:
         return None
-    return {"root": segs[0], "segs": segs[1:], "method": method, "ref": ref, "raw": addr}
+    return {
+        "root": segs[0],
+        "segs": segs[1:],
+        "method": method,
+        "ref": ref,
+        "raw": addr,
+    }
 
 
 def _csv_rows(text):
@@ -147,8 +165,11 @@ def build_index(artifacts):
         h = a.get("artifact", {})
         objs = {o.get("name"): o for o in a.get("objects", []) if o.get("name")}
         idx[h.get("name")] = {
-            "type": h.get("type"), "created": h.get("created"), "header": h,
-            "objects": objs, "art": a,
+            "type": h.get("type"),
+            "created": h.get("created"),
+            "header": h,
+            "objects": objs,
+            "art": a,
             "methods": {n: o for n, o in objs.items() if o.get("type") == "Content"},
         }
     return idx
@@ -164,7 +185,11 @@ def resolve(addr, index, members):
     if root in members and not p["segs"] and not p["method"]:
         return True, {"kind": "member", "name": root}, ""
     if root in members:
-        return False, None, f"a Member address exposes no internal structure (spec 1.7): {addr}"
+        return (
+            False,
+            None,
+            f"a Member address exposes no internal structure (spec 1.7): {addr}",
+        )
     if root not in index:
         return False, None, f"no artifact named '{root}'"
 
@@ -180,7 +205,11 @@ def resolve(addr, index, members):
         elif segs[0] in rec["header"]:
             prop, kind = segs[0], "property"
         else:
-            return False, None, f"'{segs[0]}' is neither an Object nor a property of '{root}'"
+            return (
+                False,
+                None,
+                f"'{segs[0]}' is neither an Object nor a property of '{root}'",
+            )
     elif len(segs) == 2:
         if segs[0] not in rec["objects"]:
             return False, None, f"'{segs[0]}' is not an Object of '{root}'"
@@ -190,9 +219,16 @@ def resolve(addr, index, members):
     else:
         return False, None, f"address has too many segments: {addr}"
 
-    info = {"kind": kind, "artifact": root, "object": obj, "property": prop,
-            "method": method, "ref": p["ref"], "rec": rec,
-            "node_type": rec["objects"][obj]["type"] if obj else None}
+    info = {
+        "kind": kind,
+        "artifact": root,
+        "object": obj,
+        "property": prop,
+        "method": method,
+        "ref": p["ref"],
+        "rec": rec,
+        "node_type": rec["objects"][obj]["type"] if obj else None,
+    }
 
     if method:
         if method not in rec["methods"]:
@@ -209,22 +245,43 @@ def _verify_graph(rec, ref):
     parts = dict(kv.split("=", 1) for kv in (ref or "").split("&") if "=" in kv)
     if "node" in parts:
         if parts["node"] not in rec["objects"]:
-            return [finding("ADDRESS", "FAIL",
-                            f"graph node '{parts['node']}' is not an Object of this Artifact")]
+            return [
+                finding(
+                    "ADDRESS",
+                    "FAIL",
+                    f"graph node '{parts['node']}' is not an Object of this Artifact",
+                )
+            ]
         return []
     if "edge" in parts:
         bits = parts["edge"].split("|")
         if len(bits) != 3:
-            return [finding("ADDRESS", "FAIL",
-                            "graph edge reference is <source>|<rel>|<target>")]
+            return [
+                finding(
+                    "ADDRESS", "FAIL", "graph edge reference is <source>|<rel>|<target>"
+                )
+            ]
         s, r, t = bits
         rels = (rec.get("art") or {}).get("relationships", [])
-        if not any(e.get("source") == s and e.get("rel") == r and e.get("target") == t for e in rels):
-            return [finding("ADDRESS", "FAIL",
-                            f"no relationship {s} -{r}-> {t} in this Artifact")]
+        if not any(
+            e.get("source") == s and e.get("rel") == r and e.get("target") == t
+            for e in rels
+        ):
+            return [
+                finding(
+                    "ADDRESS",
+                    "FAIL",
+                    f"no relationship {s} -{r}-> {t} in this Artifact",
+                )
+            ]
         return []
-    return [finding("ADDRESS", "FAIL",
-                    "graph reference needs node=<name> or edge=<source>|<rel>|<target>")]
+    return [
+        finding(
+            "ADDRESS",
+            "FAIL",
+            "graph reference needs node=<name> or edge=<source>|<rel>|<target>",
+        )
+    ]
 
 
 def verify_content(info):
@@ -233,17 +290,26 @@ def verify_content(info):
     if m not in VERIFIABLE_METHODS:
         return out
     if not ref:
-        return out                    # no reference string: the address names all of the content
+        return out  # no reference string: the address names all of the content
     rec, prop = info["rec"], info.get("property")
     if m == "graph":
         return _verify_graph(rec, ref)
     if prop is None:
-        out.append(finding("ADDRESS", "FAIL",
-                           f"method '{m}' must address a property (…artifact.<property>#{m}.…): {info}"))
+        out.append(
+            finding(
+                "ADDRESS",
+                "FAIL",
+                f"method '{m}' must address a property (…artifact.<property>#{m}.…): {info}",
+            )
+        )
         return out
-    src = (rec["objects"][info["object"]] if info.get("object") else rec["header"]).get(prop)
+    src = (rec["objects"][info["object"]] if info.get("object") else rec["header"]).get(
+        prop
+    )
     if not isinstance(src, str):
-        out.append(finding("ADDRESS", "FAIL", f"property '{prop}' holds no text to address"))
+        out.append(
+            finding("ADDRESS", "FAIL", f"property '{prop}' holds no text to address")
+        )
         return out
 
     if m == "csv":
@@ -251,7 +317,9 @@ def verify_content(info):
         row, col = parts.get("row"), parts.get("col")
         rows = _csv_rows(src)
         if rows is None or not rows:
-            out.append(finding("ADDRESS", "FAIL", f"property '{prop}' is not parseable CSV"))
+            out.append(
+                finding("ADDRESS", "FAIL", f"property '{prop}' is not parseable CSV")
+            )
             return out
         cols = list(rows[0].keys())
         if col is not None and col not in cols:
@@ -261,31 +329,56 @@ def verify_content(info):
         else:
             key = cols[0]
             if not any(r.get(key) == row for r in rows):
-                out.append(finding("ADDRESS", "FAIL", f"row '{row}' not found in column '{key}'"))
+                out.append(
+                    finding(
+                        "ADDRESS", "FAIL", f"row '{row}' not found in column '{key}'"
+                    )
+                )
     elif m == "text_span":
         mm = re.match(r'\s*quote="((?:[^"\\]|\\.)*)"(.*)$', ref or "")
         if not mm:
-            out.append(finding("ADDRESS", "FAIL", 'text_span reference needs quote="…"'))
+            out.append(
+                finding("ADDRESS", "FAIL", 'text_span reference needs quote="…"')
+            )
             return out
         q = re.sub(r"\\(.)", r"\1", mm.group(1))
-        extra = dict(kv.split("=", 1) for kv in mm.group(2).lstrip("&").split("&") if "=" in kv)
+        extra = dict(
+            kv.split("=", 1) for kv in mm.group(2).lstrip("&").split("&") if "=" in kv
+        )
         n = _count_overlapping(src, q)
         if n == 0:
-            out.append(finding("ADDRESS", "FAIL", f"quote not found in '{prop}': {q[:50]!r}"))
+            out.append(
+                finding("ADDRESS", "FAIL", f"quote not found in '{prop}': {q[:50]!r}")
+            )
         elif n > 1:
             nth, near = extra.get("nth"), (extra.get("near") or "").strip('"')
             if nth is not None:
                 if not (nth.isdigit() and 1 <= int(nth) <= n):
-                    out.append(finding("ADDRESS", "FAIL", f"&nth={nth} out of range (quote matches {n})"))
+                    out.append(
+                        finding(
+                            "ADDRESS",
+                            "FAIL",
+                            f"&nth={nth} out of range (quote matches {n})",
+                        )
+                    )
             elif near:
                 near = re.sub(r"\\(.)", r"\1", near)
                 if q not in near:
-                    out.append(finding("ADDRESS", "FAIL", "&near must contain the quote"))
+                    out.append(
+                        finding("ADDRESS", "FAIL", "&near must contain the quote")
+                    )
                 elif _count_overlapping(src, near) != 1:
-                    out.append(finding("ADDRESS", "FAIL", "&near context is not unique"))
+                    out.append(
+                        finding("ADDRESS", "FAIL", "&near context is not unique")
+                    )
             else:
-                out.append(finding("ADDRESS", "FAIL",
-                                   f"quote matches {n} spans; add &nth= or a unique &near="))
+                out.append(
+                    finding(
+                        "ADDRESS",
+                        "FAIL",
+                        f"quote matches {n} spans; add &nth= or a unique &near=",
+                    )
+                )
     return out
 
 
@@ -294,31 +387,65 @@ def groundable(info, citing_artifact):
     if info["kind"] == "member":
         return False, "FAIL", "a Member is not groundable (spec 2.2.4)"
     if info["artifact"] == citing_artifact:
-        return False, "FAIL", "a Ground may not address content inside its own Argument (spec 2.2)"
+        return (
+            False,
+            "FAIL",
+            "a Ground may not address content inside its own Argument (spec 2.2)",
+        )
     rec = info["rec"]
     if rec["type"] in NON_GROUNDABLE_TYPES:
-        return False, "FAIL", f"{rec['type']} is a non-groundable Artifact type (spec 2.1)"
+        return (
+            False,
+            "FAIL",
+            f"{rec['type']} is a non-groundable Artifact type (spec 2.1)",
+        )
     # Spec 1.5: `groundable: false` on the header means NO content in that Artifact may be
     # cited in a Ground. The type check above only covers the three types the specification
     # names, and 2.7 explicitly invites communities to declare non-groundable Artifacts under
     # their own type names — so without this, the documented extensibility path published a
     # guarantee the checker did not keep.
     if (rec.get("header") or {}).get("groundable") is False:
-        return False, "FAIL", (f"'{info['artifact']}' declares groundable:false; no content in it "
-                               f"may be cited in a Ground (spec 1.5)")
+        return (
+            False,
+            "FAIL",
+            (
+                f"'{info['artifact']}' declares groundable:false; no content in it "
+                f"may be cited in a Ground (spec 1.5)"
+            ),
+        )
     if info.get("node_type") == "Content":
-        return False, "FAIL", "Content Objects are not themselves groundable (spec 2.2.4)"
+        return (
+            False,
+            "FAIL",
+            "Content Objects are not themselves groundable (spec 2.2.4)",
+        )
     if info.get("node_type") == "Assertion":
-        return True, None, ""                                   # an Assertion in another Argument
+        return True, None, ""  # an Assertion in another Argument
     m = info.get("method_obj")
     if m is None:
-        return False, "FAIL", ("names no Content Object; groundable content must be reached by a "
-                               "method the Artifact declares (spec 2.2.4)")
+        return (
+            False,
+            "FAIL",
+            (
+                "names no Content Object; groundable content must be reached by a "
+                "method the Artifact declares (spec 2.2.4)"
+            ),
+        )
     if m.get("groundable") is not True:
-        return False, "FAIL", f"Content Object '{info['method']}' is not declared groundable"
+        return (
+            False,
+            "FAIL",
+            f"Content Object '{info['method']}' is not declared groundable",
+        )
     if method_of(info["method"]) in ("rest", "download"):
-        return True, "REVIEW", (f"grounds via '{info['method']}' — content is outside the record and "
-                                f"cannot be machine-verified; verifiability is trust-based")
+        return (
+            True,
+            "REVIEW",
+            (
+                f"grounds via '{info['method']}' — content is outside the record and "
+                f"cannot be machine-verified; verifiability is trust-based"
+            ),
+        )
     return True, None, ""
 
 
@@ -329,21 +456,36 @@ def check_structure(a):
         return [finding("STRUCT", "FAIL", "missing 'artifact' header object")]
     for k in HEADER_REQUIRED:
         if k not in h:
-            f.append(finding("STRUCT", "FAIL", f"header missing required '{k}' (spec 1.4)"))
+            f.append(
+                finding("STRUCT", "FAIL", f"header missing required '{k}' (spec 1.4)")
+            )
     name = h.get("name")
     if isinstance(name, str):
         if NAME_FORBIDDEN.search(name) or name.startswith("@"):
-            f.append(finding("STRUCT", "FAIL", f"name '{name}' contains a delimiter (. # @)"))
+            f.append(
+                finding("STRUCT", "FAIL", f"name '{name}' contains a delimiter (. # @)")
+            )
         # A Member-name prefix segment must be present. Hyphens are permitted in it because
         # account handles may contain them — `symposium-admin` is one — and excluding them
         # would bar such an account from naming its own artifacts after itself. This
         # check is structural only: that the NAME MATCHES THE PUBLISHING ACCOUNT is enforced
         # where the account is actually known, in publish.py and at the gate.
         if not re.match(r"^[A-Za-z0-9][A-Za-z0-9-]*_", name):
-            f.append(finding("NAMING", "FAIL", f"name '{name}' lacks the '<agent>_' prefix (profile rule)"))
+            f.append(
+                finding(
+                    "NAMING",
+                    "FAIL",
+                    f"name '{name}' lacks the '<agent>_' prefix (profile rule)",
+                )
+            )
     if h.get("specification_version") != SPEC_VERSION:
-        f.append(finding("STRUCT", "FAIL",
-                         f"specification_version {h.get('specification_version')!r} != '{SPEC_VERSION}'"))
+        f.append(
+            finding(
+                "STRUCT",
+                "FAIL",
+                f"specification_version {h.get('specification_version')!r} != '{SPEC_VERSION}'",
+            )
+        )
     typ = h.get("type")
     if typ in PROFILE_TYPES:
         # Recognised, so no "not defined" finding. Its required `groundable` value is what
@@ -351,17 +493,39 @@ def check_structure(a):
         # it is missing; a REVIEW, like the finding it replaces, so acceptance is unchanged.
         want = PROFILE_GROUNDABLE.get(typ)
         if want is not None and h.get("groundable") is not want:
-            f.append(finding("STRUCT", "REVIEW",
-                             f"a {typ} must declare groundable: {str(want).lower()} "
-                             f"(profile 2.1); this one declares {h.get('groundable')!r}"))
+            f.append(
+                finding(
+                    "STRUCT",
+                    "REVIEW",
+                    f"a {typ} must declare groundable: {str(want).lower()} "
+                    f"(profile 2.1); this one declares {h.get('groundable')!r}",
+                )
+            )
     elif typ not in ARTIFACT_TYPES:
-        f.append(finding("STRUCT", "REVIEW",
-                         f"type '{typ}' is not defined by the specification or this profile"))
+        f.append(
+            finding(
+                "STRUCT",
+                "REVIEW",
+                f"type '{typ}' is not defined by the specification or this profile",
+            )
+        )
     pb = h.get("published_by")
     if not (isinstance(pb, str) and pb.startswith("@") and "." not in pb):
-        f.append(finding("STRUCT", "FAIL", f"published_by must be a bare Member address, got {pb!r}"))
+        f.append(
+            finding(
+                "STRUCT",
+                "FAIL",
+                f"published_by must be a bare Member address, got {pb!r}",
+            )
+        )
     if h.get("supersedes") and not (h.get("supersedes_rationale") or "").strip():
-        f.append(finding("STRUCT", "FAIL", "supersedes present without supersedes_rationale (spec 1.4)"))
+        f.append(
+            finding(
+                "STRUCT",
+                "FAIL",
+                "supersedes present without supersedes_rationale (spec 1.4)",
+            )
+        )
 
     objs = a.get("objects", [])
     names = [o.get("name") for o in objs]
@@ -372,8 +536,13 @@ def check_structure(a):
             f.append(finding("STRUCT", "FAIL", f"Object missing name/type: {o}"))
         # spec 1.7.1: Object names must not collide with the Artifact's property names
         if o.get("name") in h:
-            f.append(finding("STRUCT", "FAIL",
-                             f"Object name '{o['name']}' collides with an Artifact property (spec 1.7.1)"))
+            f.append(
+                finding(
+                    "STRUCT",
+                    "FAIL",
+                    f"Object name '{o['name']}' collides with an Artifact property (spec 1.7.1)",
+                )
+            )
     known = set(names)
     # The relationship vocabulary is closed for Arguments and open everywhere else. spec 2.2
     # names the three relationships an Argument may use; spec 1.7 places no vocabulary on
@@ -384,39 +553,69 @@ def check_structure(a):
         if not isinstance(rel, str) or not rel.strip():
             f.append(finding("STRUCT", "FAIL", f"relationship missing 'rel': {r}"))
         elif h.get("type") == "Argument" and rel not in RELS:
-            f.append(finding("STRUCT", "FAIL",
-                             f"'{rel}' is not a relationship an Argument may use; spec 2.2 defines "
-                             f"{', '.join(sorted(RELS))}"))
+            f.append(
+                finding(
+                    "STRUCT",
+                    "FAIL",
+                    f"'{rel}' is not a relationship an Argument may use; spec 2.2 defines "
+                    f"{', '.join(sorted(RELS))}",
+                )
+            )
         for end in ("source", "target"):
             v = r.get(end)
             if v not in known:
-                f.append(finding("STRUCT", "FAIL",
-                                 f"{r.get('rel')} {end} '{v}' is not an Object of this Artifact "
-                                 f"(relationships never leave the Artifact; spec 1.6)"))
+                f.append(
+                    finding(
+                        "STRUCT",
+                        "FAIL",
+                        f"{r.get('rel')} {end} '{v}' is not an Object of this Artifact "
+                        f"(relationships never leave the Artifact; spec 1.6)",
+                    )
+                )
     return f
 
 
 def check_type_specific(a):
     f, h = [], a["artifact"]
     t = h.get("type")
-    req = {"Analysis": ("procedure",), "Model": ("modeling_choices",),
-           "Message": ("recipients", "text")}.get(t, ())
+    req = {
+        "Analysis": ("procedure",),
+        "Model": ("modeling_choices",),
+        "Message": ("recipients", "text"),
+    }.get(t, ())
     for k in req:
         if not h.get(k) and h.get(k) != []:
             f.append(finding("TYPE", "FAIL", f"{t} requires '{k}'"))
     if t == "Analysis" and "outputs" in h:
-        f.append(finding("TYPE", "REVIEW",
-                         "'outputs' is not an Analysis property; outputs cite the Analysis "
-                         "with produced_by, so they are found by search (spec 2.5)"))
-    if t == "NonGroundable" and not any(str(h.get(k, "")).strip()
-                                        for k in ("text", "description", "title")):
-        f.append(finding("TYPE", "REVIEW",
-                         "NonGroundable has no required content property, but should carry at "
-                         "least one expressing meaningful content, such as 'text' (spec 2.7)"))
+        f.append(
+            finding(
+                "TYPE",
+                "REVIEW",
+                "'outputs' is not an Analysis property; outputs cite the Analysis "
+                "with produced_by, so they are found by search (spec 2.5)",
+            )
+        )
+    if t == "NonGroundable" and not any(
+        str(h.get(k, "")).strip() for k in ("text", "description", "title")
+    ):
+        f.append(
+            finding(
+                "TYPE",
+                "REVIEW",
+                "NonGroundable has no required content property, but should carry at "
+                "least one expressing meaningful content, such as 'text' (spec 2.7)",
+            )
+        )
     if t == "ScientificPublication":
         for k in ("import_method", "authors"):
             if not h.get(k):
-                f.append(finding("TYPE", "FAIL", f"ScientificPublication is imported by definition; '{k}' required"))
+                f.append(
+                    finding(
+                        "TYPE",
+                        "FAIL",
+                        f"ScientificPublication is imported by definition; '{k}' required",
+                    )
+                )
     if t == "Argument":
         # The judgment is a property of the Argument, not of each Assertion: one
         # verdict, for one stated purpose, on the primary Assertion (spec 2.2.2).
@@ -424,48 +623,85 @@ def check_type_specific(a):
             if not h.get(k):
                 f.append(finding("TYPE", "FAIL", f"Argument requires '{k}' (spec 2.2)"))
     if bool(h.get("extracted_from")) != bool(h.get("extraction_method")):
-        f.append(finding("TYPE", "FAIL", "extracted_from and extraction_method must appear together"))
+        f.append(
+            finding(
+                "TYPE",
+                "FAIL",
+                "extracted_from and extraction_method must appear together",
+            )
+        )
 
     for o in a.get("objects", []):
         ot = o.get("type")
         if t == "Argument" and ot not in ARGUMENT_OBJECTS:
-            f.append(finding("TYPE", "FAIL", f"Object type '{ot}' not permitted in an Argument"))
+            f.append(
+                finding(
+                    "TYPE", "FAIL", f"Object type '{ot}' not permitted in an Argument"
+                )
+            )
         # Outside an Argument the Object vocabulary is open (spec 1.6): a Model of a pathway
         # holds nodes for life-cycle stages and effectors, and the specification's own Gene
         # Ontology example (spec 2.6) is a Model whose internal annotations a Ground cites.
         # Restricting every non-Argument Artifact to Content Objects made the Model type
         # unusable for the thing it exists to hold.
-        need = {"Assertion": ("claim", "scope"),
-                "Ground": ("citation", "rationale"), "Assumption": ("rationale",),
-                "Content": ("description", "addressing_method")}.get(ot, ())
+        need = {
+            "Assertion": ("claim", "scope"),
+            "Ground": ("citation", "rationale"),
+            "Assumption": ("rationale",),
+            "Content": ("description", "addressing_method"),
+        }.get(ot, ())
         for k in need:
             if not str(o.get(k, "")).strip():
-                f.append(finding("TYPE", "FAIL", f"{ot} '{o.get('name')}' missing '{k}'"))
+                f.append(
+                    finding("TYPE", "FAIL", f"{ot} '{o.get('name')}' missing '{k}'")
+                )
         if ot == "Content":
             if not isinstance(o.get("groundable"), bool):
-                f.append(finding("TYPE", "FAIL",
-                                 f"Content Object '{o.get('name')}' groundable must be a boolean, "
-                                 f"got {o.get('groundable')!r} (spec 1.8.1)"))
+                f.append(
+                    finding(
+                        "TYPE",
+                        "FAIL",
+                        f"Content Object '{o.get('name')}' groundable must be a boolean, "
+                        f"got {o.get('groundable')!r} (spec 1.8.1)",
+                    )
+                )
             meth = method_of(o.get("name"))
             if meth is None:
-                f.append(finding("TYPE", "REVIEW",
-                                 f"Content Object '{o.get('name')}' declares no method the profile "
-                                 f"knows: name it for one of {', '.join(sorted(STD_METHODS))}, "
-                                 f"optionally with a label in front (e.g. 'class_a_csv')"))
+                f.append(
+                    finding(
+                        "TYPE",
+                        "REVIEW",
+                        f"Content Object '{o.get('name')}' declares no method the profile "
+                        f"knows: name it for one of {', '.join(sorted(STD_METHODS))}, "
+                        f"optionally with a label in front (e.g. 'class_a_csv')",
+                    )
+                )
             if meth in ("rest", "download") and not o.get("access_method"):
-                f.append(finding("TYPE", "FAIL", f"method '{meth}' requires access_method"))
+                f.append(
+                    finding("TYPE", "FAIL", f"method '{meth}' requires access_method")
+                )
         if ot == "Content" and o.get("groundable") is True:
             if h.get("type") in NON_GROUNDABLE_TYPES:
-                f.append(finding("TYPE", "FAIL",
-                                 f"{h['type']} is non-groundable; its methods are addressable only "
-                                 f"(spec 2.1)"))
+                f.append(
+                    finding(
+                        "TYPE",
+                        "FAIL",
+                        f"{h['type']} is non-groundable; its methods are addressable only "
+                        f"(spec 2.1)",
+                    )
+                )
             elif h.get("groundable") is False:
                 # Spec 2.1: a non-groundable Artifact may hold Content Objects, but none of them
                 # may declare `groundable: true`. Caught here as well as at the Ground, so the
                 # contradiction is refused when it is WRITTEN rather than when someone relies on it.
-                f.append(finding("TYPE", "FAIL",
-                                 f"artifact declares groundable:false, so Content Object "
-                                 f"'{o.get('name')}' may not declare groundable:true (spec 2.1)"))
+                f.append(
+                    finding(
+                        "TYPE",
+                        "FAIL",
+                        f"artifact declares groundable:false, so Content Object "
+                        f"'{o.get('name')}' may not declare groundable:true (spec 2.1)",
+                    )
+                )
     return f
 
 
@@ -481,21 +717,44 @@ def check_argument(a):
     U = {n for n, o in objs.items() if o["type"] == "Assumption"}
 
     if not A:
-        f.append(finding("C-ARG", "FAIL", "an Argument contains at least one Assertion"))
+        f.append(
+            finding("C-ARG", "FAIL", "an Argument contains at least one Assertion")
+        )
     pa = h.get("primary_assertion")
     if pa not in A:
-        f.append(finding("C-ARG", "FAIL", f"primary_assertion '{pa}' does not name an owned Assertion"))
+        f.append(
+            finding(
+                "C-ARG",
+                "FAIL",
+                f"primary_assertion '{pa}' does not name an owned Assertion",
+            )
+        )
 
     for r in rels:
         want = REL_TARGET_TYPE.get(r.get("rel"))
         src, tgt = r.get("source"), r.get("target")
         if src in objs and objs[src]["type"] != "Assertion":
-            f.append(finding("C-ARG", "FAIL", f"{r['rel']} must originate at an Assertion, got {objs[src]['type']}"))
+            f.append(
+                finding(
+                    "C-ARG",
+                    "FAIL",
+                    f"{r['rel']} must originate at an Assertion, got {objs[src]['type']}",
+                )
+            )
         if want and tgt in objs and objs[tgt]["type"] != want:
-            f.append(finding("C-ARG", "FAIL", f"{r['rel']} must target a {want}, got {objs[tgt]['type']}"))
+            f.append(
+                finding(
+                    "C-ARG",
+                    "FAIL",
+                    f"{r['rel']} must target a {want}, got {objs[tgt]['type']}",
+                )
+            )
 
     # Ground / Assumption bear on exactly one Assertion
-    for kind, names, rel in (("Ground", G, "grounded_by"), ("Assumption", U, "assumes")):
+    for kind, names, rel in (
+        ("Ground", G, "grounded_by"),
+        ("Assumption", U, "assumes"),
+    ):
         cnt = {}
         for r in rels:
             if r.get("rel") == rel:
@@ -503,26 +762,41 @@ def check_argument(a):
         for n in sorted(names):
             c = cnt.get(n, 0)
             if c == 0:
-                f.append(finding("C-ARG", "FAIL",
-                                 f"{kind} '{n}' bears on no Assertion — connect it with `{rel}` "
-                                 f"from the Assertion it supports, or remove it"))
+                f.append(
+                    finding(
+                        "C-ARG",
+                        "FAIL",
+                        f"{kind} '{n}' bears on no Assertion — connect it with `{rel}` "
+                        f"from the Assertion it supports, or remove it",
+                    )
+                )
             elif c != 1:
                 # The remedy is not obvious from the count alone, and authors reasonably write one
                 # shared assumption for several Assertions. Say what to do and why (spec 2.2.4).
-                f.append(finding("C-ARG", "FAIL",
-                                 f"{kind} '{n}' bears on {c} Assertions (must be exactly 1) — give "
-                                 f"each Assertion its OWN {kind}, e.g. '{n}_1', '{n}_2'. Its "
-                                 f"rationale explains what THAT Assertion rests "
-                                 f"on, so one shared between two would have to mean two things at "
-                                 f"once. Where both rest on the same material the addresses "
-                                 f"coincide and the rationales differ, and that difference is the "
-                                 f"information worth recording (spec 2.2.4)"))
+                f.append(
+                    finding(
+                        "C-ARG",
+                        "FAIL",
+                        f"{kind} '{n}' bears on {c} Assertions (must be exactly 1) — give "
+                        f"each Assertion its OWN {kind}, e.g. '{n}_1', '{n}_2'. Its "
+                        f"rationale explains what THAT Assertion rests "
+                        f"on, so one shared between two would have to mean two things at "
+                        f"once. Where both rest on the same material the addresses "
+                        f"coincide and the rationales differ, and that difference is the "
+                        f"information worth recording (spec 2.2.4)",
+                    )
+                )
 
     # every Assertion has a basis
     basis = {r["source"] for r in rels if r.get("rel") in BASIS_RELS}
     for n in sorted(A - basis):
-        f.append(finding("C-ARG", "FAIL",
-                         f"Assertion '{n}' has no basis — needs a depends_on, grounded_by, or assumes (spec 2.2.3)"))
+        f.append(
+            finding(
+                "C-ARG",
+                "FAIL",
+                f"Assertion '{n}' has no basis — needs a depends_on, grounded_by, or assumes (spec 2.2.3)",
+            )
+        )
 
     # depends_on DAG, primary and alternatives are roots
     dep = {}
@@ -533,7 +807,13 @@ def check_argument(a):
         f.append(finding("C-ARG", "FAIL", "the depends_on graph contains a cycle"))
     depended_on = {t for ts in dep.values() for t in ts}
     if pa in depended_on:
-        f.append(finding("C-ARG", "FAIL", f"no Assertion may depend on the primary Assertion '{pa}'"))
+        f.append(
+            finding(
+                "C-ARG",
+                "FAIL",
+                f"no Assertion may depend on the primary Assertion '{pa}'",
+            )
+        )
     return f
 
 
@@ -567,7 +847,7 @@ def _nearest(common, index):
     ancestor itself descends from is behind the join and is dropped."""
     behind = set()
     for x in common:
-        behind |= (_ancestry(x, index) - {x})
+        behind |= _ancestry(x, index) - {x}
     return (common - behind) or common
 
 
@@ -585,7 +865,7 @@ def check_independence(a, index):
         return f
     objs = {o["name"]: o for o in a.get("objects", []) if o.get("name")}
     idx = dict(index)
-    idx.setdefault(h.get("name"), {"header": h})            # so self-provenance resolves
+    idx.setdefault(h.get("name"), {"header": h})  # so self-provenance resolves
 
     by_assertion = {}
     for r in a.get("relationships", []):
@@ -605,29 +885,42 @@ def check_independence(a, index):
         shared_carrier = {r: gs for r, gs in same.items() if len(gs) > 1}
         if shared_carrier:
             for root, gs in sorted(shared_carrier.items()):
-                f.append(finding("INDEPENDENCE", "REVIEW",
-                                 f"Assertion '{assertion}': Grounds {', '.join(sorted(gs))} all address "
-                                 f"'{root}'. Say in the rationale what the sharing does here — "
-                                 f"corroboration, contrast, or a chain — because a reader who is not "
-                                 f"told reads several Grounds as agreement (spec 2.2.4)"))
-            continue                                        # same carrier subsumes shared ancestry
+                f.append(
+                    finding(
+                        "INDEPENDENCE",
+                        "REVIEW",
+                        f"Assertion '{assertion}': Grounds {', '.join(sorted(gs))} all address "
+                        f"'{root}'. Say in the rationale what the sharing does here — "
+                        f"corroboration, contrast, or a chain — because a reader who is not "
+                        f"told reads several Grounds as agreement (spec 2.2.4)",
+                    )
+                )
+            continue  # same carrier subsumes shared ancestry
         anc = {gname: _ancestry(root, idx) for gname, root in grounds}
         reported = set()
         for i, (gi, ai) in enumerate(sorted(anc.items())):
-            for gj, aj in sorted(anc.items())[i + 1:]:
+            for gj, aj in sorted(anc.items())[i + 1 :]:
                 common = (ai & aj) - {r for _, r in grounds}
                 key = tuple(sorted((gi, gj)))
                 if common and key not in reported:
                     reported.add(key)
                     join = _nearest(common, idx)
                     more = len(common) - len(join)
-                    f.append(finding("INDEPENDENCE", "REVIEW",
-                                     f"Assertion '{assertion}': Grounds {gi} and {gj} address different "
-                                     f"Artifacts whose provenance meets at {', '.join(sorted(join))}"
-                                     + (f" (and {more} further shared ancestor(s) behind it)"
-                                        if more else "")
-                                     + ". Say in the rationale what the sharing does here — "
-                                       "corroboration, contrast, or a chain (spec 2.2.4)"))
+                    f.append(
+                        finding(
+                            "INDEPENDENCE",
+                            "REVIEW",
+                            f"Assertion '{assertion}': Grounds {gi} and {gj} address different "
+                            f"Artifacts whose provenance meets at {', '.join(sorted(join))}"
+                            + (
+                                f" (and {more} further shared ancestor(s) behind it)"
+                                if more
+                                else ""
+                            )
+                            + ". Say in the rationale what the sharing does here — "
+                            "corroboration, contrast, or a chain (spec 2.2.4)",
+                        )
+                    )
     return f
 
 
@@ -654,7 +947,13 @@ def check_corpus(a, index, members, record_names):
     objs = {o["name"]: o for o in a.get("objects", []) if o.get("name")}
 
     if name in record_names:
-        f.append(finding("UNIQUE", "FAIL", f"name '{name}' is already in the record; names are never reused"))
+        f.append(
+            finding(
+                "UNIQUE",
+                "FAIL",
+                f"name '{name}' is already in the record; names are never reused",
+            )
+        )
 
     # What supersedes what, across the whole record. Built here rather than in the index so
     # that `index` stays a plain description of the artifacts and this stays a judgment about
@@ -670,7 +969,7 @@ def check_corpus(a, index, members, record_names):
     replaced_by = {}
     for other in index.values():
         oh = other.get("header") or {}
-        for s in (oh.get("supersedes") or []):
+        for s in oh.get("supersedes") or []:
             p_ = parse_address(s)
             if p_:
                 replaced_by[p_["root"]] = oh
@@ -683,7 +982,13 @@ def check_corpus(a, index, members, record_names):
         if info["kind"] == "member":
             # Members sit outside the temporal ordering, but are never evidence (spec 2.2.4).
             if evidential:
-                f.append(finding("GROUND", "FAIL", f"{ctx}: a Member is not groundable (spec 2.2.4)"))
+                f.append(
+                    finding(
+                        "GROUND",
+                        "FAIL",
+                        f"{ctx}: a Member is not groundable (spec 2.2.4)",
+                    )
+                )
             return
         theirs = parse_instant(info["rec"]["created"])
         if info["artifact"] == name:
@@ -694,9 +999,14 @@ def check_corpus(a, index, members, record_names):
             # and no two of them ever share a `created`.
             pass
         elif mine and theirs and theirs >= mine:
-            f.append(finding("ORDER", "FAIL",
-                             f"{ctx}: '{info['artifact']}' ({info['rec']['created']}) is not strictly "
-                             f"earlier than '{name}' ({h.get('created')}) — spec 1.9"))
+            f.append(
+                finding(
+                    "ORDER",
+                    "FAIL",
+                    f"{ctx}: '{info['artifact']}' ({info['rec']['created']}) is not strictly "
+                    f"earlier than '{name}' ({h.get('created')}) — spec 1.9",
+                )
+            )
         # CITING SOMETHING THAT HAD ALREADY BEEN REPLACED. Never a FAIL: spec 1.9 is explicit
         # that a Ground on superseded content stays valid, because the record of what was
         # published and relied upon at the time is not erased. But an artifact that names an
@@ -708,11 +1018,16 @@ def check_corpus(a, index, members, record_names):
         if repl and repl.get("name") != name and repl.get("name") not in _mentions:
             r_when = parse_instant(repl.get("created"))
             if mine and r_when and r_when < mine:
-                f.append(finding("SUPERSEDED", "REVIEW",
-                                 f"{ctx}: '{info['artifact']}' was already superseded by "
-                                 f"'{repl.get('name')}' when this was published. Cite the "
-                                 f"later version, or say why the earlier one is the one you "
-                                 f"mean (spec 1.9)"))
+                f.append(
+                    finding(
+                        "SUPERSEDED",
+                        "REVIEW",
+                        f"{ctx}: '{info['artifact']}' was already superseded by "
+                        f"'{repl.get('name')}' when this was published. Cite the "
+                        f"later version, or say why the earlier one is the one you "
+                        f"mean (spec 1.9)",
+                    )
+                )
         if evidential:
             g_ok, lvl, reason = groundable(info, name)
             if not g_ok:
@@ -720,7 +1035,10 @@ def check_corpus(a, index, members, record_names):
                 return
             if lvl == "REVIEW":
                 f.append(finding("GROUND", "REVIEW", f"{ctx}: {reason}"))
-        f.extend(finding(x["check"], x["level"], f"{ctx}: {x['msg']}") for x in verify_content(info))
+        f.extend(
+            finding(x["check"], x["level"], f"{ctx}: {x['msg']}")
+            for x in verify_content(info)
+        )
 
     # `produced_by` is ordered like every other address. Publication is serial and the
     # Analysis is strictly earlier (spec 2.5), so the ordinary check is both correct and
@@ -733,11 +1051,17 @@ def check_corpus(a, index, members, record_names):
         # pointing at another Data Artifact records no procedure at all.
         ok, info, _ = resolve(h["produced_by"], index, members)
         if ok and info.get("kind") != "member" and info["rec"]["type"] != "Analysis":
-            f.append(finding("TYPE", "FAIL",
-                             f"header produced_by: '{info['artifact']}' is a {info['rec']['type']}, "
-                             f"not an Analysis (spec 2.5)"))
+            f.append(
+                finding(
+                    "TYPE",
+                    "FAIL",
+                    f"header produced_by: '{info['artifact']}' is a {info['rec']['type']}, "
+                    f"not an Analysis (spec 2.5)",
+                )
+            )
     if h.get("extracted_from"):
         check_addr(h["extracted_from"], "header extracted_from", False)
+
     def each_address(hk):
         """Walk a header field that holds a LIST of addresses.
 
@@ -751,13 +1075,23 @@ def check_corpus(a, index, members, record_names):
         if v is None or v == []:
             return
         if isinstance(v, str):
-            f.append(finding("STRUCT", "FAIL",
-                             f"header {hk} must be a LIST of addresses, not a string — "
-                             f'write ["{v}"] rather than "{v}"'))
+            f.append(
+                finding(
+                    "STRUCT",
+                    "FAIL",
+                    f"header {hk} must be a LIST of addresses, not a string — "
+                    f'write ["{v}"] rather than "{v}"',
+                )
+            )
             return
         if not isinstance(v, list):
-            f.append(finding("STRUCT", "FAIL",
-                             f"header {hk} must be a list of addresses, got {type(v).__name__}"))
+            f.append(
+                finding(
+                    "STRUCT",
+                    "FAIL",
+                    f"header {hk} must be a list of addresses, got {type(v).__name__}",
+                )
+            )
             return
         for a in v:
             check_addr(a, f"header {hk}", False)
@@ -777,12 +1111,21 @@ def check_corpus(a, index, members, record_names):
     # it is walked here only so a dead goal address is caught and so the temporal rule applies.
     # An artifact is immutable, so this states intent AT PUBLICATION and can never be extended
     # afterwards; a goal declared later is connected by the later artifact, not by this one.
-    for a_ in (h.get("serves_goals") or []):
+    for a_ in h.get("serves_goals") or []:
         ok_, info_, _ = resolve(a_, index, members)
-        if ok_ and info_.get("kind") != "member" and info_["rec"]["type"] != "ResearchGoal":
-            f.append(finding("GOAL", "REVIEW",
-                             f"serves_goals names '{info_['artifact']}', which is a "
-                             f"{info_['rec']['type']} rather than a ResearchGoal"))
+        if (
+            ok_
+            and info_.get("kind") != "member"
+            and info_["rec"]["type"] != "ResearchGoal"
+        ):
+            f.append(
+                finding(
+                    "GOAL",
+                    "REVIEW",
+                    f"serves_goals names '{info_['artifact']}', which is a "
+                    f"{info_['rec']['type']} rather than a ResearchGoal",
+                )
+            )
 
     for n, o in objs.items():
         if o["type"] == "Ground":
@@ -791,7 +1134,12 @@ def check_corpus(a, index, members, record_names):
     # prose citations: markdown link form only (profile 3.1)
     for scope, d in [("header", h)] + [(f"Object '{n}'", o) for n, o in objs.items()]:
         for k, v in d.items():
-            if not isinstance(v, str) or k in ("citation", "published_by", "produced_by", "extracted_from"):
+            if not isinstance(v, str) or k in (
+                "citation",
+                "published_by",
+                "produced_by",
+                "extracted_from",
+            ):
                 continue
             # A backtick code span is a literal, not prose. A Content Object's
             # `addressing_method` has to SHOW the form of an address, and that form contains an
@@ -802,9 +1150,14 @@ def check_corpus(a, index, members, record_names):
                 check_addr(m.group(1) or m.group(2), f"{scope}.{k} citation", False)
             bare = re.findall(r"(?<![\w(<])@[A-Za-z0-9_]+", CITATION_RE.sub("", v))
             for b in set(bare):
-                f.append(finding("CITATION", "REVIEW",
-                                 f"{scope}.{k}: bare '{b}' is not in markdown link form and cannot be "
-                                 f"validated — write [text]({b}) (profile 3.1)"))
+                f.append(
+                    finding(
+                        "CITATION",
+                        "REVIEW",
+                        f"{scope}.{k}: bare '{b}' is not in markdown link form and cannot be "
+                        f"validated — write [text]({b}) (profile 3.1)",
+                    )
+                )
     return f
 
 
@@ -816,14 +1169,14 @@ def embedded_size(a):
     """
     try:
         total = len(json.dumps(a))
-    except Exception:                                          # noqa: BLE001
+    except Exception:  # noqa: BLE001
         return 0, []
     props = []
     h = a.get("artifact") or {}
     for k, v in h.items():
         if isinstance(v, str) and len(v) > 1024:
             props.append(("artifact", k, len(v)))
-    for o in (a.get("objects") or []):
+    for o in a.get("objects") or []:
         if not isinstance(o, dict):
             continue
         for k, v in o.items():
@@ -838,23 +1191,36 @@ def check_size(a):
     total, props = embedded_size(a)
     if total <= EMBED_REVIEW:
         return []
-    where = (f"; largest is '{props[0][1]}' on {props[0][0]} at {props[0][2] // 1024} KB"
-             if props else "")
-    return [finding("SIZE", "REVIEW",
-                    f"embedded payload is {total // 1024} KB{where}. Embedded content is not "
-                    f"queryable in this profile — a reader loads all of it to read any of it. "
-                    f"Above ~{EMBED_REVIEW // 1024} KB the fix is usually a narrower analysis, "
-                    f"not a bigger artifact.")]
+    where = (
+        f"; largest is '{props[0][1]}' on {props[0][0]} at {props[0][2] // 1024} KB"
+        if props
+        else ""
+    )
+    return [
+        finding(
+            "SIZE",
+            "REVIEW",
+            f"embedded payload is {total // 1024} KB{where}. Embedded content is not "
+            f"queryable in this profile — a reader loads all of it to read any of it. "
+            f"Above ~{EMBED_REVIEW // 1024} KB the fix is usually a narrower analysis, "
+            f"not a bigger artifact.",
+        )
+    ]
 
 
 def validate(candidate, record=(), members=()):
     """-> list of findings for `candidate`, validated against the accepted `record`."""
     f = check_structure(candidate)
-    if any(x["level"] == "FAIL" and x["check"] == "STRUCT" and "header" in x["msg"] for x in f):
-        return f                                              # header too broken to continue
+    if any(
+        x["level"] == "FAIL" and x["check"] == "STRUCT" and "header" in x["msg"]
+        for x in f
+    ):
+        return f  # header too broken to continue
     # The candidate joins the resolution index so intra-Artifact addresses resolve (spec 1.8
     # permits self-reference); uniqueness is still judged against the record alone.
-    record_names = {r["artifact"]["name"] for r in record if r.get("artifact", {}).get("name")}
+    record_names = {
+        r["artifact"]["name"] for r in record if r.get("artifact", {}).get("name")
+    }
     index = build_index(list(record) + [candidate])
     f += check_type_specific(candidate)
     f += check_argument(candidate)

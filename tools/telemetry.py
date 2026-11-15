@@ -56,6 +56,7 @@ Schema — every event carries:
 Attempts-per-artifact is NOT stored. It is derived when the log is read, by counting events
 per (session, artifact) — storing a counter would only be a second thing to get wrong.
 """
+
 from __future__ import annotations
 
 import json
@@ -70,8 +71,11 @@ def _host():
     """Short machine name — the only thing distinguishing two participants who took every
     other default. Deterministic, so every command in a session agrees on it."""
     try:
-        return re.sub(r"[^A-Za-z0-9_-]", "", socket.gethostname().split(".")[0])[:24] or "host"
-    except Exception:                                          # noqa: BLE001
+        return (
+            re.sub(r"[^A-Za-z0-9_-]", "", socket.gethostname().split(".")[0])[:24]
+            or "host"
+        )
+    except Exception:  # noqa: BLE001
         return "host"
 
 
@@ -103,8 +107,18 @@ def split_findings(findings):
     return fail, review
 
 
-def emit(actor, action, outcome, artifact=None, atype=None, role=None,
-         findings=None, refusal=None, session=None, **extra):
+def emit(
+    actor,
+    action,
+    outcome,
+    artifact=None,
+    atype=None,
+    role=None,
+    findings=None,
+    refusal=None,
+    session=None,
+    **extra,
+):
     """Append one event. Never raises: losing the log must not stop the work.
 
     A failure to write is reported once on stderr rather than silently swallowed — a
@@ -136,8 +150,9 @@ def emit(actor, action, outcome, artifact=None, atype=None, role=None,
             os.write(descriptor, line)
         finally:
             os.close(descriptor)
-    except Exception as exc:                                   # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         import sys
+
         print(f"! telemetry not written to {LOG}: {exc}", file=sys.stderr)
     return event
 

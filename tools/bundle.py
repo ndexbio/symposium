@@ -90,7 +90,11 @@ def link_targets(text: str):
             continue
         for match in LINK.finditer(line):
             target = match.group(1)
-            if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target) or target[:1] in ("#", "@", "<"):
+            if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", target) or target[:1] in (
+                "#",
+                "@",
+                "<",
+            ):
                 continue
             path = target.split("#", 1)[0]
             if path:
@@ -169,7 +173,9 @@ class Bundle:
         end = text.find("\n---\n", 3)
         if not text.startswith("---\n") or end < 0:
             raise SystemExit("skills/symposium/SKILL.md has no frontmatter")
-        front, found = VERSION_LINE.subn(f'  version: "{self.version}"', text[:end], count=1)
+        front, found = VERSION_LINE.subn(
+            f'  version: "{self.version}"', text[:end], count=1
+        )
         if not found or "\nmetadata:\n" not in front:
             raise SystemExit(
                 "skills/symposium/SKILL.md frontmatter has no metadata.version line"
@@ -204,12 +210,17 @@ class Bundle:
         with zipfile.ZipFile(partial) as zf:
             names = zf.namelist()
             documents = {
-                n: zf.read(n).decode("utf-8", "replace") for n in names if n.endswith(".md")
+                n: zf.read(n).decode("utf-8", "replace")
+                for n in names
+                if n.endswith(".md")
             }
         dead = dead_links(documents, zip_exists(names))
         if dead:
             partial.unlink()
-            return {"error": f"{len(dead)} dead link(s) in the bundle; no zip written", "dead": dead}
+            return {
+                "error": f"{len(dead)} dead link(s) in the bundle; no zip written",
+                "dead": dead,
+            }
         partial.replace(out)
         return {"bundle": str(out), "files": len(entries), "version": self.version}
 

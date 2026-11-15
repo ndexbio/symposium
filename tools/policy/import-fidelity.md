@@ -74,8 +74,10 @@ the subsets derive from a stated column, then import the canonical one and recor
 duplication problem into the record with the publisher's name on it.
 
 **Point at the original.** Every imported Artifact carries a `download` Content addressing the
-untouched source file on the file store. That is what makes all of the above safe: anything you
-flattened, dropped or added is recoverable by a Member who disagrees with your judgment.
+untouched source: its own canonical location, or its citation in the community's `files`
+collection, with its `sha256`, where the community holds the file. That is what makes all of
+the above safe: anything you flattened, dropped or added is recoverable by a Member who
+disagrees with your judgment.
 
 ## Where the line falls
 

@@ -56,6 +56,7 @@ whole record whenever a file changes — a full pass is fast enough at any size 
 reach, and a full pass cannot drift from the record the way a partial update can. The manifest
 is a log of what moved, not a build instruction.
 """
+
 from __future__ import annotations
 
 import os
@@ -119,8 +120,10 @@ def message_line(m):
     title and name are each what a Member wrote, and an agent is asked to relay this line,
     so each is put on one line first: a title cannot add a line that seems to come from the
     gate."""
-    return (f"message for you from {one_line(m['from'])}: {one_line(m['title'])} "
-            f"(@{one_line(m['name'])})")
+    return (
+        f"message for you from {one_line(m['from'])}: {one_line(m['title'])} "
+        f"(@{one_line(m['name'])})"
+    )
 
 
 def outbound(canonical):
@@ -135,11 +138,11 @@ def outbound(canonical):
     for k in ("produced_by", "extracted_from"):
         add(h.get(k))
     for k in ("supersedes", "outputs", "inputs", "used_models", "recipients"):
-        for v in (h.get(k) or []):
+        for v in h.get(k) or []:
             add(v)
     for o in canonical.get("objects", []):
         if o.get("type") == "Ground":
-            add(o.get("citation"))          # a Ground's evidence address (spec 2.2.4)
+            add(o.get("citation"))  # a Ground's evidence address (spec 2.2.4)
     return out - {h.get("name")}
 
 
@@ -149,8 +152,13 @@ def _root(addr):
 
 
 class Sync:
-    def __init__(self, data: SymposiumData | None = None, mirror: Mirror | None = None,
-                 quiet: bool = False, lists_messages: bool | None = None):
+    def __init__(
+        self,
+        data: SymposiumData | None = None,
+        mirror: Mirror | None = None,
+        quiet: bool = False,
+        lists_messages: bool | None = None,
+    ):
         self.data = data or SymposiumData()
         self.mirror = mirror or Mirror()
         self.quiet = quiet
@@ -170,11 +178,10 @@ class Sync:
             print(line)
 
     def load_state(self):
-        state = self.mirror.read_state(
-            STATE, {"since": 0, "pending": [], "replies": [], "messages": [], "build": 0}
+        return self.mirror.read_state(
+            STATE,
+            {"since": 0, "pending": [], "replies": [], "messages": [], "build": 0},
         )
-        state.setdefault("messages", [])  # a state file written before Messages were listed
-        return state
 
     def me(self):
         """This session's handle, from its context (local; the server is not contacted)."""
@@ -194,9 +201,15 @@ class Sync:
         new = [h for h in messages_for(record, self.me()) if h.get("name") not in shown]
         if self.lists_messages:
             state["messages"].extend(h["name"] for h in new)
-        return [{"name": h["name"], "from": h.get("published_by") or "?",
-                 "title": h.get("title") or "(untitled)", "created": h.get("created")}
-                for h in new]
+        return [
+            {
+                "name": h["name"],
+                "from": h.get("published_by") or "?",
+                "title": h.get("title") or "(untitled)",
+                "created": h.get("created"),
+            }
+            for h in new
+        ]
 
     def fetch(self, state):
         """-> (list of {citation, canonical} to apply, reachable, why).
@@ -215,12 +228,16 @@ class Sync:
             return [], False, str(e)
         citations = list(state["pending"])
         for item in feed["items"]:
-            if (item.get("metadata") or {}).get(RECORD_MARK) and not item.get("deleted"):
+            if (item.get("metadata") or {}).get(RECORD_MARK) and not item.get(
+                "deleted"
+            ):
                 citations.append(item["citation"])
         found = []
         for citation in dict.fromkeys(citations):
             try:
-                found.append({"citation": citation, "canonical": self.data.get_json(citation)})
+                found.append(
+                    {"citation": citation, "canonical": self.data.get_json(citation)}
+                )
             except DataError as e:
                 return [], False, str(e)
         state["since"] = feed["next_since"]
@@ -230,10 +247,15 @@ class Sync:
         """Validate and write, oldest first. -> (added, dirty, deferred)."""
         record = self.mirror.load()
         names = {r["artifact"]["name"] for r in record}
-        members = {r["artifact"]["published_by"].lstrip("@") for r in record
-                   if r.get("artifact", {}).get("published_by")}
-        members |= {f["canonical"]["artifact"].get("published_by", "@").lstrip("@")
-                    for f in found}
+        members = {
+            r["artifact"]["published_by"].lstrip("@")
+            for r in record
+            if r.get("artifact", {}).get("published_by")
+        }
+        members |= {
+            f["canonical"]["artifact"].get("published_by", "@").lstrip("@")
+            for f in found
+        }
         members |= self.members
 
         # the server's `created` is the record's total order; apply in it or addresses will
@@ -253,7 +275,9 @@ class Sync:
             findings = validate(c, record, members)
             if not passed(findings):
                 # Usually a dependency that has not arrived yet — retry next pass, never drop.
-                deferred.append((name, [x["msg"] for x in findings if x["level"] == "FAIL"][:2]))
+                deferred.append(
+                    (name, [x["msg"] for x in findings if x["level"] == "FAIL"][:2])
+                )
                 pending.append(f["citation"])
                 continue
 
@@ -261,7 +285,9 @@ class Sync:
             record.append(c)
             names.add(name)
             added.append(name)
-            dirty |= {name} | (outbound(c) & names)  # its own page + every page it points at
+            dirty |= {name} | (
+                outbound(c) & names
+            )  # its own page + every page it points at
         state["pending"] = pending
         return added, dirty, deferred
 
@@ -280,18 +306,23 @@ class Sync:
             if item["citation"] in state["replies"]:
                 continue
             state["replies"].append(item["citation"])
-            new.append((item["name"], (item.get("metadata") or {}).get(IN_REPLY_TO, "?")))
+            new.append(
+                (item["name"], (item.get("metadata") or {}).get(IN_REPLY_TO, "?"))
+            )
         return new
 
     def write_manifest(self, state, added, dirty, total):
         state["build"] += 1
-        self.mirror.write_state("manifest.json", {
-            "build": state["build"],
-            "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "artifacts": total,
-            "added": sorted(added),
-            "dirty": sorted(dirty | {"index"}),
-        })
+        self.mirror.write_state(
+            "manifest.json",
+            {
+                "build": state["build"],
+                "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "artifacts": total,
+                "added": sorted(added),
+                "dirty": sorted(dirty | {"index"}),
+            },
+        )
 
     def once(self):
         """Run one pass while sharing state atomically with other sync callers."""
@@ -305,10 +336,14 @@ class Sync:
         if not reachable:
             held = len(self.mirror.load())
             self.say(f"! COULD NOT REACH THE SERVER — {why}")
-            self.say(f"  Your copy of the record is UNCHANGED at {held} artifact(s) and may "
-                     f"now be STALE.")
-            self.say("  Do not publish against it: validation can only see the record it has, "
-                     "so a")
+            self.say(
+                f"  Your copy of the record is UNCHANGED at {held} artifact(s) and may "
+                f"now be STALE."
+            )
+            self.say(
+                "  Do not publish against it: validation can only see the record it has, "
+                "so a"
+            )
             self.say("  stale copy will approve a name someone else has already taken.")
             return None
         added, dirty, deferred = self.apply(found, state)
@@ -316,14 +351,18 @@ class Sync:
             self.say(f"  deferred {name}: {why[0] if why else 'unresolved'}")
         replies = self.replies(state)
         for name, about in replies if self.prints_replies else ():
-            self.say(f"  reply from the gate: {name} (re {about}) — not part of the record")
+            self.say(
+                f"  reply from the gate: {name} (re {about}) — not part of the record"
+            )
         held = self.mirror.load()
         total = len(held)
         if added:
             self.write_manifest(state, added, dirty, total)
             self.say(f"  +{len(added)}: {', '.join(added)}")
-            self.say(f"  build {state['build']}, {total} artifact(s), "
-                     f"{len(dirty | {'index'})} page(s) dirty")
+            self.say(
+                f"  build {state['build']}, {total} artifact(s), "
+                f"{len(dirty | {'index'})} page(s) dirty"
+            )
         # last, so the lines that ask something of this member are the ones left on screen
         messages = self.messages(held, state)
         if self.prints_messages:
@@ -356,14 +395,19 @@ def list_messages(sync):
         print("  no Message in your copy of the record is addressed to you")
         return 1 if result is None else 0
     fresh = sum(1 for h in mine if h.get("name") not in before)
-    print(f"  {len(mine)} Message(s) addressed to you, newest first"
-          + (f"; {fresh} new since they were last listed:" if fresh else ":"))
+    print(
+        f"  {len(mine)} Message(s) addressed to you, newest first"
+        + (f"; {fresh} new since they were last listed:" if fresh else ":")
+    )
     for h in reversed(mine):
         mark = "new" if h.get("name") not in before else "   "
         when = (h.get("created") or "")[:16].replace("T", " ")
-        m = {"name": h["name"], "from": h.get("published_by") or "?",
-             "title": h.get("title") or "(untitled)"}
-        print(f"  {mark}  {when}  {message_line(m)[len('message for you '):]}")
+        m = {
+            "name": h["name"],
+            "from": h.get("published_by") or "?",
+            "title": h.get("title") or "(untitled)",
+        }
+        print(f"  {mark}  {when}  {message_line(m)[len('message for you ') :]}")
     return 1 if result is None else 0
 
 
@@ -372,7 +416,9 @@ def list_replies(sync):
     each one no pass had listed before marked `new`, with the artifact it is about. -> exit
     code (1 when the server could not be reached: the replies are held there)."""
     before = set(sync.load_state()["replies"])
-    sync.prints_replies = False  # this command lists them itself, all of them, after the pass
+    sync.prints_replies = (
+        False  # this command lists them itself, all of them, after the pass
+    )
     if sync.once() is None:
         return 1
     try:
@@ -386,13 +432,17 @@ def list_replies(sync):
         print("  no reply from the gate is addressed to you")
         return 0
     fresh = sum(1 for item in items if item["citation"] not in before)
-    print(f"  {len(items)} reply(ies) from the gate addressed to you, newest first"
-          + (f"; {fresh} new since they were last listed:" if fresh else ":"))
+    print(
+        f"  {len(items)} reply(ies) from the gate addressed to you, newest first"
+        + (f"; {fresh} new since they were last listed:" if fresh else ":")
+    )
     for item in reversed(items):
         mark = "new" if item["citation"] not in before else "   "
         about = (item.get("metadata") or {}).get(IN_REPLY_TO, "?")
-        print(f"  {mark}  reply from the gate: {one_line(item['name'])} "
-              f"(re {one_line(about)}) — not part of the record")
+        print(
+            f"  {mark}  reply from the gate: {one_line(item['name'])} "
+            f"(re {one_line(about)}) — not part of the record"
+        )
     return 0
 
 
@@ -402,8 +452,10 @@ def main(argv):
         print("! --messages and --replies each list on their own: give one")
         return 2
     if listings and "--watch" in argv:
-        print(f"! {listings[0]} lists once; run `/symposium sync --watch` on its own to keep "
-              "watching")
+        print(
+            f"! {listings[0]} lists once; run `/symposium sync --watch` on its own to keep "
+            "watching"
+        )
         return 2
     # with --messages this command lists the Messages itself, all of them, after the pass
     sync = Sync(lists_messages=True if "--messages" in argv else None)
@@ -422,7 +474,7 @@ def main(argv):
     if "--watch" not in argv:
         result = sync.once()
         if result is None:
-            return 1                       # unreachable: never report a stale copy as fine
+            return 1  # unreachable: never report a stale copy as fine
         if not result["added"]:
             print(f"  up to date — {result['artifacts']} artifact(s)")
         return 0
@@ -433,16 +485,24 @@ def main(argv):
         # held for as long as this sync watches: the one sync watcher of this session
         context = sync.data.context()
         lock = watch_alone(  # noqa: F841
-            "sync", LOCKS / "sync.lock", f"{context.get('community')}/{context.get('handle')}",
-            replace="--take-over" in argv)
-        print(f"watching {sync.mirror.root}/ (every {POLL}s) — ctrl-c to stop", flush=True)
+            "sync",
+            LOCKS / "sync.lock",
+            f"{context.get('community')}/{context.get('handle')}",
+            replace="--take-over" in argv,
+        )
+        print(
+            f"watching {sync.mirror.root}/ (every {POLL}s) — ctrl-c to stop", flush=True
+        )
         while True:
             try:
                 if sync.once() is None:
                     misses += 1
                     if misses in (1, 5) or misses % 20 == 0:
-                        print(f"  ({misses} consecutive failed poll(s) — the copy is not "
-                              f"being updated)", flush=True)
+                        print(
+                            f"  ({misses} consecutive failed poll(s) — the copy is not "
+                            f"being updated)",
+                            flush=True,
+                        )
                 else:
                     misses = 0
             except Exception as e:

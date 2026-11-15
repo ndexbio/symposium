@@ -33,7 +33,7 @@ succeeds when the caller holds it where the request acts.
 |---|---|---|
 | `read` | read a collection's files and their versions, list and search them, follow its changes, and check citations into it; reading the record (the `record` collection) is `read` on `record` | the collections its value names |
 | `write` | add files and new versions, and delete your own files, in any collection but `inbox` and `record`; create a collection, which then belongs to you | the collections its value names |
-| `manage` | make a collection public or private; share it read-only with someone; change or delete anyone's files in it; purge a version's content | the collections its value names |
+| `manage` | make a collection public or private; share it read-only with someone; change or delete anyone's files in it; purge a version's content, unless an Artifact in the record cites that version | the collections its value names |
 | `publish` | submit an artifact to the community's gate (into `inbox`), and check one before submitting; see your own submissions and the gate's replies to you | the community |
 | `gate` | read every submission, accept one into the record, or reject it with a reply | the community |
 | `members` | invite people into the community; give and take away community roles; remove users; replace a user's lost key; flag a user's writes after a time; list and revoke any API key in the community | the community |

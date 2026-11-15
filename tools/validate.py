@@ -1,6 +1,6 @@
-"""The validator, at its historical import path. It lives in `symposium_rules.validate`, which
+"""The validator, as the tools beside it import it. It lives in `symposium_rules.validate`, which
 the data server's record routes share; this module is that same module object, so `import validate`
-and `from validate import …` reach exactly what they always did."""
+and `from validate import …` reach the one validator."""
 
 import sys
 from pathlib import Path

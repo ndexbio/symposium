@@ -8,7 +8,9 @@ and removing or editing a file here breaks the build.**
 [Martin-Sancho et al. 2021](https://doi.org/10.1016/j.molcel.2021.04.008).
 Unlike [`../manuscript_example/`](../manuscript_example/), this one is real:
 every embedded value has a cell address in the published supplementary tables
-behind it.
+behind it. Its source files are cited on the data server, from `download`
+Content Objects; the file ids and digests in those citations show the form a
+citation takes.
 
 It does two jobs, which is why it must not be edited casually:
 

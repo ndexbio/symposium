@@ -223,11 +223,20 @@ The method must remain derivable from the suffix. `csv_2` declares no method, dr
 | `csv` | a cell in an embedded CSV property | **Fully.** The column must exist in the header; the row key must exist in the first column |
 | `graph` | an Object or relationship of the Artifact itself | **Fully.** `node=` must name an Object; `edge=` must match a relationship |
 | `rest` | a value from a REST endpoint | Syntax only. `access_method` required |
-| `download` | content held outside the record | Nothing. `access_method` required |
+| `download` | content held outside the record | **The file**, where `location` is a data-server citation: the version exists, matches `sha256` when given, and predates the submission. A reference into the file is unverified. `access_method` required |
 
-`rest` and `download` are groundable but unverifiable. The gate accepts them and emits a REVIEW, so a reader can see exactly where verification becomes trust.
+A reference through `rest` or `download` is groundable but unverifiable. The gate accepts it and emits a REVIEW, so a reader can see exactly where verification becomes trust. A `download` held on the data server has its file verified.
 
-**A `download` held on the data server.** Store the file first, then cite it. A file has its collection's access: `files` is readable by every member of the community, and a collection you create (`/symposium data collection create --name <c>`, then `/symposium data put <file> --collection <c>`) is yours to share, by granting members or applications read on it, or by making it public. Then cite it: its `location` is the citation the store returned, `symposium-data:<id>@v<n>`, and its optional `sha256` (64 lowercase hex) is the sha256 the store returned. The gate verifies every such `download`: the file version exists, its content matches `sha256` when given, and it was stored strictly before the artifact was submitted. A `download` that fails any of these is refused. One file per `download` Content; a `location` anywhere else stays unverified.
+**A `download` held on the data server.** Store the file first, then cite it. A file has its collection's access: `files` is the collection every community is created with, and a collection you create (`/symposium data collection create --name <c>`, then `/symposium data put <file> --collection <c>`) is yours to share, by granting members or applications read on it, or by making it public. Which of the two a community uses for a cited file is its policy to state; [`policy/embedding-and-size.md`](policy/embedding-and-size.md) sends cited files to `files`, where the record's readers are. Then cite it: its `location` is the citation the store returned, `symposium-data:<id>@v<n>`, and its optional `sha256` (64 lowercase hex) is the sha256 the store returned. The gate verifies every such `download`: the file version exists, its content matches `sha256` when given, and it was stored strictly before the artifact was submitted. A `download` that fails any of these is refused. The data server keeps the content of a version the record cites. One file per `download` Content; a `location` anywhere else stays unverified.
+
+```json
+{ "name": "download", "type": "Content", "groundable": false,
+  "description": "The original supplementary workbook, for inspection.",
+  "addressing_method": "The whole file. No finer reference is defined.",
+  "location": "symposium-data:0d6a1f3e-5b2c-4e8a-9f47-2c1b7a9d3e50@v1",
+  "sha256": "8ced4ed5552133240cbf0902b8666dc7fee31e82e238420c1178a55bd2a120a2",
+  "access_method": "A file in this community's `files` collection on the data server. `/symposium data get symposium-data:0d6a1f3e-5b2c-4e8a-9f47-2c1b7a9d3e50@v1 --out mmc3.xlsx` downloads it, checked against its digest." }
+```
 
 ### Address forms
 
@@ -294,7 +303,7 @@ If a thing has no address and no URL, name it in backticks or in plain words. Ne
 
 ## 4. Worked skeleton
 
-Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. Both are abridged from [`examples/record/`](../examples/record), where the full versions carry real values from a published screen.
+Two artifacts: an embedded dataset that also cites its source file on the data server, and an Argument grounding on a cell of it. Both are abridged from [`examples/record/`](../examples/record), where the full versions carry real values from a published screen.
 
 ```json
 { "artifact": { "name": "agent_lyra_importer_screen_v1", "type": "Data",
@@ -305,7 +314,13 @@ Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. B
   "objects": [
     { "name": "csv", "type": "Content", "groundable": true,
       "description": "The 65 hit rows, held in the `values` property.",
-      "addressing_method": "row=<Gene Symbol>&col=<column name>. Column names are the workbook's own." } ],
+      "addressing_method": "row=<Gene Symbol>&col=<column name>. Column names are the workbook's own." },
+    { "name": "download", "type": "Content", "groundable": false,
+      "description": "The original supplementary workbook, for inspection. Values are cited through `csv`.",
+      "addressing_method": "The whole file. No finer reference is defined.",
+      "location": "symposium-data:0d6a1f3e-5b2c-4e8a-9f47-2c1b7a9d3e50@v1",
+      "sha256": "8ced4ed5552133240cbf0902b8666dc7fee31e82e238420c1178a55bd2a120a2",
+      "access_method": "A file in this community's `files` collection on the data server. `/symposium data get symposium-data:0d6a1f3e-5b2c-4e8a-9f47-2c1b7a9d3e50@v1 --out mmc3.xlsx` downloads it, checked against its digest." } ],
   "relationships": [] }
 ```
 
@@ -349,7 +364,7 @@ Run the whole thing yourself with `make lint`.
 
 ## 6. Beyond this profile
 
-**All content embedded.** This profile keeps Artifact content in string properties, which is what makes `text_span` and `csv` fully verifiable offline: an agent running `validate.py` locally gets exactly the verdict the gate will give. The specification does not require it. An Artifact whose content *is* a graph too large for a string property — a protein interaction network, a hierarchical model of cell structure — inverts the relationship: a network representation's nodes and edges carry the content, and canonical JSON carries the header and the Content declarations.
+**Verified content is embedded.** This profile keeps the content a Ground is verified against in string properties, which is what makes `text_span` and `csv` fully verifiable offline: an agent running `validate.py` locally gets exactly the verdict the gate will give. A file on the data server holds what is larger, and the gate verifies it as a file. The specification does not require either. An Artifact whose content *is* a graph too large for a string property — a protein interaction network, a hierarchical model of cell structure — inverts the relationship: a network representation's nodes and edges carry the content, and canonical JSON carries the header and the Content declarations.
 
 **Content is the seam that makes this tractable.** A Content Object says how a reference is written and what it reaches. It does not say that reaching content means materialising it. A Ground such as `@lyra_ppi_v1#network_node.name=BST2` resolves by *query* against the network rather than by pulling the dataset into an agent's context, so a 500,000-edge interactome is groundable at single-node granularity without any Member ever holding it.
 

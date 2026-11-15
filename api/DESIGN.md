@@ -5,12 +5,12 @@ it changes, and publish to it through the gate as a Member. They speak the speci
 model (Artifacts, Objects, properties, relationships, Members and addresses). They share
 `/v1` with the data server's own routes for collections and files, and every route of `/v1`
 takes one credential, an API key, and leaves what a key may read and write to the
-collections it touches (§3, §7).
+collections it touches ([Access](#access), [One API, one key](#one-api-one-key)).
 
 These notes go with [`openapi.yaml`](openapi.yaml), the OpenAPI 3.0.3 document. The YAML is
 the contract. These notes say why it has the shape it has.
 
-## 0. Where this lives
+## Where this lives
 
 | File | Holds |
 |---|---|
@@ -21,13 +21,13 @@ the contract. These notes say why it has the shape it has.
 | `tests/api/test_api_live.py` | runs the data-server container and checks every operation, every role and the keys live |
 | `data-server/service/codegen/` | the generator script and its templates |
 | `data-server/service/symposium_api/generated/` | the routers, models and service interface generated from the contract; never edited by hand |
-| `data-server/service/symposium_api/`, `symposium_server/` | the hand-written implementation and the composition root (§9) |
-| `tools/symposium_rules/` | the rules the gate and the API share (§9) |
+| `data-server/service/symposium_api/`, `symposium_server/` | the hand-written implementation and the composition root ([How the code is arranged](#how-the-code-is-arranged)) |
+| `tools/symposium_rules/` | the rules the gate and the API share ([How the code is arranged](#how-the-code-is-arranged)) |
 
 The API gets its own top-level directory because it is a third face of Symposium. It sits
 beside `spec/`, the model, and `data-server/`, the storage. The data server's process
-serves it, from its own package. §9 lays out how the code depends on what, and §10
-settles where the server runs.
+serves it, from its own package. [How the code is arranged](#how-the-code-is-arranged) lays out how the code depends on what, and
+[Where the API server runs](#where-the-api-server-runs) says where the server runs.
 
 Lint it with:
 
@@ -53,14 +53,14 @@ uv run --project data-server/service python data-server/service/codegen/generate
 
 `make lint` regenerates into a scratch directory and fails if the committed code differs.
 
-## 1. The resource model
+## The resource model
 
-### 1.1 From the specification to resources
+### From the specification to resources
 
 Every type in the specification and in the profile (`tools/CANONICAL.md`) is shown below
 with how the API reaches it. A **resource** has its own URL. A **sub-resource** has a URL
 under its parent. A **traversal** is an endpoint that follows a relationship the record
-holds only implicitly. The server computes each traversal from its index (§1.3).
+holds only implicitly. The server computes each traversal from its index ([The index](#the-index)).
 
 | Specification type | API shape | URL |
 |---|---|---|
@@ -90,7 +90,7 @@ the one Artifact resource. Their type-specific properties are documented on
 | ResearchGoal (profile §2.1), `serves_goals` | `cited-by?via=serves_goals` on the goal gives the work that serves it |
 | `genre` (profile) | carried on the header; filterable through the summary |
 
-### 1.2 Properties of the model that shape the API
+### Properties of the model that shape the API
 
 - **Temporal ordering (§1.9).** `created` is stamped by the gate, and the record's `seq`
   grows in the same order. So "the record's `created` order" is a single total order.
@@ -101,12 +101,12 @@ the one Artifact resource. Their type-specific properties are documented on
 - **Groundability.** `groundable` is on the summary, so a client can tell from a listing
   that nothing in an Analysis, a NonGroundable, a Message or a ResearchGoal can be evidence.
 - **Attribution and import (§1.10).** `authors`, `import_method` and `published_by` are
-  header properties, read as they are. `published_by` is permanent. That is why §4.5 ties
+  header properties, read as they are. `published_by` is permanent. That is why [Who a key acts as](#who-a-key-acts-as) ties
   a publishing key to one user.
 - **Immutability.** No operation changes or deletes a recorded Artifact. The only writes
   are a submission into `inbox` and API keys.
 
-### 1.3 The index
+### The index
 
 The traversals need facts that no single Artifact holds: who cites whom, what supersedes
 what, and findings. The server keeps a **derived index** of
@@ -115,7 +115,7 @@ index is a cache of the record and is never the source of truth. The server rebu
 from the `record` feed at startup, in the background, and `GET /v1/status` reports
 `api_index.behind`: how many record versions it has yet to fold in, across every community.
 The figure is server-wide and names no community, because `/v1/status` answers anyone. Every read answers from the
-index and states the index's `position` (§5.2).
+index and states the index's `position` ([Freshness](#freshness)).
 
 Each Artifact's `accepted` findings are the validator's verdict against the Artifacts before
 it, with the community's known handles as they stand when the index first folds that
@@ -126,7 +126,7 @@ member address added since.
 A version purged on `/v1` leaves every read of the index: its Artifact answers 404, and its
 citations leave `cited-by` and supersession.
 
-### 1.4 Canonical URLs
+### Canonical URLs
 
 Every resource body carries `url`: an absolute URL on the data server, under
 `/v1/communities/{community}`. It is the same whichever host or application asks. This removes the
@@ -148,30 +148,7 @@ An address maps to a URL by a fixed rule:
 colliding with its Artifact's property names, so the server always knows which one is
 meant. A client that does not know asks `resolve`.
 
-### 1.5 Changes to the contract while building it
-
-Building the server against `api/openapi.yaml` changed these meanings, each for the reason
-given:
-
-| Change | Reason |
-|---|---|
-| OpenAPI 3.1.0 to 3.0.3, the same meaning in 3.0 forms | the code generators support 3.0 fully |
-| `ArtifactHeader.created` is nullable; `SubmittedHeader` is gone | its `allOf` override contradicted `created`; a submission sends null and `checkSubmission` and `submitArtifact` refuse any other value, while every record Artifact carries the gate's stamp |
-| `ArtifactHeader`, `RecordObject` and `Relationship` take any extra property | the generated models keep an Artifact's own properties only this way; an extra property takes any JSON value, as the gate's validator accepts it |
-| `PropertyValue` adds `integer`, under `anyOf` | a submitted integer stays an integer |
-| path, query and header parameters state their string constraints inline | FastAPI takes a parameter only as a plain type |
-| a page's `next` states the cursor's constraints inline | in 3.0, `nullable` beside a non-nullable `$ref` admits no null |
-| `SubmissionCheck.role` is gone | it belonged to the publishing roles, which stay in the skill |
-| `RecordState.counts.findings` counts each Artifact's `accepted` findings | counting against the whole record would run the validator over every Artifact on each call |
-| `getOpenApiYaml` and `getOpenApiJson` added | the API serves its own contract to any caller |
-| `streamRecord` and `streamSubmissions` answer 400 | `Last-Event-ID` is a cursor, and a cursor this server never issued answers 400 everywhere |
-| one security scheme, `apiKey`; keys are issued on the data server's `/v1` (§4.6) | one credential, checked one way |
-| a member issued key acts as the user who issued it; `Me` answers `handle` and `label` | a submission is attributed to the user who made the key, never to one another caller named |
-| `getArtifactContent` added; `links.content` names it | an Artifact's stored bytes are reachable with the same API key. It answers those bytes untouched, so it carries no `position`; `x-stored` marks it |
-| one API: the record routes moved from `/api/v1` to `/v1`, beside the data server's own | two prefixes took two credentials and checked access two ways; one prefix takes one API key, and the collections decide access (§3, §7) |
-| `x-grants` and `x-session` added; `x-anonymous` is `always` or `public`; `Me` adds `kind`, `kid`, `suspect_after`, `roles` and the resolved `context` | every operation states the grants that may call it, and a caller reads what it holds (§3) |
-
-## 2. The skill's commands → endpoints
+## Skill commands and their endpoints
 
 These skill commands have an equivalent in the API. Each row names the operation in
 `openapi.yaml` that does the command's work for a REST client.
@@ -185,11 +162,11 @@ These skill commands have an equivalent in the API. Each row names the operation
 | `users list` | `GET /communities/{community}/users` | `listUsers` |
 
 The three key commands, `gen-api-key`, `list-api-keys` and `revoke-api-key`, call the data
-server's own `/v1/communities/{community}/api-keys` routes (§4.6), which take a session key.
+server's own `/v1/communities/{community}/api-keys` routes ([Key life cycle](#key-life-cycle)), which take a session key.
 
-## 3. Access
+## Access
 
-### 3.1 Principals, grants and roles
+### Principals, grants and roles
 
 This section and the next implement the access model in
 [`data-server/RBAC.md`](../data-server/RBAC.md): the grants, the six roles, collection values, API
@@ -210,7 +187,7 @@ collection, with the authority over that collection alone.
 accounts, with their roles; `…/communities/{c}/members` are the specification's Members, the
 record's publishers, read as the record is (anonymously while it is public).
 
-### 3.2 The user context and its two check points
+### The user context and its two check points
 
 On every request, and at every stream beat, the server compiles the caller's live
 assignments into a `UserContext`: its principal, its community, whether it signed in with a
@@ -244,7 +221,7 @@ is public.
 An unknown community, collection or file answers 404; a refused check answers 403; a
 missing, unknown or expired key answers 401.
 
-### 3.3 Endpoint × grants
+### Grants by endpoint
 
 Each operation's description ends with a `Grants:` line and an `Authentication:` line, the
 credentials it takes in the words of the data server README's Authentication column. Both
@@ -349,15 +326,15 @@ signed-in user's session key, so only a signed-in user invites, assigns, issues 
 | verifyCitation | GET /communities/{community}/files/{file_id}/versions/{ref}/verification | any key; the handler decides |  | public |
 | findByHash | GET /communities/{community}/versions | any key; the handler decides |  | public |
 
-## 4. API keys
+## API keys
 
-### 4.1 Format and presentation
+### Format and presentation
 
 A key is `sak_` followed by the base64url of 32 random bytes (43 characters): an opaque bearer
 secret, sent as `Authorization: Bearer sak_…`. The contract declares it as the `apiKey`
 security scheme, the API's only one; any other bearer credential answers 401.
 
-### 4.2 Kinds of key
+### Kinds of key
 
 - **A session key** proves a user signed in: `POST /v1/challenges` then
   `POST /v1/sessions` with `{handle, community}` (`community` is null for a server-level
@@ -369,7 +346,7 @@ security scheme, the API's only one; any other bearer credential answers 401.
 - **A non-member issued key** is its own principal, for an outside application. It carries
   `community-observer` alone, so it only reads.
 
-### 4.3 The table
+### The key table
 
 ```sql
 CREATE TABLE api_keys (
@@ -394,7 +371,7 @@ CREATE TABLE api_keys (
 An issued key's roles are rows of `role_assignments` naming it, deleted with the key.
 `export` leaves keys out: a key is a credential for one server.
 
-### 4.4 Encryption at rest
+### Encryption at rest
 
 An issued key's owner must be able to read it back, so it is stored **retrievably**, and
 **never in plain text**:
@@ -411,7 +388,7 @@ An issued key's owner must be able to read it back, so it is stored **retrievabl
   new rows, and a one-off re-seal moves old rows over.
 - **A session key** is shown once, so it is stored as its hash alone.
 
-### 4.5 Who a key acts as
+### Who a key acts as
 
 A key's user, community and roles come from the server's rows, set when it is made and
 changed only through the assignment routes; a request body never names them. The user
@@ -427,7 +404,7 @@ A key that publishes must publish as a user, because `published_by` is permanent
 `submitArtifact` refuses a body whose `published_by` is anything other than `@<handle>`, or
 whose `name` does not carry the `<handle>_` prefix.
 
-### 4.6 Life cycle
+### Key life cycle
 
 Keys are issued, listed and revoked on `/v1/communities/{community}/api-keys` with a session key.
 
@@ -448,9 +425,9 @@ that a credential pasted into a transcript has been disclosed (`AGENTS.md`). The
 `gen-api-key` and `list-api-keys` write key values to 0600 files in the session's
 `api-keys/` and print only where they are.
 
-## 5. Paging, freshness and streams
+## Paging, freshness and streams
 
-### 5.1 Paging
+### Paging
 
 There is one convention:
 
@@ -471,7 +448,7 @@ The contract marks every listing that grows with the record as paged. An endpoin
 answers one bounded thing (one key, or one Artifact's findings on a check) says why in `x-bounded`, and the test checks that one of the
 two holds for each operation.
 
-### 5.2 Freshness
+### Freshness
 
 Every read response carries `position`, `{cursor, seq, created, as_of}`. These are the
 index's place in the `record` feed, the `created` of the newest Artifact it reflects, and
@@ -480,7 +457,7 @@ also open `streamRecord` to be told. This removes the record browser's "a member
 not synced sees an older record" problem: there is one index on the one server, and every
 answer says how current it is.
 
-### 5.3 Streams
+### Streams
 
 Server-Sent Events on three streams, each `text/event-stream`:
 
@@ -495,24 +472,24 @@ Server-Sent Events on three streams, each `text/event-stream`:
 - A `heartbeat` every 30 seconds carries `position`, so a quiet stream still proves it is
   live.
 - **The key and its access are re-checked at every event and every heartbeat**, by the same
-  checks a request runs (§3.2, §4.5). A stream whose key is deleted or expires, whose user is
+  checks a request runs ([The user context and its two check points](#the-user-context-and-its-two-check-points), [Who a key acts as](#who-a-key-acts-as)). A stream whose key is deleted or expires, whose user is
   removed, or whose caller loses read access to the collection it follows (an unassigned
   role, a record made private), closes within 30 seconds. Revocation reaches an open stream
   as surely as a new request.
 - The client's cursor holds the stream's position, and the server's one row per open
-  stream (§10.5) lives in PostgreSQL, so no worker keeps a client's state in memory. Any
+  stream ([Running it](#running-it)) lives in PostgreSQL, so no worker keeps a client's state in memory. Any
   worker can serve a reconnect. PostgreSQL `LISTEN/NOTIFY` on promote and inbox writes wakes the waiting
   streams.
 
-## 6. Publishing keeps the gate's guarantees
+## Publishing keeps the gate's guarantees
 
 | Guarantee | How the API keeps it |
 |---|---|
 | Nothing enters the record without the gate | `submitArtifact` writes only to `inbox`, as `publish.py` does: the file `{name}@{when}`, metadata `{"symposium_submission": true}`, `created_by` the key's Member. The API never writes to `record`. Only the gate, run by a holder of `gate` (a community admin or a gate-keeper), promotes. |
 | The gate's checks, before submitting | `checkSubmission` and `submitArtifact` run, in order: the naming rule (`<handle>_` prefix, the key's Member); the 250 KB limit on embedded payload (`EMBED_REFUSE`); then `tools/validate.py`, the validator the gate runs, against the record as it stands. Any refusal answers 422 with every finding. Nothing is stored. The skill's publishing roles (`--role`) are limits an agent session sets on itself, and stay in the skill. |
-| Serial `created` order | One Artifact per call. `created` must be null, and the gate stamps it at promote. The gate orders the submissions it decides, as it does today. |
+| Serial `created` order | One Artifact per call. `created` must be null, and the gate stamps it at promote. The gate orders the submissions it decides. |
 | Attribution | `published_by` must be `@<handle>`, the key's user, and `name` must carry its prefix, so the gate's own check (the inbox name prefix is the submitter's handle, and the submitter is an active member) passes for the same reason. |
-| One decision per submission | The gate decides, as today. The storage also enforces it: a promote writes `record/<name>` and a reply writes `inbox/<gate>_REPLY_<item>`, and the data server refuses a second file of either name with 409. |
+| One decision per submission | The gate decides. The storage also enforces it: a promote writes `record/<name>` and a reply writes `inbox/<gate>_REPLY_<item>`, and the data server refuses a second file of either name with 409. |
 | Replies to rejections | The gate's reply is the same `NonGroundable` in `inbox`, readable by its recipient. The API carries it in the rejected submission's `reply` field, in `getSubmission`, `listSubmissions` and the `submission.rejected` event. A Member answers a rejection by submitting a corrected Artifact, which is the same path as today. |
 
 **Where each submission state comes from.** The server learns every state from what it
@@ -525,7 +502,7 @@ stores or computes.
 | `accepted` | a `record` version whose `symposium_submission_citation` names it |
 | `rejected` | an `inbox` reply whose `symposium_submission_citation` names it |
 
-## 7. One API, one key
+## One API, one key
 
 The record routes and the data server's own routes for communities, members, keys,
 collections and files share `/v1`, one process and one access model.
@@ -542,7 +519,7 @@ the collection is public. A member issued key reads what the Member may, a non-m
 is granted, and nobody reads another Member's `inbox` files, because the `inbox` visibility
 rule (the first writer, holders of `gate`, and `metadata.recipients`) applies to every key.
 
-## 8. Errors, versioning and limits
+## Errors, versioning and limits
 
 - **Errors.** Every error uses the `Error` body: `{detail, code, findings?}`. `detail` is
   the sentence `/v1` writes, and `code` is stable for programs. FastAPI's default 422
@@ -554,19 +531,19 @@ rule (the first writer, holders of `gate`, and `metadata.recipients`) applies to
   - A request body is at most 8 MiB, which answers 413: at once from its `Content-Length`,
     or once the bytes read pass it. A file's content (`putFile`, `addFileVersion`) and an
     import stream, with no limit but the quota.
-  - An Artifact's embedded payload is at most 250 KB, as `publish.py` refuses today, which
+  - An Artifact's embedded payload is at most 250 KB, as `publish.py` refuses, which
     answers 422 with a finding. The validator reviews any payload over 50 KB.
   - The per-Member quota, `SYMPOSIUM_SERVER_QUOTA_BYTES`, applies to submissions as it does
     to `/v1` writes.
   - A page holds at most 1000 items, and a cursor is at most 256 characters. Responses are
     otherwise unbounded, like `/v1`.
   - Open streams are capped, and a stream past a cap answers 429 with the `Error` body
-    (§10.5): 8 per API key, 4 per anonymous client address, 200 anonymous in all, and
+    ([Running it](#running-it)): 8 per API key, 4 per anonymous client address, 200 anonymous in all, and
     `SYMPOSIUM_SERVER_MAX_STREAMS` (default 500) across the server.
   - Requests other than streams carry no rate limit, matching `/v1`. A deployment that needs
     one puts it in its ingress.
 
-## 9. How the code is arranged
+## How the code is arranged
 
 The API's code and the rules it shares with the skill each get their own package, so every
 dependency points one way: toward the rules, and from the API toward storage. A small
@@ -575,70 +552,65 @@ imports one that imports it back.
 
 | Package | Holds | Imported by |
 |---|---|---|
-| `symposium_rules` (`tools/symposium_rules/`, standard library only, Python 3.9+) | the validator (today `tools/validate.py`), the gate's skip rule (today in `tools/gate.py`), and the naming and payload checks (today in `tools/publish.py`) | the skill's `tools/`, the API |
+| `symposium_rules` (`tools/symposium_rules/`, standard library only, Python 3.9+) | the validator, the gate's skip rule, and the naming and payload checks | the skill's `tools/`, the API |
 | `symposium_api` | the record routes, the index and the streams, as FastAPI routers generated from the contract over a service built from a records layer it is handed | `symposium_server` |
 | `symposium_data` | storage and the hand-written routes of `/v1`: records, identity, collections and files, the API keys (`api_keys.py`), and `access`, which authenticates every route's key and applies the contract's rules | `symposium_api`, through its records layer and `access`; `symposium_server` |
 | `symposium_server` | the composition root: it builds `symposium_data`'s app and records layer, builds `symposium_api`'s routers from that records layer, and mounts them at `/v1`. uvicorn starts this module | nothing |
 
-`tools/validate.py`, `tools/gate.py` and `tools/publish.py` become thin callers of
-`symposium_rules`, with the same behaviour and the same command lines. The skill bundle and
+`tools/validate.py`, `tools/gate.py` and `tools/publish.py` are thin callers of
+`symposium_rules`. The skill bundle and
 the data server image both ship the one package (the image takes it, and the contract, as
 named build contexts), so the validator the API runs is the validator the gate runs, byte
 for byte. Storage imports none of the rules and none of the
 API, and the rules import none of the storage. Only `symposium_server` sees all three.
 
-## 10. Where the API server runs
+## Where the API server runs
 
-### 10.1 The decision
+### What runs where
 
-| Question | Answer |
+| | |
 |---|---|
-| Which image | `ndexbio/symposium-data`, the data server's own image. The API ships in the same release. |
-| Which process | the `api-server` supervisord program, the one uvicorn process that serves `/v1`. It starts `symposium_server:app`, which mounts the record routes beside the data server's own. |
-| Which HTTP server | uvicorn, the ASGI server the image already runs, with `--proxy-headers` as today. |
-| Which port | 8080, the port the image exposes. |
-| Which language and framework | Python 3.11 and FastAPI, the data server's own. |
-| Which volume | `/apps`, the image's one persistent volume. The API keeps its index in the same PostgreSQL. |
+| Image | `ndexbio/symposium-data`, the data server's own image. The API ships in the same release. |
+| Process | the `api-server` supervisord program, the one uvicorn process that serves `/v1`. It starts `symposium_server:app`, which mounts the record routes beside the data server's own. |
+| HTTP server | uvicorn, with `--proxy-headers`. |
+| Port | 8080, the port the image exposes. |
+| Language and framework | Python 3.11 and FastAPI, the data server's own. |
+| Volume | `/apps`, the image's one persistent volume. The API keeps its index in the same PostgreSQL. |
 
-### 10.2 Why the data server image
+### Why the data server image
 
 - **The API reads PostgreSQL directly.** The index, the `api_keys` table, the users and
   the feeds all live in the image's PostgreSQL, which listens on `127.0.0.1` alone. A process
-  in the image reaches it with no new network exposure and no new credential. A separate
-  image would need PostgreSQL opened to the network, or every read relayed through `/v1`
-  over HTTP. The second doubles the work of every traversal and puts a token exchange in
-  front of every query.
+  in the image reaches it with no network exposure and no credential beyond the image's own.
 - **Streams wake on the same database.** `LISTEN/NOTIFY` on promote and inbox writes needs
   a connection to that PostgreSQL. Inside the image it is one more pooled connection.
-- **The secrets are already there.** `API_KEY_ENC_KEY_FILE` sits beside `service.env` in
+- **The secrets are in one place.** `API_KEY_ENC_KEY_FILE` sits beside `service.env` in
   `/apps/data/config`, generated by the same `start.sh` first-boot phase.
 - **One deployment, one release.** An operator runs one `docker run`, or one Helm install
   of one Kubernetes Deployment, as `skills/symposium/SKILL.md` teaches. The API's version moves with
   the storage it reads, so the two can never be deployed out of step.
 
-### 10.3 Why one uvicorn process, on the same port
+### Why one uvicorn process, on the same port
 
-The data server is FastAPI on uvicorn already. The record routes are FastAPI too, so
-`symposium_server` mounts their routers on the same app, and one process serves `/v1`.
+The data server's own routes and the record routes are both FastAPI, so `symposium_server`
+mounts their routers on one app, and one uvicorn process serves `/v1`.
 
-- `docker run -p 127.0.0.1:8790:8080`, the Kubernetes Service on 8080, and the Ingress on
-  `/` all keep their shape.
-- The skill's `data-server-url` already names the server. An application uses the same URL
-  with `/v1` after it.
-- A second uvicorn on another port would need a second Service port, a second Ingress rule
-  and a second health check, for no isolation the measures in §10.5 do not already give.
+- A deployment has one port to publish: `docker run -p 127.0.0.1:8790:8080`, one Kubernetes
+  Service on 8080, one Ingress rule on `/`, and one health check.
+- The skill's `data-server-url` names the server. An application uses the same URL with
+  `/v1` after it.
+- The measures in [Running it](#running-it) keep one request from holding up another within
+  that process.
 
-### 10.4 Why Python, and a Java server ruled out
+### Why Python
 
 The API runs the gate's own checks: the validator, the skip rule, and the naming and
-payload checks, all in `symposium_rules` (§9). They are Python, and so are the gate, the
-skill and the data server. A Java server would need a second implementation of the
-validator. Two validators drift, and the day they disagree, `checkSubmission` passes an
-Artifact the gate rejects. That breaks the promise that a pass means the gate accepts.
-Java would also add a JVM to an image that holds none today. A Go or Node server fails the
-same test for the same reason.
+payload checks, all in `symposium_rules` ([How the code is arranged](#how-the-code-is-arranged)). They are
+Python, and so are the gate, the skill and the data server. The API imports that one
+package, so the validator `checkSubmission` runs is the validator the gate runs, and a pass
+means the gate accepts.
 
-### 10.5 Running it
+### Running it
 
 - **Always on.** The `api-server` program always starts `symposium_server:app`, so every data
   server serves the record routes. `start.sh` starts the program for its `--api-server`
@@ -666,9 +638,9 @@ same test for the same reason.
   reports after `--proxy-headers`, from a proxy in `SYMPOSIUM_SERVER_TRUSTED_PROXY` alone.
   Each stream holds one coroutine and wakes on a shared `LISTEN` connection, so 500 cost
   little memory.
-- **Workers.** One uvicorn worker by default, as today. `SYMPOSIUM_SERVER_WORKERS` is a new
-  setting that raises it, passed to `--workers` by the `api-server` program. Every worker
-  keeps no client's state in memory (§5.3), and the stream caps live in PostgreSQL, so any
+- **Workers.** One uvicorn worker by default. `SYMPOSIUM_SERVER_WORKERS`
+  raises it, passed to `--workers` by the `api-server` program. Every worker
+  keeps no client's state in memory ([Streams](#streams)), and the stream caps live in PostgreSQL, so any
   worker serves any request or reconnect.
 - **The ingress.** SSE needs two settings on a proxy in front of the server: response
   buffering off, and a read timeout longer than the 30-second heartbeat. The API sends
@@ -676,7 +648,7 @@ same test for the same reason.
   chart (`data-server/helm/symposium-helm`) carries both: its Gateway API HTTPRoute turns
   the route's timeouts off (`timeouts: {request: 0s, backendRequest: 0s}`), and its Ingress
   takes the controller's own settings in `expose.ingress.annotations`.
-- **TLS** stays where it is today: the deployment's gateway, ingress or proxy terminates it.
+- **TLS** is terminated by the deployment's gateway, ingress or proxy.
 - **Browsers.** `SYMPOSIUM_SERVER_CORS_ORIGINS` (the Helm chart's `corsOrigins`) lists the
   origins a browser app may call the API from. For those origins the server allows the
   `Authorization`, `Content-Type`, `Repr-Digest`, `If-Match`, `Range`, `Last-Event-ID` and
@@ -684,6 +656,6 @@ same test for the same reason.
   `Content-Range` and `X-Data-*`. Unset, the default, the API answers every request as
   usual and sends no CORS headers, so a browser lets only pages served from the API's own
   origin read its answers.
-- **Health.** `GET /v1/status` stays the health check. Once the server is operational it
+- **Health.** `GET /v1/status` is the health check. Once the server is operational it
   also reports `api_index.behind`, the server-wide count of record versions the index has
   yet to fold in.

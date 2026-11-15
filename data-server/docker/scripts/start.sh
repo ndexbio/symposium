@@ -73,8 +73,8 @@ EOT
             /apps/postgres/config/superuser.pw
 fi
 
-# The API keys' encryption key (api/DESIGN.md §4.3): 32 random bytes beside the other secrets,
-# made on first boot and on the first boot of a server that predates the API.
+# The API keys' encryption key (api/DESIGN.md#encryption-at-rest): 32 random bytes beside the
+# other secrets, made when it is absent.
 API_KEY=/apps/data/config/api_key_enc.key
 if [[ ! -f "$API_KEY" ]]; then
   log "generating the API keys' encryption key"

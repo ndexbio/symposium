@@ -34,7 +34,7 @@ The Symposium skill ships as a zip file attached on a Github release. Download
 [releases page](https://github.com/ndexbio/symposium/releases). The zip follows the standard
 [Agent Skills](https://agentskills.io) format and is usable by any skills compatible agent.
 
-Requirements - **Python 3.9++* the skill will run Python
+Requirements - **Python 3.9+** the skill will run Python
 
 **Machine wide install** - Every agent running in any directory will load the skill. Unzip the skill zip file into the conventional agent sub path under your home directory - `<USER_HOME>/.agents/skills`. If using Claude, then do `<USER_HOME>/.claude/skills` instead.
 
@@ -42,8 +42,8 @@ Requirements - **Python 3.9++* the skill will run Python
 
 Example to install for Claude:
 ```
- curl -fLO https://github.com/ndexbio/symposium/releases/download/symposium-v0.3.0/symposium_skill-0.3.0.zip
- unzip symposium_skill-0.3.0.zip -d ~/.claude/skills
+ curl -fLO https://github.com/ndexbio/symposium/releases/download/symposium-v0.3.1/symposium_skill-0.3.1.zip
+ unzip symposium_skill-0.3.1.zip -d ~/.claude/skills
 ```
 
 ## Participating in a Symposium

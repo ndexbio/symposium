@@ -21,6 +21,7 @@ Figure mode differs from screen mode deliberately:
   * **Preset positions only.** The force layout is never used: a figure must be
     reproducible, and cose is not.
 """
+
 from __future__ import annotations
 
 import html
@@ -30,14 +31,14 @@ import pathlib
 # Print-scaled geometry. Screen mode packs nodes tightly because the reader can
 # zoom; a figure cannot be zoomed, so everything is larger and further apart.
 PAD = 48.0
-ARROW_L = 9.0      # arrowhead length, in the same units as the drawing
-ARROW_W = 6.0      # arrowhead width at its base
+ARROW_L = 9.0  # arrowhead length, in the same units as the drawing
+ARROW_W = 6.0  # arrowhead width at its base
 FONT_CLAIM = 13.0
 FONT_LEAF = 10.5
 LINE_H = 1.28
-CLAIM_W = 210.0          # wrap width for assertion labels, in px
-LEAF_W = 185.0           # a citation label is an artifact title plus a cell reference
-CHAR_W = 0.55            # rough advance width as a fraction of font size
+CLAIM_W = 210.0  # wrap width for assertion labels, in px
+LEAF_W = 185.0  # a citation label is an artifact title plus a cell reference
+CHAR_W = 0.55  # rough advance width as a fraction of font size
 
 # Screen positions pack tightly because the reader can zoom and hover; a figure
 # can do neither, so positions are spread and long prose is capped.
@@ -49,12 +50,12 @@ MAX_LEAF_LINES = 4
 
 EDGE_STYLE = {
     # rel                     colour     width  dash
-    "depends_on":            ("#dc2626", 2.6,  None),
-    "assumes":               ("#d97706", 2.0,  "2 4"),
-    "cites":                 ("#a3a3a3", 1.4,  "1 5"),
-    "grounded_by_test":      ("#16a34a", 2.4,  None),
-    "grounded_by_material":  ("#64748b", 1.8,  "7 5"),
-    "grounded_by_testimony": ("#7c3aed", 2.2,  "7 5"),
+    "depends_on": ("#dc2626", 2.6, None),
+    "assumes": ("#d97706", 2.0, "2 4"),
+    "cites": ("#a3a3a3", 1.4, "1 5"),
+    "grounded_by_test": ("#16a34a", 2.4, None),
+    "grounded_by_material": ("#64748b", 1.8, "7 5"),
+    "grounded_by_testimony": ("#7c3aed", 2.2, "7 5"),
 }
 
 
@@ -109,22 +110,44 @@ def _shape(x, y, w, h, ntype, fill, dashed):
     dash = ' stroke-dasharray="5 4"' if dashed else ""
     if ntype == "Assumption":
         # chevron: rests on something the author could not address
-        pts = " ".join(f"{px:.1f},{py:.1f}" for px, py in [
-            (x - w / 2, y - h / 2), (x + w / 2, y - h / 2), (x + w / 2 - 7, y),
-            (x + w / 2, y + h / 2), (x - w / 2, y + h / 2), (x - w / 2 + 7, y)])
-        return (f'<polygon points="{pts}" fill="{fill}" fill-opacity="0.85" '
-                f'stroke="#b45309" stroke-width="1.5"{dash}/>')
+        pts = " ".join(
+            f"{px:.1f},{py:.1f}"
+            for px, py in [
+                (x - w / 2, y - h / 2),
+                (x + w / 2, y - h / 2),
+                (x + w / 2 - 7, y),
+                (x + w / 2, y + h / 2),
+                (x - w / 2, y + h / 2),
+                (x - w / 2 + 7, y),
+            ]
+        )
+        return (
+            f'<polygon points="{pts}" fill="{fill}" fill-opacity="0.85" '
+            f'stroke="#b45309" stroke-width="1.5"{dash}/>'
+        )
     if ntype in ("Source", "External"):
         # hexagon: addressed content, subordinate to claims
         k = h / 2
-        pts = " ".join(f"{px:.1f},{py:.1f}" for px, py in [
-            (x - w / 2, y), (x - w / 2 + k, y - h / 2), (x + w / 2 - k, y - h / 2),
-            (x + w / 2, y), (x + w / 2 - k, y + h / 2), (x - w / 2 + k, y + h / 2)])
-        return (f'<polygon points="{pts}" fill="{fill}" fill-opacity="0.9" '
-                f'stroke="{stroke}" stroke-width="1.4"{dash}/>')
-    return (f'<rect x="{x - w / 2:.1f}" y="{y - h / 2:.1f}" width="{w:.1f}" '
-            f'height="{h:.1f}" rx="7" fill="{fill}" fill-opacity="0.92" '
-            f'stroke="{stroke}" stroke-width="2"{dash}/>')
+        pts = " ".join(
+            f"{px:.1f},{py:.1f}"
+            for px, py in [
+                (x - w / 2, y),
+                (x - w / 2 + k, y - h / 2),
+                (x + w / 2 - k, y - h / 2),
+                (x + w / 2, y),
+                (x + w / 2 - k, y + h / 2),
+                (x - w / 2 + k, y + h / 2),
+            ]
+        )
+        return (
+            f'<polygon points="{pts}" fill="{fill}" fill-opacity="0.9" '
+            f'stroke="{stroke}" stroke-width="1.4"{dash}/>'
+        )
+    return (
+        f'<rect x="{x - w / 2:.1f}" y="{y - h / 2:.1f}" width="{w:.1f}" '
+        f'height="{h:.1f}" rx="7" fill="{fill}" fill-opacity="0.92" '
+        f'stroke="{stroke}" stroke-width="2"{dash}/>'
+    )
 
 
 def render_claim_svg(elements, meta, title=None):
@@ -158,18 +181,28 @@ def render_claim_svg(elements, meta, title=None):
         # its text, not its body, and it is three times wider. Bounds taken from the
         # body clipped every long citation label off the edge of the figure.
         text_w = max((len(ln) for ln in lines), default=0) * font * CHAR_W
-        boxes[d["id"]] = {"lines": lines, "font": font, "w": w, "h": h,
-                          "draw_w": max(w, text_w), "text_h": text_h,
-                          "is_claim": is_claim}
+        boxes[d["id"]] = {
+            "lines": lines,
+            "font": font,
+            "w": w,
+            "h": h,
+            "draw_w": max(w, text_w),
+            "text_h": text_h,
+            "is_claim": is_claim,
+        }
 
-    pos = {d["id"]: (d["_pos_claim"]["x"] * SPREAD, d["_pos_claim"]["y"] * SPREAD)
-           for d in nodes}
+    pos = {
+        d["id"]: (d["_pos_claim"]["x"] * SPREAD, d["_pos_claim"]["y"] * SPREAD)
+        for d in nodes
+    }
     # Bounds from the ACTUAL drawn extent of every node, so nothing clips.
     min_x = min(pos[d["id"]][0] - boxes[d["id"]]["draw_w"] / 2 for d in nodes)
     max_x = max(pos[d["id"]][0] + boxes[d["id"]]["draw_w"] / 2 for d in nodes)
     min_y = min(pos[d["id"]][1] - boxes[d["id"]]["h"] / 2 for d in nodes)
-    max_y = max(pos[d["id"]][1] + boxes[d["id"]]["h"] / 2
-                + boxes[d["id"]]["text_h"] + 10 for d in nodes)
+    max_y = max(
+        pos[d["id"]][1] + boxes[d["id"]]["h"] / 2 + boxes[d["id"]]["text_h"] + 10
+        for d in nodes
+    )
     w_total, h_total = (max_x - min_x) + 2 * PAD, (max_y - min_y) + 2 * PAD
     ox, oy = PAD - min_x, PAD - min_y
 
@@ -180,7 +213,7 @@ def render_claim_svg(elements, meta, title=None):
         '<rect width="100%" height="100%" fill="#ffffff"/>',
     ]
     if title:
-        out.append(f'<title>{html.escape(str(title))}</title>')
+        out.append(f"<title>{html.escape(str(title))}</title>")
     # Arrowheads are drawn as ordinary polygons at the end of each line rather than
     # declared as <marker>s. Markers are correct SVG and every browser honours them,
     # but PowerPoint's importer does not reliably, and an edge that loses its head
@@ -205,13 +238,19 @@ def render_claim_svg(elements, meta, title=None):
         ux, uy = dx / dist, dy / dist
         # stop the shaft at the base of the head, so the two do not overlap
         bx, by = x2 - ux * ARROW_L, y2 - uy * ARROW_L
-        out.append(f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{bx:.1f}" y2="{by:.1f}" '
-                   f'stroke="{colour}" stroke-width="{width}"{da}/>')
+        out.append(
+            f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{bx:.1f}" y2="{by:.1f}" '
+            f'stroke="{colour}" stroke-width="{width}"{da}/>'
+        )
         nx, ny = -uy, ux
-        head = " ".join(f"{px:.1f},{py:.1f}" for px, py in [
-            (x2, y2),
-            (bx + nx * ARROW_W / 2, by + ny * ARROW_W / 2),
-            (bx - nx * ARROW_W / 2, by - ny * ARROW_W / 2)])
+        head = " ".join(
+            f"{px:.1f},{py:.1f}"
+            for px, py in [
+                (x2, y2),
+                (bx + nx * ARROW_W / 2, by + ny * ARROW_W / 2),
+                (bx - nx * ARROW_W / 2, by - ny * ARROW_W / 2),
+            ]
+        )
         out.append(f'<polygon points="{head}" fill="{colour}"/>')
 
     # ---- nodes ----
@@ -220,16 +259,25 @@ def render_claim_svg(elements, meta, title=None):
         x = pos[d["id"]][0] + ox
         y = pos[d["id"]][1] + oy
         ntype = d.get("ntype")
-        fill = d.get("owner_color", "#2563eb") if ntype == "Assertion" else (
-            "#e5e7eb" if ntype == "External" else
-            "#fbbf24" if ntype == "Assumption" else "#cbd5e1")
-        out.append(_shape(x, y, b["w"], b["h"], ntype,
-                          fill, bool(d.get("navigable"))))
+        fill = (
+            d.get("owner_color", "#2563eb")
+            if ntype == "Assertion"
+            else (
+                "#e5e7eb"
+                if ntype == "External"
+                else "#fbbf24"
+                if ntype == "Assumption"
+                else "#cbd5e1"
+            )
+        )
+        out.append(_shape(x, y, b["w"], b["h"], ntype, fill, bool(d.get("navigable"))))
         if d.get("primary"):
-            out.append(f'<rect x="{x - b["w"] / 2 - 5:.1f}" y="{y - b["h"] / 2 - 5:.1f}" '
-                       f'width="{b["w"] + 10:.1f}" height="{b["h"] + 10:.1f}" rx="10" '
-                       f'fill="none" stroke="#1e3a8a" stroke-width="1.6" '
-                       f'stroke-dasharray="3 3"/>')
+            out.append(
+                f'<rect x="{x - b["w"] / 2 - 5:.1f}" y="{y - b["h"] / 2 - 5:.1f}" '
+                f'width="{b["w"] + 10:.1f}" height="{b["h"] + 10:.1f}" rx="10" '
+                f'fill="none" stroke="#1e3a8a" stroke-width="1.6" '
+                f'stroke-dasharray="3 3"/>'
+            )
 
         is_cite = str(d.get("id", "")).startswith("cite:")
         colour = "#94a3b8" if is_cite else "#1f2937"
@@ -240,15 +288,19 @@ def render_claim_svg(elements, meta, title=None):
         # behind it, without boxing the label and cluttering the figure.
         for i, line in enumerate(b["lines"]):
             ty = start + i * b["font"] * LINE_H
-            common = (f'x="{x:.1f}" y="{ty:.1f}" text-anchor="middle" '
-                      f'font-size="{b["font"]:.1f}" font-weight="{weight}"')
+            common = (
+                f'x="{x:.1f}" y="{ty:.1f}" text-anchor="middle" '
+                f'font-size="{b["font"]:.1f}" font-weight="{weight}"'
+            )
             esc = html.escape(line)
             # The halo is a SECOND copy of the glyphs drawn underneath in white
             # stroke, rather than `paint-order="stroke"` on a single element.
             # paint-order is SVG 2 and PowerPoint ignores it — the stroke then
             # paints OVER the fill and every label disappears into the page.
-            out.append(f'<text {common} fill="none" stroke="#ffffff" '
-                       f'stroke-width="3.2" stroke-linejoin="round">{esc}</text>')
+            out.append(
+                f'<text {common} fill="none" stroke="#ffffff" '
+                f'stroke-width="3.2" stroke-linejoin="round">{esc}</text>'
+            )
             out.append(f'<text {common} fill="{colour}">{esc}</text>')
 
     out.append("</svg>")

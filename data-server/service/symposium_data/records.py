@@ -672,6 +672,16 @@ class Records:
             raise NotFound(f"no collection {community}/{collection}")
         return row["seq"], row["last_created"]
 
+    def lock_collection(self, conn, community: str, collection: str) -> None:
+        """Hold the collection's row until commit: the row `allocate` updates, so whoever
+        holds it and a writer into the collection wait for one another."""
+        row = conn.execute(
+            "SELECT 1 FROM collections WHERE community = %s AND name = %s FOR UPDATE",
+            (community, collection),
+        ).fetchone()
+        if row is None:
+            raise NotFound(f"no collection {community}/{collection}")
+
     def allocate_at(self, conn, community: str, collection: str, created: datetime):
         """-> (seq, created) for an instant the caller supplies. Only the port does
         this: each instant must be strictly later than the collection's last one, so

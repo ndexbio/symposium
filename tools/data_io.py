@@ -82,7 +82,9 @@ def uninterrupted():
         return
     held = []
     stops = (signal.SIGINT, signal.SIGBREAK if WINDOWS else signal.SIGTERM)
-    previous = {stop: signal.signal(stop, lambda *_: held.append(True)) for stop in stops}
+    previous = {
+        stop: signal.signal(stop, lambda *_: held.append(True)) for stop in stops
+    }
     try:
         yield
     finally:
@@ -213,22 +215,29 @@ def watch_alone(name: str, lock_file: Path, who: str, replace: bool = False):
     handle = open(lock_file, "a+")
     if not _locked(handle):
         pid, running = _holder(pid_file), _who(pid_file)
-        print(f"standing by: a {name} watcher is running"
-              + (f" (pid {pid}{', ' + running if running else ''})" if pid else "")
-              + " and this one watches when it ends", flush=True)
+        print(
+            f"standing by: a {name} watcher is running"
+            + (f" (pid {pid}{', ' + running if running else ''})" if pid else "")
+            + " and this one watches when it ends",
+            flush=True,
+        )
         try:
             while not _locked(handle):
                 time.sleep(0.5)
         except BaseException:
             handle.close()
             raise
-        print(f"the {name} watcher that was running has ended: this one is watching now",
-              flush=True)
+        print(
+            f"the {name} watcher that was running has ended: this one is watching now",
+            flush=True,
+        )
     replace_text(pid_file, f"{os.getpid()} {who}\n")
     return handle
 
 
-def take_over(name: str, wait: float = 10.0, lock_file: Path | None = None, who: str = ""):
+def take_over(
+    name: str, wait: float = 10.0, lock_file: Path | None = None, who: str = ""
+):
     """Become the one `name` watcher behind a lock (this session's own, unless `lock_file`
     names another) by stopping the one that holds it. A watcher still running is asked to
     stop (SIGTERM; Windows has only TerminateProcess), and after `wait` seconds it is killed.
@@ -247,8 +256,10 @@ def take_over(name: str, wait: float = 10.0, lock_file: Path | None = None, who:
             # a holder that has just started may not have written its pid yet
             pid = _holder(pid_file)
             if pid is not None:
-                print(f"taking over from the {name} watcher already running (pid {pid})",
-                      flush=True)
+                print(
+                    f"taking over from the {name} watcher already running (pid {pid})",
+                    flush=True,
+                )
                 _end(pid, hard=False)
                 deadline = time.monotonic() + wait
         elif time.monotonic() >= deadline and not hard:
@@ -311,11 +322,13 @@ class SymposiumData:
         the server decides either way."""
         context = self.context()
         if not self.access().allowsRequest(grant, context.get("community")):
-            raise DataError({
-                "error": f"{doing} takes the `{grant}` grant, which '{context['handle']}' "
-                f"does not hold in {context.get('community')}: `/symposium access` shows what "
-                "it holds"
-            })
+            raise DataError(
+                {
+                    "error": f"{doing} takes the `{grant}` grant, which '{context['handle']}' "
+                    f"does not hold in {context.get('community')}: `/symposium access` shows what "
+                    "it holds"
+                }
+            )
 
     def members(self) -> set:
         """Every handle validation resolves, fetched live: every user of the community,
@@ -329,7 +342,8 @@ class SymposiumData:
         """The handles whose submissions the gate decides: the community's users, not
         removed, holding `publish` (community-member)."""
         return {
-            m["handle"] for m in self.run("users", "list")["users"]
+            m["handle"]
+            for m in self.run("users", "list")["users"]
             if not m["removed"]
             and any(r["role"] == rbac.COMMUNITY_MEMBER for r in m["roles"])
         }
@@ -337,7 +351,9 @@ class SymposiumData:
     # ── reading ────────────────────────────────────────────────────────────────────────────
     def changes(self, collection: str, since: int = 0) -> dict:
         """Every change to a collection after the cursor `since`: {items, next_since}."""
-        return self.run("changes", "--collection", collection, "--since", since, "--all")
+        return self.run(
+            "changes", "--collection", collection, "--since", since, "--all"
+        )
 
     def query(self, collection: str, contains: dict) -> list:
         """Every version of a collection, readable here, whose metadata contains `contains`."""
@@ -368,7 +384,9 @@ class SymposiumData:
             return json.loads(out.read_text())
 
     # ── writing ────────────────────────────────────────────────────────────────────────────
-    def put_json(self, document: dict, collection: str, name: str, metadata: dict) -> dict:
+    def put_json(
+        self, document: dict, collection: str, name: str, metadata: dict
+    ) -> dict:
         """Store a JSON document (an artifact) as a new file. -> the CLI's report (citation,
         sha256, created, ...)."""
         with tempfile.TemporaryDirectory() as tmp:

@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
+## [Symposium Skill 0.3.1] - 2026-11-14
+
+Works with Data Server 0.2.1.
+
+### Changed
+
+- **Content held outside an Artifact has one form:** a file on the data server, cited from a
+  `download` Content by `symposium-data:<file id>@v<n>` with its `sha256`. The embedding
+  policy, the profile and the worked record all state it.
+- **A cited file goes in `files`,** the collection every community is created with, so that
+  whoever reads the Artifact can read the file. A member's own collection is for working files
+  and files shared directly. The policy sets out the trade-offs.
+- **A result over the size limit is published as its rows and its file:** the rows an Argument
+  turns on are embedded, and the full output is a file cited from the same Artifact. The
+  refusal of an Artifact over 250 KB names the policy that says so.
+- **A source stays where it is held:** an imported Artifact cites the source's own location, or
+  its file on the data server where the community holds it.
+
+[Install Skill Instructions](README.md#installing-skill)
+
+## [Data Server 0.2.1] - 2026-11-14
+
+### Changed
+
+- **A file version the record cites keeps its content.** Purging a version that an Artifact in
+  the record cites, from a `download` Content, is refused with `409` and names the citing
+  Artifacts. Purging those Artifacts first frees it.
+- **An Artifact enters the record only when the file versions it cites have their content.**
+  Accepting one that cites a purged or missing version is refused with `409`.
+
+## [Symposium Helm 0.1.3] - 2026-11-14
+
+### Changed
+
+- **Deploys Data Server 0.2.1.**
+
 ## [Symposium Skill 0.3.0] - 2026-11-13
 
 Works with Data Server 0.2.0.
@@ -41,8 +77,6 @@ Works with Data Server 0.2.0.
 
 - Commands running at once in one session each write whole files: the session's context, its
   copy of the record, its event log, and the skill's runtime.
-
-[Install Skill Instructions](README.md#installing-skill)
 
 ## [Symposium Skill 0.2.0] - 2026-11-06
 

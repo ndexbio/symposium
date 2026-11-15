@@ -2270,6 +2270,19 @@ def test_a_cited_file_is_read_through_its_collections_access(world, suite, cli):
     )
     conforms("getObject", obj)
     assert obj.json()["location_url"] == url
+    # the address a Ground uses, whole or to a cell, leads to the same file request
+    for through in (
+        "@lyra_data_e_v1#scores_download",
+        "@lyra_data_e_v1#scores_download.row=BST2&col=score",
+    ):
+        reached = api.call(
+            "GET",
+            "/communities/demo/addresses?address="
+            + urllib.parse.quote(through, safe=""),
+            keys["non-member"],
+        )
+        conforms("resolveAddress", reached)
+        assert reached.json()["location_url"] == url
 
     dashboard = {"Authorization": f"Bearer {keys['non-member']}"}
     assert api.http.get(url, headers=dashboard).status_code == 403  # `record` only
@@ -2286,6 +2299,200 @@ def test_a_cited_file_is_read_through_its_collections_access(world, suite, cli):
     assert api.http.get(url).status_code == 401
     api.control("PATCH", "/communities/demo/collections/lab", lyra, {"public": True})
     assert api.http.get(url).content == data
+
+
+# ── a file version the record cites keeps its content ──────────────────────────────────────
+def stored_file(api, key: str, collection: str, name: str, data: bytes) -> dict:
+    """A file put into a collection of `demo`: its citation, file id and sha256."""
+    response = api.http.put(
+        f"{api.base}/communities/demo/collections/{collection}/files/{name}",
+        content=data,
+        headers={**digest_header(data), "Authorization": f"Bearer {key}"},
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def citing(name: str, publisher: str, put: dict, content: str = "scores_download"):
+    """A Data Artifact whose Content `content` holds the file's citation as its location."""
+    doc = json.loads(json.dumps(DATA_D))
+    doc["artifact"]["name"] = name
+    doc["artifact"]["published_by"] = f"@{publisher}"
+    doc["objects"].append(
+        {
+            "name": content,
+            "type": "Content",
+            "groundable": True,
+            "description": "The scores as a file on the data server.",
+            "addressing_method": "the whole file",
+            "location": put["citation"],
+            "access_method": "GET its location_url with an API key that may read it",
+            "sha256": put["sha256"],
+        }
+    )
+    return doc
+
+
+def purge(api, credential: str, put: dict, n: int = 1):
+    return api.control(
+        "DELETE", f"/communities/demo/files/{put['file_id']}/versions/{n}", credential
+    )
+
+
+def test_a_version_the_record_cites_keeps_its_content(world, suite, cli, server):
+    api, keys, root_dir = world["api"], world["keys"], world["admin_dir"]
+    root, lyra_dir = world["root_session"], world["sessions"]["lyra"]
+    data = b"gene,score\nBST2,0.06\n"
+    put = stored_file(api, keys["lyra"], "files", "scores.csv", data)
+    made = api.call(
+        "POST",
+        "/communities/demo/submissions",
+        keys["lyra"],
+        citing("lyra_data_e_v1", "lyra", put),
+    )
+    assert made.status_code == 201, made.text
+    gate(suite, root_dir)
+    # accepted a moment ago, and read through the API by no one yet: it counts all the same
+    assert sql(
+        server,
+        "SELECT count(*) FROM api_index WHERE community = 'demo' AND name = %s",
+        "lyra_data_e_v1",
+    ) == [[0]]
+
+    refused = purge(api, root, put)
+    assert refused.status_code == 409, refused.text
+    conforms("purgeVersion", refused)
+    assert "`lyra_data_e_v1`" in refused.json()["detail"]
+    url = f"{api.base}/communities/demo/files/{put['file_id']}/versions/1"
+    held = api.http.get(url, headers={"Authorization": f"Bearer {keys['lyra']}"})
+    assert held.status_code == 200 and held.content == data
+    assert cli.ok(
+        lyra_dir, "verify", "--cite", put["citation"], "--sha256", put["sha256"]
+    )["ok"]
+    # the client reports the refusal as the server words it
+    code, out = cli(root_dir, "purge", "--cite", put["citation"])
+    assert code == 1 and out["status"] == 409 and "lyra_data_e_v1" in out["error"]
+
+    # another version of the same file, cited by nothing, is freed
+    newer = lyra_dir / "scores.csv"
+    newer.write_bytes(b"gene,score\nBST2,0.07\n")
+    cli.ok(lyra_dir, "version", put["file_id"], newer)
+    assert purge(api, root, put, 2).status_code == 200
+
+    # and so is the cited one, once the Artifact citing it is purged
+    purge_artifact(world, cli, server, "lyra_data_e_v1")
+    freed = purge(api, root, put)
+    assert freed.status_code == 200, freed.text
+    conforms("purgeVersion", freed)
+
+
+def test_a_cited_version_is_kept_in_a_members_own_collection(world, suite, cli):
+    """The owner holds `manage` there and is refused all the same, including where the citing
+    member cannot read the file: citing it gives no read on it."""
+    api, keys, root_dir = world["api"], world["keys"], world["admin_dir"]
+    lyra = session_key(suite, world["sessions"]["lyra"])
+    api.control("POST", "/communities/demo/collections", lyra, {"name": "lab"})
+    data = b"gene,score\nBST2,0.06\n"
+    put = stored_file(api, keys["lyra"], "lab", "scores.csv", data)
+    olive_dir = enroll(cli, root_dir, "olive", "community-member:files")
+    olive = key_value(
+        cli.ok(olive_dir, "gen-api-key", "laptop", "--access", "community-member:files")
+    )
+    made = api.call(
+        "POST",
+        "/communities/demo/submissions",
+        olive,
+        citing("olive_data_e_v1", "olive", put),
+    )
+    assert made.status_code == 201, made.text
+    gate(suite, root_dir)
+    found = api.call("GET", "/communities/demo/artifacts/olive_data_e_v1", keys["lyra"])
+    assert found.status_code == 200, found.text
+
+    refused = purge(api, lyra, put)
+    assert (
+        refused.status_code == 409 and "`olive_data_e_v1`" in refused.json()["detail"]
+    )
+    url = f"{api.base}/communities/demo/files/{put['file_id']}/versions/1"
+    assert (
+        api.http.get(url, headers={"Authorization": f"Bearer {olive}"}).status_code
+        == 403
+    )
+
+
+def test_a_version_cited_only_from_inbox_is_freed_and_the_gate_replies(
+    world, suite, cli
+):
+    api, keys, root_dir = world["api"], world["keys"], world["admin_dir"]
+    put = stored_file(api, keys["lyra"], "files", "scores.csv", b"gene,score\nBST2,1\n")
+    made = api.call(
+        "POST",
+        "/communities/demo/submissions",
+        keys["lyra"],
+        citing("lyra_data_e_v1", "lyra", put),
+    )
+    assert made.status_code == 201, made.text
+    assert purge(api, world["root_session"], put).status_code == 200
+
+    out = gate(suite, root_dir)
+    assert "content purged" in out
+    gone = api.call("GET", "/communities/demo/artifacts/lyra_data_e_v1", keys["lyra"])
+    assert gone.status_code == 404
+
+
+def test_an_artifact_citing_a_version_without_content_is_not_accepted(
+    world, suite, cli
+):
+    """The server's own check at acceptance, which holds where a purge lands between the
+    gate's file check and its promotion."""
+    api, keys, root_dir = world["api"], world["keys"], world["admin_dir"]
+    put = stored_file(api, keys["lyra"], "files", "scores.csv", b"gene,score\nBST2,1\n")
+    made = api.call(
+        "POST",
+        "/communities/demo/submissions",
+        keys["lyra"],
+        citing("lyra_data_e_v1", "lyra", put),
+    )
+    assert made.status_code == 201, made.text
+    assert purge(api, world["root_session"], put).status_code == 200
+
+    code, out = cli(
+        root_dir,
+        "promote",
+        made.json()["citation"],
+        "--collection",
+        "record",
+        "--name",
+        "lyra_data_e_v1",
+        "--metadata",
+        '{"symposium_record": true}',
+        "--stamp-json-pointer",
+        "/artifact/created",
+    )
+    assert code == 1 and out["status"] == 409, out
+    assert "Content `scores_download` cites" in out["error"]
+    assert "lyra_data_e_v1" not in {
+        i["name"]
+        for i in cli.ok(root_dir, "changes", "--collection", "record", "--all")["items"]
+    }
+
+
+def test_only_a_download_content_cites_a_file(world, suite):
+    """The server and the gate judge the same Contents: a citation held as the location of
+    a Content of another method is not checked by the gate, and holds no file in place."""
+    api, keys, root_dir = world["api"], world["keys"], world["admin_dir"]
+    put = stored_file(api, keys["lyra"], "files", "scores.csv", b"gene,score\nBST2,1\n")
+    made = api.call(
+        "POST",
+        "/communities/demo/submissions",
+        keys["lyra"],
+        citing("lyra_data_e_v1", "lyra", put, content="scores_rest"),
+    )
+    assert made.status_code == 201, made.text
+    gate(suite, root_dir)
+    found = api.call("GET", "/communities/demo/artifacts/lyra_data_e_v1", keys["lyra"])
+    assert found.status_code == 200, found.text
+    assert purge(api, world["root_session"], put).status_code == 200
 
 
 def viewer_id(cli, root_dir) -> str:

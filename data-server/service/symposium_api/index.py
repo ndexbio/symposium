@@ -1,4 +1,4 @@
-"""The derived index (api/DESIGN.md §1.3): what no single Artifact holds, folded from each
+"""The derived index (api/DESIGN.md#the-index): what no single Artifact holds, folded from each
 community's `record` feed into PostgreSQL. It holds every Artifact's canonical JSON, the
 citations between Artifacts, and each Artifact's findings as the gate saw them at acceptance.
 
@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
+from symposium_rules.checks import cited_files
 from symposium_rules.validate import (
     CITATION_RE,
     CODE_SPAN_RE,
@@ -21,6 +22,7 @@ from symposium_rules.validate import (
 )
 
 from symposium_data.records import unpurged
+from symposium_data.wire import parse_citation
 
 RECORD = "record"
 # every read of the index skips an Artifact whose version was purged on /v1
@@ -116,8 +118,10 @@ class Index:
         ).fetchone()
         return row["seq"] if row else 0
 
-    def catch_up(self, conn, community: str) -> int:
-        """Fold every record version after the index's position into the index. -> position."""
+    def catch_up(self, conn, community: str, commit: bool = True) -> int:
+        """Fold every record version after the index's position into the index. -> position.
+        With `commit` false the fold stays in the caller's transaction, which then holds
+        the index level with the record until it ends."""
         conn.execute(
             "SELECT pg_advisory_xact_lock(hashtext('symposium_api_index:' || %s))",
             (community,),
@@ -190,10 +194,28 @@ class Index:
             )
             if len(rows) < BATCH:
                 break
-        conn.commit()
+        if commit:
+            conn.commit()
         return since
 
     # ── reads ──────────────────────────────────────────────────────────────────────────────
+    def citing_file(self, conn, community: str, file_id, n: int) -> list:
+        """The names of the live Artifacts that cite this file version from a `download`
+        Content. SQL narrows to the documents holding the file id; `cited_files` decides."""
+        rows = conn.execute(
+            f"SELECT name, doc FROM api_index WHERE community = %s AND {LIVE} "
+            "AND doc::text ILIKE %s ORDER BY seq",
+            (community, f"%{file_id}%"),
+        ).fetchall()
+        return [
+            r["name"]
+            for r in rows
+            if any(
+                parse_citation(location) == (file_id, n)
+                for _, location, _ in cited_files(r["doc"])
+            )
+        ]
+
     def docs(self, conn, community: str) -> list:
         return conn.execute(
             f"SELECT * FROM api_index WHERE community = %s AND {LIVE} ORDER BY seq",

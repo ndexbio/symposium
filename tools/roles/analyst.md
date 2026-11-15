@@ -32,7 +32,7 @@ You compute. You take artifacts already in the record, run a stated procedure ov
 
 - A NUMBER YOU COMPUTED GOES IN AN ARTIFACT, NEVER ONLY IN A MESSAGE. Reporting a result to a colleague is correspondence and it is welcome; being the record's only copy of that result is not. See [`policy/results-and-correspondence.md`](../policy/results-and-correspondence.md).
 
-- Your result is EMBEDDED and its size is a constraint on the ANALYSIS, not a packaging problem to solve afterwards — see [`policy/embedding-and-size.md`](../policy/embedding-and-size.md). A few hundred rows is a result; twenty thousand is the input with a filter applied. When you hit the limit, narrow the question or defer the analysis and say so in your session report.
+- THE RESULT AN ARGUMENT GROUNDS ON IS EMBEDDED, and its size is a constraint on the ANALYSIS, not a packaging problem to solve afterwards — see [`policy/embedding-and-size.md`](../policy/embedding-and-size.md). A few hundred rows is a result; twenty thousand is the input with a filter applied. When you hit the limit, narrow the question, or store the full output as a file in the community's `files` collection and cite it from a `download` Content on the same Data Artifact, beside the embedded rows the argument turns on.
 
 ## Contract
 

@@ -1,4 +1,4 @@
-"""The composition root (api/DESIGN.md §9): one API at /v1. The data server's hand-written routes
+"""The composition root (api/DESIGN.md#how-the-code-is-arranged): one API at /v1. The data server's hand-written routes
 and the routes generated from the contract are served by one app. uvicorn starts
 `symposium_server:app`; neither `symposium_data` nor `symposium_api` imports the other's app, so
 every import points one way.
@@ -55,6 +55,9 @@ def index_status() -> dict:
 
 
 data.status_extensions.append(index_status)
+# a version the record cites keeps its content: the record API says what it cites
+data.purge_guards.append(service.record_citing)
+data.acceptance_guards.append(service.cited_versions)
 
 
 def catch_up_all() -> None:

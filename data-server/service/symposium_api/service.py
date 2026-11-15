@@ -22,7 +22,12 @@ from urllib.parse import quote
 
 from fastapi.responses import Response
 from pydantic import RootModel
-from symposium_rules.checks import naming_refusal, payload_refusal, skip_reason
+from symposium_rules.checks import (
+    cited_files,
+    naming_refusal,
+    payload_refusal,
+    skip_reason,
+)
 from symposium_rules.validate import (
     NON_GROUNDABLE_TYPES,
     passed,
@@ -155,6 +160,23 @@ class ApiService(Service):
         self.index.catch_up(conn, community)
         return community
 
+    # ── what the record cites on the data server ───────────────────────────────────────────
+    def record_citing(self, conn, community: str, file_id, n: int) -> list:
+        """The names of the Artifacts in the record that cite this file version. The index is
+        brought level with the record in the caller's transaction, so an Artifact accepted a
+        moment ago counts."""
+        self.index.catch_up(conn, community, commit=False)
+        return self.index.citing_file(conn, community, file_id, n)
+
+    def cited_versions(self, document: dict) -> list:
+        """The file versions an Artifact cites, as (file id, n, Content name); the file id is
+        None where the location is not a well-formed citation."""
+        out = []
+        for name, location, _ in cited_files(document):
+            file_id, n = parse_citation(location) or (None, 0)
+            out.append((file_id, n, name))
+        return out
+
     def position(self, conn, community: str) -> dict:
         seq = self.index.position(conn, community)
         newest = self.index.newest(conn, community)
@@ -194,7 +216,7 @@ class ApiService(Service):
     def address_url(
         self, caller, community, address: str, kind: str | None = None
     ) -> str:
-        """The canonical URL of what an address names (api/DESIGN.md §1.4)."""
+        """The canonical URL of what an address names (api/DESIGN.md#canonical-urls)."""
         base, _, schema = address.partition("#")
         segs = base[1:].split(".")
         if schema or kind is None and len(segs) > 1:

@@ -23,7 +23,8 @@ one admin Artifact) on the
 ISG restriction screen of [Martin-Sancho et al.
 2021](https://doi.org/10.1016/j.molcel.2021.04.008). Every embedded value is a
 real value with a cell address in the published supplementary tables behind
-it.
+it. Its source files are cited on the data server, and the file ids and digests
+in those citations show the form a citation takes.
 
 It has two jobs at once. It is what `validate_record.py` walks in
 publication order, checking each Artifact against everything published before

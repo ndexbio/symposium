@@ -4,7 +4,10 @@ the tools print it their way and the API reports it as a finding."""
 
 from __future__ import annotations
 
-from .validate import EMBED_REFUSE, embedded_size
+from .validate import EMBED_REFUSE, embedded_size, method_of
+
+# where a `download` Content's location is a file version held on the data server
+DATA_LOCATION = "symposium-data:"
 
 
 def skip_reason(inbox_name: str, owner: str, declared, members) -> str | None:
@@ -30,9 +33,25 @@ def naming_refusal(name, account: str) -> str | None:
     return None
 
 
+def cited_files(document: dict) -> list:
+    """The file versions an Artifact cites on the data server: each `download` Content whose
+    `location` is a data-server citation, as (Content name, location, sha256 or None). The gate
+    verifies these, and the data server keeps their content."""
+    out = []
+    for o in document.get("objects") or []:
+        if not isinstance(o, dict) or o.get("type") != "Content":
+            continue
+        if method_of(o.get("name")) != "download":
+            continue
+        location = str(o.get("location") or "")
+        if location.startswith(DATA_LOCATION):
+            out.append((o.get("name"), location, o.get("sha256") or None))
+    return out
+
+
 def payload_excess(artifact: dict):
     """(total bytes, the properties by size) when the artifact's embedded payload is over
-    EMBED_REFUSE, or None. An artifact that large belongs in the file store."""
+    EMBED_REFUSE, or None. policy/embedding-and-size.md says what is published in its place."""
     total, props = embedded_size(artifact)
     return (total, props) if total > EMBED_REFUSE else None
 

@@ -271,6 +271,12 @@ async def _unreadable(request: Request, error: RequestValidationError):
 # composition root registers the record index's position here, so this module never
 # imports the API.
 status_extensions: list = []
+# A version the record cites keeps its content. The record's structure belongs to the
+# record API, so `symposium_server` appends what answers for it:
+#   purge_guards       (conn, community, file_id, n) -> the names of the Artifacts citing it
+#   acceptance_guards  (document) -> the versions it cites, as (file_id, n, Content name)
+purge_guards: list = []
+acceptance_guards: list = []
 
 
 @app.get("/v1/status")
@@ -2098,6 +2104,10 @@ def delete_file(
         return written(conn, community, file_id, n, status_code=200)
 
 
+# how many citing Artifacts a refused purge names
+CITING_SHOWN = 5
+
+
 def version_number(ref: str) -> int:
     if not ref.isdigit() or int(ref) < 1:
         refuse(400, "name a version by its number")
@@ -2128,6 +2138,24 @@ def purge(
             )
         if not allowed:
             refuse(403, f"purging needs manage on {community}/{row['collection']}")
+        # the record's row: an acceptance in flight and this purge wait for one another
+        records.lock_collection(conn, community, rbac.RECORD)
+        citing = sorted(
+            {
+                name
+                for guard in purge_guards
+                for name in guard(conn, community, file_id, n)
+            }
+        )
+        if citing:
+            shown = ", ".join(f"`{name}`" for name in citing[:CITING_SHOWN])
+            more = len(citing) - CITING_SHOWN
+            refuse(
+                409,
+                f"`symposium-data:{file_id}@v{n}` is cited in the record by {shown}"
+                + (f" and {more} more" if more > 0 else "")
+                + "; a version the record cites keeps its content",
+            )
         pid = records.purge(conn, file_id, n)
     freed = pid is not None and cleanup.finish_purge(pid)
     result = {"purged": f"symposium-data:{file_id}@v{n}", "bytes_freed": freed}
@@ -2464,6 +2492,27 @@ def by_hash(
         }
 
 
+def absent_citation(conn, community: str, document) -> str | None:
+    """Why this Artifact may not enter the record: a file version it cites that is not one of
+    this community's with its content present. None when every cited version is."""
+    for guard in acceptance_guards:
+        for file_id, n, name in guard(document):
+            if file_id is None:
+                return (
+                    f"Content `{name}` cites a file version that is not on this server"
+                )
+            try:
+                present = not records.version(conn, community, file_id, n)["purged"]
+            except NotFound:
+                present = False
+            if not present:
+                return (
+                    f"Content `{name}` cites `symposium-data:{file_id}@v{n}`, whose "
+                    "content is not on this server"
+                )
+    return None
+
+
 @app.post("/v1/communities/{community}/collections/{collection}/files", status_code=201)
 def promote(
     caller: Annotated[Caller, Depends(authorize("promoteVersion"))],
@@ -2533,6 +2582,13 @@ def promote(
             clock, payload = None, source["payload_id"]
             if document is not None:
                 clock = records.allocate(conn, community, collection)
+                if collection == rbac.RECORD:
+                    # under the record's row, which a purge takes too: what an accepted
+                    # Artifact cites has its content
+                    absent = absent_citation(conn, community, document)
+                    if absent:
+                        conn.rollback()
+                        refuse(409, absent)
                 data = json.dumps(stamp(document, pointer, iso(clock[1]))).encode()
                 store.put_bytes(s3_key, data)
                 try:

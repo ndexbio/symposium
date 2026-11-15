@@ -233,9 +233,9 @@ A Content Object's **name is the method token in the address**, so it is chosen 
 
 The rule, the size limits, and what to do when you hit them are in [`policy/embedding-and-size.md`](policy/embedding-and-size.md). Read it before you publish anything you produced yourself. It is community policy, not part of the specification.
 
-The short version: over 50 KB you get a REVIEW, over 250 KB `/symposium publish` refuses, and the fix is almost always a narrower question rather than a bigger Artifact.
+The short version: embed what a reader reads and what an Argument grounds on. Over 50 KB you get a REVIEW, and over 250 KB `/symposium publish` refuses. The fix is a narrower question, or the full output stored as a file (`/symposium data put <file> --collection files`) and cited from a `download` Content with its `sha256`, beside the embedded rows.
 
-The path the record is built around: bulk content behind `download` → an **Analysis** computes over it → its **output Data** carries a small embedded table → Arguments ground on *that*, verifiably.
+The path the record is built around: bulk content behind `download` → an **Analysis** computes over it → its **output Data** carries a small embedded table, and cites its full output as a file where there is more → Arguments ground on the embedded table, verifiably.
 
 ## 9. Failure modes — the ones that will actually happen
 

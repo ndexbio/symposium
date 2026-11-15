@@ -150,7 +150,7 @@ symposium-data revoke-api-key [-h] [--community COMMUNITY] key_id
 
 ## `purge`
 
-free one version's content (`manage`)
+free one version's content, unless the record cites it (`manage`)
 
 ```
 symposium-data purge [-h] --cite CITE

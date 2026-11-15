@@ -371,7 +371,7 @@ def test_the_grant_table_matches_the_contract(spec, design):
         )
         for path, method, op in operations(spec)
     }
-    rows = table(design, "### 3.3 Endpoint × grants")
+    rows = table(design, "### Grants by endpoint")
     documented = {operation: tuple(cells) for operation, *cells in rows}
     assert documented == contract
 
@@ -381,7 +381,7 @@ def test_the_design_maps_every_command_to_a_real_endpoint(spec, design):
         op["operationId"]: f"{method.upper()} {path}"
         for path, method, op in operations(spec)
     }
-    commands = table(design, "## 2. The skill's commands → endpoints")
+    commands = table(design, "## Skill commands and their endpoints")
     for command in SKILL_COMMANDS:
         assert any(
             re.search(rf"`{re.escape(command)}\b", row[0]) for row in commands

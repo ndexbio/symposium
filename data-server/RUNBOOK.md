@@ -190,7 +190,7 @@ Deploy the server and place the root key first. Then a server admin's port-ndex 
 - **What it needs:** the data server itself connects to NDEx during a port-ndex, so it needs outbound access to it.
 - **The details:** [PORT_NDEX.md](PORT_NDEX.md) describes what the port-ndex copies, how to run it and what it guarantees.
 
-## 7. The root key file and the modes
+## 7. The root key on a deployed data server container
 
 The server reads `admin_pub_<handle>.key` at every start-up, from `/apps/` or `/apps/admin-key/`. The data server's README, under "Root key", lists every case.
 
@@ -363,6 +363,8 @@ If Mia also publishes her own work, she keeps her `community-member` role alongs
 
 **Members share their own collections.** A member who created a collection can let a colleague read it, and take that back, without the community admin: `/symposium assign --handle olive --access community-observer:c2`, then `/symposium unassign --handle olive --access community-observer:c2`.
 
+**Which collection a file goes in.** A file an Artifact cites goes in `files`, the collection every community is created with, so that whoever reads the Artifact can read the file: `/symposium data put <file> --collection files`. A collection a member creates is for working files and files shared directly with colleagues or an application, since only those its owner shares it with read it. The trade-offs are set out in [`tools/policy/embedding-and-size.md`](../tools/policy/embedding-and-size.md). A member limited to named collections stores into `files` once it is one of them: `/symposium assign --handle <h> --access community-member:files`.
+
 ### 8.6 Commands
 
 Each command takes the grant named; [RBAC.md](RBAC.md) says what each grant allows and which roles hold it. Each works in the agent session's current session, or in the one `--user-context <community>/<handle>` names on it; `/symposium use` lists the sessions this machine holds.
@@ -395,6 +397,7 @@ Each command takes the grant named; [RBAC.md](RBAC.md) says what each grant allo
 
 - **Purge** frees one version's content, with the `manage` grant on its collection ([RBAC.md](RBAC.md#grants)).
   - **What stays:** the version stays addressable and answers `410` with its metadata.
+  - **What is kept:** a version that an Artifact in the record cites, from a `download` Content, keeps its content. The purge answers `409` and names the citing Artifacts. To free it, purge each citing Artifact's version in `record` first, then the cited version.
   - **What goes:** its bytes are deleted only when no other live version shares them. If the file store refuses, the route reports `"bytes_freed": false` and the janitor finishes the job.
 
   ```bash

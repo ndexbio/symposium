@@ -181,7 +181,7 @@ Every route is under `/v1/communities/{community}`. Record listings page with `c
 | `GET /collections` | The community's collections the caller may use, each with its owner, whether it is public, and the caller's `access`: `read` to list and read its files, `write` to add files, `manage` to share it or change its visibility | issued key, session key, no key (public) |
 | `GET /collections/{collection}` | One collection, with the caller's `access` | issued key, session key, no key (public) |
 
-**Files.** A file has its collection's access: `read` to read it, `write` to add to the collection. The file's creator versions or deletes it with `write`, and a `manage` holder does so for any file. A non-member issued key reads.
+**Files.** A file has its collection's access: `read` to read it, `write` to add to the collection. The file's creator versions or deletes it with `write`, and a `manage` holder does so for any file. A non-member issued key reads. A file an Artifact cites goes in `files`, where the record's readers can reach it; a collection a member creates is for working files and files shared directly. A file version that an Artifact in the record cites keeps its content.
 
 | Route | Does | Authentication |
 |---|---|---|
@@ -277,7 +277,7 @@ A collection's owner shares it read-only by adding it to someone's `community-ob
 
 | Route | Does | Grants | Authentication |
 |---|---|---|---|
-| `DELETE /v1/communities/{community}/files/{id}/versions/{n}` | Purges one version's content: the version stays addressable and answers `410` with its metadata. Its bytes are freed once no other live version shares them (`bytes_freed`) | `manage` | session key |
+| `DELETE /v1/communities/{community}/files/{id}/versions/{n}` | Purges one version's content: the version stays addressable and answers `410` with its metadata. Its bytes are freed once no other live version shares them (`bytes_freed`). A version an Artifact in the record cites is refused with `409`, naming the citing Artifacts | `manage` | session key |
 | `POST /v1/communities/{community}/collections/{collection}/files {from, name?, metadata?, stamp_json_pointer?}` | Copies the version `from` cites into the collection as a new file, atomically, with the server's clock written at `stamp_json_pointer`. Into `record` it takes `gate`: the gate's accept | `gate`, or `manage` outside `record` | session key |
 | `GET /v1/status` | The server's version, health, mode and root handle. Open to every caller | — | no key required |
 
@@ -513,7 +513,7 @@ curl -s $API/communities/demo/collections/test_collection_public/changes \
 curl -s $API/communities/demo/files/<file id>/versions/latest -o summary.csv
 ```
 
-A file an Artifact cites works the same way: `put` prints the file's citation, `symposium-data:<file id>@v1`, an Artifact cites it as a `download` Content Object whose `location` is that citation (`tools/CANONICAL.md`), and resolving that Object answers the file's `location_url`, read with the access its collection gives.
+A file an Artifact cites works the same way: `put` into `files` prints the file's citation, `symposium-data:<file id>@v1`, an Artifact cites it as a `download` Content Object whose `location` is that citation (`tools/CANONICAL.md`), and resolving that Object answers the file's `location_url`, read with the access its collection gives. A cited file goes in `files` so that whoever reads the Artifact can read the file; `tools/policy/embedding-and-size.md` sets out the choice.
 
 **14. Retire keys.** Each key's issuer, or the community admin, deletes it. In `agent_lyra`'s session:
 

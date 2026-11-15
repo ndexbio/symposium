@@ -4,6 +4,7 @@ validates them in a serial order, promotes each accepted one into `record` (the 
 keeps no decision only it knows: the record version or the reply names the submission it
 decided, so a lost state file is rebuilt from the server."""
 
+import hashlib
 import json
 import signal
 import subprocess
@@ -231,6 +232,214 @@ def test_a_download_on_the_data_server_is_verified(suite, root_dir, cli):
     }
     assert "sha256 does not match" in out and "is not strictly earlier" in out
     assert len(replies(cli, root_dir)) == 2
+
+
+def table(
+    directory: Path, name: str, stored: dict, file_name: str, values: str = ""
+) -> Path:
+    """A Data artifact in the form the embedding policy gives: its full output a file in
+    `files`, cited from a groundable `download` Content with its sha256, and, with `values`,
+    the rows an Argument turns on embedded under a `csv` Content."""
+    citation = stored["citation"]
+    header = {
+        "name": name,
+        "type": "Data",
+        "title": "Scores",
+        "description": "Scores by gene. The full table is the file behind `download`.",
+        "produced_by": "@lyra_analysis_count_v1",
+    }
+    contents = [
+        {
+            "name": "download",
+            "type": "Content",
+            "description": "The full table, as CSV.",
+            "addressing_method": "row=<gene>&col=<column name>, in the file. "
+            "Line 1 is the header.",
+            "groundable": True,
+            "location": citation,
+            "sha256": stored["sha256"],
+            "access_method": "A file in this community's `files` collection on the data "
+            f"server. `/symposium data get {citation} --out {file_name}` downloads it, "
+            "checked against its digest.",
+        }
+    ]
+    if values:
+        header["values"] = values
+        contents.insert(
+            0,
+            {
+                "name": "csv",
+                "type": "Content",
+                "description": "The rows an Argument turns on, held in `values`.",
+                "addressing_method": "row=<gene>&col=<column name>. Line 1 is the header.",
+                "groundable": True,
+            },
+        )
+    return artifact(directory, header, contents)
+
+
+def argument(directory: Path, name: str, citation: str) -> Path:
+    """An Argument by vega resting on one Ground: the profile's worked skeleton."""
+    path = directory / f"{name}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "artifact": {
+                    "name": name,
+                    "type": "Argument",
+                    "specification_version": "1.0",
+                    "published_by": "@vega",
+                    "created": None,
+                    "authors": ["vega"],
+                    "primary_assertion": "a_primary",
+                    "verdict": "Supported, for the purpose stated.",
+                    "purpose": "Choosing one gene to follow up; a wrong pick is cheap.",
+                    "rationale": "The score puts BST2 on the list.",
+                },
+                "objects": [
+                    {
+                        "name": "a_primary",
+                        "type": "Assertion",
+                        "claim": "BST2 scores among the lowest.",
+                        "scope": "This table only.",
+                    },
+                    {
+                        "name": "g_score",
+                        "type": "Ground",
+                        "citation": citation,
+                        "rationale": "The score the table gives for BST2.",
+                        "criterion": "A high score would have removed it.",
+                    },
+                ],
+                "relationships": [
+                    {"rel": "grounded_by", "source": "a_primary", "target": "g_score"}
+                ],
+            }
+        )
+    )
+    return path
+
+
+def fetched(cli, member: Path, location: str) -> bytes:
+    """The file a citation names, as `/symposium data get` downloads it."""
+    out = member / "fetched.bin"
+    cli.ok(member, "get", location, "--out", out)
+    return out.read_bytes()
+
+
+def test_a_published_download_is_read_as_its_file_and_grounded_on(suite, root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
+    vega = enroll(cli, root_dir, "vega")
+    assert tool(suite, lyra, "publish.py", analysis(lyra))[0] == 0
+    gate(suite, root_dir)
+    scores = lyra / "scores.csv"
+    scores.write_text("gene,score\nBST2,0.06\nLY6E,0.24\n")
+    stored = cli.ok(
+        lyra, "put", scores, "--collection", "files", "--name", "scores.csv"
+    )
+    data = table(lyra, "lyra_data_scores_v1", stored, "scores.csv")
+    assert tool(suite, lyra, "publish.py", data)[0] == 0
+    assert "ACCEPTED" in gate(suite, root_dir)
+
+    # another member reads the Artifact from her copy of the record, then the file it cites
+    code, out = tool(suite, vega, "sync.py")
+    assert code == 0, out
+    held = json.loads((vega / "record" / "lyra_data_scores_v1.json").read_text())
+    content = next(o for o in held["objects"] if o["name"] == "download")
+    assert content["location"] == stored["citation"]
+    got = fetched(cli, vega, content["location"])
+    assert got == scores.read_bytes()
+    assert hashlib.sha256(got).hexdigest() == content["sha256"]
+
+    # and grounds on a cell of it: accepted, with the REVIEW that says nothing checked the cell
+    cell = "@lyra_data_scores_v1#download.row=BST2&col=score"
+    code, out = tool(
+        suite, vega, "publish.py", argument(vega, "vega_arg_bst2_v1", cell)
+    )
+    assert code == 0, out
+    assert "grounds via 'download'" in out
+    assert "ACCEPTED" in gate(suite, root_dir)
+    assert "vega_arg_bst2_v1" in {i["name"] for i in records(cli, root_dir)}
+
+
+def test_a_result_over_the_limit_is_published_as_its_rows_and_its_file(
+    suite, root_dir, cli
+):
+    lyra = enroll(cli, root_dir, "lyra")
+    vega = enroll(cli, root_dir, "vega")
+    assert tool(suite, lyra, "publish.py", analysis(lyra))[0] == 0
+    gate(suite, root_dir)
+    rows = ["gene,score"] + [f"GENE{i},{i / 100000:.5f}" for i in range(20000)]
+    full = "\n".join(rows) + "\n"
+    assert len(full) > 250 * 1024
+
+    # embedded whole, it is refused before anything is submitted, and the policy is named
+    whole = artifact(
+        lyra,
+        {
+            "name": "lyra_data_scores_v1",
+            "type": "Data",
+            "title": "Scores",
+            "description": "Scores by gene.",
+            "produced_by": "@lyra_analysis_count_v1",
+            "values": full,
+        },
+        [
+            {
+                "name": "csv",
+                "type": "Content",
+                "description": "Every row.",
+                "addressing_method": "row=<gene>&col=<column name>.",
+                "groundable": True,
+            }
+        ],
+    )
+    code, out = tool(suite, lyra, "publish.py", whole)
+    assert code != 0
+    assert "over the 250 KB limit" in out and "A result over the limit" in out
+    assert not [
+        i for i in submissions(cli, root_dir) if i["name"].startswith("lyra_data_")
+    ]
+
+    # in the policy's form: the rows an Argument turns on embedded, the full output a file
+    scores = lyra / "scores.csv"
+    scores.write_text(full)
+    stored = cli.ok(
+        lyra, "put", scores, "--collection", "files", "--name", "scores.csv"
+    )
+    few = "\n".join(rows[:4]) + "\n"
+    code, out = tool(
+        suite,
+        lyra,
+        "publish.py",
+        table(lyra, "lyra_data_scores_v1", stored, "scores.csv", values=few),
+    )
+    assert code == 0, out
+    assert "embedded payload" not in out
+    assert "ACCEPTED" in gate(suite, root_dir)
+    assert [
+        i["name"] for i in records(cli, root_dir) if i["name"].startswith("lyra_data_")
+    ] == ["lyra_data_scores_v1"]
+
+    # the citation gives the full table back
+    got = fetched(cli, vega, stored["citation"])
+    assert got == full.encode() and len(got) > 250 * 1024
+    assert hashlib.sha256(got).hexdigest() == stored["sha256"]
+
+    # a Ground on an embedded row is verified to the cell; a row only in the file is not there
+    embedded = "@lyra_data_scores_v1.values#csv.row=GENE1&col=score"
+    code, out = tool(
+        suite, vega, "publish.py", argument(vega, "vega_arg_gene1_v1", embedded)
+    )
+    assert code == 0, out
+    assert "grounds via" not in out
+    absent = "@lyra_data_scores_v1.values#csv.row=GENE19999&col=score"
+    code, out = tool(
+        suite, vega, "publish.py", argument(vega, "vega_arg_gene19999_v1", absent)
+    )
+    assert code != 0, out
+    assert "ACCEPTED" in gate(suite, root_dir)
+    assert "vega_arg_gene1_v1" in {i["name"] for i in records(cli, root_dir)}
 
 
 def test_a_removed_members_pending_submission_is_skipped(suite, root_dir, cli):

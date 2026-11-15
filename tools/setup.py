@@ -45,7 +45,9 @@ class Setup:
         self.data = data
 
     def run(self, invite_file: str) -> dict:
-        context = self.data.run("context", "set", "--invite-file", invite_file)["context"]
+        context = self.data.run("context", "set", "--invite-file", invite_file)[
+            "context"
+        ]
         registered = self.data.run("owner", "register")
         access = self.data.run("access")
         out = {
@@ -57,18 +59,28 @@ class Setup:
             "roles": access["roles"],
         }
         if context["community"] is None:
-            return out  # a server-level user: its communities have sessions of their own
+            return (
+                out  # a server-level user: its communities have sessions of their own
+            )
         held = rbac.UserContext.from_view(access["context"])
-        if not held.allowsRequest(rbac.READ, context["community"],
-                                  rbac.CollectionRef(RECORD)):
-            return {**out, "record": None,
-                    "record_access": "your access reads named collections only, so this "
-                                     "session works without a copy of the record"}
+        if not held.allowsRequest(
+            rbac.READ, context["community"], rbac.CollectionRef(RECORD)
+        ):
+            return {
+                **out,
+                "record": None,
+                "record_access": "your access reads named collections only, so this "
+                "session works without a copy of the record",
+            }
         sync = Sync(self.data, quiet=True, lists_messages=True)
         synced = sync.once()
         if synced is None:
-            raise DataError({"error": "registered, but the record could not be synced: run "
-                             "`/symposium sync` once the server answers"})
+            raise DataError(
+                {
+                    "error": "registered, but the record could not be synced: run "
+                    "`/symposium sync` once the server answers"
+                }
+            )
         return {
             **out,
             "record": {"artifacts": synced["artifacts"], "replies": synced["replies"]},
@@ -78,9 +90,12 @@ class Setup:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        prog="setup", description="Join with an invite file: a community, or the server."
+        prog="setup",
+        description="Join with an invite file: a community, or the server.",
     )
-    parser.add_argument("--invite-file", required=True, help="the invite file you were sent")
+    parser.add_argument(
+        "--invite-file", required=True, help="the invite file you were sent"
+    )
     args = parser.parse_args(argv)
     try:
         result = Setup(SymposiumData()).run(args.invite_file)

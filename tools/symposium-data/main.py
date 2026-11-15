@@ -741,7 +741,9 @@ class Commands:
                 f"{args.handle}}}` to the install's values file and run `helm upgrade "
                 "<release> <chart> -n <namespace> --version <chart version> -f <values "
                 f"file> --set-file adminKey.publicKey={key_file}`, which restarts the "
-                "server (the data server's RUNBOOK.md, 5.3: the root key on Kubernetes)",
+                "server",
+                "the data server's runbook covers each deployment under \"The root key on a "
+                'deployed data server container"',
                 f"check that GET {url}/v1/status reports root '{args.handle}' with this "
                 "fingerprint",
             ],
@@ -943,7 +945,7 @@ class Commands:
             args.handle, self.target_home(args, context), args.at
         )
 
-    # ── API keys (api/DESIGN.md §4.6): values move as 0600 files, never on stdout ───────────
+    # ── API keys (api/DESIGN.md#key-life-cycle): values move as 0600 files, never on stdout ──
     @staticmethod
     def api_key_dir(context: dict) -> Path:
         """Where a session's key files go: a homed user's in its own session, a server-level
@@ -1530,7 +1532,12 @@ def build_parser(commands: Commands) -> argparse.ArgumentParser:
     p.add_argument("key_id")
     p.add_argument("--community", help="default: the context's community")
 
-    p = command(sub, "purge", commands.purge, "free one version's content (`manage`)")
+    p = command(
+        sub,
+        "purge",
+        commands.purge,
+        "free one version's content, unless the record cites it (`manage`)",
+    )
     p.add_argument("--cite", required=True, help="symposium-data:<file-id>@v<n>")
 
     p = command(

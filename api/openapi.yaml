@@ -6,8 +6,8 @@ info:
     Read a Symposium community record, follow it as it changes, and publish through the gate.
 
     The record's routes speak in the specification's model: Artifacts, Objects, properties,
-    relationships, Members and addresses (`spec/symposium_specification.md`, profiled by
-    `tools/CANONICAL.md`). The Symposium Data server serves them over the community record it
+    relationships, Members and addresses (the Symposium specification and its canonical
+    profile). The Symposium Data server serves them over the community record it
     holds, so every application sees the one record under the same access rules. Every URL
     they answer is one of the API's own.
 
@@ -17,7 +17,7 @@ info:
 
     **Canonical URLs.** Every resource carries a `url`: an absolute URL on the data server that
     names it whichever host asks. An address maps to a URL by a fixed rule (see
-    `GET /communities/{community}/addresses` and `api/DESIGN.md`).
+    `GET /communities/{community}/addresses`).
 
     **Freshness.** Every read response carries `position`: the record's cursor and the
     `created` of the newest Artifact the response reflects.
@@ -3406,7 +3406,8 @@ paths:
         source's merged with `metadata`. With `stamp_json_pointer`, the content is a JSON
         document and the server writes the new version's own `created` at that pointer. The
         gate accepts a submission this way. A taken name or a tombstone answers 409, purged
-        content 410.
+        content 410. Into `record`, an Artifact whose `download` Content cites a file version
+        without its content on this server answers 409.
 
         Grants: gate, manage.
 
@@ -3858,7 +3859,9 @@ paths:
       summary: Free one version's content
       description: |
         The version stays addressable and answers 410 with its metadata from then on. Its
-        bytes are freed once no other live version shares them (`bytes_freed`).
+        bytes are freed once no other live version shares them (`bytes_freed`). A version that
+        an Artifact in the record cites keeps its content: the purge answers 409 and names the
+        citing Artifacts.
 
         Grants: manage.
 
@@ -3885,6 +3888,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /communities/{community}/files/{file_id}/versions/{ref}/metadata:
     get:
       operationId: statFileVersion
@@ -4298,7 +4303,7 @@ components:
     Conflict:
       description: |
         The request conflicts with the state: a name already in the record or already
-        submitted.
+        submitted, or a file version the record cites.
       content:
         application/json:
           schema:
@@ -4313,7 +4318,6 @@ components:
       description: |
         A stream cap is reached: 8 per API key, 4 per anonymous client address, 200
         anonymous in all, or the server's `SYMPOSIUM_SERVER_MAX_STREAMS` (default 500).
-        `api/DESIGN.md` §10.5 holds the rules.
         Close a stream or retry later.
       content:
         application/json:
@@ -5179,7 +5183,7 @@ components:
       description: |
         `pending` until the gate decides. `skipped` when the gate's own rule sets it aside: its
         inbox name is the artifact's name with the wrong prefix, or its submitter is not an
-        active member. Then `accepted` or `rejected`. `api/DESIGN.md` §6 says where each comes from.
+        active member. Then `accepted` or `rejected`.
       enum: [pending, skipped, accepted, rejected]
     SubmissionResource:
       type: object

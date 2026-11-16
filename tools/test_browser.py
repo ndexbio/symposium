@@ -2005,6 +2005,21 @@ def case_y_edges_found_in_review(dists):
                     f"<session>/{name} is titled {browse.community_name(session / name)!r}"
                 )
 
+    # one definition of a Lineage link's look and order: the links' own rules carry the
+    # colour and dash the legend and arrowheads use, and the kinds rank as browse ranks them
+    if tuple(T.LINEAGE_LOOK) != browse.LINEAGE_KINDS or set(T.LINEAGE_WIDTH) != set(
+        T.LINEAGE_LOOK
+    ):
+        bad.append("the Lineage kinds differ between browse and templates")
+    if re.search(r"path\.lk-\w+ \{\{", T.LINEAGE_TEMPLATE):
+        bad.append("a Lineage link's style is written out beside LINEAGE_LOOK")
+    for k, (colour, dash, _s, _l) in T.LINEAGE_LOOK.items():
+        rule = re.search(r"path\.lk-%s \{([^}]*)\}" % k, page)
+        if not rule or f"stroke:{colour};" not in rule.group(1) or (
+            bool(dash) != (f"stroke-dasharray:{dash};" in rule.group(1))
+        ):
+            bad.append(f"a {k} link is not drawn in the legend's colour and dash")
+
     if "function reveal(scroll)" not in T.ARTIFACT_TEMPLATE or (
         "window.addEventListener('hashchange'" not in T.ARTIFACT_TEMPLATE
     ):

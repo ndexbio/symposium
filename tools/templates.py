@@ -2395,9 +2395,7 @@ LINEAGE_TEMPLATE = """<!doctype html>
                overflow:hidden; text-overflow:ellipsis; line-height:1.45; }}
   .mbadge {{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px;
              vertical-align:middle; border:1px solid rgba(0,0,0,.15); }}
-  path.lk-supersedes {{ stroke:#1d4ed8; stroke-width:2.6; }}
-  path.lk-ground {{ stroke:#15803d; stroke-width:2.2; stroke-dasharray:10 3 2 3; }}
-  path.lk-cites {{ stroke:#6b7280; stroke-width:1.6; stroke-dasharray:5 4; }}
+{link_css}
   path.cross {{ opacity:.8; }}
   main.lines {{ max-width:960px; margin:0 auto; padding:6px 16px 60px; }}
   .lines h2 {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
@@ -2455,6 +2453,21 @@ LINEAGE_LOOK = {
         "which it cites in prose (context, not evidence)",
     ),
 }
+#: How wide each kind's link is drawn, px: the stronger the link, the heavier the line.
+LINEAGE_WIDTH = {"supersedes": 2.6, "ground": 2.2, "cites": 1.6}
+
+
+def lineage_link_css():
+    """The links' style rules, from LINEAGE_LOOK and LINEAGE_WIDTH: the same colour and dash
+    the legend's swatches and the arrowheads are drawn with, so the three cannot differ."""
+    return "\n".join(
+        f"  path.lk-{k} {{ stroke:{c}; stroke-width:{LINEAGE_WIDTH[k]};"
+        + (f" stroke-dasharray:{dash};" if dash else "")
+        + " }"
+        for k, (c, dash, _s, _l) in LINEAGE_LOOK.items()
+    )
+
+
 LINEAGE_NODE = (170, 164)  # a node's width and height, px
 LINEAGE_GAP = (26, 46)  # between columns, and between lines (room for a line's label)
 LINEAGE_PAD = 8
@@ -2642,6 +2655,7 @@ def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=
         roundslink=ROUNDS_LINK if has_rounds else "",
         summary=summary,
         legend=legend,
+        link_css=lineage_link_css(),
         width=width,
         height=height,
         markers=markers,

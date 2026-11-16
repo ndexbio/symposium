@@ -358,6 +358,9 @@ HTML_TEMPLATE = r"""<!doctype html>
       // computed one
       {{ selector: 'node.moved', style: {{
           'border-width': 2, 'border-opacity': 1, 'border-color': '#0f766e', 'border-style': 'dashed' }} }},
+      // a moved claim keeps its finding marker: the dashes say it was moved, the orange that a
+      // finding is on it. Listed after node.moved, whose border colour would otherwise win.
+      {{ selector: 'node.moved[?flagged]', style: {{ 'border-color': '#d97706' }} }},
       // a highlighted edge wins over the flow-mode dimming (listed last)
       {{ selector: 'edge.hi', style: {{ 'width': 3.2, 'opacity': 1 }} }}
     ],
@@ -901,20 +904,24 @@ HTML_TEMPLATE = r"""<!doctype html>
       + e.style('line-style') + ';border-top-width:' + Math.max(1.5, Math.min(3, parseFloat(e.style('width')) || 1.5))
       + 'px"></span>';
   }}
-  // the element a row's swatch is read from: one showing no transient or marker state
-  function sample(els, plain) {{
+  // the element a row's swatch is read from: one showing no transient state and, where the
+  // row has one, none of the states `avoid` names, so a row's swatch shows that row's mark alone
+  function sample(els, avoid) {{
     var calm = els.filter(function (e) {{
-      return !e.hasClass('hi') && !e.hasClass('faded') && (!plain || (!e.hasClass('moved') && !e.data('flagged')));
+      return !e.hasClass('hi') && !e.hasClass('faded') && !(avoid && avoid(e));
     }});
     return (calm.length ? calm : els).first();
   }}
+  function isMoved(e) {{ return e.hasClass('moved'); }}
+  function isFlagged(e) {{ return !!e.data('flagged'); }}
+  function isMarked(e) {{ return isMoved(e) || isFlagged(e); }}
   function rows(defs, all, isNode) {{
     var html = '', seen = cy.collection();
     defs.forEach(function (d) {{
       var els = cy.$(d[0]).filter(onGraph);
       seen = seen.union(els);
       if (!els.length) return;
-      var one = sample(els, true);
+      var one = sample(els, isMarked);
       html += '<span class="lg">' + (isNode ? nodeSwatch(one) : edgeSwatch(one)) + d[1] + ' (' + els.length + ')</span>';
     }});
     var rest = all.difference(seen), kinds = {{}};
@@ -930,18 +937,20 @@ HTML_TEMPLATE = r"""<!doctype html>
     return html;
   }}
   function markersLegend() {{
-    var s = '', flagged = cy.nodes('[?flagged]'), onClaims = 0;
+    var s = '', flagged = cy.nodes('[?flagged]'), onClaims = 0, moved = cy.nodes('.moved');
+    var movedFlagged = moved.filter(isFlagged).length;
     flagged.forEach(function (n) {{ onClaims += (n.data('findings') || []).length; }});
     var marks = [
       [flagged, 'orange border — ' + onClaims + ' checker finding' + (onClaims === 1 ? '' : 's') + ' on '
-        + flagged.length + ' claim' + (flagged.length === 1 ? '' : 's') + '; click a claim to read'],
-      [cy.nodes('[?unverifiable]'), 'dotted border — not machine-verifiable: content outside the record'],
+        + flagged.length + ' claim' + (flagged.length === 1 ? '' : 's') + '; click a claim to read', isMoved],
+      [cy.nodes('[?unverifiable]'), 'dotted border — not machine-verifiable: content outside the record', isMoved],
       [cy.nodes('[?navigable]'), 'dashed border — has a page of its own; click to go there'],
-      [cy.nodes('.moved'), 'teal dashed border — a node you moved; Reset positions puts it back']
+      [moved, 'teal dashed border' + (movedFlagged ? ', orange on a claim with a finding' : '')
+        + ' — a node you moved; Reset positions puts it back', isFlagged]
     ];
     marks.forEach(function (m) {{
       var els = m[0].filter(onGraph);
-      if (els.length) s += '<span class="lg">' + nodeSwatch(sample(els, false)) + m[1] + ' (' + els.length + ')</span>';
+      if (els.length) s += '<span class="lg">' + nodeSwatch(sample(els, m[2])) + m[1] + ' (' + els.length + ')</span>';
     }});
     var loose = (c.findings || 0) - onClaims;
     if (loose > 0) s += '<span class="lg">' + loose + ' checker finding' + (loose === 1 ? '' : 's')

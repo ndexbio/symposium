@@ -2019,7 +2019,7 @@ def case_y_edges_found_in_review(dists):
     if re.search(r"path\.lk-\w+ \{\{", T.LINEAGE_TEMPLATE):
         bad.append("a Lineage link's style is written out beside LINEAGE_LOOK")
     for k, (colour, dash, _s, _l) in T.LINEAGE_LOOK.items():
-        rule = re.search(r"path\.lk-%s \{([^}]*)\}" % k, page)
+        rule = re.search(r"path\.lk-" + k + r" \{([^}]*)\}", page)
         if (
             not rule
             or f"stroke:{colour};" not in rule.group(1)

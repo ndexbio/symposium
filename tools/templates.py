@@ -944,7 +944,6 @@ HTML_TEMPLATE = r"""<!doctype html>
       [flagged, 'orange border — ' + onClaims + ' checker finding' + (onClaims === 1 ? '' : 's') + ' on '
         + flagged.length + ' claim' + (flagged.length === 1 ? '' : 's') + '; click a claim to read', isMoved],
       [cy.nodes('[?unverifiable]'), 'dotted border — not machine-verifiable: content outside the record', isMoved],
-      [cy.nodes('[?navigable]'), 'dashed border — has a page of its own; click to go there'],
       [moved, 'teal dashed border' + (movedFlagged ? ', orange on a claim with a finding' : '')
         + ' — a node you moved; Reset positions puts it back', isFlagged]
     ];
@@ -952,6 +951,11 @@ HTML_TEMPLATE = r"""<!doctype html>
       var els = m[0].filter(onGraph);
       if (els.length) s += '<span class="lg">' + nodeSwatch(sample(els, m[2])) + m[1] + ' (' + els.length + ')</span>';
     }});
+    // Said in words, with no swatch: no one border marks these. Addressed content with a page
+    // keeps its type's solid border, so a "dashed border" row sat over solid nodes.
+    var nav = cy.nodes('[?navigable]').filter(onGraph).length;
+    if (nav) s += '<span class="lg">' + nav + (nav === 1 ? ' node has a page of its own' : ' nodes have a page of their own')
+      + ' &mdash; click one to go there</span>';
     var loose = (c.findings || 0) - onClaims;
     if (loose > 0) s += '<span class="lg">' + loose + ' checker finding' + (loose === 1 ? '' : 's')
       + ' on the Argument as a whole, not on one claim</span>';

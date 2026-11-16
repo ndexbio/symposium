@@ -117,6 +117,33 @@ def community_name(record_dir):
     return name.strip() if isinstance(name, str) and name.strip() else None
 
 
+#: Abbreviations a sentence does not end at, though a full stop and a space follow.
+_NOT_AN_END = re.compile(
+    r"(?:\b(?:al|Fig|Figs|fig|figs|Eq|Eqs|Ref|Refs|No|vs|cf|ca|approx|resp|e\.g|i\.e|Dr|Prof)"
+    r"|\b[A-Z])\.$"
+)
+
+
+def sentences(text):
+    """`text` as its sentences. One ends at `.`, `!` or `?` before a space, except after an
+    abbreviation or an initial (`et al.`, `Fig.`, `vs.`, `J.`), or where a lower-case letter
+    or a digit follows the full stop (`e.g. the`, `Fig. 2`), so a verdict's opening is a
+    whole sentence and keeps its qualifiers."""
+    text = (text or "").strip()
+    out, start = [], 0
+    for m in re.finditer(r"(?<=[.!?])\s+", text):
+        head, nxt = text[start : m.start()], text[m.end() : m.end() + 1]
+        if head.endswith(".") and (
+            _NOT_AN_END.search(head) or nxt.islower() or nxt.isdigit()
+        ):
+            continue
+        out.append(head)
+        start = m.end()
+    if text[start:]:
+        out.append(text[start:])
+    return out
+
+
 def load_record(record_dir):
     """Every canonical artifact in a directory, oldest first.
 
@@ -2241,8 +2268,7 @@ def contents_entries(artifacts, colors, pages, findings_by):
         name, typ = h["name"], h["type"]
         verdict = ""
         if typ == ARGUMENT and h.get("verdict"):
-            parts = re.split(r"(?<=[.!?])\s+", h["verdict"].strip())
-            verdict = " ".join(parts[:2])
+            verdict = " ".join(sentences(h["verdict"])[:2])
         extra = []
         if typ == ARGUMENT:
             n = sum(1 for o in a.get("objects", []) if o.get("type") == "Ground")
@@ -2328,7 +2354,7 @@ def round_entry(doc, colors, pages, serves, goal_label, this_goal=None):
     owner = h.get("published_by", "").lstrip("@")
     verdict = ""
     if typ == ARGUMENT and h.get("verdict"):
-        verdict = re.split(r"(?<=[.!?])\s+", h["verdict"].strip())[0]
+        verdict = sentences(h["verdict"])[0]
     others = [goal_label[g] for g in serves.get(name, []) if g != this_goal]
     return {
         "group": "result" if typ == "Data" and h.get("produced_by") else typ,
@@ -2565,7 +2591,7 @@ def lineage_nodes(artifacts, colors, pages):
         out[h["name"]] = {
             "name": h["name"],
             "title": h.get("title") or h["name"],
-            "opening": re.split(r"(?<=[.!?])\s+", verdict)[0] if verdict else "",
+            "opening": sentences(verdict)[0] if verdict else "",
             "grounds": len(grounds),
             "tests": sum(1 for g in grounds if g.get("criterion")),
             "created": h.get("created") or "",

@@ -168,7 +168,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 <body>
 <header>
   <h1>{title}</h1>
-  <div class="sub">{arg_label} <code>{review_id}</code> &middot; <span class="mbadge" style="background:{member_color}"></span><b>{member}</b> &middot; {created}{genre_html} &middot; <a href="index.html" class="uplink">&uarr; community overview</a> &middot; <span class="hint">reading runs left &rarr; right into the claim being made &middot; hover = brief &middot; click = full detail &middot; dashed border = has a page of its own</span></div>
+  <div class="sub">{arg_label} <code>{review_id}</code> &middot; <span class="mbadge" style="background:{member_color}"></span><b>{member}</b> &middot; {created}{genre_html} &middot; <a href="index.html" class="uplink">&uarr; community overview</a> &middot; <span class="hint">reading runs left &rarr; right into the claim being made &middot; hover = brief &middot; click = full detail, with a Go to button where the node has a page of its own</span></div>
 </header>
 {intro_html}
 <div id="app">
@@ -958,7 +958,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     // keeps its type's solid border, so a "dashed border" row sat over solid nodes.
     var nav = cy.nodes('[?navigable]').filter(onGraph).length;
     if (nav) s += '<span class="lg">' + nav + (nav === 1 ? ' node has a page of its own' : ' nodes have a page of their own')
-      + ' &mdash; click one to go there</span>';
+      + ' &mdash; click one for its Go to button</span>';
     var loose = (c.findings || 0) - onClaims;
     if (loose > 0) s += '<span class="lg">' + loose + ' checker finding' + (loose === 1 ? '' : 's')
       + ' elsewhere in the Argument: on a Ground, an Assumption or the Argument as a whole</span>';

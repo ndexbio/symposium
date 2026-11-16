@@ -1858,6 +1858,11 @@ def case_x_claim_map_legend_is_read_from_the_graph(dists):
                 or "cy.nodes(OWNER_FILLED).filter(onGraph)" not in page
             ):
                 bad.append(f"{h['name']}: Members counts nodes by colour alone")
+            # nor does the header: addressed content with a page has a solid border
+            if "dashed border = has a page of its own" in page:
+                bad.append(
+                    f"{h['name']}: the header says a node with a page has a dashed border"
+                )
             if "'dashed border — has a page" in page:
                 bad.append(
                     f"{h['name']}: a legend row says a node with a page has a dashed "
@@ -2015,8 +2020,10 @@ def case_y_edges_found_in_review(dists):
         bad.append("a Lineage link's style is written out beside LINEAGE_LOOK")
     for k, (colour, dash, _s, _l) in T.LINEAGE_LOOK.items():
         rule = re.search(r"path\.lk-%s \{([^}]*)\}" % k, page)
-        if not rule or f"stroke:{colour};" not in rule.group(1) or (
-            bool(dash) != (f"stroke-dasharray:{dash};" in rule.group(1))
+        if (
+            not rule
+            or f"stroke:{colour};" not in rule.group(1)
+            or (bool(dash) != (f"stroke-dasharray:{dash};" in rule.group(1)))
         ):
             bad.append(f"a {k} link is not drawn in the legend's colour and dash")
 

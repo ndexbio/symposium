@@ -958,7 +958,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       + ' &mdash; click one to go there</span>';
     var loose = (c.findings || 0) - onClaims;
     if (loose > 0) s += '<span class="lg">' + loose + ' checker finding' + (loose === 1 ? '' : 's')
-      + ' on the Argument as a whole, not on one claim</span>';
+      + ' elsewhere in the Argument: on a Ground, an Assumption or the Argument as a whole</span>';
     return s ? '<b>Markers</b>' + s : '';
   }}
   function graphLegend(mode) {{

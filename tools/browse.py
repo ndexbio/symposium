@@ -958,6 +958,16 @@ def build_claim_graph(doc, index, findings, colors, pages):
             "shared_source_count": shared_count,
             "unverifiable": n_unverifiable,
             "findings": len(findings),
+            # distinct findings that name an Assertion: one naming two claims is on both,
+            # and is still one finding
+            "findings_on_claims": sum(
+                1
+                for f in findings
+                if any(
+                    m in assertions
+                    for m in re.findall(r"'([A-Za-z0-9_]+)'", f.get("msg", ""))
+                )
+            ),
         },
         "full_elements": {"nodes": full_nodes, "edges": full_edges},
         "frag_map": {n["data"]["id"]: n["data"]["id"] for n in nodes},

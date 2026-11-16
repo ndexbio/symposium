@@ -939,7 +939,10 @@ HTML_TEMPLATE = r"""<!doctype html>
   function markersLegend() {{
     var s = '', flagged = cy.nodes('[?flagged]'), onClaims = 0, moved = cy.nodes('.moved');
     var movedFlagged = moved.filter(isFlagged).length;
+    // distinct findings, from the build: one that names two claims is on both, and summing
+    // each claim's would count it twice
     flagged.forEach(function (n) {{ onClaims += (n.data('findings') || []).length; }});
+    if (typeof c.findings_on_claims === 'number') onClaims = c.findings_on_claims;
     var marks = [
       [flagged, 'orange border — ' + onClaims + ' checker finding' + (onClaims === 1 ? '' : 's') + ' on '
         + flagged.length + ' claim' + (flagged.length === 1 ? '' : 's') + '; click a claim to read', isMoved],

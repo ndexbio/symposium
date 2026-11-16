@@ -2522,7 +2522,9 @@ def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=
         elif elbow:
             down, r = lane > line_of[earlier], 8
             x1, x2 = ax + nw / 2, bx + nw / 2
-            y1, g, y2 = (ay + nh, by - 30, by - 2) if down else (ay, by + nh + 16, by + nh + 2)
+            y1, g, y2 = (
+                (ay + nh, by - 30, by - 2) if down else (ay, by + nh + 16, by + nh + 2)
+            )
             s = 1 if down else -1
             d = (
                 f"M{x1:.0f},{y1:.0f} L{x1:.0f},{g - s * r:.0f} Q{x1:.0f},{g:.0f} "

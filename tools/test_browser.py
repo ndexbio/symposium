@@ -1882,6 +1882,140 @@ def case_x_claim_map_legend_is_read_from_the_graph(dists):
     )
 
 
+def case_y_edges_found_in_review(dists):
+    """What the review of #37 found at the edges. A table row shorter than its header keeps
+    its values under their columns when cited columns come first. A Lineage link between
+    lanes that are not neighbours goes round the cards of the lanes between. A verdict's
+    opening does not end at an abbreviation. A finding that names two claims is counted once.
+    Only a session's `record/` is titled with its community. A link into a column the picker
+    has hidden shows the column."""
+    bad = []
+    # a short row: header order is gene, c, a, b; row X has no c, so its c cell is empty
+    table = T.csv_table(
+        "gene,a,b,c\nX,1,2\nY,3,4,5", method="t", cited={"t.col=c": [("g", "x")]}
+    )
+    row = re.search(r'<tr id="t.row=X"[^>]*>(.*?)</tr>', table, re.S)
+    got = re.findall(r'<td data-c="(\d+)"[^>]*>([^<]*)', row.group(1)) if row else []
+    if got != [("0", "X"), ("3", ""), ("1", "1"), ("2", "2")]:
+        bad.append(f"a short row's cells, as (column, value): {got}")
+
+    # lines [A, A2], [B, B2], [D] with D citing A: the link passes lane 2's cards
+    lin = {
+        "args": ["A", "B", "A2", "B2", "D"],
+        "links": {
+            ("A2", "A"): {"cites"},
+            ("B2", "B"): {"cites"},
+            ("D", "A"): {"cites"},
+        },
+        "drawn": {("A2", "A"), ("B2", "B"), ("D", "A")},
+        "lines": [["A", "A2"], ["B", "B2"], ["D"]],
+        "line_of": {"A": 0, "A2": 0, "B": 1, "B2": 1, "D": 2},
+    }
+    nodes = {
+        n: {
+            "name": n,
+            "title": n,
+            "opening": "",
+            "grounds": 0,
+            "tests": 0,
+            "created": "",
+            "member": "m",
+            "color": "#999",
+            "href": f"{n}.html",
+            "map": f"{n}.html",
+        }
+        for n in lin["args"]
+    }
+    page = T.render_lineage_html(lin, nodes)
+    path = re.search(r'<path data-from="A" data-to="D" [^>]*d="([^"]+)"', page)
+    (nw, nh), (gx, gy), pad = T.LINEAGE_NODE, T.LINEAGE_GAP, T.LINEAGE_PAD
+    cards = {
+        n: (pad + i * (nw + gx), gy - 6 + lin["line_of"][n] * (nh + gy))
+        for i, n in enumerate(lin["args"])
+    }
+    if not path:
+        bad.append("the link from A to D is not drawn")
+    else:
+        # the path is straight runs joined by small corners: its points, in order
+        pts = [
+            (float(x), float(y))
+            for x, y in re.findall(r"(-?[\d.]+),(-?[\d.]+)", path.group(1))
+        ]
+        for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+            for n in ("B", "B2", "A2"):
+                cx, cy = cards[n]
+                if (
+                    min(x1, x2) < cx + nw
+                    and max(x1, x2) > cx
+                    and min(y1, y2) < cy + nh
+                    and max(y1, y2) > cy
+                ):
+                    bad.append(f"the link from A to D crosses card {n}")
+        if " C" in path.group(1):
+            bad.append("the link from A to D is a curve across the lanes between")
+
+    want = "Supported for IMR-90 cells (Smith et al. 2021, Fig. 2), but not for HeLa."
+    got = browse.sentences(want + " More follows. And J. Doe vs. Roe agree, e.g. here.")
+    if got != [want, "More follows.", "And J. Doe vs. Roe agree, e.g. here."]:
+        bad.append(f"sentences: {got}")
+
+    # one finding that names two claims is on both, and is one finding
+    for rec in dists:
+        arts = browse.load_record(str(rec))
+        index = browse.build_index(arts)
+        colors = browse.member_colors(arts)
+        pages = {
+            a["artifact"]["name"]: browse.page_name(a["artifact"]["name"]) for a in arts
+        }
+        for a in arts:
+            claims = [
+                o["name"] for o in a.get("objects", []) if o.get("type") == "Assertion"
+            ]
+            if a["artifact"]["type"] != "Argument" or len(claims) < 2:
+                continue
+            finding = {
+                "check": "x",
+                "level": "REVIEW",
+                "msg": f"'{claims[0]}' and '{claims[1]}' disagree",
+            }
+            col, _full, meta = browse.build_claim_graph(
+                a, index, [finding], colors, pages
+            )
+            on = sum(len(n["data"].get("findings") or []) for n in col["nodes"])
+            if on != 2 or meta["counts"].get("findings_on_claims") != 1:
+                bad.append(
+                    f"{a['artifact']['name']}: one finding on two claims is filed {on} "
+                    f"time(s) and counted {meta['counts'].get('findings_on_claims')}"
+                )
+            break
+        else:
+            continue
+        break
+    else:
+        bad.append("no Argument with two Assertions to count a finding on")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        session = pathlib.Path(tmp) / "session"
+        (session / ".symposium").mkdir(parents=True)
+        (session / ".symposium" / "context.json").write_text('{"community": "c1"}')
+        for name, expect in (("record", "c1"), ("c2-export", None)):
+            (session / name).mkdir()
+            if browse.community_name(session / name) != expect:
+                bad.append(
+                    f"<session>/{name} is titled {browse.community_name(session / name)!r}"
+                )
+
+    if "function reveal(scroll)" not in T.ARTIFACT_TEMPLATE or (
+        "window.addEventListener('hashchange'" not in T.ARTIFACT_TEMPLATE
+    ):
+        bad.append("a link into a hidden column does not show the column")
+    return (
+        not bad,
+        "short rows, far lanes, openings, counts, titles, hidden columns",
+        bad,
+    )
+
+
 def case_w_overview_legend_says_what_each_type_is(dists):
     """The overview's legend gives every artifact type in the record its own shape, the shape
     its nodes are drawn with, and says what the type is and whether it can be evidence: the
@@ -1999,6 +2133,7 @@ CASES = [
         "a claim map's legend is read from its graph",
         case_x_claim_map_legend_is_read_from_the_graph,
     ),
+    ("the edges the review of #37 found hold", case_y_edges_found_in_review),
 ]
 
 

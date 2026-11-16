@@ -1709,9 +1709,15 @@ import re as _re  # noqa: E402
 #: cross-artifact relationship, so each of these names a way an address got into a
 #: property value, not an edge anyone authored.
 OVERVIEW_REL_COLORS = {
-    "grounded_by": "#16a34a", "testimony": "#7c3aed", "cites": "#475569",
-    "produced_by": "#0d9488", "outputs": "#0d9488", "inputs": "#0284c7",
-    "used_models": "#6366f1", "extracted_from": "#db2777", "supersedes": "#b45309",
+    "grounded_by": "#16a34a",
+    "testimony": "#7c3aed",
+    "cites": "#475569",
+    "produced_by": "#0d9488",
+    "outputs": "#0d9488",
+    "inputs": "#0284c7",
+    "used_models": "#6366f1",
+    "extracted_from": "#db2777",
+    "supersedes": "#b45309",
     "recipients": "#94a3b8",
 }
 
@@ -1739,43 +1745,72 @@ def _verdict_panel(meta, reading_href=None, has_prose=False):
     if not (verdict or purpose or rationale or reading_href):
         return ""
     pages = meta.get("addr_pages", {})
-    out = ['<div id="verdictpanel">', '<div class="vhead"><span class="vlabel">Verdict</span>']
+    out = [
+        '<div id="verdictpanel">',
+        '<div class="vhead"><span class="vlabel">Verdict</span>',
+    ]
     if reading_href:
-        out.append(f'<a href="{_html.escape(reading_href)}"><b>Read this Argument as a document '
-                   '&rarr;</b></a><span class="hint">verdict, purpose, rationale and every Ground '
-                   'in one place</span>')
+        out.append(
+            f'<a href="{_html.escape(reading_href)}"><b>Read this Argument as a document '
+            '&rarr;</b></a><span class="hint">verdict, purpose, rationale and every Ground '
+            "in one place</span>"
+        )
         n = meta.get("cited_by")
         if n:
-            out.append(f'<a href="{_html.escape(reading_href)}#cited-by">cited by {n}</a>')
+            out.append(
+                f'<a href="{_html.escape(reading_href)}#cited-by">cited by {n}</a>'
+            )
     if purpose or rationale or has_prose:
-        out.append('<button type="button" id="btn-intro" aria-expanded="false" aria-controls="intro" '
-                   'title="Open every section and show this pane at its full height">Expand</button>')
-    out.append('</div>')
-    out.append('<div class="vtext">' + (_html.escape(verdict) or
-               '<span style="color:#9ca3af">(none stated)</span>') + '</div>')
+        out.append(
+            '<button type="button" id="btn-intro" aria-expanded="false" aria-controls="intro" '
+            'title="Open every section and show this pane at its full height">Expand</button>'
+        )
+    out.append("</div>")
+    out.append(
+        '<div class="vtext">'
+        + (_html.escape(verdict) or '<span style="color:#9ca3af">(none stated)</span>')
+        + "</div>"
+    )
     if purpose:
-        out.append('<details class="vsec"><summary>Purpose and stakes</summary><div class="vbody">'
-                   + md_to_html(purpose, pages) + '</div></details>')
+        out.append(
+            '<details class="vsec"><summary>Purpose and stakes</summary><div class="vbody">'
+            + md_to_html(purpose, pages)
+            + "</div></details>"
+        )
     if rationale:
-        out.append('<details class="vsec"><summary>Rationale</summary><div class="vbody">'
-                   + md_to_html(rationale, pages) + '</div></details>')
+        out.append(
+            '<details class="vsec"><summary>Rationale</summary><div class="vbody">'
+            + md_to_html(rationale, pages)
+            + "</div></details>"
+        )
     if sup:
-        out.append('<dl><dt>Supersedes</dt><dd>' + _html.escape("; ".join(str(x) for x in sup))
-                   + (' — ' + _html.escape(meta.get("supersedes_rationale", ""))
-                      if meta.get("supersedes_rationale") else "") + '</dd></dl>')
-    out.append('</div>')
+        out.append(
+            "<dl><dt>Supersedes</dt><dd>"
+            + _html.escape("; ".join(str(x) for x in sup))
+            + (
+                " — " + _html.escape(meta.get("supersedes_rationale", ""))
+                if meta.get("supersedes_rationale")
+                else ""
+            )
+            + "</dd></dl>"
+        )
+    out.append("</div>")
     return "".join(out)
 
 
 #: The verdict pane's resize handle: a separator a reader drags, or moves with the arrow keys
 #: (Shift for bigger steps, Home for the smallest, End or a double-click for full height).
-INTRO_SPLIT = ('<div id="introsplit" role="separator" tabindex="0" aria-orientation="horizontal" '
-               'aria-controls="intro" aria-label="Height of the verdict pane: drag, or use the '
-               'arrow keys" title="Drag to resize the verdict pane; arrow keys work too; '
-               'double-click for full height"></div>')
+INTRO_SPLIT = (
+    '<div id="introsplit" role="separator" tabindex="0" aria-orientation="horizontal" '
+    'aria-controls="intro" aria-label="Height of the verdict pane: drag, or use the '
+    'arrow keys" title="Drag to resize the verdict pane; arrow keys work too; '
+    'double-click for full height"></div>'
+)
 
 
-def render_claim_html(elements, meta, cytoscape_rel_path, intro_html="", reading_href=None):
+def render_claim_html(
+    elements, meta, cytoscape_rel_path, intro_html="", reading_href=None
+):
     """`intro_html` is the Argument's own framing prose (its `description` and `text`);
     `reading_href` is its reading page, linked from the verdict pane."""
     payload = {"elements": elements, "meta": meta}
@@ -1786,13 +1821,19 @@ def render_claim_html(elements, meta, cytoscape_rel_path, intro_html="", reading
         title=_html.escape(meta["title"]),
         review_id=_html.escape(meta["review_id"]),
         arg_label="Argument",
-        genre_html=(f' &middot; <span class="genre">{_html.escape(genre)}</span>' if genre else ""),
+        genre_html=(
+            f' &middot; <span class="genre">{_html.escape(genre)}</span>'
+            if genre
+            else ""
+        ),
         member=_html.escape(meta["member"]),
         member_color=_html.escape(meta.get("member_color", "#9ca3af")),
         created=_html.escape(meta["created"]),
         cyto_src=_html.escape(cytoscape_rel_path),
         graph_json=_json.dumps(payload, ensure_ascii=False),
-        intro_html=(f'<div id="intro">{intro_html}</div>{INTRO_SPLIT}' if intro_html else ''),
+        intro_html=(
+            f'<div id="intro">{intro_html}</div>{INTRO_SPLIT}' if intro_html else ""
+        ),
     )
 
 
@@ -1808,14 +1849,22 @@ def nav_links(has_rounds=False, has_lineage=False):
     return (ROUNDS_LINK if has_rounds else "") + (LINEAGE_LINK if has_lineage else "")
 
 
-def render_overview_html(elements, meta, cytoscape_rel_path, corpus_title="community record",
-                         has_rounds=False, has_lineage=False):
+def render_overview_html(
+    elements,
+    meta,
+    cytoscape_rel_path,
+    corpus_title="community record",
+    has_rounds=False,
+    has_lineage=False,
+):
     return OVERVIEW_TEMPLATE.format(
         cyto_src=_html.escape(cytoscape_rel_path),
         corpus_title=_html.escape(corpus_title),
         uplink='<a class="uplink" href="contents.html">contents &rarr;</a> &middot; ',
         exlink=nav_links(has_rounds, has_lineage),
-        graph_json=_json.dumps({"elements": elements, "meta": meta}, ensure_ascii=False),
+        graph_json=_json.dumps(
+            {"elements": elements, "meta": meta}, ensure_ascii=False
+        ),
     )
 
 
@@ -2037,8 +2086,12 @@ def render_reading_html(title, byline, map_href, body):
     The structure is the specialist view and deserves the viewport it has; the prose is what
     a scientist came to read and needs a page that simply scrolls."""
     return READING_TEMPLATE.format(
-        title=_html.escape(title), byline=_html.escape(byline),
-        map_href=_html.escape(map_href), body=body, cited_css=CITED_CSS)
+        title=_html.escape(title),
+        byline=_html.escape(byline),
+        map_href=_html.escape(map_href),
+        body=body,
+        cited_css=CITED_CSS,
+    )
 
 
 #: The types Contents starts with hidden (R9, as the user chose it on 2026-11-04): the talk
@@ -2047,8 +2100,9 @@ def render_reading_html(title, byline, map_href, body):
 CONTENTS_HIDDEN = ("Message", "AnalysisPlan", "ResearchGoal", "Data")
 
 
-def render_contents_html(entries, corpus_title="community record", has_rounds=False,
-                         has_lineage=False):
+def render_contents_html(
+    entries, corpus_title="community record", has_rounds=False, has_lineage=False
+):
     """A plain reading list of the record.
 
     The overview is a reference graph, which answers "how does this record hang together"
@@ -2057,8 +2111,15 @@ def render_contents_html(entries, corpus_title="community record", has_rounds=Fa
     without first finding the Argument in the picture. Arguments come first because the
     verdict is what a reader came for; everything else follows in the order the type is
     likely to be wanted."""
-    order = ["Argument", "Data", "Model", "ScientificPublication",
-             "Analysis", "Message", "NonGroundable"]
+    order = [
+        "Argument",
+        "Data",
+        "Model",
+        "ScientificPublication",
+        "Analysis",
+        "Message",
+        "NonGroundable",
+    ]
     out, chips, index = [], [], {}
     types = order + sorted({e["type"] for e in entries} - set(order))
     for t in types:
@@ -2067,50 +2128,93 @@ def render_contents_html(entries, corpus_title="community record", has_rounds=Fa
             continue
         items = []
         for e in sorted(rows, key=lambda x: x["created"], reverse=True):
-            index[e["name"]] = e.get("search") or f'{e["title"]} {e["name"]}'
-            verdict = (f'<div class="verdict">{_html.escape(e["verdict"])}</div>'
-                       if e.get("verdict") else "")
-            extra = f' &middot; {_html.escape(e["extra"])}' if e.get("extra") else ""
+            index[e["name"]] = e.get("search") or f"{e['title']} {e['name']}"
+            verdict = (
+                f'<div class="verdict">{_html.escape(e["verdict"])}</div>'
+                if e.get("verdict")
+                else ""
+            )
+            extra = f" &middot; {_html.escape(e['extra'])}" if e.get("extra") else ""
             items.append(
                 '<div class="item" data-name="{name}"><a href="{href}">{title}</a>'
                 '<div class="meta"><span class="mbadge" style="background:{color}"></span>'
-                '{member} &middot; {created}{extra} &middot; <code>{name}</code></div>'
-                '{verdict}</div>'.format(
-                    href=_html.escape(e["href"]), title=_html.escape(e["title"]),
+                "{member} &middot; {created}{extra} &middot; <code>{name}</code></div>"
+                "{verdict}</div>".format(
+                    href=_html.escape(e["href"]),
+                    title=_html.escape(e["title"]),
                     color=_html.escape(e.get("color", "#9ca3af")),
-                    member=_html.escape(e["member"]), created=_html.escape(e["created"][:16]),
-                    extra=extra, name=_html.escape(e["name"]), verdict=verdict))
+                    member=_html.escape(e["member"]),
+                    created=_html.escape(e["created"][:16]),
+                    extra=extra,
+                    name=_html.escape(e["name"]),
+                    verdict=verdict,
+                )
+            )
         tq = _html.escape(t)
-        out.append(f'<details class="sec" data-type="{tq}" open><summary>'
-                   f"<h2>{tq} ({len(rows)})</h2></summary>" + "".join(items) + "</details>")
+        out.append(
+            f'<details class="sec" data-type="{tq}" open><summary>'
+            f"<h2>{tq} ({len(rows)})</h2></summary>" + "".join(items) + "</details>"
+        )
         pressed = "false" if t in CONTENTS_HIDDEN else "true"
-        chips.append(f'<button type="button" class="chip" data-type="{tq}" '
-                     f'aria-pressed="{pressed}">'
-                     f'{tq} <span class="n">{len(rows)}</span></button>')
+        chips.append(
+            f'<button type="button" class="chip" data-type="{tq}" '
+            f'aria-pressed="{pressed}">'
+            f'{tq} <span class="n">{len(rows)}</span></button>'
+        )
     # inside a <script>: "<", ">" and "&" become JSON escapes, so no title can end the element
     # early or open a comment in it, and JSON.parse reads them back unchanged
-    data = (_json.dumps(index, ensure_ascii=False)
-            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
-    present = [t for t in types if t in CONTENTS_HIDDEN and any(e["type"] == t for e in entries)]
+    data = (
+        _json.dumps(index, ensure_ascii=False)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+    present = [
+        t
+        for t in types
+        if t in CONTENTS_HIDDEN and any(e["type"] == t for e in entries)
+    ]
     named = [f"<b>{_html.escape(t)}</b>" for t in present]
-    hidden_note = (" " + (", ".join(named[:-1]) + " and " + named[-1] if len(named) > 1
-                          else named[0] if named else "")
-                   + " start hidden: a chip shows a type, and a search looks through every type."
-                   ) if named else ""
-    return CONTENTS_TEMPLATE.format(corpus_title=_html.escape(corpus_title),
-                                    sections="".join(out), chips="".join(chips), index=data,
-                                    roundslink=nav_links(has_rounds, has_lineage),
-                                    hidden_note=hidden_note,
-                                    defaults=_json.dumps({t: True for t in CONTENTS_HIDDEN}))
+    hidden_note = (
+        (
+            " "
+            + (
+                ", ".join(named[:-1]) + " and " + named[-1]
+                if len(named) > 1
+                else named[0]
+                if named
+                else ""
+            )
+            + " start hidden: a chip shows a type, and a search looks through every type."
+        )
+        if named
+        else ""
+    )
+    return CONTENTS_TEMPLATE.format(
+        corpus_title=_html.escape(corpus_title),
+        sections="".join(out),
+        chips="".join(chips),
+        index=data,
+        roundslink=nav_links(has_rounds, has_lineage),
+        hidden_note=hidden_note,
+        defaults=_json.dumps({t: True for t in CONTENTS_HIDDEN}),
+    )
 
 
 #: The grouping of a Rounds column and of a goal page's "Serving this goal": the goal, the
 #: plan, the material, the work, what the work produced, the judgment, the talk. A Data
 #: artifact whose `produced_by` names something is a result; one without is imported material.
-ROUND_GROUPS = [("ResearchGoal", "Goals"), ("AnalysisPlan", "Plans"),
-                ("ScientificPublication", "Publications"), ("Data", "Data"),
-                ("Analysis", "Analyses"), ("result", "Results"), ("Model", "Models"),
-                ("Argument", "Arguments"), ("Message", "Messages")]
+ROUND_GROUPS = [
+    ("ResearchGoal", "Goals"),
+    ("AnalysisPlan", "Plans"),
+    ("ScientificPublication", "Publications"),
+    ("Data", "Data"),
+    ("Analysis", "Analyses"),
+    ("result", "Results"),
+    ("Model", "Models"),
+    ("Argument", "Arguments"),
+    ("Message", "Messages"),
+]
 
 
 def grouped_entries_html(entries):
@@ -2129,20 +2233,32 @@ def grouped_entries_html(entries):
             shared = ""
             if e.get("shared"):
                 also = ", ".join(e["shared"])
-                shared = (f' &middot; <span class="shared" title="also serves {_html.escape(also)}">'
-                          f'shared &middot; also {_html.escape(also)}</span>')
-            verdict = (f'<div class="rverdict">{_html.escape(e["verdict"])}</div>'
-                       if e.get("verdict") else "")
+                shared = (
+                    f' &middot; <span class="shared" title="also serves {_html.escape(also)}">'
+                    f"shared &middot; also {_html.escape(also)}</span>"
+                )
+            verdict = (
+                f'<div class="rverdict">{_html.escape(e["verdict"])}</div>'
+                if e.get("verdict")
+                else ""
+            )
             items.append(
                 '<li class="ritem"><a href="{href}">{title}</a><div class="rmeta">'
                 '<span class="mbadge" style="background:{color}"></span>{member} &middot; '
-                '{created}{shared}</div>{verdict}</li>'.format(
-                    href=_html.escape(e["href"]), title=_html.escape(e["title"]),
+                "{created}{shared}</div>{verdict}</li>".format(
+                    href=_html.escape(e["href"]),
+                    title=_html.escape(e["title"]),
                     color=_html.escape(e.get("color", "#9ca3af")),
-                    member=_html.escape(e["member"]), created=_html.escape(e["created"][:16]),
-                    shared=shared, verdict=verdict))
-        out.append(f'<div class="rgroup"><h3>{_html.escape(labels.get(g, g))} ({len(rows)})</h3>'
-                   f'<ul>{"".join(items)}</ul></div>')
+                    member=_html.escape(e["member"]),
+                    created=_html.escape(e["created"][:16]),
+                    shared=shared,
+                    verdict=verdict,
+                )
+            )
+        out.append(
+            f'<div class="rgroup"><h3>{_html.escape(labels.get(g, g))} ({len(rows)})</h3>'
+            f"<ul>{''.join(items)}</ul></div>"
+        )
     return "".join(out) or '<p class="hint">Nothing in the record names it yet.</p>'
 
 
@@ -2217,18 +2333,26 @@ def render_rounds_html(columns, corpus_title="community record", has_lineage=Fal
     """The Rounds page (R3): `columns` = [{label, title, href, count, entries, corpus}]."""
     out = []
     for c in columns:
-        head = (f'<a href="{_html.escape(c["href"])}">{_html.escape(c["title"])}</a>'
-                if c.get("href") else _html.escape(c["title"]))
+        head = (
+            f'<a href="{_html.escape(c["href"])}">{_html.escape(c["title"])}</a>'
+            if c.get("href")
+            else _html.escape(c["title"])
+        )
         out.append(
             f'<section class="rcol{" corpus" if c.get("corpus") else ""}" '
             f'aria-label="{_html.escape(c["label"])}"><h2><span class="rnum">'
-            f'{_html.escape(c["label"])}</span>{head}</h2>'
+            f"{_html.escape(c['label'])}</span>{head}</h2>"
             f'<div class="rcount">{c["count"]} artifact{"" if c["count"] == 1 else "s"}'
-            f'{(" &middot; " + _html.escape(c["created"][:16])) if c.get("created") else ""}</div>'
-            + grouped_entries_html(c["entries"]) + "</section>")
-    return ROUNDS_TEMPLATE.format(corpus_title=_html.escape(corpus_title),
-                                  columns="".join(out), round_css=ROUND_CSS,
-                                  lineagelink=LINEAGE_LINK if has_lineage else "")
+            f"{(' &middot; ' + _html.escape(c['created'][:16])) if c.get('created') else ''}</div>"
+            + grouped_entries_html(c["entries"])
+            + "</section>"
+        )
+    return ROUNDS_TEMPLATE.format(
+        corpus_title=_html.escape(corpus_title),
+        columns="".join(out),
+        round_css=ROUND_CSS,
+        lineagelink=LINEAGE_LINK if has_lineage else "",
+    )
 
 
 LINEAGE_TEMPLATE = """<!doctype html>
@@ -2316,13 +2440,21 @@ LINEAGE_TEMPLATE = """<!doctype html>
 #: Each has its own dash pattern and its own words, so colour is never the only sign (N6).
 LINEAGE_LOOK = {
     "supersedes": ("#1d4ed8", "", "supersedes", "which it supersedes"),
-    "ground": ("#15803d", "10 3 2 3", "a Ground under its primary Assertion cites",
-               "which a Ground under its primary Assertion cites"),
-    "cites": ("#6b7280", "5 4", "cites in prose (context, not evidence)",
-              "which it cites in prose (context, not evidence)"),
+    "ground": (
+        "#15803d",
+        "10 3 2 3",
+        "a Ground under its primary Assertion cites",
+        "which a Ground under its primary Assertion cites",
+    ),
+    "cites": (
+        "#6b7280",
+        "5 4",
+        "cites in prose (context, not evidence)",
+        "which it cites in prose (context, not evidence)",
+    ),
 }
-LINEAGE_NODE = (170, 164)        # a node's width and height, px
-LINEAGE_GAP = (26, 46)           # between columns, and between lines (room for a line's label)
+LINEAGE_NODE = (170, 164)  # a node's width and height, px
+LINEAGE_GAP = (26, 46)  # between columns, and between lines (room for a line's label)
 LINEAGE_PAD = 8
 
 
@@ -2335,7 +2467,9 @@ def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=
     col = {n: i for i, n in enumerate(lin["args"])}
     line_of = lin["line_of"]
     width = pad * 2 + max(1, len(col)) * (nw + gx) - gx
-    height = pad + len(lin["lines"]) * (nh + gy) + 16     # room for an arc under the last lane
+    height = (
+        pad + len(lin["lines"]) * (nh + gy) + 16
+    )  # room for an arc under the last lane
     xy = {n: (pad + col[n] * (nw + gx), gy - 6 + line_of[n] * (nh + gy)) for n in col}
     anchor = {n: "a-" + _re.sub(r"[^A-Za-z0-9_-]", "_", n) for n in col}
     rank = {k: i for i, k in enumerate(LINEAGE_LOOK)}
@@ -2346,13 +2480,13 @@ def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=
     def ordered(kinds):
         return sorted(kinds, key=lambda k: rank[k])
 
-    def said(kinds):                 # "which it supersedes and which it cites in prose …"
+    def said(kinds):  # "which it supersedes and which it cites in prose …"
         return " and ".join(LINEAGE_LOOK[k][3] for k in ordered(kinds))
 
-    def named(kinds):                # "supersedes; cites in prose …", for a link's tooltip
+    def named(kinds):  # "supersedes; cites in prose …", for a link's tooltip
         return "; ".join(LINEAGE_LOOK[k][2] for k in ordered(kinds))
 
-    follows = {}                     # an Argument -> the one before it in its line
+    follows = {}  # an Argument -> the one before it in its line
     for line in lin["lines"]:
         for a, b in zip(line, line[1:]):
             follows[b] = a
@@ -2365,14 +2499,19 @@ def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=
         # of its lanes in the columns between, and read as links through it. Within one lane
         # it arcs below the lane instead, card bottom to card bottom, clear of the next lane's
         # label; between lanes it leaves through the gap, from the facing edges of its cards.
-        passed = any(line_of[n] in (line_of[earlier], lane)
-                     for n in col if col[earlier] < col[n] < col[later])
+        passed = any(
+            line_of[n] in (line_of[earlier], lane)
+            for n in col
+            if col[earlier] < col[n] < col[later]
+        )
         below = passed and line_of[earlier] == lane
         between = passed and not below
         if below:
             x1, x2, low = ax + nw / 2, bx + nw / 2, ay + nh + (gy - 18)
-            d = (f"M{x1:.0f},{ay + nh:.0f} C{x1:.0f},{low:.0f} {x2:.0f},{low:.0f} "
-                 f"{x2:.0f},{by + nh + 2:.0f}")
+            d = (
+                f"M{x1:.0f},{ay + nh:.0f} C{x1:.0f},{low:.0f} {x2:.0f},{low:.0f} "
+                f"{x2:.0f},{by + nh + 2:.0f}"
+            )
         elif between:
             down = lane > line_of[earlier]
             x1, x2 = ax + nw / 2, bx + nw / 2
@@ -2382,28 +2521,43 @@ def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=
         else:
             x1, y1, x2, y2 = ax + nw, ay + nh / 2, bx, by + nh / 2
             dx = max(24, (x2 - x1) / 2)
-            d = (f"M{x1:.0f},{y1:.0f} C{x1 + dx:.0f},{y1:.0f} {x2 - dx:.0f},{y2:.0f} "
-                 f"{x2 - 2:.0f},{y2:.0f}")
+            d = (
+                f"M{x1:.0f},{y1:.0f} C{x1 + dx:.0f},{y1:.0f} {x2 - dx:.0f},{y2:.0f} "
+                f"{x2 - 2:.0f},{y2:.0f}"
+            )
         cross = "" if follows.get(later) == earlier else " cross"
-        route = ' data-route="below"' if below else ' data-route="between"' if between else ""
-        tip = f'{nodes[later]["title"]} — {named(kinds)} — {nodes[earlier]["title"]}'
-        edges.append(f'<path data-from="{esc(earlier)}" data-to="{esc(later)}" '
-                     f'class="lk-{strongest(kinds)}{cross}"{route} '
-                     f'marker-end="url(#ah-{strongest(kinds)})" d="{d}">'
-                     f'<title>{esc(tip)}</title></path>')
+        route = (
+            ' data-route="below"'
+            if below
+            else ' data-route="between"'
+            if between
+            else ""
+        )
+        tip = f"{nodes[later]['title']} — {named(kinds)} — {nodes[earlier]['title']}"
+        edges.append(
+            f'<path data-from="{esc(earlier)}" data-to="{esc(later)}" '
+            f'class="lk-{strongest(kinds)}{cross}"{route} '
+            f'marker-end="url(#ah-{strongest(kinds)})" d="{d}">'
+            f"<title>{esc(tip)}</title></path>"
+        )
     markers = "".join(
         f'<marker id="ah-{k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
         f'markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
-        f'fill="{c}"/></marker>' for k, (c, _d, _s, _l) in LINEAGE_LOOK.items())
+        f'fill="{c}"/></marker>'
+        for k, (c, _d, _s, _l) in LINEAGE_LOOK.items()
+    )
     lanes = "".join(
         f'<div class="lane" style="left:{pad}px;top:{gy - 24 + i * (nh + gy)}px">Line {i + 1}'
-        f' &middot; {len(line)} Argument{"" if len(line) == 1 else "s"}</div>'
-        for i, line in enumerate(lin["lines"]))
+        f" &middot; {len(line)} Argument{'' if len(line) == 1 else 's'}</div>"
+        for i, line in enumerate(lin["lines"])
+    )
     boxes = []
     for n in lin["args"]:
         d, (x, y) = nodes[n], xy[n]
-        tests = (f'{d["tests"]} test{"" if d["tests"] == 1 else "s"} &middot; '
-                 f'{d["grounds"]} Ground{"" if d["grounds"] == 1 else "s"}')
+        tests = (
+            f"{d['tests']} test{'' if d['tests'] == 1 else 's'} &middot; "
+            f"{d['grounds']} Ground{'' if d['grounds'] == 1 else 's'}"
+        )
         boxes.append(
             f'<a class="lnode" href="{esc(d["href"])}" style="left:{x}px;top:{y}px;'
             f'width:{nw}px;height:{nh}px" title="{esc(d["title"])}">'
@@ -2411,47 +2565,72 @@ def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=
             f'<div class="o">{esc(d["opening"])}</div>'
             f'<div class="m">{tests}<br><span class="mbadge" style="background:'
             f'{esc(d["color"])}"></span>{esc(d["member"])} &middot; {esc(d["created"][:10])}'
-            f'</div></a>')
+            f"</div></a>"
+        )
     legend = "".join(
         f'<span><svg width="34" height="8" aria-hidden="true"><line x1="0" y1="4" x2="34" '
         f'y2="4" stroke="{c}" stroke-width="2.4" stroke-dasharray="{dash}"/></svg>{esc(word)}'
-        f'</span>' for (c, dash, word, _w) in LINEAGE_LOOK.values())
+        f"</span>"
+        for (c, dash, word, _w) in LINEAGE_LOOK.values()
+    )
 
     sections = []
     for i, line in enumerate(lin["lines"]):
         items = []
         for n in line:
             d = nodes[n]
-            stated = sorted(((e, k) for (b, e), k in lin["links"].items() if b == n),
-                            key=lambda x: col[x[0]])
+            stated = sorted(
+                ((e, k) for (b, e), k in lin["links"].items() if b == n),
+                key=lambda x: col[x[0]],
+            )
             said_here = []
             for e, kinds in stated:
                 where = "" if line_of[e] == i else f" (line {line_of[e] + 1})"
                 lead = "Follows" if follows.get(n) == e else "Also links to"
-                said_here.append(f'{lead} <a href="#{anchor[e]}">{esc(nodes[e]["title"])}</a>'
-                                 f'{where}, {esc(said(kinds))}.')
+                said_here.append(
+                    f'{lead} <a href="#{anchor[e]}">{esc(nodes[e]["title"])}</a>'
+                    f"{where}, {esc(said(kinds))}."
+                )
             said_here.sort(key=lambda x: not x.startswith("Follows"))
             items.append(
                 f'<li id="{anchor[n]}"><a href="{esc(d["href"])}">{esc(d["title"])}</a>'
                 f'<div class="meta"><span class="mbadge" style="background:{esc(d["color"])}">'
-                f'</span>{esc(d["member"])} &middot; {esc(d["created"][:16])} &middot; '
-                f'{d["grounds"]} Ground(s), {d["tests"]} offered as a test &middot; '
+                f"</span>{esc(d['member'])} &middot; {esc(d['created'][:16])} &middot; "
+                f"{d['grounds']} Ground(s), {d['tests']} offered as a test &middot; "
                 f'<a href="{esc(d["map"])}">claim map</a></div>'
-                + (f'<div class="opening">{esc(d["opening"])}</div>' if d["opening"] else "")
+                + (
+                    f'<div class="opening">{esc(d["opening"])}</div>'
+                    if d["opening"]
+                    else ""
+                )
                 + "".join(f'<div class="follows">{x}</div>' for x in said_here)
-                + "</li>")
+                + "</li>"
+            )
         first, last = nodes[line[0]]["created"][:10], nodes[line[-1]]["created"][:10]
         span = first if first == last else f"{first} to {last}"
-        sections.append(f'<h2>Line {i + 1} <span>&middot; {len(line)} Argument'
-                        f'{"" if len(line) == 1 else "s"}, {span}</span></h2>'
-                        f'<ol>{"".join(items)}</ol>')
+        sections.append(
+            f"<h2>Line {i + 1} <span>&middot; {len(line)} Argument"
+            f"{'' if len(line) == 1 else 's'}, {span}</span></h2>"
+            f"<ol>{''.join(items)}</ol>"
+        )
     n_args, n_lines = len(lin["args"]), len(lin["lines"])
-    summary = (f'{n_args} Argument{"" if n_args == 1 else "s"} in {n_lines} '
-               f'line{"" if n_lines == 1 else "s"}.')
+    summary = (
+        f"{n_args} Argument{'' if n_args == 1 else 's'} in {n_lines} "
+        f"line{'' if n_lines == 1 else 's'}."
+    )
     return LINEAGE_TEMPLATE.format(
-        corpus_title=esc(corpus_title), roundslink=ROUNDS_LINK if has_rounds else "",
-        summary=summary, legend=legend, width=width, height=height, markers=markers,
-        edges="".join(edges), lanes=lanes, nodes="".join(boxes), lines="".join(sections))
+        corpus_title=esc(corpus_title),
+        roundslink=ROUNDS_LINK if has_rounds else "",
+        summary=summary,
+        legend=legend,
+        width=width,
+        height=height,
+        markers=markers,
+        edges="".join(edges),
+        lanes=lanes,
+        nodes="".join(boxes),
+        lines="".join(sections),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -2510,10 +2689,15 @@ def _mark_grounded(escaped, spans):
         if needle and needle in escaped:
             anchor = _html.escape(f'text_span.quote="{quote}"')
             tip = _html.escape(f"Cited by {citer}")
-            badge = (f'<a class="cmark" href="#{_html.escape(href)}" title="{tip}" '
-                     f'aria-label="{tip}">{count}</a>' if href else "")
+            badge = (
+                f'<a class="cmark" href="#{_html.escape(href)}" title="{tip}" '
+                f'aria-label="{tip}">{count}</a>'
+                if href
+                else ""
+            )
             escaped = escaped.replace(
-                needle, f'<mark id="{anchor}" title="{tip}">{needle}</mark>{badge}', 1)
+                needle, f'<mark id="{anchor}" title="{tip}">{needle}</mark>{badge}', 1
+            )
     return escaped
 
 
@@ -2523,8 +2707,11 @@ def preformatted(text, spans=None):
     Still passed through `_mark_grounded`, because a Content Object may declare a
     `text_span` method over code and a Ground through it has to land on the line it
     quotes — the same reason every other rendering path marks."""
-    return ("<pre class='code'><code>"
-            + _mark_grounded(_html.escape(text or ""), spans) + "</code></pre>")
+    return (
+        "<pre class='code'><code>"
+        + _mark_grounded(_html.escape(text or ""), spans)
+        + "</code></pre>"
+    )
 
 
 def md_to_html(md, pages=None, spans=None):
@@ -2544,9 +2731,16 @@ def md_to_html(md, pages=None, spans=None):
             continue
         if all(_re.match(r"^\s*[-*]\s+", ln) for ln in lines):
             items = "".join(
-                "<li>" + _md_inline(
-                    _mark_grounded(_html.escape(_re.sub(r"^\s*[-*]\s+", "", ln)), spans), pages)
-                + "</li>" for ln in lines)
+                "<li>"
+                + _md_inline(
+                    _mark_grounded(
+                        _html.escape(_re.sub(r"^\s*[-*]\s+", "", ln)), spans
+                    ),
+                    pages,
+                )
+                + "</li>"
+                for ln in lines
+            )
             out.append("<ul>" + items + "</ul>")
         else:
             # A heading may open a block without a blank line after it, so headings are
@@ -2563,10 +2757,17 @@ def md_to_html(md, pages=None, spans=None):
                 if m:
                     flush()
                     tag = "h3" if len(m.group(1)) <= 2 else "h4"
-                    out.append(f"<{tag} class='mdh'>" + _md_inline(
-                        _mark_grounded(_html.escape(m.group(2)), spans), pages) + f"</{tag}>")
+                    out.append(
+                        f"<{tag} class='mdh'>"
+                        + _md_inline(
+                            _mark_grounded(_html.escape(m.group(2)), spans), pages
+                        )
+                        + f"</{tag}>"
+                    )
                 else:
-                    para.append(_md_inline(_mark_grounded(_html.escape(ln), spans), pages))
+                    para.append(
+                        _md_inline(_mark_grounded(_html.escape(ln), spans), pages)
+                    )
             flush()
     return "".join(out)
 
@@ -2578,9 +2779,11 @@ def _cited_cell(anchor, cited):
     if not entries:
         return "", ""
     tip = _html.escape("Cited by " + "; ".join(t for _i, t in entries))
-    return (' class="cited"',
-            f'<a class="cmark" href="#{_html.escape(entries[0][0])}" title="{tip}" '
-            f'aria-label="{tip}">{len(entries)}</a>')
+    return (
+        ' class="cited"',
+        f'<a class="cmark" href="#{_html.escape(entries[0][0])}" title="{tip}" '
+        f'aria-label="{tip}">{len(entries)}</a>',
+    )
 
 
 def csv_table(text, max_rows=None, method="csv", cited=None):
@@ -2616,7 +2819,7 @@ def csv_table(text, max_rows=None, method="csv", cited=None):
     order = column_order(hdr, method, cited)
     body = []
     limit = len(rows) - 1 if max_rows is None else max_rows
-    for r in rows[1:limit + 1]:
+    for r in rows[1 : limit + 1]:
         cells = [c.strip() for c in r]
         rk = cells[0] if cells else ""
         row_cls, row_badge = _cited_cell(f"{method}.row={rk}", cited)
@@ -2629,29 +2832,44 @@ def csv_table(text, max_rows=None, method="csv", cited=None):
             cell_id, value = _html.escape(anchor), _html.escape(c)
             tds[i] = f'<td data-c="{i}" id="{cell_id}"{cls}>{value}{badge}</td>'
         placed = [tds[i] for i in order if i in tds]
-        placed += [tds[i] for i in sorted(tds) if i not in order]   # a ragged row's extras
-        body.append('<tr id="{}"{}>{}</tr>'.format(
-            _html.escape(f"{method}.row={rk}"), row_cls, "".join(placed)))
+        placed += [
+            tds[i] for i in sorted(tds) if i not in order
+        ]  # a ragged row's extras
+        body.append(
+            '<tr id="{}"{}>{}</tr>'.format(
+                _html.escape(f"{method}.row={rk}"), row_cls, "".join(placed)
+            )
+        )
     # Every row is rendered by default. A truncated table silently breaks the one thing
     # these ids exist for: a Ground addressing row 400 of a 714-row table would resolve in
     # the validator and land the reader at the top of the page. What bounds the size here
     # is policy/embedding-and-size.md, which bounds the artifact.
-    more = (f"<tr><td colspan='{len(hdr)}' class='hint'>… {len(rows) - 1 - limit} further row(s) "
+    more = (
+        (
+            f"<tr><td colspan='{len(hdr)}' class='hint'>… {len(rows) - 1 - limit} further row(s) "
             "not shown; an address into them will not resolve on this page</td></tr>"
-            ) if len(rows) - 1 > limit else ""
+        )
+        if len(rows) - 1 > limit
+        else ""
+    )
     head = ""
     for i in order:
         c = hdr[i]
         cls, badge = _cited_cell(f"{method}.col={c}", cited)
         head += '<th data-c="{}" id="{}"{}>{}{}</th>'.format(
-            i, _html.escape(f"{method}.col={c}"), cls, _html.escape(c), badge)
-    return (f"<p class='hint'>Addressed as <code>#{_html.escape(method)}"
-            f".row=&lt;{_html.escape(key)}&gt;"
-            f"&amp;col=&lt;column&gt;</code></p>"
-            + table_tools(hdr, order, method, cited)
-            + f"<div class='tablewrap'><table class='data' id='{_html.escape('tbl-' + method)}' "
-            f"data-order='{','.join(map(str, order))}'><tr>{head}</tr>"
-            + "".join(body) + more + "</table></div>")
+            i, _html.escape(f"{method}.col={c}"), cls, _html.escape(c), badge
+        )
+    return (
+        f"<p class='hint'>Addressed as <code>#{_html.escape(method)}"
+        f".row=&lt;{_html.escape(key)}&gt;"
+        f"&amp;col=&lt;column&gt;</code></p>"
+        + table_tools(hdr, order, method, cited)
+        + f"<div class='tablewrap'><table class='data' id='{_html.escape('tbl-' + method)}' "
+        f"data-order='{','.join(map(str, order))}'><tr>{head}</tr>"
+        + "".join(body)
+        + more
+        + "</table></div>"
+    )
 
 
 #: A table with more columns than this offers a column picker (R11).
@@ -2663,7 +2881,7 @@ def cited_columns(hdr, method, cited):
     names = set()
     for anchor in cited or {}:
         if anchor.startswith(f"{method}.col="):
-            names.add(anchor[len(f"{method}.col="):])
+            names.add(anchor[len(f"{method}.col=") :])
         elif anchor.startswith(f"{method}.row=") and "&col=" in anchor:
             names.add(anchor.rsplit("&col=", 1)[1])
     return [i for i, c in enumerate(hdr) if i > 0 and c in names]
@@ -2673,7 +2891,9 @@ def column_order(hdr, method, cited):
     """The order a table is shown in: its row key, then the columns a Ground cites, then the
     rest, each group in its stored order."""
     first = cited_columns(hdr, method, cited)
-    return [0, *first, *(i for i in range(1, len(hdr)) if i not in first)] if hdr else []
+    return (
+        [0, *first, *(i for i in range(1, len(hdr)) if i not in first)] if hdr else []
+    )
 
 
 def table_tools(hdr, order, method, cited):
@@ -2683,17 +2903,24 @@ def table_tools(hdr, order, method, cited):
     tid = _html.escape("tbl-" + method)
     parts = []
     if order != list(range(len(hdr))):
-        named = ", ".join(_html.escape(hdr[i]) for i in cited_columns(hdr, method, cited))
-        parts.append(f'<button type="button" class="colorder" data-for="{tid}" '
-                     f'aria-pressed="false">Original column order</button>'
-                     f'<span class="hint">Columns a Ground cites come first: {named}</span>')
+        named = ", ".join(
+            _html.escape(hdr[i]) for i in cited_columns(hdr, method, cited)
+        )
+        parts.append(
+            f'<button type="button" class="colorder" data-for="{tid}" '
+            f'aria-pressed="false">Original column order</button>'
+            f'<span class="hint">Columns a Ground cites come first: {named}</span>'
+        )
     if len(hdr) > COLUMN_PICKER_OVER:
         boxes = "".join(
             f'<label><input type="checkbox" data-c="{i}" checked> {_html.escape(hdr[i])}</label>'
-            for i in order[1:])
-        parts.append(f'<details class="colpick" data-for="{tid}"><summary>Columns: '
-                     f'<span class="cp-n">{len(hdr)}</span> of {len(hdr)} shown</summary>'
-                     f'<div class="cp-list">{boxes}</div></details>')
+            for i in order[1:]
+        )
+        parts.append(
+            f'<details class="colpick" data-for="{tid}"><summary>Columns: '
+            f'<span class="cp-n">{len(hdr)}</span> of {len(hdr)} shown</summary>'
+            f'<div class="cp-list">{boxes}</div></details>'
+        )
     return f"<div class='tabletools'>{''.join(parts)}</div>" if parts else ""
 
 
@@ -2707,26 +2934,33 @@ def internal_graph_section(ig, artifact_name, artifact_type):
     cannot.
     """
     import json as _j
+
     counts = ig["counts"]
     legend = ig["legend"]
     types_html = "".join(
         f'<span class="olg"><span class="osw" style="background:{_html.escape(c)}"></span>{_html.escape(t)}</span>'
-        for t, c in sorted(legend["types"].items()))
+        for t, c in sorted(legend["types"].items())
+    )
     rels_html = "".join(
         '<span class="olg"><span class="oln" style="background:{}"></span>{}</span>'.format(
-            _html.escape(c), _html.escape(r.replace("_", " ")))
-        for r, c in sorted(legend["rels"].items()))
+            _html.escape(c), _html.escape(r.replace("_", " "))
+        )
+        for r, c in sorted(legend["rels"].items())
+    )
     dropped = ""
     if counts.get("dropped"):
-        dropped = ('<div class="hint">{} relationship(s) not drawn: an endpoint is not an Object '
-                   'of this Artifact. All relationships are internal (spec §1.7).</div>'
-                   .format(counts["dropped"]))
+        dropped = (
+            '<div class="hint">{} relationship(s) not drawn: an endpoint is not an Object '
+            "of this Artifact. All relationships are internal (spec §1.7).</div>".format(
+                counts["dropped"]
+            )
+        )
     payload = _j.dumps(ig["elements"], ensure_ascii=False)
     return f"""<h2>Internal structure</h2>
 <p class="hint">The Objects this {_html.escape(artifact_type)} contains and the relationships
 among them. All relationships are internal to one Artifact (spec §1.7) — nothing here reaches
 another artifact. <b>Click a node or an edge</b> for every property its author wrote.
-{counts['objects']} object(s), {counts['relationships']} relationship(s).</p>
+{counts["objects"]} object(s), {counts["relationships"]} relationship(s).</p>
 <div class="oglegend">{types_html}{rels_html}</div>
 {dropped}
 <div class="ogwrap">

@@ -25,6 +25,7 @@ to decide what to recompile.
 Pages poll `/__build` and reload themselves when the number moves, so a browser left
 open on the overview keeps up with the day without anyone touching it.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -70,15 +71,19 @@ def rebuild(record_dir, out_dir, title):
             STATE["error"] = None
             STATE["artifacts"] = manifest["artifacts"]
             STATE["at"] = time.strftime("%H:%M:%S")
-        print(f"[{STATE['at']}] build {STATE['build']}: {manifest['artifacts']} artifacts, "
-              f"{manifest['arguments']} argument(s), {manifest['findings']} finding(s), "
-              f"in {took:.2f}s")
+        print(
+            f"[{STATE['at']}] build {STATE['build']}: {manifest['artifacts']} artifacts, "
+            f"{manifest['arguments']} argument(s), {manifest['findings']} finding(s), "
+            f"in {took:.2f}s"
+        )
     except Exception:
         with _LOCK:
             STATE["build"] += 1
             STATE["error"] = traceback.format_exc(limit=3)
-        print(f"[{time.strftime('%H:%M:%S')}] BUILD FAILED — serving the previous build",
-              file=sys.stderr)
+        print(
+            f"[{time.strftime('%H:%M:%S')}] BUILD FAILED — serving the previous build",
+            file=sys.stderr,
+        )
         traceback.print_exc(limit=3)
 
 
@@ -116,7 +121,7 @@ def make_handler(out_dir):
             super().end_headers()
 
         def log_message(self, fmt, *args):
-            pass                                    # the build log is the useful one
+            pass  # the build log is the useful one
 
     return Handler
 
@@ -130,23 +135,40 @@ class Server(socketserver.ThreadingTCPServer):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("record_dir", nargs="?", default="record",
-                    help="directory of canonical JSON (default: ./record)")
+    ap.add_argument(
+        "record_dir",
+        nargs="?",
+        default="record",
+        help="directory of canonical JSON (default: ./record)",
+    )
     ap.add_argument("--out", default="dist")
-    ap.add_argument("--port", type=int, default=8760,
-                    help="the port to serve on; 0 takes any free one, and says which")
-    ap.add_argument("--title", default=None,
-                    help="the pages' title (default: the community of the session whose "
-                         "record copy this is)")
-    ap.add_argument("--interval", type=float, default=2.0,
-                    help="seconds between checks of the record directory")
+    ap.add_argument(
+        "--port",
+        type=int,
+        default=8760,
+        help="the port to serve on; 0 takes any free one, and says which",
+    )
+    ap.add_argument(
+        "--title",
+        default=None,
+        help="the pages' title (default: the community of the session whose "
+        "record copy this is)",
+    )
+    ap.add_argument(
+        "--interval",
+        type=float,
+        default=2.0,
+        help="seconds between checks of the record directory",
+    )
     args = ap.parse_args(argv)
 
     record = pathlib.Path(args.record_dir).resolve()
     out = pathlib.Path(args.out).resolve()
     if not record.is_dir():
-        raise SystemExit(f"ERROR: no record copy at {record}: run `/symposium sync` here first\n"
-                         f"  (on the admin's machine, `/symposium gate` writes the gate's copy)")
+        raise SystemExit(
+            f"ERROR: no record copy at {record}: run `/symposium sync` here first\n"
+            f"  (on the admin's machine, `/symposium gate` writes the gate's copy)"
+        )
     # a session's copy is titled with its community, so two communities open side by side
     # can be told apart; any other record directory keeps the generic title
     args.title = args.title or browse.community_name(record)
@@ -164,8 +186,11 @@ def main(argv=None):
         httpd = Server(("", port), make_handler(out))
     try:
         rebuild(str(record), str(out), args.title)
-        threading.Thread(target=watch, args=(str(record), str(out), args.title,
-                                             args.interval), daemon=True).start()
+        threading.Thread(
+            target=watch,
+            args=(str(record), str(out), args.title, args.interval),
+            daemon=True,
+        ).start()
         with httpd:
             print(f"watching {record}", flush=True)
             print(f"serving  http://localhost:{port}/   (ctrl-c to stop)", flush=True)

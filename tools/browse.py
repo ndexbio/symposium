@@ -40,6 +40,7 @@ nodes it does not mention. It is a viewing preference, so it lives beside the ar
 never inside one — the gate, the validator and the mirror comparison do not see it, and
 deleting it restores the computed layout.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -71,8 +72,14 @@ NON_GROUNDABLE_TYPES = {"Analysis", "NonGroundable", "Message"}
 
 #: Artifact properties whose value is an address or a list of them (spec §1.5, §2.5). These
 #: carry the record's formal provenance, so they are rendered as links rather than as text.
-ADDRESS_PROPS = {"produced_by", "inputs", "supersedes", "extracted_from", "recipients",
-                 "serves_goals"}
+ADDRESS_PROPS = {
+    "produced_by",
+    "inputs",
+    "supersedes",
+    "extracted_from",
+    "recipients",
+    "serves_goals",
+}
 
 # There is no verdict vocabulary. An Argument holds ONE free-text verdict, judging its
 # primary Assertion for a stated purpose, so a verdict is read rather than tallied:
@@ -80,13 +87,22 @@ ADDRESS_PROPS = {"produced_by", "inputs", "supersedes", "extracted_from", "recip
 # at all. A closed set would have let the browser colour claims by verdict and count
 # them, which is exactly the cross-Argument comparison the specification disclaims.
 
-_MEMBER_PALETTE = ["#2563eb", "#0d9488", "#c2410c", "#7c3aed", "#be123c",
-                   "#0891b2", "#4d7c0f", "#a16207"]
+_MEMBER_PALETTE = [
+    "#2563eb",
+    "#0d9488",
+    "#c2410c",
+    "#7c3aed",
+    "#be123c",
+    "#0891b2",
+    "#4d7c0f",
+    "#a16207",
+]
 
 
 # --------------------------------------------------------------------------- #
 # Loading
 # --------------------------------------------------------------------------- #
+
 
 def community_name(record_dir):
     """The community a record copy belongs to, for the pages' title (R13): the `community` of
@@ -118,15 +134,21 @@ def load_record(record_dir):
             if path.name.startswith("."):
                 continue
             raise SystemExit(f"ERROR: {path} is not valid JSON: {exc}") from exc
-        if isinstance(doc, dict) and isinstance(doc.get("artifact"), dict) \
-                and doc["artifact"].get("name") and doc["artifact"].get("type"):
+        if (
+            isinstance(doc, dict)
+            and isinstance(doc.get("artifact"), dict)
+            and doc["artifact"].get("name")
+            and doc["artifact"].get("type")
+        ):
             arts.append(doc)
     arts.sort(key=lambda a: (a["artifact"].get("created") or "", a["artifact"]["name"]))
     return arts
 
 
 def member_colors(artifacts):
-    members = sorted({a["artifact"].get("published_by", "").lstrip("@") for a in artifacts} - {""})
+    members = sorted(
+        {a["artifact"].get("published_by", "").lstrip("@") for a in artifacts} - {""}
+    )
     return {m: _MEMBER_PALETTE[i % len(_MEMBER_PALETTE)] for i, m in enumerate(members)}
 
 
@@ -135,18 +157,24 @@ def run_validator(artifacts, members):
     is what the gate did when it accepted it."""
     out = {}
     for i, a in enumerate(artifacts):
-        rest = artifacts[:i] + artifacts[i + 1:]
+        rest = artifacts[:i] + artifacts[i + 1 :]
         try:
             out[a["artifact"]["name"]] = validate(a, record=rest, members=members)
-        except Exception as exc:                       # a browser must render a broken record
-            out[a["artifact"]["name"]] = [{"check": "VALIDATOR", "level": "REVIEW",
-                                           "msg": f"could not be validated: {exc}"}]
+        except Exception as exc:  # a browser must render a broken record
+            out[a["artifact"]["name"]] = [
+                {
+                    "check": "VALIDATOR",
+                    "level": "REVIEW",
+                    "msg": f"could not be validated: {exc}",
+                }
+            ]
     return out
 
 
 # --------------------------------------------------------------------------- #
 # Addresses
 # --------------------------------------------------------------------------- #
+
 
 def page_name(artifact_name):
     return re.sub(r"[^A-Za-z0-9._-]", "_", artifact_name) + ".html"
@@ -164,7 +192,7 @@ def address_fragment(addr):
     if not p:
         return ""
     if p["method"] and p["ref"]:
-        return f'{p["method"]}.{p["ref"]}'
+        return f"{p['method']}.{p['ref']}"
     return p["segs"][0] if p["segs"] else ""
 
 
@@ -211,8 +239,12 @@ def cited_addresses(doc):
     scopes = [h] + [o for o in doc.get("objects", [])]
     for d in scopes:
         for k, v in d.items():
-            if not isinstance(v, str) or k in ("citation", "published_by", "produced_by",
-                                               "extracted_from"):
+            if not isinstance(v, str) or k in (
+                "citation",
+                "published_by",
+                "produced_by",
+                "extracted_from",
+            ):
                 continue
             for m in CITATION_RE.finditer(v):
                 out.append(m.group(1) or m.group(2))
@@ -228,7 +260,14 @@ def cited_addresses(doc):
 #: round, and drawn it would bury the evidence the way `cites` did. The reverse index and the
 #: Rounds page read it.
 _LINK_ONE = ("produced_by", "extracted_from")
-_LINK_MANY = ("inputs", "used_models", "outputs", "supersedes", "recipients", "serves_goals")
+_LINK_MANY = (
+    "inputs",
+    "used_models",
+    "outputs",
+    "supersedes",
+    "recipients",
+    "serves_goals",
+)
 
 
 def derived_links(doc, index):
@@ -247,14 +286,21 @@ def derived_links(doc, index):
     def add(addr, rel, **extra):
         p = parse_address(addr) if isinstance(addr, str) else None
         if p and p["root"] in index and p["root"] != src:
-            out.append({"source": src, "target": p["root"], "rel": rel, "address": addr,
-                        **extra})
+            out.append(
+                {
+                    "source": src,
+                    "target": p["root"],
+                    "rel": rel,
+                    "address": addr,
+                    **extra,
+                }
+            )
 
     for k in _LINK_ONE:
         add(h.get(k), k)
     for k in _LINK_MANY:
         v = h.get(k)
-        for x in (v if isinstance(v, list) else [v] if v else []):
+        for x in v if isinstance(v, list) else [v] if v else []:
             add(x, k)
     for o in doc.get("objects", []):
         if o.get("type") != "Ground":
@@ -262,10 +308,17 @@ def derived_links(doc, index):
         addr = o.get("citation", "")
         p = parse_address(addr)
         tgt = index.get(p["root"]) if p else None
-        testimony = bool(tgt and p["segs"] and (tgt["objects"].get(p["segs"][0], {}) or {}
-                                                ).get("type") == "Assertion")
-        add(addr, "testimony" if testimony else "grounded_by",
-            ground=o.get("name", ""), test=bool(o.get("criterion")))
+        testimony = bool(
+            tgt
+            and p["segs"]
+            and (tgt["objects"].get(p["segs"][0], {}) or {}).get("type") == "Assertion"
+        )
+        add(
+            addr,
+            "testimony" if testimony else "grounded_by",
+            ground=o.get("name", ""),
+            test=bool(o.get("criterion")),
+        )
     for addr in cited_addresses(doc):
         add(addr, "cites")
     return out
@@ -282,17 +335,22 @@ def reverse_index(artifacts, links_by_source):
     for a in artifacts:
         h = a["artifact"]
         objs = {o.get("name"): o for o in a.get("objects", [])}
-        bears_on = defaultdict(list)            # Ground name -> the Assertions grounded by it
+        bears_on = defaultdict(list)  # Ground name -> the Assertions grounded by it
         for r in a.get("relationships", []):
             if (r.get("rel") or r.get("type")) == "grounded_by":
                 bears_on[r.get("target")].append(r.get("source"))
         for link in links_by_source.get(h["name"], []):
-            entry = dict(link, source_type=h["type"],
-                         source_title=h.get("title") or h["name"],
-                         source_created=h.get("created") or "")
+            entry = dict(
+                link,
+                source_type=h["type"],
+                source_title=h.get("title") or h["name"],
+                source_created=h.get("created") or "",
+            )
             if link.get("ground") is not None:
-                entry["assertions"] = [{"name": n, "claim": (objs.get(n) or {}).get("claim", "")}
-                                       for n in bears_on.get(link["ground"], [])]
+                entry["assertions"] = [
+                    {"name": n, "claim": (objs.get(n) or {}).get("claim", "")}
+                    for n in bears_on.get(link["ground"], [])
+                ]
             by_target[link["target"]].append(entry)
     return by_target
 
@@ -300,21 +358,52 @@ def reverse_index(artifacts, links_by_source):
 #: The "Cited by" groups, in reading order: evidence first, prose citations (context, spec
 #: §2.2.5) last. A rel not listed here is shown under its own name after these.
 _CITED_BY_GROUPS = [
-    (("grounded_by", "testimony"), "Grounds",
-     "Evidence that rests on this artifact. A Ground with a <b>criterion</b> was offered as a "
-     "test that could have counted against its claim; one without is material built on."),
-    (("supersedes",), "Superseded by", "Artifacts that name this one in <code>supersedes</code>."),
-    (("produced_by",), "Named as their producer",
-     "Artifacts whose <code>produced_by</code> names this one."),
-    (("inputs",), "Used as an input", "Artifacts whose <code>inputs</code> name this one."),
-    (("used_models",), "Used as a model", "Artifacts whose <code>used_models</code> name this one."),
-    (("outputs",), "Named as an output", "Artifacts whose <code>outputs</code> name this one."),
-    (("extracted_from",), "Extracted from this",
-     "Artifacts whose <code>extracted_from</code> names this one."),
-    (("serves_goals",), "Serving this goal",
-     "Artifacts whose <code>serves_goals</code> name this one."),
-    (("cites",), "Cited in prose",
-     "A markdown link in another artifact's text: context, not evidence (spec §2.2.5)."),
+    (
+        ("grounded_by", "testimony"),
+        "Grounds",
+        "Evidence that rests on this artifact. A Ground with a <b>criterion</b> was offered as a "
+        "test that could have counted against its claim; one without is material built on.",
+    ),
+    (
+        ("supersedes",),
+        "Superseded by",
+        "Artifacts that name this one in <code>supersedes</code>.",
+    ),
+    (
+        ("produced_by",),
+        "Named as their producer",
+        "Artifacts whose <code>produced_by</code> names this one.",
+    ),
+    (
+        ("inputs",),
+        "Used as an input",
+        "Artifacts whose <code>inputs</code> name this one.",
+    ),
+    (
+        ("used_models",),
+        "Used as a model",
+        "Artifacts whose <code>used_models</code> name this one.",
+    ),
+    (
+        ("outputs",),
+        "Named as an output",
+        "Artifacts whose <code>outputs</code> name this one.",
+    ),
+    (
+        ("extracted_from",),
+        "Extracted from this",
+        "Artifacts whose <code>extracted_from</code> names this one.",
+    ),
+    (
+        ("serves_goals",),
+        "Serving this goal",
+        "Artifacts whose <code>serves_goals</code> name this one.",
+    ),
+    (
+        ("cites",),
+        "Cited in prose",
+        "A markdown link in another artifact's text: context, not evidence (spec §2.2.5).",
+    ),
 ]
 
 
@@ -322,7 +411,7 @@ def cited_by_id(link):
     """The id of a link's row in "Cited by", stable across rebuilds, so a mark on a cited cell
     and the row that cites it can point at each other."""
     tail = link.get("ground") or link["rel"]
-    return "cb-" + re.sub(r"[^A-Za-z0-9_.-]", "_", f'{link["source"]}--{tail}')
+    return "cb-" + re.sub(r"[^A-Za-z0-9_.-]", "_", f"{link['source']}--{tail}")
 
 
 def local_label(addr):
@@ -354,8 +443,13 @@ def ground_marks(links):
             continue
         frag = address_fragment(link["address"])
         if frag:
-            marks[frag].append((cited_by_id(link), f'{link["source"]} · {link["ground"]}'
-                                + (" (test)" if link.get("test") else "")))
+            marks[frag].append(
+                (
+                    cited_by_id(link),
+                    f"{link['source']} · {link['ground']}"
+                    + (" (test)" if link.get("test") else ""),
+                )
+            )
     return marks
 
 
@@ -374,8 +468,10 @@ def page_spans(links):
             by_quote[(p["segs"][0], q.group(1))].append(link)
     out = defaultdict(list)
     for (prop, quote), ls in by_quote.items():
-        tip = "; ".join(f'{x["source"]} · {x["ground"]}' + (" (test)" if x.get("test") else "")
-                        for x in ls)
+        tip = "; ".join(
+            f"{x['source']} · {x['ground']}" + (" (test)" if x.get("test") else "")
+            for x in ls
+        )
         out[prop].append((quote, tip, cited_by_id(ls[0]), len(ls)))
     return out
 
@@ -395,11 +491,15 @@ def cited_by_html(links, index, pages, skip=()):
             seen.add(key)
             rows.append(link)
     citing = {x["source"] for x in rows}
-    head = (f'<h2 id="cited-by">Cited by ({len(citing)})</h2>'
-            '<p class="hint">Worked out from the addresses other artifacts hold. The record '
-            'stores no backlinks: an artifact is immutable, and what cites it comes later.</p>')
+    head = (
+        f'<h2 id="cited-by">Cited by ({len(citing)})</h2>'
+        '<p class="hint">Worked out from the addresses other artifacts hold. The record '
+        "stores no backlinks: an artifact is immutable, and what cites it comes later.</p>"
+    )
     if not rows:
-        return head + '<p class="hint">Nothing in the record cites this artifact yet.</p>'
+        return (
+            head + '<p class="hint">Nothing in the record cites this artifact yet.</p>'
+        )
 
     def who(x):
         page = pages.get(x["source"])
@@ -414,7 +514,8 @@ def cited_by_html(links, index, pages, skip=()):
 
     known = {r for rels, _l, _h in _CITED_BY_GROUPS for r in rels}
     groups = list(_CITED_BY_GROUPS) + [
-        ((r,), r, "") for r in sorted({x["rel"] for x in rows} - known)]
+        ((r,), r, "") for r in sorted({x["rel"] for x in rows} - known)
+    ]
     parts = [head]
     for rels, label, hint in groups:
         ls = [x for x in rows if x["rel"] in rels]
@@ -426,32 +527,51 @@ def cited_by_html(links, index, pages, skip=()):
             for x in ls:
                 claims = "".join(
                     f'<div>{esc(a["claim"] or a["name"])} <span class="hint"><code>'
-                    f'{esc(a["name"])}</code></span></div>' for a in x.get("assertions", []))
-                badges = ('<span class="badge test">test</span>' if x.get("test")
-                          else '<span class="hint">built on</span>')
+                    f"{esc(a['name'])}</code></span></div>"
+                    for a in x.get("assertions", [])
+                )
+                badges = (
+                    '<span class="badge test">test</span>'
+                    if x.get("test")
+                    else '<span class="hint">built on</span>'
+                )
                 if x["rel"] == "testimony":
                     badges += ' <span class="badge">testimony</span>'
-                trs.append(f'<tr id="{esc(cited_by_id(x))}"><td>{who(x)}</td><td>{claims}'
-                           f'<div class="hint">Ground <code>{esc(x["ground"])}</code></div></td>'
-                           f'<td>{what(x)}</td><td>{badges}</td></tr>')
-            parts.append(f'<h3 class="cbh">{label} ({len(ls)}) · {tests} offered as a test</h3>'
-                         f'<p class="hint">{hint}</p><table class="citedby"><tr><th>citing '
-                         'Argument</th><th>Assertion</th><th>cites here</th><th></th></tr>'
-                         + "".join(trs) + "</table>")
+                trs.append(
+                    f'<tr id="{esc(cited_by_id(x))}"><td>{who(x)}</td><td>{claims}'
+                    f'<div class="hint">Ground <code>{esc(x["ground"])}</code></div></td>'
+                    f"<td>{what(x)}</td><td>{badges}</td></tr>"
+                )
+            parts.append(
+                f'<h3 class="cbh">{label} ({len(ls)}) · {tests} offered as a test</h3>'
+                f'<p class="hint">{hint}</p><table class="citedby"><tr><th>citing '
+                "Argument</th><th>Assertion</th><th>cites here</th><th></th></tr>"
+                + "".join(trs)
+                + "</table>"
+            )
         else:
-            lis = "".join(f'<li>{who(x)}'
-                          + (f'<div class="hint">cites {what(x)}</div>'
-                             if address_fragment(x["address"]) else "") + "</li>"
-                          for x in ls)
-            parts.append(f'<h3 class="cbh">{label} ({len(ls)})</h3>'
-                         + (f'<p class="hint">{hint}</p>' if hint else "")
-                         + f'<ul class="citedby">{lis}</ul>')
+            lis = "".join(
+                f"<li>{who(x)}"
+                + (
+                    f'<div class="hint">cites {what(x)}</div>'
+                    if address_fragment(x["address"])
+                    else ""
+                )
+                + "</li>"
+                for x in ls
+            )
+            parts.append(
+                f'<h3 class="cbh">{label} ({len(ls)})</h3>'
+                + (f'<p class="hint">{hint}</p>' if hint else "")
+                + f'<ul class="citedby">{lis}</ul>'
+            )
     return "".join(parts)
 
 
 # --------------------------------------------------------------------------- #
 # Claim map for one Argument
 # --------------------------------------------------------------------------- #
+
 
 def _ground_facts(g, index, argument_name):
     """What the record can say, structurally, about one Ground."""
@@ -490,7 +610,7 @@ def build_claim_graph(doc, index, findings, colors, pages):
     grounds = {n: o for n, o in objs.items() if o.get("type") == "Ground"}
     assumptions = {n: o for n, o in objs.items() if o.get("type") == "Assumption"}
 
-    out = defaultdict(list)                     # assertion -> [(rel, target)]
+    out = defaultdict(list)  # assertion -> [(rel, target)]
     for r in rels:
         out[r.get("source")].append((r.get("rel"), r.get("target")))
 
@@ -515,19 +635,29 @@ def build_claim_graph(doc, index, findings, colors, pages):
             return sid
         source_ids[sid] = True
         external_assertion = gf["testimony"]
-        target_owner = (index.get(gf["root"], {}).get("header", {}) or {}).get(
-            "published_by", "").lstrip("@")
+        target_owner = (
+            (index.get(gf["root"], {}).get("header", {}) or {})
+            .get("published_by", "")
+            .lstrip("@")
+        )
         if gf["unverifiable"]:
             n_unverifiable += 1
         label = pretty_address(gf["address"], index)
         d = {
-            "id": sid, "ntype": "External" if external_assertion else "Source",
-            "label": label, "name": label,
-            "owner": target_owner, "owner_color": colors.get(target_owner, "#9ca3af"),
+            "id": sid,
+            "ntype": "External" if external_assertion else "Source",
+            "label": label,
+            "name": label,
+            "owner": target_owner,
+            "owner_color": colors.get(target_owner, "#9ca3af"),
             "unverifiable": gf["unverifiable"],
-            "full": {"name": label, "address": gf["address"], "artifact": gf["root"],
-                     "method": (parse_address(gf["address"]) or {}).get("method"),
-                     "type": gf["target_type"]},
+            "full": {
+                "name": label,
+                "address": gf["address"],
+                "artifact": gf["root"],
+                "method": (parse_address(gf["address"]) or {}).get("method"),
+                "type": gf["target_type"],
+            },
             "tooltip": gf["address"],
         }
         if gf["root"] in pages:
@@ -552,80 +682,176 @@ def build_claim_graph(doc, index, findings, colors, pages):
             g = grounds[t]
             gf = _ground_facts(g, index, name)
             sid = source_node(gf, an)
-            gs.append({"source": pretty_address(gf["address"], index),
-                       "address": gf["address"], "kind": gf["kind"],
-                       "criterion": g.get("criterion"), "rationale": g.get("rationale"),
-                       "testimony": gf["testimony"], "unverifiable": gf["unverifiable"],
-                       "_ground": t, "_sid": sid, "_facts": gf})
-        us = [{"id": t, "rationale": assumptions[t].get("rationale")}
-              for rel, t in my if rel == "assumes" and t in assumptions]
+            gs.append(
+                {
+                    "source": pretty_address(gf["address"], index),
+                    "address": gf["address"],
+                    "kind": gf["kind"],
+                    "criterion": g.get("criterion"),
+                    "rationale": g.get("rationale"),
+                    "testimony": gf["testimony"],
+                    "unverifiable": gf["unverifiable"],
+                    "_ground": t,
+                    "_sid": sid,
+                    "_facts": gf,
+                }
+            )
+        us = [
+            {"id": t, "rationale": assumptions[t].get("rationale")}
+            for rel, t in my
+            if rel == "assumes" and t in assumptions
+        ]
         data = {
-            "id": an, "ntype": "Assertion", "label": label,
-            "owner": owner, "owner_color": color,
-            "groundings": [{k: v for k, v in g.items() if not k.startswith("_")} for g in gs],
+            "id": an,
+            "ntype": "Assertion",
+            "label": label,
+            "owner": owner,
+            "owner_color": color,
+            "groundings": [
+                {k: v for k, v in g.items() if not k.startswith("_")} for g in gs
+            ],
             "assumptions": us,
-            "findings": [{"check": f["check"], "level": f["level"], "msg": f["msg"]}
-                         for f in per_object.get(an, [])],
+            "findings": [
+                {"check": f["check"], "level": f["level"], "msg": f["msg"]}
+                for f in per_object.get(an, [])
+            ],
             # drawn with an orange border, so the claim a finding is on can be found
             "flagged": bool(per_object.get(an)),
             "full": {"claim": a.get("claim"), "scope": a.get("scope")},
             "primary": an == h.get("primary_assertion"),
-            "tooltip": (("PRIMARY — " if an == h.get("primary_assertion") else "") + claim),
+            "tooltip": (
+                ("PRIMARY — " if an == h.get("primary_assertion") else "") + claim
+            ),
         }
         nodes.append({"data": data})
-        full_nodes.append({"data": {k: v for k, v in data.items()
-                                    if k not in ("groundings", "assumptions")}})
+        full_nodes.append(
+            {
+                "data": {
+                    k: v
+                    for k, v in data.items()
+                    if k not in ("groundings", "assumptions")
+                }
+            }
+        )
 
         # collapsed edges: assertion -> what it rests on
         for g in gs:
-            edges.append({"data": {
-                "id": f"e_{an}_{g['_ground']}", "source": an, "target": g["_sid"],
-                "rel": "grounded_by", "kind": g["kind"], "testimony": g["testimony"],
-                "unverifiable": g["unverifiable"],
-                "full": {"address": g["address"], "criterion": g.get("criterion"),
-                         "rationale": g.get("rationale")},
-                "tooltip": ("test — " if g["kind"] == "test" else "evidential — ")
-                           + (g.get("rationale") or "")}})
+            edges.append(
+                {
+                    "data": {
+                        "id": f"e_{an}_{g['_ground']}",
+                        "source": an,
+                        "target": g["_sid"],
+                        "rel": "grounded_by",
+                        "kind": g["kind"],
+                        "testimony": g["testimony"],
+                        "unverifiable": g["unverifiable"],
+                        "full": {
+                            "address": g["address"],
+                            "criterion": g.get("criterion"),
+                            "rationale": g.get("rationale"),
+                        },
+                        "tooltip": (
+                            "test — " if g["kind"] == "test" else "evidential — "
+                        )
+                        + (g.get("rationale") or ""),
+                    }
+                }
+            )
         for u in us:
-            edges.append({"data": {"id": f"e_{an}_{u['id']}", "source": an, "target": u["id"],
-                                   "rel": "assumes", "tooltip": u.get("rationale") or ""}})
+            edges.append(
+                {
+                    "data": {
+                        "id": f"e_{an}_{u['id']}",
+                        "source": an,
+                        "target": u["id"],
+                        "rel": "assumes",
+                        "tooltip": u.get("rationale") or "",
+                    }
+                }
+            )
         for rel, t in my:
             if rel == "depends_on" and t in assertions:
-                e = {"data": {"id": f"e_{an}_{rel}_{t}", "source": an, "target": t, "rel": rel,
-                              "tooltip": rel + " → " + (assertions[t].get("claim") or t)}}
+                e = {
+                    "data": {
+                        "id": f"e_{an}_{rel}_{t}",
+                        "source": an,
+                        "target": t,
+                        "rel": rel,
+                        "tooltip": rel + " → " + (assertions[t].get("claim") or t),
+                    }
+                }
                 edges.append(e)
                 full_edges.append({"data": dict(e["data"])})
 
         # full graph: nothing folded
         for g in gs:
-            full_edges.append({"data": {
-                "id": f"f_{an}_{g['_ground']}", "source": an, "target": g["_ground"],
-                "rel": "grounded_by", "kind": g["kind"], "testimony": g["testimony"]}})
-            full_edges.append({"data": {
-                "id": f"f_{g['_ground']}_addr", "source": g["_ground"], "target": g["_sid"],
-                "rel": "addresses"}})
+            full_edges.append(
+                {
+                    "data": {
+                        "id": f"f_{an}_{g['_ground']}",
+                        "source": an,
+                        "target": g["_ground"],
+                        "rel": "grounded_by",
+                        "kind": g["kind"],
+                        "testimony": g["testimony"],
+                    }
+                }
+            )
+            full_edges.append(
+                {
+                    "data": {
+                        "id": f"f_{g['_ground']}_addr",
+                        "source": g["_ground"],
+                        "target": g["_sid"],
+                        "rel": "addresses",
+                    }
+                }
+            )
         for u in us:
-            full_edges.append({"data": {"id": f"f_{an}_{u['id']}", "source": an,
-                                        "target": u["id"], "rel": "assumes"}})
+            full_edges.append(
+                {
+                    "data": {
+                        "id": f"f_{an}_{u['id']}",
+                        "source": an,
+                        "target": u["id"],
+                        "rel": "assumes",
+                    }
+                }
+            )
 
     # ---- assumptions (drawn in BOTH modes — never folded) --------------------
     for un, u in assumptions.items():
         r = u.get("rationale", "")
-        d = {"id": un, "ntype": "Assumption", "owner": owner, "owner_color": color,
-             "label": r,
-             "full": {"rationale": r}, "tooltip": "assumed: " + r}
+        d = {
+            "id": un,
+            "ntype": "Assumption",
+            "owner": owner,
+            "owner_color": color,
+            "label": r,
+            "full": {"rationale": r},
+            "tooltip": "assumed: " + r,
+        }
         nodes.append({"data": dict(d)})
         full_nodes.append({"data": dict(d)})
 
     # ---- grounds exist only in the full graph --------------------------------
     for gn, g in grounds.items():
-        full_nodes.append({"data": {
-            "id": gn, "ntype": "Ground", "label": gn,
-            "owner": owner, "owner_color": color,
-            "kind": "test" if g.get("criterion") else "evidential",
-            "full": {k: v for k, v in g.items() if k != "name"},
-            "tooltip": ("test: " if g.get("criterion") else "evidential: ")
-                       + (g.get("rationale") or "")}})
+        full_nodes.append(
+            {
+                "data": {
+                    "id": gn,
+                    "ntype": "Ground",
+                    "label": gn,
+                    "owner": owner,
+                    "owner_color": color,
+                    "kind": "test" if g.get("criterion") else "evidential",
+                    "full": {k: v for k, v in g.items() if k != "name"},
+                    "tooltip": ("test: " if g.get("criterion") else "evidential: ")
+                    + (g.get("rationale") or ""),
+                }
+            }
+        )
 
     # ---- prose citations ----------------------------------------------------
     for addr in cited_addresses(doc):
@@ -634,23 +860,43 @@ def build_claim_graph(doc, index, findings, colors, pages):
             continue
         cid = "cite:" + p["root"]
         if not any(n["data"]["id"] == cid for n in nodes):
-            title = (index.get(p["root"], {}).get("header", {}) or {}).get("title") or p["root"]
-            tgt_owner = (index.get(p["root"], {}).get("header", {}) or {}).get(
-                "published_by", "").lstrip("@")
-            d = {"id": cid, "ntype": "Source", "label": "cited: " + title,
-                 "name": title, "owner": tgt_owner,
-                 "owner_color": colors.get(tgt_owner, "#9ca3af"),
-                 "nav_file": pages[p["root"]], "navigable": True,
-                 "full": {"name": title, "address": addr, "artifact": p["root"]},
-                 "tooltip": "cited in prose — a reference, never evidence: " + addr}
+            title = (index.get(p["root"], {}).get("header", {}) or {}).get(
+                "title"
+            ) or p["root"]
+            tgt_owner = (
+                (index.get(p["root"], {}).get("header", {}) or {})
+                .get("published_by", "")
+                .lstrip("@")
+            )
+            d = {
+                "id": cid,
+                "ntype": "Source",
+                "label": "cited: " + title,
+                "name": title,
+                "owner": tgt_owner,
+                "owner_color": colors.get(tgt_owner, "#9ca3af"),
+                "nav_file": pages[p["root"]],
+                "navigable": True,
+                "full": {"name": title, "address": addr, "artifact": p["root"]},
+                "tooltip": "cited in prose — a reference, never evidence: " + addr,
+            }
             nodes.append({"data": dict(d)})
             full_nodes.append({"data": dict(d)})
         prim = h.get("primary_assertion")
         if prim in assertions:
             eid = f"e_cite_{prim}_{p['root']}"
             if not any(e["data"]["id"] == eid for e in edges):
-                edges.append({"data": {"id": eid, "source": prim, "target": cid, "rel": "cites",
-                                       "tooltip": "cited in prose: " + addr}})
+                edges.append(
+                    {
+                        "data": {
+                            "id": eid,
+                            "source": prim,
+                            "target": cid,
+                            "rel": "cites",
+                            "tooltip": "cited in prose: " + addr,
+                        }
+                    }
+                )
 
     _layout_claim(nodes, edges, h.get("primary_assertion"))
     _layout_full(full_nodes, full_edges)
@@ -677,7 +923,8 @@ def build_claim_graph(doc, index, findings, colors, pages):
         "supersedes_rationale": h.get("supersedes_rationale", ""),
         "members": {owner: color},
         "counts": {
-            "nodes_total": len(nodes), "edges_total": len(edges),
+            "nodes_total": len(nodes),
+            "edges_total": len(edges),
             "nodes_by_type": dict(by_type),
             "source_nodes": by_type.get("Source", 0) + by_type.get("External", 0),
             "folded_grounds": len(grounds),
@@ -694,7 +941,11 @@ def build_claim_graph(doc, index, findings, colors, pages):
         m = n["data"]
         if m.get("owner") and m["owner"] not in meta["members"]:
             meta["members"][m["owner"]] = m.get("owner_color", "#9ca3af")
-    return {"nodes": nodes, "edges": edges}, {"nodes": full_nodes, "edges": full_edges}, meta
+    return (
+        {"nodes": nodes, "edges": edges},
+        {"nodes": full_nodes, "edges": full_edges},
+        meta,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -757,7 +1008,9 @@ def _layout_claim(nodes, edges, primary):
     for i, d in by_id.items():
         if d["ntype"] == "Assertion":
             continue
-        cs = [c for c in consumers.get(i, []) if c in by_id and "_pos_claim" in by_id[c]]
+        cs = [
+            c for c in consumers.get(i, []) if c in by_id and "_pos_claim" in by_id[c]
+        ]
         if cs:
             anchor = min(cs, key=lambda c: by_id[c]["_pos_claim"]["x"])
             ax, ay = by_id[anchor]["_pos_claim"]["x"], by_id[anchor]["_pos_claim"]["y"]
@@ -768,15 +1021,16 @@ def _layout_claim(nodes, edges, primary):
     for key, items in stack.items():
         items.sort(key=lambda t: t[1])
         for k, (i, ay) in enumerate(items):
-            by_id[i]["_pos_claim"] = {"x": key - _LEAF_DX,
-                                      "y": ay + (k - (len(items) - 1) / 2) * _LEAF_DY}
+            by_id[i]["_pos_claim"] = {
+                "x": key - _LEAF_DX,
+                "y": ay + (k - (len(items) - 1) / 2) * _LEAF_DY,
+            }
     for d in by_id.values():
         d.setdefault("_pos_claim", {"x": 0.0, "y": 0.0})
     return roots
 
 
-_FULL_ORDER = {"Source": 0, "External": 0, "Ground": 1, "Assumption": 1,
-               "Assertion": 2}
+_FULL_ORDER = {"Source": 0, "External": 0, "Ground": 1, "Assumption": 1, "Assertion": 2}
 
 
 def _layout_full(nodes, edges):
@@ -790,7 +1044,10 @@ def _layout_full(nodes, edges):
     for c, ids in sorted(col.items()):
         ids.sort()
         for k, i in enumerate(ids):
-            by_id[i]["_pos_full"] = {"x": c * 260.0, "y": (k - (len(ids) - 1) / 2) * 60.0}
+            by_id[i]["_pos_full"] = {
+                "x": c * 260.0,
+                "y": (k - (len(ids) - 1) / 2) * 60.0,
+            }
     for d in by_id.values():
         d.setdefault("_pos_full", {"x": 0.0, "y": 0.0})
 
@@ -799,30 +1056,59 @@ def _layout_full(nodes, edges):
 # Community overview
 # --------------------------------------------------------------------------- #
 
-_SHAPE = {"Argument": "round-rectangle", "NonGroundable": "hexagon", "Data": "rectangle",
-          "ScientificPublication": "octagon", "Analysis": "diamond",
-          "Model": "pentagon", "Message": "tag", "ResearchGoal": "star"}
+_SHAPE = {
+    "Argument": "round-rectangle",
+    "NonGroundable": "hexagon",
+    "Data": "rectangle",
+    "ScientificPublication": "octagon",
+    "Analysis": "diamond",
+    "Model": "pentagon",
+    "Message": "tag",
+    "ResearchGoal": "star",
+}
 #: Shapes for the types a community uses that neither the specification nor the profile
 #: defines, given out in the types' alphabetical order, so no two types in one record share a
 #: shape; past the last, ellipse.
-_SPARE_SHAPES = ("rhomboid", "triangle", "vee", "concave-hexagon", "heptagon", "right-rhomboid")
+_SPARE_SHAPES = (
+    "rhomboid",
+    "triangle",
+    "vee",
+    "concave-hexagon",
+    "heptagon",
+    "right-rhomboid",
+)
 #: What each artifact type is, in a line, and whether it can be evidence: the overview's legend
 #: (spec §2; ResearchGoal, CANONICAL.md §2.1). A type neither defines is said to be one, with
 #: no guess at what the community meant by it; whether it is evidence is its own declaration.
 TYPE_MEANING = {
-    "Argument": ("evidential reasoning: a claim, the Grounds it rests on, and a verdict",
-                 "its claims can be testimony"),
-    "Data": ("data imported into the record, or produced by an Analysis", "can be evidence"),
-    "Model": ("a model, with the modeling choices its content depends on", "can be evidence"),
-    "ScientificPublication": ("a published paper, imported with its authors", "can be evidence"),
-    "Analysis": ("a procedure performed, set out so the work can be inspected",
-                 "never evidence"),
+    "Argument": (
+        "evidential reasoning: a claim, the Grounds it rests on, and a verdict",
+        "its claims can be testimony",
+    ),
+    "Data": (
+        "data imported into the record, or produced by an Analysis",
+        "can be evidence",
+    ),
+    "Model": (
+        "a model, with the modeling choices its content depends on",
+        "can be evidence",
+    ),
+    "ScientificPublication": (
+        "a published paper, imported with its authors",
+        "can be evidence",
+    ),
+    "Analysis": (
+        "a procedure performed, set out so the work can be inspected",
+        "never evidence",
+    ),
     "ResearchGoal": ("what the community is trying to find out", "never evidence"),
     "Message": ("a communication to the Members it names", "never evidence"),
     "NonGroundable": ("content its Member marked as never evidence", "never evidence"),
 }
-UNDEFINED_TYPE_MEANING = ("a type this community uses that neither the specification nor its "
-                          "profile defines", "")
+UNDEFINED_TYPE_MEANING = (
+    "a type this community uses that neither the specification nor its profile defines",
+    "",
+)
 
 
 def type_shapes(types):
@@ -838,10 +1124,21 @@ def type_legend(by_type, shapes):
     """The overview's "Artifact types": each type present, in reading order, with its shape,
     count, meaning and whether it can be evidence."""
     order = list(TYPE_MEANING)
-    types = sorted(by_type, key=lambda t: (order.index(t) if t in order else len(order), t))
-    return [{"type": t, "shape": shapes[t], "count": by_type[t],
-             "meaning": TYPE_MEANING.get(t, UNDEFINED_TYPE_MEANING)[0],
-             "evidence": TYPE_MEANING.get(t, UNDEFINED_TYPE_MEANING)[1]} for t in types]
+    types = sorted(
+        by_type, key=lambda t: (order.index(t) if t in order else len(order), t)
+    )
+    return [
+        {
+            "type": t,
+            "shape": shapes[t],
+            "count": by_type[t],
+            "meaning": TYPE_MEANING.get(t, UNDEFINED_TYPE_MEANING)[0],
+            "evidence": TYPE_MEANING.get(t, UNDEFINED_TYPE_MEANING)[1],
+        }
+        for t in types
+    ]
+
+
 _SESSION_GAP = 20 * 60
 #: Edge kinds the overview starts with hidden. A `cites` edge is a citation in prose: context,
 #: not evidence (spec 2.2.5). On c037_2 it was 323 of 404 edges, and drawn by default it buried
@@ -895,11 +1192,11 @@ _SUB_DX, _COL_GAP = 190.0, 150.0
 # rather than the graph getting taller. _target_rows is derived from the node count so the
 # whole picture stays near _ASPECT rather than running away along either axis.
 
-_MIN_DX = 260.0          # hard floor on the horizontal span of any derived edge
-_SUB_DX_L = 200.0        # sub-column spacing inside one layer's band
-_ROW_DY_L = 118.0        # row spacing inside a layer; wide enough that a long
-                         # `cites` edge can pass BETWEEN two rows rather than over a box
-_ASPECT = 1.35           # target width:height; the pane is landscape, so >1
+_MIN_DX = 260.0  # hard floor on the horizontal span of any derived edge
+_SUB_DX_L = 200.0  # sub-column spacing inside one layer's band
+_ROW_DY_L = 118.0  # row spacing inside a layer; wide enough that a long
+# `cites` edge can pass BETWEEN two rows rather than over a box
+_ASPECT = 1.35  # target width:height; the pane is landscape, so >1
 
 
 def _citation_layers(nodes, edges):
@@ -912,8 +1209,15 @@ def _citation_layers(nodes, edges):
     """
     ids = [n["data"]["id"] for n in nodes]
     idset = set(ids)
-    structural = {"produced_by", "inputs", "grounded_by", "testimony", "cites",
-                  "extracted_from", "used_models"}
+    structural = {
+        "produced_by",
+        "inputs",
+        "grounded_by",
+        "testimony",
+        "cites",
+        "extracted_from",
+        "used_models",
+    }
     # child -> parents it points at (the things it cites)
     parents = {i: set() for i in ids}
     for e in edges:
@@ -929,7 +1233,7 @@ def _citation_layers(nodes, edges):
     def walk(i):
         if i in depth:
             return depth[i]
-        if i in visiting:                    # cannot happen in a valid record; do not hang
+        if i in visiting:  # cannot happen in a valid record; do not hang
             return 0
         visiting.add(i)
         d = 0
@@ -977,7 +1281,9 @@ def _layout_overview(nodes, edges, order_hint):
     # Never fewer rows than the fullest layer needs to avoid gratuitous sub-columns, and
     # never more than would leave most of the band empty.
     fullest = max((len(v) for v in layers.values()), default=1)
-    target_rows = max(target_rows, min(fullest, int(math.ceil(n_total / max(n_layers, 1)))))
+    target_rows = max(
+        target_rows, min(fullest, int(math.ceil(n_total / max(n_layers, 1))))
+    )
     target_rows = max(3, min(target_rows, 14))
 
     # Neighbour sets for the crossing heuristic, over the same structural edges used above.
@@ -1096,7 +1402,7 @@ def _layout_overview(nodes, edges, order_hint):
     layer_x, x = {}, 0.0
     for d in sorted(layers):
         layer_x[d] = x
-        subcols = max(1, -(-len(layers[d]) // target_rows))          # ceil
+        subcols = max(1, -(-len(layers[d]) // target_rows))  # ceil
         width = (subcols - 1) * _SUB_DX_L
         x += width + _MIN_DX
 
@@ -1106,8 +1412,10 @@ def _layout_overview(nodes, edges, order_hint):
         for k, i in enumerate(ids):
             sub, row = divmod(k, target_rows)
             rows_here = min(target_rows, len(ids) - sub * target_rows)
-            out[i] = {"x": layer_x[d] + sub * _SUB_DX_L,
-                      "y": (row - (rows_here - 1) / 2.0) * _ROW_DY_L}
+            out[i] = {
+                "x": layer_x[d] + sub * _SUB_DX_L,
+                "y": (row - (rows_here - 1) / 2.0) * _ROW_DY_L,
+            }
     return out
 
 
@@ -1130,8 +1438,16 @@ def apply_pins(positions, pins):
     return used
 
 
-def build_overview(artifacts, index, colors, pages, findings_by, pins=None, annotations=None,
-                   links_by_source=None):
+def build_overview(
+    artifacts,
+    index,
+    colors,
+    pages,
+    findings_by,
+    pins=None,
+    annotations=None,
+    links_by_source=None,
+):
     nodes, edges = [], []
     shapes = type_shapes({a["artifact"]["type"] for a in artifacts})
     stamps = []
@@ -1150,15 +1466,29 @@ def build_overview(artifacts, index, colors, pages, findings_by, pins=None, anno
         if s is not None:
             prev = s
 
-    order = {t: i for i, t in enumerate(
-        ["Report", "ScientificPublication", "Data", "Analysis", "Model", "Argument", "Message"])}
+    order = {
+        t: i
+        for i, t in enumerate(
+            [
+                "Report",
+                "ScientificPublication",
+                "Data",
+                "Analysis",
+                "Model",
+                "Argument",
+                "Message",
+            ]
+        )
+    }
 
     # Type bands are sized to their busiest column, not fixed, so a column holding
     # three imports cannot push its third one down into the band below. Without this
     # the picture reads wrongly at exactly the moment it matters — a burst of imports.
     occupancy = defaultdict(int)
     for a in artifacts:
-        occupancy[(cols[a["artifact"]["name"]], order.get(a["artifact"]["type"], 7))] += 1
+        occupancy[
+            (cols[a["artifact"]["name"]], order.get(a["artifact"]["type"], 7))
+        ] += 1
     band_height = defaultdict(int)
     for (_c, r), n in occupancy.items():
         band_height[r] = max(band_height[r], min(n, _BAND_MAX_ROWS))
@@ -1171,7 +1501,7 @@ def build_overview(artifacts, index, colors, pages, findings_by, pins=None, anno
     # lopsided the day was.
     sub_wide = defaultdict(int)
     for (c, _r), n in occupancy.items():
-        sub_wide[c] = max(sub_wide[c], -(-n // _BAND_MAX_ROWS))       # ceil
+        sub_wide[c] = max(sub_wide[c], -(-n // _BAND_MAX_ROWS))  # ceil
     col_x, x = {}, 0.0
     for c in sorted(set(cols.values())):
         col_x[c] = x
@@ -1187,43 +1517,66 @@ def build_overview(artifacts, index, colors, pages, findings_by, pins=None, anno
         rows[(c, r)] += 1
         title = h.get("title") or name
         fs = findings_by.get(name, [])
-        nodes.append({"data": {
-            "id": name, "ntype": typ, "label": title,
-            "member": owner, "owner_color": colors.get(owner, "#9ca3af"),
-            "shape": shapes[typ],
-            "nav_file": pages.get(name),
-            "page_kind": "claimmap" if typ == ARGUMENT else "evidence",
-            "full": {"name": name, "type": typ, "title": h.get("title"),
-                     "created": h.get("created"),
-                     "object_count": len(a.get("objects", [])),
-                     "import_method": h.get("import_method"),
-                     "modeling_choices": h.get("modeling_choices"),
-                     "procedure": h.get("procedure"),
-                     "groundable": False if typ in NON_GROUNDABLE_TYPES else None},
-            "tooltip": f"{typ} · {owner}\n{title}"
-                       + (f"\n{len(fs)} checker finding(s)" if fs else ""),
-            "_pos": {"x": 0.0, "y": 0.0},      # replaced below, once edges are known
-        }})
+        nodes.append(
+            {
+                "data": {
+                    "id": name,
+                    "ntype": typ,
+                    "label": title,
+                    "member": owner,
+                    "owner_color": colors.get(owner, "#9ca3af"),
+                    "shape": shapes[typ],
+                    "nav_file": pages.get(name),
+                    "page_kind": "claimmap" if typ == ARGUMENT else "evidence",
+                    "full": {
+                        "name": name,
+                        "type": typ,
+                        "title": h.get("title"),
+                        "created": h.get("created"),
+                        "object_count": len(a.get("objects", [])),
+                        "import_method": h.get("import_method"),
+                        "modeling_choices": h.get("modeling_choices"),
+                        "procedure": h.get("procedure"),
+                        "groundable": False if typ in NON_GROUNDABLE_TYPES else None,
+                    },
+                    "tooltip": f"{typ} · {owner}\n{title}"
+                    + (f"\n{len(fs)} checker finding(s)" if fs else ""),
+                    "_pos": {
+                        "x": 0.0,
+                        "y": 0.0,
+                    },  # replaced below, once edges are known
+                }
+            }
+        )
 
     # Every edge here is DERIVED from an address in a property value; the record stores no
     # cross-artifact relationship. Grouped by (source, target, kind) and counted.
     # The same links the reverse index reads (derived_links), less `serves_goals`.
     agg = defaultdict(int)
     for a in artifacts:
-        for link in (links_by_source or {}).get(a["artifact"]["name"]) \
-                or derived_links(a, index):
+        for link in (links_by_source or {}).get(a["artifact"]["name"]) or derived_links(
+            a, index
+        ):
             if link["rel"] != "serves_goals":
                 agg[(link["source"], link["target"], link["rel"])] += 1
 
     for (s, t, rel), n in sorted(agg.items()):
-        edges.append({"data": {
-            "id": f"o_{s}__{rel}__{t}", "source": s, "target": t, "rel": rel, "count": n,
-            "label": rel if n == 1 else f"{rel} ×{n}",
-            "_col": T.OVERVIEW_REL_COLORS.get(rel, "#94a3b8"),
-            "cpd": 0 if s == t else 26,
-            "span": 1,          # layer distance; filled in once positions are known
-            "tooltip": f"{rel} ×{n}\n{s} → {t}\nderived from an address in a property value",
-        }})
+        edges.append(
+            {
+                "data": {
+                    "id": f"o_{s}__{rel}__{t}",
+                    "source": s,
+                    "target": t,
+                    "rel": rel,
+                    "count": n,
+                    "label": rel if n == 1 else f"{rel} ×{n}",
+                    "_col": T.OVERVIEW_REL_COLORS.get(rel, "#94a3b8"),
+                    "cpd": 0 if s == t else 26,
+                    "span": 1,  # layer distance; filled in once positions are known
+                    "tooltip": f"{rel} ×{n}\n{s} → {t}\nderived from an address in a property value",
+                }
+            }
+        )
 
     # Positions are computed HERE, not in the node loop above, because layering needs the
     # derived edges and those are only known once every artifact has been read.
@@ -1266,13 +1619,24 @@ def build_overview(artifacts, index, colors, pages, findings_by, pins=None, anno
     # nothing downstream mistakes one for an artifact: they are excluded from every count, are
     # not clickable, and have no edges.
     for k, ann in enumerate(annotations or []):
-        nodes.append({"data": {
-            "id": f"__annotation_{k}", "ntype": "Annotation", "label": ann["text"],
-            "member": "", "owner_color": "#64748b", "shape": "round-rectangle",
-            "nav_file": None, "page_kind": None, "full": None,
-            "tooltip": "presenter annotation — not part of the record",
-            "_pos": {"x": ann["x"], "y": ann["y"]}, "_pinned": True,
-        }})
+        nodes.append(
+            {
+                "data": {
+                    "id": f"__annotation_{k}",
+                    "ntype": "Annotation",
+                    "label": ann["text"],
+                    "member": "",
+                    "owner_color": "#64748b",
+                    "shape": "round-rectangle",
+                    "nav_file": None,
+                    "page_kind": None,
+                    "full": None,
+                    "tooltip": "presenter annotation — not part of the record",
+                    "_pos": {"x": ann["x"], "y": ann["y"]},
+                    "_pinned": True,
+                }
+            }
+        )
 
     by_member, by_type = defaultdict(int), defaultdict(int)
     for a in artifacts:
@@ -1288,9 +1652,15 @@ def build_overview(artifacts, index, colors, pages, findings_by, pins=None, anno
         "default_hidden_types": list(OVERVIEW_HIDDEN_TYPES),
         "members": {m: colors.get(m, "#9ca3af") for m in by_member},
         "types": type_legend(by_type, shapes),
-        "counts": {"artifacts": len(artifacts), "by_member": dict(by_member),
-                   "by_type": dict(by_type), "cross_edges": len(edges),
-                   "sessions": cur + 1, "time_span": span, "pinned": len(pinned)},
+        "counts": {
+            "artifacts": len(artifacts),
+            "by_member": dict(by_member),
+            "by_type": dict(by_type),
+            "cross_edges": len(edges),
+            "sessions": cur + 1,
+            "time_span": span,
+            "pinned": len(pinned),
+        },
     }
     return {"nodes": nodes, "edges": edges}, meta
 
@@ -1298,6 +1668,7 @@ def build_overview(artifacts, index, colors, pages, findings_by, pins=None, anno
 # --------------------------------------------------------------------------- #
 # Artifact pages (everything that is not an Argument)
 # --------------------------------------------------------------------------- #
+
 
 def is_table_method(content):
     """Does this Content Object describe row/column addressing?
@@ -1308,7 +1679,9 @@ def is_table_method(content):
     means. The `addressing_method` fallback catches a Content whose name declares no known
     method — the validator REVIEWs that rather than refusing it, so it reaches these pages."""
     am = content.get("addressing_method") or ""
-    return method_of(content.get("name", "")) == "csv" or ("row=" in am and "col=" in am)
+    return method_of(content.get("name", "")) == "csv" or (
+        "row=" in am and "col=" in am
+    )
 
 
 def table_method_for(prop, methods):
@@ -1367,15 +1740,34 @@ def looks_tabular(value, declares_table, max_header=60):
         return False
     return not any(len(c) > max_header for c in rows[0])
 
+
 # A stable palette for community-defined Object types. The vocabulary outside an Argument is
 # OPEN (spec 1.6): a Model declares whatever types its author needs, and this browser cannot
 # know them in advance. So types are coloured by order of first appearance rather than from a
 # fixed table, which keeps one artifact's colouring stable across rebuilds without pretending
 # to know what `HostComplex` means.
-_OBJ_PALETTE = ["#2563eb", "#0d9488", "#c2410c", "#7c3aed", "#b45309",
-                "#db2777", "#4338ca", "#15803d", "#9f1239", "#0369a1"]
-_OBJ_SHAPES = ["round-rectangle", "ellipse", "diamond", "hexagon", "pentagon",
-               "octagon", "vee", "rhomboid"]
+_OBJ_PALETTE = [
+    "#2563eb",
+    "#0d9488",
+    "#c2410c",
+    "#7c3aed",
+    "#b45309",
+    "#db2777",
+    "#4338ca",
+    "#15803d",
+    "#9f1239",
+    "#0369a1",
+]
+_OBJ_SHAPES = [
+    "round-rectangle",
+    "ellipse",
+    "diamond",
+    "hexagon",
+    "pentagon",
+    "octagon",
+    "vee",
+    "rhomboid",
+]
 
 
 def internal_graph(doc):
@@ -1416,14 +1808,25 @@ def internal_graph(doc):
         # A Model's degrees of freedom live in these; a reader who cannot see them is reading a
         # diagram with the disclosure removed.
         props = {k: v for k, v in o.items() if k not in ("name", "type", "title")}
-        nodes.append({"data": {
-            "id": o["name"], "label": label, "otype": t,
-            "color": types[t], "shape": shapes[t],
-            "tooltip": f"{t} · {o['name']}" + (f"\n{o.get('description','')[:160]}"
-                                               if o.get("description") else ""),
-            "props": props,
-            "oname": o["name"],
-        }})
+        nodes.append(
+            {
+                "data": {
+                    "id": o["name"],
+                    "label": label,
+                    "otype": t,
+                    "color": types[t],
+                    "shape": shapes[t],
+                    "tooltip": f"{t} · {o['name']}"
+                    + (
+                        f"\n{o.get('description', '')[:160]}"
+                        if o.get("description")
+                        else ""
+                    ),
+                    "props": props,
+                    "oname": o["name"],
+                }
+            }
+        )
 
     # Relationship vocabulary is open too, so edges are keyed by their own `rel` and coloured
     # by first appearance. An edge naming an endpoint this Artifact does not contain is a
@@ -1437,20 +1840,35 @@ def internal_graph(doc):
             continue
         if rel not in rel_colors:
             rel_colors[rel] = _OBJ_PALETTE[(len(rel_colors) + 3) % len(_OBJ_PALETTE)]
-        extra = {k: v for k, v in r.items() if k not in ("rel", "type", "source", "target")}
+        extra = {
+            k: v for k, v in r.items() if k not in ("rel", "type", "source", "target")
+        }
         tip = f"{s} --{rel}--> {t}"
         for k, v in extra.items():
             tip += f"\n{k}: {v}"
-        edges.append({"data": {
-            "id": f"r{i}_{s}__{rel}__{t}", "source": s, "target": t, "rel": rel,
-            "label": rel.replace("_", " "), "color": rel_colors[rel],
-            "tooltip": tip, "props": extra,
-        }})
+        edges.append(
+            {
+                "data": {
+                    "id": f"r{i}_{s}__{rel}__{t}",
+                    "source": s,
+                    "target": t,
+                    "rel": rel,
+                    "label": rel.replace("_", " "),
+                    "color": rel_colors[rel],
+                    "tooltip": tip,
+                    "props": extra,
+                }
+            }
+        )
 
     return {
         "elements": {"nodes": nodes, "edges": edges},
         "legend": {"types": types, "shapes": shapes, "rels": rel_colors},
-        "counts": {"objects": len(nodes), "relationships": len(edges), "dropped": dropped},
+        "counts": {
+            "objects": len(nodes),
+            "relationships": len(edges),
+            "dropped": dropped,
+        },
     }
 
 
@@ -1487,7 +1905,7 @@ def layout_internal(graph):
                 if j not in seen:
                     nxt.append(j)
         frontier, d = nxt, d + 1
-    for i in ids:                       # anything only reachable inside a cycle
+    for i in ids:  # anything only reachable inside a cycle
         depth.setdefault(i, d)
 
     cols = defaultdict(list)
@@ -1512,12 +1930,15 @@ def mark_badge(entries, text=None):
     esc = html.escape
     tip = "Cited by " + "; ".join(t for _i, t in entries)
     shown = text or str(len(entries))
-    return (f'<a class="cmark" href="#{esc(entries[0][0])}" title="{esc(tip)}" '
-            f'aria-label="{esc(tip)}">{esc(shown)}</a>')
+    return (
+        f'<a class="cmark" href="#{esc(entries[0][0])}" title="{esc(tip)}" '
+        f'aria-label="{esc(tip)}">{esc(shown)}</a>'
+    )
 
 
-def render_artifact_page(doc, index, colors, pages, findings, cyto, cited=None,
-                         serving_html=""):
+def render_artifact_page(
+    doc, index, colors, pages, findings, cyto, cited=None, serving_html=""
+):
     """One non-Argument artifact's page. `cited` is the links into it (reverse_index): they
     make its "Cited by" section and mark each cell, row, property and passage a Ground cites.
     `serving_html` is a ResearchGoal's "Serving this goal" section."""
@@ -1535,8 +1956,10 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, cited=None,
 
     parts = []
     if typ in NON_GROUNDABLE_TYPES:
-        parts.append('<div class="banner">Non-groundable by type (spec §2.1). Everything here '
-                     'may be cited in prose and none of it may be used as a Ground.</div>')
+        parts.append(
+            '<div class="banner">Non-groundable by type (spec §2.1). Everything here '
+            "may be cited in prose and none of it may be used as a Ground.</div>"
+        )
 
     # The Artifact's own Objects and the relationships among them (spec §1.6, §1.7). An
     # Argument's structure is drawn by its claim map, so this is for everything else — most
@@ -1554,18 +1977,25 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, cited=None,
     methods = [o for o in doc.get("objects", []) if o.get("type") == "Content"]
     if methods:
         rows = "".join(
-            '<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>'.format(
+            "<tr><td><code>{}</code></td><td>{}</td><td>{}</td></tr>".format(
                 esc(m["name"]),
-                ('<span class="yes">groundable</span>' if m.get("groundable")
-                 and typ not in NON_GROUNDABLE_TYPES else '<span class="no">addressable only</span>'),
-                esc(m.get("description", "")))
-            for m in methods)
-        parts.append('<h2>How to reach this content</h2>'
-                     '<p class="hint">An artifact with no addressing method is inert — nobody can '
-                     'ground on a single value in it. A method marked <i>addressable only</i> can '
-                     'be pointed at but not used as evidence.</p>'
-                     f'<table class="methods"><tr><th>method</th><th></th><th>reference form</th></tr>'
-                     f'{rows}</table>')
+                (
+                    '<span class="yes">groundable</span>'
+                    if m.get("groundable") and typ not in NON_GROUNDABLE_TYPES
+                    else '<span class="no">addressable only</span>'
+                ),
+                esc(m.get("description", "")),
+            )
+            for m in methods
+        )
+        parts.append(
+            "<h2>How to reach this content</h2>"
+            '<p class="hint">An artifact with no addressing method is inert — nobody can '
+            "ground on a single value in it. A method marked <i>addressable only</i> can "
+            "be pointed at but not used as evidence.</p>"
+            f'<table class="methods"><tr><th>method</th><th></th><th>reference form</th></tr>'
+            f"{rows}</table>"
+        )
 
     # Properties whose value IS an address (spec §1.5, §2.5). They are the record's formal
     # provenance and its only machine-readable links between artifacts, and until this was
@@ -1576,10 +2006,12 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, cited=None,
         root = a.lstrip("@").split("#")[0].split(".")[0]
         title = (index.get(root, {}).get("header", {}) or {}).get("title")
         if root not in pages:
-            return f"<code>{esc(a)}</code>"          # a Member, or something unresolved
+            return f"<code>{esc(a)}</code>"  # a Member, or something unresolved
         label = esc(title) if title else f"<code>{esc(a)}</code>"
-        return (f'<a href="{esc(pages[root])}">{label}</a> '
-                f'<span class="hint"><code>{esc(a)}</code></span>')
+        return (
+            f'<a href="{esc(pages[root])}">{label}</a> '
+            f'<span class="hint"><code>{esc(a)}</code></span>'
+        )
 
     declares_table = any(is_table_method(m) for m in methods)
 
@@ -1588,18 +2020,37 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, cited=None,
         # to (`@name.prop#content`, no reference), so a Ground citing a whole table lands on
         # the table rather than on the top of the page.
         whole = marks.get(k)
-        badge = (" " + mark_badge(whole, f"cited whole by {len(whole)} Ground"
-                                  + ("" if len(whole) == 1 else "s")) if whole else "")
+        badge = (
+            " "
+            + mark_badge(
+                whole,
+                f"cited whole by {len(whole)} Ground"
+                + ("" if len(whole) == 1 else "s"),
+            )
+            if whole
+            else ""
+        )
         cls = ' class="cited"' if whole else ""
         return f'<h2 id="{esc(k)}"{cls}>{esc(k)}{badge}</h2>'
 
     for k, v in h.items():
-        if k in ("name", "type", "specification_version", "published_by", "created", "title"):
+        if k in (
+            "name",
+            "type",
+            "specification_version",
+            "published_by",
+            "created",
+            "title",
+        ):
             continue
         if k in ADDRESS_PROPS:
             vs = v if isinstance(v, list) else [v]
-            parts.append(heading(k) + "<ul>"
-                         + "".join(f"<li>{addr_link(x)}</li>" for x in vs) + "</ul>")
+            parts.append(
+                heading(k)
+                + "<ul>"
+                + "".join(f"<li>{addr_link(x)}</li>" for x in vs)
+                + "</ul>"
+            )
         elif k == "code" and isinstance(v, str):
             # An Analysis carries its procedure's code verbatim. Run through the prose
             # renderer it lost every indent and every `#` comment line became a heading,
@@ -1607,31 +2058,47 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, cited=None,
             # are still marked: a Content may declare a `text_span` method over code.
             parts.append(heading(k) + T.preformatted(v, spans.get(k)))
         elif isinstance(v, str) and looks_tabular(v, declares_table):
-            parts.append(heading(k)
-                         + T.csv_table(v, method=table_method_for(k, methods), cited=marks))
+            parts.append(
+                heading(k)
+                + T.csv_table(v, method=table_method_for(k, methods), cited=marks)
+            )
         elif isinstance(v, list):
-            parts.append(heading(k) + "<ul>"
-                         + "".join(f"<li>{prose(x)}</li>" for x in v) + "</ul>")
+            parts.append(
+                heading(k)
+                + "<ul>"
+                + "".join(f"<li>{prose(x)}</li>" for x in v)
+                + "</ul>"
+            )
         elif isinstance(v, str):
             parts.append(heading(k) + f"<div class='prose'>{prose(v, k)}</div>")
         else:
-            parts.append(heading(k) + f"<div class='prose'><code>{esc(json.dumps(v))}</code></div>")
+            parts.append(
+                heading(k)
+                + f"<div class='prose'><code>{esc(json.dumps(v))}</code></div>"
+            )
 
     if serving_html:
         parts.append(serving_html)
-    parts.append(cited_by_html(cited, index, pages,
-                               skip=("serves_goals",) if serving_html else ()))
+    parts.append(
+        cited_by_html(
+            cited, index, pages, skip=("serves_goals",) if serving_html else ()
+        )
+    )
 
     if findings:
         items = "".join(
             '<div class="finding{}"><b>{}</b> — {}</div>'.format(
-                " fail" if f["level"] == "FAIL" else "", esc(f["check"]), esc(f["msg"]))
-            for f in findings)
+                " fail" if f["level"] == "FAIL" else "", esc(f["check"]), esc(f["msg"])
+            )
+            for f in findings
+        )
         parts.append("<h2>Noted by the checker</h2>" + items)
 
     return T.ARTIFACT_TEMPLATE.format(
         title=esc(h.get("title") or name),
-        name=esc(name), atype=esc(typ), member=esc(owner),
+        name=esc(name),
+        atype=esc(typ),
+        member=esc(owner),
         member_color=esc(colors.get(owner, "#9ca3af")),
         created=esc(h.get("created") or "(unstamped)"),
         body="".join(parts),
@@ -1644,6 +2111,7 @@ def render_artifact_page(doc, index, colors, pages, findings, cyto, cited=None,
 # --------------------------------------------------------------------------- #
 # main
 # --------------------------------------------------------------------------- #
+
 
 def evidence_table(doc, index, pages):
     """Every Ground of an Argument in one table, under the Assertion it bears on.
@@ -1676,35 +2144,49 @@ def evidence_table(doc, index, pages):
             continue
         a = objs.get(aname, {})
         rows.append(
-            '<tr class="assertion"><td colspan="3"><b>{}</b>{}<div class="hint">{}</div></td></tr>'
-            .format(esc(a.get("claim", aname)),
-                    ' <span class="pill-primary">primary</span>' if aname == primary else "",
-                    "scope — " + esc(a.get("scope", "")) if a.get("scope") else ""))
+            '<tr class="assertion"><td colspan="3"><b>{}</b>{}<div class="hint">{}</div></td></tr>'.format(
+                esc(a.get("claim", aname)),
+                ' <span class="pill-primary">primary</span>'
+                if aname == primary
+                else "",
+                "scope — " + esc(a.get("scope", "")) if a.get("scope") else "",
+            )
+        )
         for g in grounds:
             addr = g.get("citation", "")
             root = addr.lstrip("@").split("#")[0].split(".")[0]
             frag = address_fragment(addr)
             if root in pages:
                 href = pages[root] + (f"#{frag}" if frag else "")
-                target = (f'<a href="{esc(href)}">{esc(pretty_address(addr, index))}</a>'
-                          f'<div class="hint"><code>{esc(addr)}</code></div>')
+                target = (
+                    f'<a href="{esc(href)}">{esc(pretty_address(addr, index))}</a>'
+                    f'<div class="hint"><code>{esc(addr)}</code></div>'
+                )
             else:
                 target = f"<code>{esc(addr)}</code>"
-            crit = (f'<div class="crit"><b>Criterion.</b> {esc(g["criterion"])}</div>'
-                    if g.get("criterion")
-                    else '<div class="hint">No criterion: material built on, '
-                         'not a test the claim survived.</div>')
-            rows.append('<tr><td class="gname"><code>{}</code></td><td>{}</td>'
-                        '<td>{}{}</td></tr>'.format(
-                            esc(g["name"]), target, esc(g.get("rationale", "")), crit))
-    return ('<h3 class="evh">What this Argument stands on</h3>'
-            '<p class="hint">Every Ground, under the Assertion it bears on. A Ground with a '
-            '<b>criterion</b> asserts the material was used as a test that could have counted '
-            'against the claim; one without offers the material as something built upon '
-            '(spec §2.2.4). Follow a target to land on the value itself.</p>'
-            '<table class="evidence"><tr><th>Ground</th><th>addresses</th>'
-            '<th>how it bears, and whether it was a test</th></tr>'
-            + "".join(rows) + "</table>")
+            crit = (
+                f'<div class="crit"><b>Criterion.</b> {esc(g["criterion"])}</div>'
+                if g.get("criterion")
+                else '<div class="hint">No criterion: material built on, '
+                "not a test the claim survived.</div>"
+            )
+            rows.append(
+                '<tr><td class="gname"><code>{}</code></td><td>{}</td>'
+                "<td>{}{}</td></tr>".format(
+                    esc(g["name"]), target, esc(g.get("rationale", "")), crit
+                )
+            )
+    return (
+        '<h3 class="evh">What this Argument stands on</h3>'
+        '<p class="hint">Every Ground, under the Assertion it bears on. A Ground with a '
+        "<b>criterion</b> asserts the material was used as a test that could have counted "
+        "against the claim; one without offers the material as something built upon "
+        "(spec §2.2.4). Follow a target to land on the value itself.</p>"
+        '<table class="evidence"><tr><th>Ground</th><th>addresses</th>'
+        "<th>how it bears, and whether it was a test</th></tr>"
+        + "".join(rows)
+        + "</table>"
+    )
 
 
 def render_reading_page(doc, index, pages, reading_name, cited=None):
@@ -1718,25 +2200,42 @@ def render_reading_page(doc, index, pages, reading_name, cited=None):
     esc = html.escape
     parts = []
     if h.get("verdict"):
-        parts.append('<h2 class="sec">Verdict</h2>'
-                     f'<div class="verdict-lead">{esc(h["verdict"])}</div>')
-    for label, key in (("Purpose and stakes", "purpose"), ("Rationale", "rationale"),
-                       ("Description", "description"), ("Text", "text")):
+        parts.append(
+            '<h2 class="sec">Verdict</h2>'
+            f'<div class="verdict-lead">{esc(h["verdict"])}</div>'
+        )
+    for label, key in (
+        ("Purpose and stakes", "purpose"),
+        ("Rationale", "rationale"),
+        ("Description", "description"),
+        ("Text", "text"),
+    ):
         if h.get(key):
-            parts.append(f'<h2 class="sec">{label}</h2>'
-                         f'<div class="prose">{T.md_to_html(h[key], pages)}</div>')
+            parts.append(
+                f'<h2 class="sec">{label}</h2>'
+                f'<div class="prose">{T.md_to_html(h[key], pages)}</div>'
+            )
     if h.get("supersedes"):
-        parts.append('<h2 class="sec">Supersedes</h2><div class="prose">'
-                     + ", ".join(f"<code>{esc(str(x))}</code>" for x in h["supersedes"])
-                     + (f'<p>{esc(h.get("supersedes_rationale", ""))}</p>'
-                        if h.get("supersedes_rationale") else "") + "</div>")
+        parts.append(
+            '<h2 class="sec">Supersedes</h2><div class="prose">'
+            + ", ".join(f"<code>{esc(str(x))}</code>" for x in h["supersedes"])
+            + (
+                f"<p>{esc(h.get('supersedes_rationale', ''))}</p>"
+                if h.get("supersedes_rationale")
+                else ""
+            )
+            + "</div>"
+        )
     parts.append(evidence_table(doc, index, pages))
     parts.append(cited_by_html(cited or [], index, pages))
     byline = "{} · {} · {}".format(
-        (h.get("published_by") or "").lstrip("@"), (h.get("created") or "")[:16],
-        ", ".join(h.get("authors") or []))
-    return T.render_reading_html(h.get("title") or h["name"], byline,
-                                 pages[h["name"]], "".join(parts))
+        (h.get("published_by") or "").lstrip("@"),
+        (h.get("created") or "")[:16],
+        ", ".join(h.get("authors") or []),
+    )
+    return T.render_reading_html(
+        h.get("title") or h["name"], byline, pages[h["name"]], "".join(parts)
+    )
 
 
 def contents_entries(artifacts, colors, pages, findings_by):
@@ -1757,8 +2256,11 @@ def contents_entries(artifacts, colors, pages, findings_by):
         extra = []
         if typ == ARGUMENT:
             n = sum(1 for o in a.get("objects", []) if o.get("type") == "Ground")
-            crit = sum(1 for o in a.get("objects", [])
-                       if o.get("type") == "Ground" and o.get("criterion"))
+            crit = sum(
+                1
+                for o in a.get("objects", [])
+                if o.get("type") == "Ground" and o.get("criterion")
+            )
             extra.append(f"{n} Ground(s), {crit} offered as a test")
         if h.get("supersedes"):
             extra.append(f"supersedes {len(h['supersedes'])}")
@@ -1767,29 +2269,45 @@ def contents_entries(artifacts, colors, pages, findings_by):
         # An Argument's entry here goes to the document, not to the graph. Someone arriving
         # from a contents page has come to read; the claim map is one click further on and
         # is linked from it. Arriving from the reference graph still lands on the map.
-        href = (pages[name].replace(".html", "_reading.html") if typ == ARGUMENT
-                else pages[name])
+        href = (
+            pages[name].replace(".html", "_reading.html")
+            if typ == ARGUMENT
+            else pages[name]
+        )
         # What the Contents search reads (R12): the title and name, the whole verdict (only
         # its opening is shown), and every Assertion's claim, so a claim made inside an
         # Argument is found though no title mentions it.
-        claims = [str(o.get("claim") or "") for o in a.get("objects", [])
-                  if o.get("type") == "Assertion"]
-        search = " ".join(x for x in (h.get("title") or "", name, h.get("verdict") or "",
-                                      *claims) if x)
-        rows.append({
-            "name": name, "type": typ, "href": href,
-            "title": h.get("title") or name,
-            "member": h.get("published_by", "").lstrip("@"),
-            "color": colors.get(h.get("published_by", "").lstrip("@"), "#9ca3af"),
-            "created": h.get("created") or "", "verdict": verdict,
-            "extra": " · ".join(extra), "search": search,
-        })
+        claims = [
+            str(o.get("claim") or "")
+            for o in a.get("objects", [])
+            if o.get("type") == "Assertion"
+        ]
+        search = " ".join(
+            x
+            for x in (h.get("title") or "", name, h.get("verdict") or "", *claims)
+            if x
+        )
+        rows.append(
+            {
+                "name": name,
+                "type": typ,
+                "href": href,
+                "title": h.get("title") or name,
+                "member": h.get("published_by", "").lstrip("@"),
+                "color": colors.get(h.get("published_by", "").lstrip("@"), "#9ca3af"),
+                "created": h.get("created") or "",
+                "verdict": verdict,
+                "extra": " · ".join(extra),
+                "search": search,
+            }
+        )
     return rows
 
 
 # --------------------------------------------------------------------------- #
 # Rounds: the record by ResearchGoal
 # --------------------------------------------------------------------------- #
+
 
 def goal_membership(artifacts, links_by_source):
     """-> (goals oldest first, artifact name -> the goals it serves, in the order it names them).
@@ -1803,8 +2321,11 @@ def goal_membership(artifacts, links_by_source):
     for a in artifacts:
         mine = []
         for link in links_by_source.get(a["artifact"]["name"], []):
-            if link["rel"] == "serves_goals" and link["target"] in names \
-                    and link["target"] not in mine:
+            if (
+                link["rel"] == "serves_goals"
+                and link["target"] in names
+                and link["target"] not in mine
+            ):
                 mine.append(link["target"])
         serves[a["artifact"]["name"]] = mine
     return goals, serves
@@ -1823,10 +2344,15 @@ def round_entry(doc, colors, pages, serves, goal_label, this_goal=None):
         "group": "result" if typ == "Data" and h.get("produced_by") else typ,
         "title": h.get("title") or name,
         # an Argument goes to its document, as from the contents page
-        "href": (pages[name].replace(".html", "_reading.html") if typ == ARGUMENT
-                 else pages[name]),
-        "member": owner, "color": colors.get(owner, "#9ca3af"),
-        "created": h.get("created") or "", "verdict": verdict,
+        "href": (
+            pages[name].replace(".html", "_reading.html")
+            if typ == ARGUMENT
+            else pages[name]
+        ),
+        "member": owner,
+        "color": colors.get(owner, "#9ca3af"),
+        "created": h.get("created") or "",
+        "verdict": verdict,
         "shared": others if len(serves.get(name, [])) > 1 else [],
     }
 
@@ -1834,18 +2360,37 @@ def round_entry(doc, colors, pages, serves, goal_label, this_goal=None):
 def rounds_columns(artifacts, colors, pages, goals, serves):
     """The Rounds page's columns: the corpus and unassigned first, then one per goal."""
     label = {g["artifact"]["name"]: f"goal {i}" for i, g in enumerate(goals, 1)}
-    corpus = [round_entry(a, colors, pages, serves, label)
-              for a in artifacts if not serves.get(a["artifact"]["name"])]
-    cols = [{"label": "Corpus and unassigned", "title": "Names no goal", "corpus": True,
-             "count": len(corpus), "entries": corpus}]
+    corpus = [
+        round_entry(a, colors, pages, serves, label)
+        for a in artifacts
+        if not serves.get(a["artifact"]["name"])
+    ]
+    cols = [
+        {
+            "label": "Corpus and unassigned",
+            "title": "Names no goal",
+            "corpus": True,
+            "count": len(corpus),
+            "entries": corpus,
+        }
+    ]
     for g in goals:
         gname = g["artifact"]["name"]
-        entries = [round_entry(a, colors, pages, serves, label, gname)
-                   for a in artifacts if gname in serves.get(a["artifact"]["name"], [])]
-        cols.append({"label": label[gname].capitalize(),
-                     "title": g["artifact"].get("title") or gname, "href": pages[gname],
-                     "created": g["artifact"].get("created") or "",
-                     "count": len(entries), "entries": entries})
+        entries = [
+            round_entry(a, colors, pages, serves, label, gname)
+            for a in artifacts
+            if gname in serves.get(a["artifact"]["name"], [])
+        ]
+        cols.append(
+            {
+                "label": label[gname].capitalize(),
+                "title": g["artifact"].get("title") or gname,
+                "href": pages[gname],
+                "created": g["artifact"].get("created") or "",
+                "count": len(entries),
+                "entries": entries,
+            }
+        )
     return cols
 
 
@@ -1853,12 +2398,17 @@ def serving_section(goal, artifacts, colors, pages, goals, serves):
     """A ResearchGoal page's "Serving this goal" (R4), grouped as its Rounds column is."""
     label = {g["artifact"]["name"]: f"goal {i}" for i, g in enumerate(goals, 1)}
     gname = goal["artifact"]["name"]
-    entries = [round_entry(a, colors, pages, serves, label, gname)
-               for a in artifacts if gname in serves.get(a["artifact"]["name"], [])]
-    return (f'<h2 id="serving">Serving this goal ({len(entries)})</h2>'
-            '<p class="hint">Every artifact whose <code>serves_goals</code> names this goal, '
-            'grouped by type. It is <b>' + html.escape(label[gname]) + '</b> on the '
-            '<a href="rounds.html">Rounds page</a>.</p>' + T.grouped_entries_html(entries))
+    entries = [
+        round_entry(a, colors, pages, serves, label, gname)
+        for a in artifacts
+        if gname in serves.get(a["artifact"]["name"], [])
+    ]
+    return (
+        f'<h2 id="serving">Serving this goal ({len(entries)})</h2>'
+        '<p class="hint">Every artifact whose <code>serves_goals</code> names this goal, '
+        "grouped by type. It is <b>" + html.escape(label[gname]) + "</b> on the "
+        '<a href="rounds.html">Rounds page</a>.</p>' + T.grouped_entries_html(entries)
+    )
 
 
 PIN_FILE = ".browser_layout.json"
@@ -1950,9 +2500,12 @@ def lineage(artifacts, links_by_source):
     for a in args:
         h = a["artifact"]
         name, prim = h["name"], h.get("primary_assertion")
-        on_primary = {r.get("target") for r in a.get("relationships", [])
-                      if (r.get("rel") or r.get("type")) == "grounded_by"
-                      and r.get("source") == prim}
+        on_primary = {
+            r.get("target")
+            for r in a.get("relationships", [])
+            if (r.get("rel") or r.get("type")) == "grounded_by"
+            and r.get("source") == prim
+        }
         for link in links_by_source.get(name, []):
             t = link["target"]
             if t not in order or order[t] >= order[name]:
@@ -1972,9 +2525,14 @@ def lineage(artifacts, links_by_source):
     reach = {}
     for a in args:
         n = a["artifact"]["name"]
-        reach[n] = set().union(*({t} | reach[t] for t in targets[n])) if targets[n] else set()
-    drawn = {(b, t) for (b, t), kinds in links.items()
-             if kinds - {"cites"} or not any(t in reach[o] for o in targets[b] if o != t)}
+        reach[n] = (
+            set().union(*({t} | reach[t] for t in targets[n])) if targets[n] else set()
+        )
+    drawn = {
+        (b, t)
+        for (b, t), kinds in links.items()
+        if kinds - {"cites"} or not any(t in reach[o] for o in targets[b] if o != t)
+    }
 
     rank = {k: i for i, k in enumerate(LINEAGE_KINDS)}
     lines, line_of, continued = [], {}, set()
@@ -1989,12 +2547,18 @@ def lineage(artifacts, links_by_source):
         def score(t, n=n):
             held = sum(1 for x in targets[n] if line_of.get(x) == line_of[t])
             return (min(rank[k] for k in links[(n, t)]), -held, -order[t])
+
         best = min(open_ends, key=score)
         continued.add(best)
         line_of[n] = line_of[best]
         lines[line_of[n]].append(n)
-    return {"args": [a["artifact"]["name"] for a in args], "links": dict(links),
-            "drawn": drawn, "lines": lines, "line_of": line_of}
+    return {
+        "args": [a["artifact"]["name"] for a in args],
+        "links": dict(links),
+        "drawn": drawn,
+        "lines": lines,
+        "line_of": line_of,
+    }
 
 
 def lineage_nodes(artifacts, colors, pages):
@@ -2009,10 +2573,13 @@ def lineage_nodes(artifacts, colors, pages):
         verdict = (h.get("verdict") or "").strip()
         member = h.get("published_by", "").lstrip("@")
         out[h["name"]] = {
-            "name": h["name"], "title": h.get("title") or h["name"],
+            "name": h["name"],
+            "title": h.get("title") or h["name"],
             "opening": re.split(r"(?<=[.!?])\s+", verdict)[0] if verdict else "",
-            "grounds": len(grounds), "tests": sum(1 for g in grounds if g.get("criterion")),
-            "created": h.get("created") or "", "member": member,
+            "grounds": len(grounds),
+            "tests": sum(1 for g in grounds if g.get("criterion")),
+            "created": h.get("created") or "",
+            "member": member,
             "color": colors.get(member, "#9ca3af"),
             "href": pages[h["name"]].replace(".html", "_reading.html"),
             "map": pages[h["name"]],
@@ -2020,8 +2587,14 @@ def lineage_nodes(artifacts, colors, pages):
     return out
 
 
-def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=None, quiet=False,
-                   figures_dir=None):
+def compile_record(
+    record_dir,
+    out_dir,
+    cyto="vendor/cytoscape.min.js",
+    title=None,
+    quiet=False,
+    figures_dir=None,
+):
     artifacts = load_record(record_dir)
     if not artifacts:
         raise SystemExit(f"ERROR: no canonical artifacts found in {record_dir}")
@@ -2032,7 +2605,9 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
     pages = {a["artifact"]["name"]: page_name(a["artifact"]["name"]) for a in artifacts}
     # Every cross-artifact link, read once from the addresses: the overview draws them, the
     # reverse index turns them into each page's "Cited by", and `serves_goals` makes the rounds.
-    links_by_source = {a["artifact"]["name"]: derived_links(a, index) for a in artifacts}
+    links_by_source = {
+        a["artifact"]["name"]: derived_links(a, index) for a in artifacts
+    }
     cited = reverse_index(artifacts, links_by_source)
     goals, serves = goal_membership(artifacts, links_by_source)
     lines = lineage(artifacts, links_by_source)
@@ -2060,34 +2635,56 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
             # and cites the work it answers. It is not in the graph and would otherwise
             # be invisible on the page that most needs it.
             reading = page_name(name).replace(".html", "_reading.html")
-            intro = "".join(T.md_to_html(a["artifact"][k], pages)
-                            for k in ("description", "text") if a["artifact"].get(k))
+            intro = "".join(
+                T.md_to_html(a["artifact"][k], pages)
+                for k in ("description", "text")
+                if a["artifact"].get(k)
+            )
             meta["cited_by"] = len({x["source"] for x in cited.get(name, [])})
             (out / pages[name]).write_text(
-                T.render_claim_html(collapsed, meta, cyto, intro_html=intro, reading_href=reading),
-                encoding="utf-8")
+                T.render_claim_html(
+                    collapsed, meta, cyto, intro_html=intro, reading_href=reading
+                ),
+                encoding="utf-8",
+            )
             (out / reading).write_text(
-                render_reading_page(a, index, pages, reading, cited.get(name)), encoding="utf-8")
+                render_reading_page(a, index, pages, reading, cited.get(name)),
+                encoding="utf-8",
+            )
             if figures_dir:
                 # Same precomputed positions as the page, so the figure IS the
                 # picture the reader saw — only unelided and print-scaled.
-                figs.append((re.sub(r"[^A-Za-z0-9._-]", "_", name),
-                             F.render_claim_svg(collapsed, meta, title=meta["title"])))
+                figs.append(
+                    (
+                        re.sub(r"[^A-Za-z0-9._-]", "_", name),
+                        F.render_claim_svg(collapsed, meta, title=meta["title"]),
+                    )
+                )
             n_arg += 1
             if not quiet:
                 c = meta["counts"]
-                print(f"  Argument  {name:44s} {c['nodes_total']:3d} nodes / "
-                      f"{c['edges_total']:3d} edges · {c['folded_grounds']} Ground(s)"
-                      + (f" · {len(fs)} finding(s)" if fs else ""))
+                print(
+                    f"  Argument  {name:44s} {c['nodes_total']:3d} nodes / "
+                    f"{c['edges_total']:3d} edges · {c['folded_grounds']} Ground(s)"
+                    + (f" · {len(fs)} finding(s)" if fs else "")
+                )
         else:
-            serving = (serving_section(a, artifacts, colors, pages, goals, serves)
-                       if a["artifact"]["type"] == "ResearchGoal" else "")
+            serving = (
+                serving_section(a, artifacts, colors, pages, goals, serves)
+                if a["artifact"]["type"] == "ResearchGoal"
+                else ""
+            )
             (out / pages[name]).write_text(
-                render_artifact_page(a, index, colors, pages, fs, cyto, cited.get(name),
-                                     serving), encoding="utf-8")
+                render_artifact_page(
+                    a, index, colors, pages, fs, cyto, cited.get(name), serving
+                ),
+                encoding="utf-8",
+            )
             if not quiet:
-                print(f"  {a['artifact']['type']:9s} {name}"
-                      + (f"  · {len(fs)} finding(s)" if fs else ""))
+                print(
+                    f"  {a['artifact']['type']:9s} {name}"
+                    + (f"  · {len(fs)} finding(s)" if fs else "")
+                )
 
     if figures_dir and figs:
         written = F.write_figures(figs, out / figures_dir)
@@ -2098,75 +2695,125 @@ def compile_record(record_dir, out_dir, cyto="vendor/cytoscape.min.js", title=No
 
     pins = load_pins(record_dir)
     annotations = load_annotations(record_dir)
-    elements, meta = build_overview(artifacts, index, colors, pages, findings_by,
-                                    pins=pins, annotations=annotations,
-                                    links_by_source=links_by_source)
+    elements, meta = build_overview(
+        artifacts,
+        index,
+        colors,
+        pages,
+        findings_by,
+        pins=pins,
+        annotations=annotations,
+        links_by_source=links_by_source,
+    )
     meta["counts"]["findings"] = sum(len(v) for v in findings_by.values())
     meta["pin_file"] = PIN_FILE
     if not quiet and meta["counts"].get("pinned"):
         print(f"  {meta['counts']['pinned']} pinned position(s) from {PIN_FILE}")
     (out / "index.html").write_text(
-        T.render_overview_html(elements, meta, cyto, corpus_title=title or "community record",
-                               has_rounds=bool(goals), has_lineage=has_lineage),
-        encoding="utf-8")
+        T.render_overview_html(
+            elements,
+            meta,
+            cyto,
+            corpus_title=title or "community record",
+            has_rounds=bool(goals),
+            has_lineage=has_lineage,
+        ),
+        encoding="utf-8",
+    )
     (out / "contents.html").write_text(
-        T.render_contents_html(contents_entries(artifacts, colors, pages, findings_by),
-                               corpus_title=title or "community record",
-                               has_rounds=bool(goals), has_lineage=has_lineage),
-        encoding="utf-8")
+        T.render_contents_html(
+            contents_entries(artifacts, colors, pages, findings_by),
+            corpus_title=title or "community record",
+            has_rounds=bool(goals),
+            has_lineage=has_lineage,
+        ),
+        encoding="utf-8",
+    )
     # No goals, no Rounds page: a community that sets none would see one empty column.
     rounds = out / "rounds.html"
     if goals:
-        rounds.write_text(T.render_rounds_html(
-            rounds_columns(artifacts, colors, pages, goals, serves),
-            corpus_title=title or "community record", has_lineage=has_lineage),
-            encoding="utf-8")
+        rounds.write_text(
+            T.render_rounds_html(
+                rounds_columns(artifacts, colors, pages, goals, serves),
+                corpus_title=title or "community record",
+                has_lineage=has_lineage,
+            ),
+            encoding="utf-8",
+        )
     elif rounds.exists():
-        rounds.unlink()                    # left from a build of an earlier record
+        rounds.unlink()  # left from a build of an earlier record
     # No Argument, no Lineage page: there would be nothing on it.
     lineage_page = out / "lineage.html"
     if has_lineage:
-        lineage_page.write_text(T.render_lineage_html(
-            lines, lineage_nodes(artifacts, colors, pages),
-            corpus_title=title or "community record", has_rounds=bool(goals)), encoding="utf-8")
+        lineage_page.write_text(
+            T.render_lineage_html(
+                lines,
+                lineage_nodes(artifacts, colors, pages),
+                corpus_title=title or "community record",
+                has_rounds=bool(goals),
+            ),
+            encoding="utf-8",
+        )
     elif lineage_page.exists():
         lineage_page.unlink()
 
     manifest = {
-        "artifacts": len(artifacts), "arguments": n_arg,
-        "by_type": meta["counts"]["by_type"], "by_member": meta["counts"]["by_member"],
-        "findings": meta["counts"]["findings"], "goals": len(goals),
+        "artifacts": len(artifacts),
+        "arguments": n_arg,
+        "by_type": meta["counts"]["by_type"],
+        "by_member": meta["counts"]["by_member"],
+        "findings": meta["counts"]["findings"],
+        "goals": len(goals),
         "lines": len(lines["lines"]),
         "pages": pages,
     }
     (out / "browser_manifest.json").write_text(json.dumps(manifest, indent=2))
     if not quiet:
         c = meta["counts"]
-        print(f"\n{c['artifacts']} artifacts, {c['cross_edges']} derived cross-artifact edges, "
-              f"{c['findings']} checker finding(s) -> {out}/index.html")
+        print(
+            f"\n{c['artifacts']} artifacts, {c['cross_edges']} derived cross-artifact edges, "
+            f"{c['findings']} checker finding(s) -> {out}/index.html"
+        )
     return manifest
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("record_dir", nargs="?", default="record",
-                    help="directory of canonical JSON (default: ./record)")
+    ap.add_argument(
+        "record_dir",
+        nargs="?",
+        default="record",
+        help="directory of canonical JSON (default: ./record)",
+    )
     ap.add_argument("--out", default="dist", help="output directory (default: dist)")
-    ap.add_argument("--title", default=None,
-                    help="title shown on the overview, contents and rounds pages (default: the "
-                         "community of the session the record copy belongs to)")
+    ap.add_argument(
+        "--title",
+        default=None,
+        help="title shown on the overview, contents and rounds pages (default: the "
+        "community of the session the record copy belongs to)",
+    )
     ap.add_argument("--quiet", action="store_true")
-    ap.add_argument("--figures", default=None, metavar="DIR",
-                    help="also write one print-scaled SVG per Argument to DIR "
-                         "(relative to --out): full labels, no chrome, preset layout")
+    ap.add_argument(
+        "--figures",
+        default=None,
+        metavar="DIR",
+        help="also write one print-scaled SVG per Argument to DIR "
+        "(relative to --out): full labels, no chrome, preset layout",
+    )
     args = ap.parse_args(argv)
     if not pathlib.Path(args.record_dir).is_dir():
-        raise SystemExit(f"ERROR: no record copy at {args.record_dir}/: run `/symposium sync` "
-                         f"here first\n  (on the admin's machine, `/symposium gate` writes the "
-                         f"gate's copy)")
-    compile_record(args.record_dir, args.out,
-                   title=args.title or community_name(args.record_dir), quiet=args.quiet,
-                   figures_dir=args.figures)
+        raise SystemExit(
+            f"ERROR: no record copy at {args.record_dir}/: run `/symposium sync` "
+            f"here first\n  (on the admin's machine, `/symposium gate` writes the "
+            f"gate's copy)"
+        )
+    compile_record(
+        args.record_dir,
+        args.out,
+        title=args.title or community_name(args.record_dir),
+        quiet=args.quiet,
+        figures_dir=args.figures,
+    )
     return 0
 
 

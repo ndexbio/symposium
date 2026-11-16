@@ -2495,21 +2495,36 @@ def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=
         (ax, ay), (bx, by) = xy[earlier], xy[later]
         lane = line_of[later]
         # A link drawn straight across from card side to card side would run behind any card
-        # of its lanes in the columns between, and read as links through it. Within one lane
-        # it arcs below the lane instead, card bottom to card bottom, clear of the next lane's
-        # label; between lanes it leaves through the gap, from the facing edges of its cards.
+        # in the columns between that sits in its lanes or the lanes between them, and read
+        # as links through it. Within one lane it arcs below the lane instead, card bottom to
+        # card bottom, clear of the next lane's label; between lanes it leaves through the
+        # gap, from the facing edges of its cards.
+        lo, hi = sorted((line_of[earlier], lane))
         passed = any(
-            line_of[n] in (line_of[earlier], lane)
-            for n in col
-            if col[earlier] < col[n] < col[later]
+            lo <= line_of[n] <= hi for n in col if col[earlier] < col[n] < col[later]
         )
         below = passed and line_of[earlier] == lane
         between = passed and not below
+        # Between lanes that are not neighbours a curve would cross the lanes between. Every
+        # Argument has a column to itself, so the link runs straight along its earlier card's
+        # column, clear of every other card, to the gap beside the later card's lane, and
+        # along that gap to the later card.
+        elbow = between and hi - lo > 1
         if below:
             x1, x2, low = ax + nw / 2, bx + nw / 2, ay + nh + (gy - 18)
             d = (
                 f"M{x1:.0f},{ay + nh:.0f} C{x1:.0f},{low:.0f} {x2:.0f},{low:.0f} "
                 f"{x2:.0f},{by + nh + 2:.0f}"
+            )
+        elif elbow:
+            down, r = lane > line_of[earlier], 8
+            x1, x2 = ax + nw / 2, bx + nw / 2
+            y1, g, y2 = (ay + nh, by - 30, by - 2) if down else (ay, by + nh + 16, by + nh + 2)
+            s = 1 if down else -1
+            d = (
+                f"M{x1:.0f},{y1:.0f} L{x1:.0f},{g - s * r:.0f} Q{x1:.0f},{g:.0f} "
+                f"{x1 + r:.0f},{g:.0f} L{x2 - r:.0f},{g:.0f} Q{x2:.0f},{g:.0f} "
+                f"{x2:.0f},{g + s * r:.0f} L{x2:.0f},{y2:.0f}"
             )
         elif between:
             down = lane > line_of[earlier]

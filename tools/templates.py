@@ -2830,10 +2830,11 @@ def csv_table(text, max_rows=None, method="csv", cited=None):
                 badge += row_badge
             cell_id, value = _html.escape(anchor), _html.escape(c)
             tds[i] = f'<td data-c="{i}" id="{cell_id}"{cls}>{value}{badge}</td>'
-        placed = [tds[i] for i in order if i in tds]
-        placed += [
-            tds[i] for i in sorted(tds) if i not in order
-        ]  # a ragged row's extras
+        # A row shorter than the header gets an empty cell for each column it lacks, so its
+        # values stay under their own headers when cited columns come first; one longer
+        # than the header keeps its extras at the end.
+        placed = [tds.get(i, f'<td data-c="{i}"></td>') for i in order]
+        placed += [tds[i] for i in sorted(tds) if i not in order]
         body.append(
             '<tr id="{}"{}>{}</tr>'.format(
                 _html.escape(f"{method}.row={rk}"), row_cls, "".join(placed)

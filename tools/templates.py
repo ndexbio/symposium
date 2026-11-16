@@ -972,15 +972,17 @@ HTML_TEMPLATE = r"""<!doctype html>
   function buildLegend(mode) {{ legend.innerHTML = graphLegend(mode); }}
 
   // The Members whose colour is on the graph: the author of each node drawn in its author's
-  // colour. A node only recording whose artifact it points into (addressed content, drawn
-  // grey) puts no Member's colour on the graph, so it is not counted.
+  // colour. Only a node whose fill encodes authorship is counted. A Ground's fill is its
+  // type's, and is the same teal as one Member's colour, so matching on colour alone would
+  // count that Member's Grounds; addressed content is drawn grey.
+  var OWNER_FILLED = 'node[ntype="Assertion"]';  // the nodes whose fill is data(owner_color)
   function rgb(hex) {{
     var m = /^#?([0-9a-f]{{2}})([0-9a-f]{{2}})([0-9a-f]{{2}})$/i.exec(hex || '');
     return m ? 'rgb(' + parseInt(m[1], 16) + ',' + parseInt(m[2], 16) + ',' + parseInt(m[3], 16) + ')' : '';
   }}
   function memberLegend() {{
     var mem = DATA.meta.members || {{}}, n = {{}};
-    cy.nodes().filter(onGraph).forEach(function (x) {{
+    cy.nodes(OWNER_FILLED).filter(onGraph).forEach(function (x) {{
       var o = x.data('owner'), drawn = String(x.style('background-color')).replace(/\s+/g, '');
       if (o && x.data('owner_color') && drawn === rgb(x.data('owner_color'))) n[o] = (n[o] || 0) + 1;
     }});

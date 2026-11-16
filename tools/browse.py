@@ -108,8 +108,12 @@ def community_name(record_dir):
     """The community a record copy belongs to, for the pages' title (R13): the `community` of
     the session context beside it (`<session>/.symposium/context.json`, which `setup` or
     `bootstrap` writes), or None for a record directory that is no session's copy, such as
-    `examples/record`. Read only; nothing here writes a session's files."""
-    path = pathlib.Path(record_dir).resolve().parent / ".symposium" / "context.json"
+    `examples/record`. A session's copy is its `record/`: another directory beside the
+    context, such as an export of a different community, is not titled with this one. Read only; nothing here writes a session's files."""
+    record = pathlib.Path(record_dir).resolve()
+    if record.name != "record":  # some other directory beside a session's context
+        return None
+    path = record.parent / ".symposium" / "context.json"
     try:
         name = json.loads(path.read_text(encoding="utf-8")).get("community")
     except (OSError, ValueError, AttributeError):

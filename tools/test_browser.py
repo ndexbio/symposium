@@ -1208,7 +1208,9 @@ def case_x_claim_map_legend_is_read_from_the_graph(dists):
     """An Argument's claim map legend agrees with its graph: every swatch is read from the
     graph's own style, none hard-coded (claims were once shown in a fixed blue, a Member's
     colour, while each was drawn in its author's), and every kind of node and link the graph
-    holds has a row. A claim with a checker finding is marked on the graph. The verdict pane
+    holds has a row. A claim with a checker finding is marked on the graph, moved or not.
+    Members counts the nodes drawn in their author's colour, and no row names a border its
+    nodes may not have. The verdict pane
     has a resize handle a keyboard can work, and its height is not kept between pages, so the
     whole verdict shows when a page opens (F6)."""
     bad, graphs = [], 0
@@ -1246,6 +1248,22 @@ def case_x_claim_map_legend_is_read_from_the_graph(dists):
                 bad.append(f"{h['name']}: the legend does not read its swatches from the graph")
             if "selector: 'node[?flagged]'" not in page:
                 bad.append(f"{h['name']}: a claim with a finding is not marked on the graph")
+            # a later rule wins, so the one keeping a moved claim's finding marker has to
+            # follow the moved-node rule, whose border colour would otherwise replace it
+            moved = page.find("selector: 'node.moved'")
+            if not 0 <= moved < page.find("selector: 'node.moved[?flagged]'"):
+                bad.append(f"{h['name']}: a moved claim loses its finding marker")
+            # Members is counted over the nodes whose fill is the author's colour, not over
+            # any node that happens to be drawn in it: a Ground's fill is a Member's teal
+            if ("var OWNER_FILLED = 'node[ntype=\"Assertion\"]'" not in page
+                    or "cy.nodes(OWNER_FILLED).filter(onGraph)" not in page):
+                bad.append(f"{h['name']}: Members counts nodes by colour alone")
+            if "'dashed border — has a page" in page:
+                bad.append(f"{h['name']}: a legend row says a node with a page has a dashed "
+                           "border, which addressed content does not")
+            if "on the Argument as a whole, not on one claim" in page:
+                bad.append(f"{h['name']}: a finding on a Ground is reported as on the "
+                           "Argument as a whole")
             if (h.get("verdict") or "").strip():
                 if 'id="introsplit" role="separator" tabindex="0"' not in page:
                     bad.append(f"{h['name']}: the verdict pane has no resize handle")

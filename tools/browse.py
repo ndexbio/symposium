@@ -566,6 +566,8 @@ def build_claim_graph(doc, index, findings, colors, pages):
             "assumptions": us,
             "findings": [{"check": f["check"], "level": f["level"], "msg": f["msg"]}
                          for f in per_object.get(an, [])],
+            # drawn with an orange border, so the claim a finding is on can be found
+            "flagged": bool(per_object.get(an)),
             "full": {"claim": a.get("claim"), "scope": a.get("scope")},
             "primary": an == h.get("primary_assertion"),
             "tooltip": (("PRIMARY — " if an == h.get("primary_assertion") else "") + claim),

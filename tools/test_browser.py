@@ -1196,6 +1196,83 @@ def case_v_title_is_the_community(dists):
     return (not bad, "pages are titled with the session's community, --title overrides", bad)
 
 
+#: The kinds of node and link the claim map's legend has a row for (templates.NODE_ROWS and
+#: EDGE_ROWS): a node by its type, a link by (rel, kind, testimony).
+CLAIM_LEGEND_NODES = {"Assertion", "Ground", "Source", "Assumption", "External"}
+CLAIM_LEGEND_EDGES = {("depends_on", None, False), ("grounded_by", "test", False),
+                      ("grounded_by", "evidential", False), ("addresses", None, False),
+                      ("assumes", None, False), ("cites", None, False)}
+
+
+def case_x_claim_map_legend_is_read_from_the_graph(dists):
+    """An Argument's claim map legend agrees with its graph: every swatch is read from the
+    graph's own style, none hard-coded (claims were once shown in a fixed blue, a Member's
+    colour, while each was drawn in its author's), and every kind of node and link the graph
+    holds has a row. A claim with a checker finding is marked on the graph, moved or not.
+    Members counts the nodes drawn in their author's colour, and no row names a border its
+    nodes may not have. The verdict pane
+    has a resize handle a keyboard can work, and its height is not kept between pages, so the
+    whole verdict shows when a page opens (F6)."""
+    bad, graphs = [], 0
+    for rec, dist in dists.items():
+        arts = browse.load_record(str(rec))
+        index = browse.build_index(arts)
+        colors = browse.member_colors(arts)
+        findings = browse.run_validator(arts, set(colors))
+        pages = {a["artifact"]["name"]: browse.page_name(a["artifact"]["name"]) for a in arts}
+        for a in arts:
+            h = a["artifact"]
+            if h["type"] != "Argument":
+                continue
+            graphs += 1
+            col, full, _meta = browse.build_claim_graph(a, index, findings.get(h["name"], []),
+                                                        colors, pages)
+            for g in (col, full):
+                for n in g["nodes"]:
+                    d = n["data"]
+                    t = d.get("ntype")
+                    if t not in CLAIM_LEGEND_NODES and t not in ("Annotation", "TimeTick"):
+                        bad.append(f"{h['name']}: a {t} node has no legend row")
+                    if t == "Assertion" and bool(d.get("flagged")) != bool(d.get("findings")):
+                        bad.append(f"{h['name']}: {d['id']} flagged={d.get('flagged')} with "
+                                   f"{len(d.get('findings') or [])} finding(s)")
+                for e in g["edges"]:
+                    d = e["data"]
+                    key = (d.get("rel"), d.get("kind"), bool(d.get("testimony")))
+                    if not key[2] and key not in CLAIM_LEGEND_EDGES:
+                        bad.append(f"{h['name']}: a {key} link has no legend row")
+            page = (dist / browse.page_name(h["name"])).read_text()
+            if re.search(r"lgNode\(|lgLine\(|lgBorder\(", page):
+                bad.append(f"{h['name']}: the legend still draws hard-coded swatches")
+            if "nodeSwatch(" not in page or "edgeSwatch(" not in page:
+                bad.append(f"{h['name']}: the legend does not read its swatches from the graph")
+            if "selector: 'node[?flagged]'" not in page:
+                bad.append(f"{h['name']}: a claim with a finding is not marked on the graph")
+            # a later rule wins, so the one keeping a moved claim's finding marker has to
+            # follow the moved-node rule, whose border colour would otherwise replace it
+            moved = page.find("selector: 'node.moved'")
+            if not 0 <= moved < page.find("selector: 'node.moved[?flagged]'"):
+                bad.append(f"{h['name']}: a moved claim loses its finding marker")
+            # Members is counted over the nodes whose fill is the author's colour, not over
+            # any node that happens to be drawn in it: a Ground's fill is a Member's teal
+            if ("var OWNER_FILLED = 'node[ntype=\"Assertion\"]'" not in page
+                    or "cy.nodes(OWNER_FILLED).filter(onGraph)" not in page):
+                bad.append(f"{h['name']}: Members counts nodes by colour alone")
+            if "'dashed border — has a page" in page:
+                bad.append(f"{h['name']}: a legend row says a node with a page has a dashed "
+                           "border, which addressed content does not")
+            if "on the Argument as a whole, not on one claim" in page:
+                bad.append(f"{h['name']}: a finding on a Ground is reported as on the "
+                           "Argument as a whole")
+            if (h.get("verdict") or "").strip():
+                if 'id="introsplit" role="separator" tabindex="0"' not in page:
+                    bad.append(f"{h['name']}: the verdict pane has no resize handle")
+                if re.search(r"localStorage[^\n]*(height|introsplit)", page, re.I):
+                    bad.append(f"{h['name']}: the verdict pane's height is kept between pages")
+    return (not bad, f"{graphs} claim map(s): legend read from the graph, verdict pane "
+            "resizable", bad)
+
+
 def case_w_overview_legend_says_what_each_type_is(dists):
     """The overview's legend gives every artifact type in the record its own shape, the shape
     its nodes are drawn with, and says what the type is and whether it can be evidence: the
@@ -1256,6 +1333,7 @@ CASES = [
     ("wide tables show cited columns first, key fixed", case_u_wide_tables_put_cited_columns_first),
     ("pages are titled with the session's community", case_v_title_is_the_community),
     ("the overview's legend says what each type is", case_w_overview_legend_says_what_each_type_is),
+    ("a claim map's legend is read from its graph", case_x_claim_map_legend_is_read_from_the_graph),
 ]
 
 

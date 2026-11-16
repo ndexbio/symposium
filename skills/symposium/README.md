@@ -2,14 +2,14 @@
 
 Symposium is a specification and toolchain for a community record: an append-only graph in which
 the members of a scientific community publish immutable artifacts. The record and its files
-live on a **Symposium Data server**. This skill is how every person works with it: admins,
-operators and members alike run `/symposium <command>`, and the skill does the rest through the
-`symposium-data` CLI. Nobody runs a tool script or a CLI command by hand, and nobody needs a
+live on a **Symposium Data server**. This skill is how every person works with it: root,
+server admins, community admins and members alike run `/symposium <command>`, and the skill
+does the rest through the `symposium-data` CLI. Nobody runs a tool script or a CLI command by hand, and nobody needs a
 shell on the server.
 
-**Install** the skill from the Symposium bundle: `make deploy-local` from a clone of the
-repository, or unzip a release's `Symposium_skill.zip` and copy its `skills/symposium/` into
-`~/.claude/skills/`. The skill's `toolchain/` holds the repository's Symposium base at its
+**Install** the skill from a release's zip, as
+[Installing Skill](https://github.com/ndexbio/symposium/blob/main/README.md#installing-skill) sets out, or with
+`make deploy-local` from a clone of the repository. The skill's `toolchain/` holds the repository's Symposium base at its
 repository paths: the specification, the tools and their docs, roles, policies and SOPs, the
 worked examples and the conformance suite. The CLI ships inside it (`toolchain/tools/symposium-data/`), and
 the host needs only Python 3.9+: nothing goes on `PATH`. The first command of an agent session
@@ -19,66 +19,83 @@ session reuses it.
 
 ## 1. Using the skill
 
-`setup` (members) and `bootstrap` (admins) are the key commands. Run one first in every agent
-session: it connects the session to one community on one data server, and every other command
-works in that context. A command run before either says which one to run.
+`setup` is the key command: everyone joins with an invite file, and the server assigns the
+**access roles** the invite carries. Root starts with `admin-config` instead, and a server admin
+opens a community with `bootstrap` or `use-community`. Every other command works in the
+session one of these makes, and a command run before any says which one to run.
+
+**Access roles** decide what each person may do: `server-root`, `server-admin`,
+`community-admin`, `gate-keeper`, `community-member` and `community-observer`, each a fixed set
+of **grants**, the last two taking a **collection value** (`:*`, `:` or `:c1,c2`).
+[`toolchain/data-server/RBAC.md`](toolchain/data-server/RBAC.md) defines them all.
+`/symposium access` shows yours, and a command your roles do not allow is refused with the
+grant it takes. The procedures are in the data server's runbook, "Roles and access"
+([`toolchain/data-server/RUNBOOK.md`](toolchain/data-server/RUNBOOK.md#8-roles-and-access)).
 
 **Sessions are kept by the skill**, under `~/.symposium/`, so a command works from any
 directory and nobody creates or enters one:
 
 | Directory | What it is |
 |---|---|
-| `~/.symposium/admin/` | `admin-config`'s public key files, `admin_pub_<handle>.key` |
-| `~/.symposium/admin/<community>/` | the admin's session for a community: `bootstrap` makes it and writes the invite files there |
-| `~/.symposium/member/<community>/<handle>/` | a member's session: `setup` makes it from the invite |
+| `~/.symposium/admin/admin/<handle>/` | a server-level user's server-wide session (`admin-config` for root, with root's public key file `admin_pub_<handle>.key`; `setup` for a server admin) |
+| `~/.symposium/admin/<community>/<handle>/` | a server-level user's session for a community: `bootstrap` or `use-community` makes it, and `bootstrap` writes the invite files there |
+| `~/.symposium/member/<community>/<handle>/` | a community user's session (member, observer, gate-keeper or community admin): `setup` makes it from the invite |
 
-Each holds the session's context, its copy of the record (`record/`) and its event log. `setup` and `bootstrap` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another, and `/symposium use` alone lists them all. Every other command works in the current session (or, when the agent session has chosen none, the machine's only one). Each agent session keeps its own choice, so several agents on one machine never change each other's. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`).
-An admin-only command (the admin commands, `gate`, `port`; `roster list` is any member's)
-refuses in a member's session and names the `use` command for the community's admin. Relative paths you give a command are read from the directory you are in.
+Each holds the session's context (with the access the server resolved for it), its copy of the record (`record/`) and its event log. `setup`, `bootstrap` and `use-community` make the session they create the current one for the agent session that runs them; `/symposium use <community> <handle>` switches to another (`/symposium use <handle>` for a server-wide one), and `/symposium use` alone lists them all, each with the `user_context` that names it. Every user has their own sessions, so root and a server admin can share a machine: `bootstrap`, `use-community` and `import` work as the server-level user of the current session, and `--handle <h>` names another. Every other command works in the session its `--user-context <user_context>` names, else the current session, else the machine's only one. Each agent session keeps its own current session, and any command can name another for itself, so several agents work on one machine side by side and one agent works as several members at once: [SKILL.md](SKILL.md#agent-runtime), "Agent runtime", has the rules for working in parallel, on one machine and across machines. Every command names the session it worked in (`session` in its JSON, or a first line `session: <community>/<handle>`). A command the session's roles do not allow names the sessions on this machine that hold the grant it takes. Relative paths you give a command are read from the directory you are in.
 
-- **Admins:** `/symposium bootstrap --community-file community.json` creates the community if
-  needed, adds its members to the roster and writes their invite files, one
-  `<community>-<handle>.invite` each, in `~/.symposium/admin/<community>/`, to hand over out of
-  band (never through a chat). Run it
-  again at any time: it only adds, and it rewrites the invite files of everyone still waiting.
-- **Members:** `/symposium setup --invite-file <file>`. The invite carries the community, the
-  handle and the server's URL; it is the only way to join, on a local server as on a remote
-  one. Setup makes your private key file on your machine, registers its public key with the
-  data server, and syncs `record/`, your copy of the community's record, in your session; its
-  `messages_for_you` lists the Messages already addressed to you. Running it again is harmless. Once you've joined, `/symposium gen-api-key <label>` in your
-  session issues you an issued key for the data server (`/v1`), so a web app or service can
-  read the record and publish as you.
-- **Several agents on one machine** each have their own session, with their own invite.
+- **Server admins:** `/symposium bootstrap --community-file community.json` creates the
+  community with its first community admin, invites any members it lists, and writes their
+  invite files, one `<community>-<handle>.invite` each, in `~/.symposium/admin/<community>/<your handle>/`,
+  to hand over out of band (never through a chat). Run it again at any time: it invites only
+  who is not invited yet, and rewrites the invite files of everyone still waiting.
+- **Everyone invited:** `/symposium setup --invite-file <file>`. The invite carries the handle,
+  the community and the server's URL; the roles it grants stay on the server. It is the only
+  way to join, on a local server as on a remote one. Setup makes your private key file on your
+  machine, registers its public key with the data server, and syncs `record/`, your copy of
+  the community's record, in your session; its `messages_for_you` lists the Messages already
+  addressed to you. Running it again is harmless. Once you've joined,
+  `/symposium gen-api-key <label> --access community-member:*` in your session issues you an
+  issued key for the data server (`/v1`), so a web app or service can read the record and
+  publish as you.
+- **Several agents on one machine** each choose their own current session, and each command
+  can name the session it works in with `--user-context`; an agent's sub-agents share its
+  current session.
 
 Then the everyday commands. Each works in its session: `record/` there is the session's copy of
 the community's record.
 
 | Command | What it does |
 |---|---|
-| `/symposium use [<community> <handle>]` | Make that session this agent session's current one; every command after it works there, until the next `use`. Alone, list every session on this machine with the `use` command for each. |
-| `/symposium publish [--role <role>] <artifact.json>` | Submit one artifact to the gate. It syncs first (listing any Message addressed to you, as `sync` does), validates against the record as it stands (the same checks the gate runs), and submits only what passes; a rejection comes back as a reply that `sync` lists. `--roles` lists the roles, `--roles <name>` prints one. The admin publishes as `operator` unless it gives `--role`; `--role none` lifts the limit. Needs the data server: nothing validates offline. |
+| `/symposium use [<community> <handle>]` | Make that session this agent session's current one; every command after it works there, until the next `use`. Alone, list every session on this machine with the `use` command and the `user_context` for each. |
+| `/symposium <command> … --user-context <user_context>` | Run that one command in the session named, a `user_context` from the listing, whatever the current session is. |
+| `/symposium agent-session [<pid>]` | This agent session: its agent process's `pid` and `started`. With a PID, that process's, and whether it is `running`. |
+| `/symposium publish [--role <role>] <artifact.json>` | `community-member`: submit one artifact to the gate. It syncs first (listing any Message addressed to you, as `sync` does), validates against the record as it stands (the same checks the gate runs), and submits only what passes; a rejection comes back as a reply that `sync` lists. `--role` is a publishing role, a limit on the Artifact types this session publishes: `--roles` lists them, `--roles <name>` prints one. Needs the data server: nothing validates offline. |
 | `/symposium validate [--role <role>] <artifact.json>` | The same checks as `publish`, submitting nothing (`publish --check`). |
-| `/symposium sync [--watch\|--messages]` | Bring the session's `record/` up to date from the record, in the server's order, and list the gate's replies addressed to you and each Message whose `recipients` include you, once. `--messages` then lists every Message addressed to you, newest first, marking the ones not listed before. `--watch` repeats every `SYMPOSIUM_POLL` seconds (default 30). |
-| `/symposium gate [--dry-run\|--verify\|--rebuild\|--watch]` | Admin: decide every submission waiting in `inbox`: accept it into the record, where the server stamps its `created`, or reply to its submitter. Every `download` held on the data server is verified. `--dry-run` decides and changes nothing; `--verify` compares the session's `record/` with the record; `--rebuild` rebuilds the session's `record/`'s cursor and the gate's state from the server; `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30), reporting each one that accepts or rejects something, until stopped. |
+| `/symposium sync [--watch [--take-over]\|--messages\|--replies]` | Bring the session's `record/` up to date from the record, in the server's order, and list the gate's replies addressed to you and each Message whose `recipients` include you, once. `--messages` then lists every Message addressed to you, newest first, marking the ones not listed before. `--watch` repeats every `SYMPOSIUM_POLL` seconds (default 30). |
+| `/symposium gate [--dry-run\|--verify\|--rebuild\|--watch [--take-over]]` | `community-admin` or `gate-keeper`: decide every submission waiting in `inbox`: accept it into the record, where the server stamps its `created`, or reply to its submitter. Every `download` held on the data server is verified. `--dry-run` decides and changes nothing; `--verify` compares the session's `record/` with the record; `--rebuild` rebuilds the session's `record/`'s cursor and the gate's state from the server; `--watch` runs a pass every `SYMPOSIUM_POLL` seconds (default 30), reporting each one that accepts or rejects something, until stopped. |
 | `/symposium serve [<record dir>] [--port N]` | Browse the session's `record/` (or the record directory given) at `http://localhost:8760` (or `--port`), titled with the session's community (or `--title`) and rebuilt whenever it changes. It stops with an error when there is no the session's `record/`: run `sync` first. |
-| `/symposium data <command> …` | Direct data work through the CLI: `put`, `get`, `version`, `delete`, `stat`, `versions`, `changes`, `find name\|hash\|meta`, `verify`, `collection list\|create\|grant\|set-public`, `owner whoami\|rotate`. `/symposium data <command> --help` shows its options. |
-| `/symposium roster list` | Any member: the community's roster, every handle on it, registered or not yet. |
-| `/symposium roster add --handle <h>\|remove --handle <h>` | Admin: change the roster, one handle at a time. |
-| `/symposium invite --handle <h> --out <file> [--hours N]` | Admin: one member's invite file. `invite list --out-dir <dir>` writes every pending one. |
-| `/symposium rebind-key --handle <h> --out <file>` | Admin: a member's key is lost or compromised. Their keys are retired, and the new invite file lets them register a new one. |
-| `/symposium suspect-after --handle <h> --at <instant>` | Admin: flag everything the member writes after an instant (ISO 8601 with a timezone). Nothing is deleted. |
-| `/symposium purge --cite <citation>` | Admin: free one version's content; it then answers that it was purged, with its metadata. |
-| `/symposium export`, `/symposium import` | Admin: see section 4. |
-| `/symposium admin-config …` | Admin: see section 2. |
-| `/symposium gen-api-key <label> [--non-member] [--community <c>] [--expires-days N]` | An issued key for the data server (`/v1`), bound to one community (the session's, or `--community`) and named by `<label>`, unique among your live keys. **In a member's session**, one more issued key bound to that member (role `member`): a web app holding it publishes, reads and writes as that member, with that member's access. **With `--non-member`**, or in the admin's session, a non-member issued key: it reads the collections it is granted with `/symposium data collection grant --collection <c> --api-key <key id> --perm read`, and any public collection. The key goes to a 0600 file in the session's `api-keys/`; only its id, community, role, handle, label and the file's path are printed. Hand the file to the app out of band. |
-| `/symposium list-api-keys [--community <c>]` | The issued keys you issued, written with their values to a 0600 file in the session's `api-keys/`, and printed without values. The admin's listing also shows members' issued keys, without their values. |
-| `/symposium revoke-api-key <key id> [--community <c>]` | Revoke one of your issued keys at once and erase its value; the admin also revokes any non-member issued key. Removing a member from the roster revokes every key that member issued. |
+| `/symposium data <command> …` | Direct data work through the CLI: `put`, `get`, `version`, `delete`, `stat`, `versions`, `changes`, `find name\|hash\|meta`, `verify`, `collection list\|create\|set-public`, `owner whoami\|rotate`. `/symposium data <command> --help` shows its options. |
+| `/symposium access` | Your access roles and grants in this session, and the six roles. |
+| `/symposium invite --handle <h> --access <role>[:<collections>] --out <file> [--hours N]` | `community-admin` (in its community) or a server admin: one invite file, carrying access roles the server applies when `<h>` joins; root invites server admins with `--access server-admin`. From a server-wide session, `--community <c>` names the community. `invite list --out-dir <dir>` writes every pending one. |
+| `/symposium assign\|unassign (--handle <h>\|--api-key <id>) --access <role>[:<collections>]` | Add or remove access roles, or some collections of one; who may change what is in [RBAC.md](toolchain/data-server/RBAC.md#who-may-change-access). A collection's owner shares it read-only this way. |
+| `/symposium users list` | Anyone in the community: its users, removed ones marked, each with its roles, and the server-level users; `--server`, root's view of the server-level users and their roles. |
+| `/symposium users remove --handle <h> [--server]` | `community-admin`, server admins (root, with `--server`, for a server admin): remove a user; [RBAC.md](toolchain/data-server/RBAC.md#removing-someone) says what removal keeps and ends. |
+| `/symposium rebind-key --handle <h> --out <file>` | `community-admin`, server admins: a user's key is lost or compromised. Their keys are retired, and the new invite file lets them register a new one, with the same roles. |
+| `/symposium suspect-after --handle <h> --at <instant>` | `community-admin`: flag everything the user writes after an instant (ISO 8601 with a timezone). The versions stay. |
+| `/symposium purge --cite <citation>` | `community-admin`: free one version's content; it then answers that it was purged, with its metadata. |
+| `/symposium export`, `/symposium import` | Server admins (`export` also a community admin): see section 4. |
+| `/symposium admin-config …` | Root: see section 2. |
+| `/symposium use-community <community>` | Server admins: a session for an existing community. |
+| `/symposium gen-api-key <label> --access <role>[:<collections>] [--non-member] [--community <c>] [--expires-days N]` | An issued key for the data server (`/v1`), bound to one community (the session's, or `--community`), named by `<label>`, unique among your keys, and carrying the access roles `--access` names: a member key (the default), or with `--non-member` a key of its own for an application ([API keys](toolchain/data-server/RBAC.md#api-keys)). The key goes to a 0600 file in the session's `api-keys/`; only its id, community, roles, label and the file's path are printed. Hand the file to the app out of band. |
+| `/symposium list-api-keys [--community <c>]` | The keys you issued, with their roles, written with their values to a 0600 file in the session's `api-keys/`, and printed without values. A community admin's listing shows every key of the community. |
+| `/symposium revoke-api-key <key id> [--community <c>]` | Delete one of your keys, or with the `members` grant any key of the community: its next request answers 401. |
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit code
 is the result (0 = done; `serve`, `sync --watch` and `gate --watch` run until stopped). Every other command
-prints one JSON object: `setup`, `bootstrap`, `use`, `port`, the admin commands (`admin-config`,
-`roster`, `invite`, `rebind-key`, `suspect-after`, `purge`, `export`, `import`), the key commands
-(`gen-api-key`, `list-api-keys`, `revoke-api-key`) and `data …`.
+prints one JSON object: `setup`, `bootstrap`, `use`, `use-community`, `access`, `port`, the
+administration commands (`admin-config`, `invite`, `assign`, `unassign`, `users`,
+`rebind-key`, `suspect-after`, `purge`, `export`, `import`), the key commands (`gen-api-key`,
+`list-api-keys`, `revoke-api-key`) and `data …`.
 
 **Commands that keep running** (`gate --watch`, `sync --watch`, `serve`): each runs until stopped,
 with no time limit of its own. Your agent starts each one in the background and shows you every
@@ -93,7 +110,9 @@ Agents limit how long a background process may run: Claude Code's unattended ses
 Agent SDK, `claude -p`) stop one after 30 minutes by default, and 2 hours at most unless raised
 with `BASH_DEFAULT_TIMEOUT_MS` and `BASH_MAX_TIMEOUT_MS`; interactive sessions set no limit. When
 the limit stops a watch, the agent starts it again. A restart resumes where the last run left
-off, and takes over from any copy of itself still running on the session, so exactly one runs.
+off, and exactly one works: a `gate --watch` started while another gate watches the community on
+this machine stands by and watches when that one ends, as a `sync --watch` does within its
+session; `--watch --take-over` stops the one running and watches in its place.
 
 ## 2. Deploying a data server
 
@@ -101,7 +120,7 @@ The skill never runs a data server; a person deploys one, once, and it can host 
 communities. The server is the published image [`ndexbio/symposium-data` on Docker Hub](https://hub.docker.com/r/ndexbio/symposium-data),
 run with `docker run` or, on Kubernetes, with its Helm chart, so nothing is built locally.
 `<version>` below is the image `/symposium --help` names (`data_server_image`): the version this
-skill was built for. Every new server starts **non-operational**, until its admin key is in place.
+skill was built for. Every new server starts **non-operational**, until its root key is in place.
 
 - **Local, with Docker**, for personal communities or ones you are comfortable running on your
   own machine: `docker run` with a directory of your machine mounted on `/apps`, reachable by
@@ -132,48 +151,54 @@ skill was built for. Every new server starts **non-operational**, until its admi
     "On a remote cluster" explains both and gives their values.
 
   The chart also ships with the skill, in `toolchain/data-server/helm/symposium-helm/`.
-- **Admin setup, once per server:** run
-  `/symposium admin-config --handle <admin> --data-server-url <url>`. It makes the admin key on
-  your machine (or reuses it), writes the public key file `admin_pub_<admin>.key`, and prints
-  its fingerprint and how to place it; placing it restarts the server:
+- **Root, once per server:** run
+  `/symposium admin-config --handle <root> --data-server-url <url>`. It makes root's key on
+  your machine (or reuses it), writes the public key file `admin_pub_<root>.key`, sets up
+  root's server-wide session, and prints the key's fingerprint and how to place it; placing it
+  restarts the server:
 
   ```bash
   # Docker
-  cp ~/.symposium/admin/admin_pub_<admin>.key /path/to/your/machine/symposium-storage/
+  cp ~/.symposium/admin/admin/<root>/admin_pub_<root>.key /path/to/your/machine/symposium-storage/
   docker restart symposium-data
-  # Kubernetes: add `adminKey: {handle: <admin>}` to values.yaml, then (it restarts the server)
+  # Kubernetes: add `adminKey: {handle: <root>}` to values.yaml, then (it restarts the server)
   helm upgrade symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm \
     --version <chart version> -n symposium -f values.yaml \
-    --set-file adminKey.publicKey=$HOME/.symposium/admin/admin_pub_<admin>.key
+    --set-file adminKey.publicKey=$HOME/.symposium/admin/admin/<root>/admin_pub_<root>.key
   ```
 
-  The server's status then reports that fingerprint. One admin key serves every community on the server, and
-  every community inherits that admin. `--new-key` replaces it; placing the new file rebinds the
-  server.
+  The server's status then reports `root` and that fingerprint. `--new-key` replaces root's
+  key; placing the new file rebinds root, and every other user's keys stay as they are.
+- **Delegating:** root invites server admins, who create and run communities from their own
+  machines: `/symposium invite --handle <h> --access server-admin --out <h>.invite`. The
+  runbook's "Roles and access" walks from an empty server to communities run by their own
+  community admins.
 - **Many communities on one server:** each community is a tenant with its own name (at most 20
-  letters, digits or underscores), members, identities and data; each gets its own
-  `community.json` and `bootstrap`, and agents choose one with `setup` or `bootstrap`.
-- **Each community:** write its `community.json` and run `/symposium bootstrap` with it:
+  letters, digits or underscores), users and data; each gets its own `community.json` and
+  `bootstrap`, and its own community admin.
+- **Each community:** a server admin (or root) writes its `community.json` and runs
+  `/symposium bootstrap` with it:
 
   ```json
-  {"community": "demo", "handles": ["lyra", "vega"], "data-server-url": "http://127.0.0.1:8790"}
+  {"community": "demo", "admin": "steward", "handles": ["lyra", "vega"], "data-server-url": "http://127.0.0.1:8790"}
   ```
 
-  `community` is its name; `handles` its members (the server admin's handle cannot be one);
-  `data-server-url` the server. There is no admin field.
+  `community` is its name; `admin` the handle of its first community admin, who joins with the
+  invite file bootstrap writes and runs the community from then on; `handles`, optional, the
+  members to invite now; `data-server-url` the server.
 
 The data server's runbook, `toolchain/data-server/RUNBOOK.md` (`data-server/RUNBOOK.md` in a
 clone of the repository), walks through choosing and running each deployment (Docker, Docker
-Desktop's Kubernetes, a remote cluster), the admin key and the server's modes, running
-communities, back-ups, and tearing it down.
+Desktop's Kubernetes, a remote cluster), the root key and the server's modes, roles and
+access, back-ups, and tearing it down.
 
 ## 3. Moving a community off NDEx (port-ndex)
 
 `/symposium port <ndex_credentials_file> <ndex_url>` copies a community's record into a new, empty community on the data server (port-ndex).
 
 - **Drain the gate first:** run it until nothing is waiting. A submission it has not decided is not ported.
-- **The order:** `bootstrap` creates the community and sets the context; `port` ports into it; `bootstrap` again writes the invites for the authors and reply recipients the port added to the roster.
-- **The credentials file** holds the source's admin account as JSON `{"username": ..., "password": ...}`, mode 0600, for port-ndex. It is sent only to the data server, which holds it in memory for the length of the port; the data server itself connects to the source, so it needs outbound access to it (port-ndex).
+- **The order:** a server admin's `bootstrap` creates the community and sets the context; `port` ports into it; `bootstrap` again writes the invites for the authors and reply recipients the port added as users.
+- **The credentials file** holds the NDEx community admin's account as JSON `{"username": ..., "password": ...}`, mode 0600, for port-ndex. It is sent only to the data server, which holds it in memory for the length of the port; the data server itself connects to the source, so it needs outbound access to it (port-ndex).
 - **What is ported** (port-ndex): the record and the gate's replies, with their exact bytes, names, original times and authors; not undecided submissions, accounts or passwords.
 - **Members afterwards** join with the invite files from the second `bootstrap`, as in any community.
 
@@ -181,13 +206,13 @@ The detailed guide is [`reference/PORT_NDEX.md`](reference/PORT_NDEX.md).
 
 ## 4. Backing up and moving a community: export and import
 
-- `/symposium export --out <file>` writes the whole community: its members' public keys, roster,
-  members' grants, and its files and versions with their bytes. API keys stay on the server
+- `/symposium export --out <file>` writes the whole community: its users with their public keys
+  and access roles, removed ones included, and its files and versions with their bytes. API keys stay on the server
   that issued them: after an import, issue new ones there.
 - `/symposium import --from <file> --community-file community.json` recreates it on another
   server, or the same one after a loss. It creates the community and is refused if it already
   exists, so it runs before any `bootstrap` for it. The export's community must be the one
   `community.json` names. Members obtain session keys again with the private key files they
   already hold. What the
-  exported admin owned becomes the new server's admin's.
+  exported root owned becomes the new server's root's.
 - Volume or PVC snapshots of the data server are the other backup.

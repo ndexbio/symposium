@@ -1,6 +1,6 @@
-"""What the CLI reports when the server is not the one it speaks to (R-I5) or is not
-operational (R-D4), against a small local server that answers like one; and the CLI's own
-pieces: keys, citations, secret files and the generated reference."""
+"""What the CLI reports when the server is not the one it speaks to, runs another
+release, or is not operational, against a small local server that answers like one; and
+the CLI's own pieces: keys, citations, secret files, `--access` and the generated reference."""
 
 import json
 import stat
@@ -56,7 +56,7 @@ def admin_context(directory: Path, url: str):
                 "community": "demo",
                 "data-server-url": url,
                 "handle": "demo-admin",
-                "role": "admin",
+                "home": None,
                 "server_id": "fake",
             }
         )
@@ -68,7 +68,7 @@ def test_a_server_speaking_another_api_version_is_refused(cli, tmp_path, api):
     fake = FakeServer({"api": api, "server_id": "fake", "mode": "operational"})
     try:
         admin_context(tmp_path, fake.url)
-        code, out = cli(tmp_path, "roster", "list")
+        code, out = cli(tmp_path, "users", "list")
     finally:
         fake.close()
     assert code == 1
@@ -92,11 +92,47 @@ def test_a_non_operational_server_is_reported_with_its_reason(cli, tmp_path):
     finally:
         fake.close()
     assert code == 1 and out["status"] == 501
-    assert (
-        "admin key missing" in out["error"]
-        and "/symposium admin-config" in out["error"]
-    )
+    assert "admin key missing" in out["error"]
+    assert "/symposium admin-config" in out["error"] and "root key" in out["error"]
     assert status["mode"] == "non-operational"  # status answers in either mode
+
+
+def test_a_server_of_another_release_is_refused(monkeypatch):
+    """A bundle names the data server it was built for: a server of another release line
+    answers with which skill it needs."""
+    assert main.same_release("0.2.0", "0.2.3") is True
+    assert main.same_release("0.2.0", "0.1.2") is False
+    assert main.same_release("development checkout", "0.1.2") is None
+    fake = FakeServer(
+        {"api": "1", "version": "0.1.2", "server_id": "fake", "mode": "operational"}
+    )
+    monkeypatch.setattr(main, "image_version", lambda: "0.2.0")
+    try:
+        server = main.DataServer(fake.url, "demo")
+        with pytest.raises(main.CommandError, match="runs version 0.1.2") as refused:
+            server.users("demo")
+    finally:
+        fake.close()
+    assert "skill released for data server 0.1.2" in str(refused.value)
+
+
+def test_access_values_take_the_three_collection_forms():
+    parse = main.rbac.parse_access
+    assert parse("community-member:*") == {
+        "role": "community-member",
+        "collections": ["*"],
+    }
+    assert parse("community-member:") == {"role": "community-member", "collections": []}
+    assert parse("community-observer:c1,c2") == {
+        "role": "community-observer",
+        "collections": ["c1", "c2"],
+    }
+    assert parse("gate-keeper") == {"role": "gate-keeper", "collections": None}
+    for bad in ("community-member", "gate-keeper:*", "researcher", "admin"):
+        with pytest.raises(main.rbac.AccessError):
+            parse(bad)
+    with pytest.raises(main.rbac.AccessError, match=r"<role>:\*"):
+        parse("community-observer")
 
 
 def test_usage_errors_are_json_too(cli, tmp_path):

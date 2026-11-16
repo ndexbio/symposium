@@ -1,4 +1,4 @@
-"""The skill's Python runtime (R-I7): the CLI's environment, `<skill>/.venv`, is built once per
+"""The skill's Python runtime: the CLI's environment, `<skill>/.venv`, is built once per
 machine and recorded once per agent session; a later command in the session only reads the
 record. Each case runs on a stand-in skill whose CLI needs no packages, so a real environment
 is built with `venv` and pip without the network."""
@@ -109,3 +109,36 @@ def test_an_environment_that_cannot_be_built_says_what_is_needed(skill, tmp_path
     assert "venv module" in report["needs"] and "PyPI" in report["needs"]
     assert not (lyra / ".symposium" / "runtime.json").exists()
     assert not (skill / ".venv").exists() and not list(skill.glob(".venv-*"))
+
+
+def test_commands_starting_at_once_build_the_environment_once(skill, tmp_path):
+    """Several sessions' first commands at the same moment: one builds, under the build lock,
+    and the others use what it built."""
+    import threading
+
+    builds, commands = [], []
+    real = Runtime.build
+
+    def counting(self):
+        builds.append(self.record)
+        real(self)
+
+    Runtime.build = counting
+    try:
+        threads = [
+            threading.Thread(
+                target=lambda n=n: commands.append(
+                    runtime(skill, session(tmp_path, f"member{n}")).command()
+                )
+            )
+            for n in range(4)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    finally:
+        Runtime.build = real
+    assert len(builds) == 1
+    assert len(commands) == 4 and all(c == commands[0] for c in commands)
+    assert not list(skill.glob(".venv-*"))

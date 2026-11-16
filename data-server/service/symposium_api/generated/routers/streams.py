@@ -21,7 +21,7 @@ router = APIRouter(tags=["streams"])
 
 
 @router.get(
-    "/{community}/streams/record",
+    "/communities/{community}/record/events",
     response_class=StreamingResponse,
     status_code=200,
     operation_id="streamRecord",
@@ -63,7 +63,7 @@ async def stream_record(
 
 
 @router.get(
-    "/{community}/streams/submissions",
+    "/communities/{community}/submissions/events",
     response_class=StreamingResponse,
     status_code=200,
     operation_id="streamSubmissions",

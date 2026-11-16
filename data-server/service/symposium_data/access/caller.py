@@ -1,11 +1,11 @@
 """Who is calling, once authenticated: the one type every route, hand-written or generated,
-shares. It depends on nothing but the principal the collection checks take."""
+shares. Its `context` is the resolved `UserContext` every access check consults."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..records import ANONYMOUS, Principal
+from .rbac import UserContext
 
 ANONYMOUS_KIND = "anonymous"
 
@@ -13,13 +13,12 @@ ANONYMOUS_KIND = "anonymous"
 @dataclass
 class Caller:
     kind: str  # "anonymous", or the key's kind: "session" or "issued"
-    role: str | None = None  # "admin", "member" or "non-member"; None when anonymous
-    # the Member a member key or session acts as, or the admin; None for a non-member key
-    handle: str | None = None
+    context: UserContext | None = None  # None when anonymous
+    user_id: object | None = None  # the user it acts as; None for a non-member key
+    handle: str | None = None  # that user's handle
     label: str | None = None  # the name an issued key's owner gave it
     key_id: object | None = None
-    # the key's one community; None for an anonymous caller and for the admin's session
-    community: str | None = None
+    community: str | None = None  # the principal's community; None when server-level
     ed25519_kid: str | None = None  # a session's signing key
     base_url: str = ""
     client_addr: str | None = None
@@ -29,14 +28,11 @@ class Caller:
         return self.kind == ANONYMOUS_KIND
 
     @property
-    def admin(self) -> bool:
-        return self.role == "admin"
+    def session(self) -> bool:
+        return self.kind == "session"
 
-    def principal(self) -> Principal:
-        """What the collection checks take: the Member or admin by handle, a non-member key by
-        its id, nobody for an anonymous caller."""
-        if self.anonymous:
-            return ANONYMOUS
-        if self.role == "non-member":
-            return Principal(api_key_id=self.key_id)
-        return Principal(handle=self.handle)
+    def allows(self, grant: str, community: str | None, collection=None) -> bool:
+        """`context.allowsRequest`, false for an anonymous caller."""
+        return self.context is not None and self.context.allowsRequest(
+            grant, community, collection
+        )

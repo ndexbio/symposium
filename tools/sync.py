@@ -1,7 +1,7 @@
 """Member-side sync — keep this session's copy of the community record current.
 
-Every member can read the community's `record` collection (the roster's default grants), so
-the server's change feed IS the distribution mechanism: a member needs no git access to hold a
+Every member and observer of the community reads its `record` collection, so the server's
+change feed IS the distribution mechanism: a member needs no git access to hold a
 current copy of the record.
 
 Two things make this simple, and both come from the specification:
@@ -18,15 +18,20 @@ community, and `./record` beside it is the copy it keeps.
 
   python sync.py              # one pass
   python sync.py --messages   # one pass, then every Message addressed to you, newest first
+  python sync.py --replies    # one pass, then every reply from the gate to you, newest first
   python sync.py --watch      # a pass every SYMPOSIUM_POLL seconds (default 30)
 
 `--watch` runs until stopped, with no time limit of its own: run it in the background. ctrl-c,
 SIGTERM or (Windows) CTRL_BREAK stops it within a second, with exit code 0, even mid-pass. A restart
-resumes where the copy left off, and takes over from a sync still watching this session, which
-it stops.
+resumes where the copy left off. One sync watches a session at a time: a `--watch` started while
+another watches it stands by, says which is watching, and watches from the moment that one ends;
+`--watch --take-over` stops the one watching and watches in its place.
 
 A pass also lists the gate's replies addressed to you (a rejected submission): they are never
-part of the record.
+part of the record. Each is listed once, by the first pass that reads it. `sync --replies`
+lists them all, newest first, marking `new` each one no pass had listed, and names the artifact
+each is about: several callers working as one member each find the decision on their own
+submission there, by its name. An accepted submission is in the copy, under its name.
 
 And it lists each Message in the record whose `recipients` include you, one line apiece:
 
@@ -51,6 +56,7 @@ whole record whenever a file changes — a full pass is fast enough at any size 
 reach, and a full pass cannot drift from the record the way a partial update can. The manifest
 is a log of what moved, not a build instruction.
 """
+
 from __future__ import annotations
 
 import os
@@ -60,6 +66,7 @@ from datetime import datetime, timezone
 
 from data_io import (
     IN_REPLY_TO,
+    LOCKS,
     RECORD_MARK,
     REPLY_MARK,
     DataError,
@@ -68,7 +75,7 @@ from data_io import (
     file_lock,
     pause,
     stop_on_signals,
-    take_over,
+    watch_alone,
 )
 from validate import parse_address, passed, validate
 
@@ -112,9 +119,11 @@ def message_line(m):
     """The one line that lists a Message to this member, wherever it is listed. Its sender,
     title and name are each what a Member wrote, and an agent is asked to relay this line,
     so each is put on one line first: a title cannot add a line that seems to come from the
-    admin or the gate."""
-    return (f"message for you from {one_line(m['from'])}: {one_line(m['title'])} "
-            f"(@{one_line(m['name'])})")
+    gate."""
+    return (
+        f"message for you from {one_line(m['from'])}: {one_line(m['title'])} "
+        f"(@{one_line(m['name'])})"
+    )
 
 
 def outbound(canonical):
@@ -129,11 +138,11 @@ def outbound(canonical):
     for k in ("produced_by", "extracted_from"):
         add(h.get(k))
     for k in ("supersedes", "outputs", "inputs", "used_models", "recipients"):
-        for v in (h.get(k) or []):
+        for v in h.get(k) or []:
             add(v)
     for o in canonical.get("objects", []):
         if o.get("type") == "Ground":
-            add(o.get("citation"))          # a Ground's evidence address (spec 2.2.4)
+            add(o.get("citation"))  # a Ground's evidence address (spec 2.2.4)
     return out - {h.get("name")}
 
 
@@ -143,8 +152,13 @@ def _root(addr):
 
 
 class Sync:
-    def __init__(self, data: SymposiumData | None = None, mirror: Mirror | None = None,
-                 quiet: bool = False, lists_messages: bool | None = None):
+    def __init__(
+        self,
+        data: SymposiumData | None = None,
+        mirror: Mirror | None = None,
+        quiet: bool = False,
+        lists_messages: bool | None = None,
+    ):
         self.data = data or SymposiumData()
         self.mirror = mirror or Mirror()
         self.quiet = quiet
@@ -154,6 +168,8 @@ class Sync:
         self.lists_messages = (not quiet) if lists_messages is None else lists_messages
         # and whether the pass prints them itself: only when the caller left it to the pass
         self.prints_messages = lists_messages is None and not quiet
+        # whether the pass prints the gate's replies itself: `sync --replies` lists them all
+        self.prints_replies = True
         self.members = set()  # fetched live on every pass
         self.handle = None  # this session's own handle, read once from its context
 
@@ -162,11 +178,10 @@ class Sync:
             print(line)
 
     def load_state(self):
-        state = self.mirror.read_state(
-            STATE, {"since": 0, "pending": [], "replies": [], "messages": [], "build": 0}
+        return self.mirror.read_state(
+            STATE,
+            {"since": 0, "pending": [], "replies": [], "messages": [], "build": 0},
         )
-        state.setdefault("messages", [])  # a state file written before Messages were listed
-        return state
 
     def me(self):
         """This session's handle, from its context (local; the server is not contacted)."""
@@ -186,9 +201,15 @@ class Sync:
         new = [h for h in messages_for(record, self.me()) if h.get("name") not in shown]
         if self.lists_messages:
             state["messages"].extend(h["name"] for h in new)
-        return [{"name": h["name"], "from": h.get("published_by") or "?",
-                 "title": h.get("title") or "(untitled)", "created": h.get("created")}
-                for h in new]
+        return [
+            {
+                "name": h["name"],
+                "from": h.get("published_by") or "?",
+                "title": h.get("title") or "(untitled)",
+                "created": h.get("created"),
+            }
+            for h in new
+        ]
 
     def fetch(self, state):
         """-> (list of {citation, canonical} to apply, reachable, why).
@@ -207,12 +228,16 @@ class Sync:
             return [], False, str(e)
         citations = list(state["pending"])
         for item in feed["items"]:
-            if (item.get("metadata") or {}).get(RECORD_MARK) and not item.get("deleted"):
+            if (item.get("metadata") or {}).get(RECORD_MARK) and not item.get(
+                "deleted"
+            ):
                 citations.append(item["citation"])
         found = []
         for citation in dict.fromkeys(citations):
             try:
-                found.append({"citation": citation, "canonical": self.data.get_json(citation)})
+                found.append(
+                    {"citation": citation, "canonical": self.data.get_json(citation)}
+                )
             except DataError as e:
                 return [], False, str(e)
         state["since"] = feed["next_since"]
@@ -222,10 +247,15 @@ class Sync:
         """Validate and write, oldest first. -> (added, dirty, deferred)."""
         record = self.mirror.load()
         names = {r["artifact"]["name"] for r in record}
-        members = {r["artifact"]["published_by"].lstrip("@") for r in record
-                   if r.get("artifact", {}).get("published_by")}
-        members |= {f["canonical"]["artifact"].get("published_by", "@").lstrip("@")
-                    for f in found}
+        members = {
+            r["artifact"]["published_by"].lstrip("@")
+            for r in record
+            if r.get("artifact", {}).get("published_by")
+        }
+        members |= {
+            f["canonical"]["artifact"].get("published_by", "@").lstrip("@")
+            for f in found
+        }
         members |= self.members
 
         # the server's `created` is the record's total order; apply in it or addresses will
@@ -245,7 +275,9 @@ class Sync:
             findings = validate(c, record, members)
             if not passed(findings):
                 # Usually a dependency that has not arrived yet — retry next pass, never drop.
-                deferred.append((name, [x["msg"] for x in findings if x["level"] == "FAIL"][:2]))
+                deferred.append(
+                    (name, [x["msg"] for x in findings if x["level"] == "FAIL"][:2])
+                )
                 pending.append(f["citation"])
                 continue
 
@@ -253,29 +285,44 @@ class Sync:
             record.append(c)
             names.add(name)
             added.append(name)
-            dirty |= {name} | (outbound(c) & names)  # its own page + every page it points at
+            dirty |= {name} | (
+                outbound(c) & names
+            )  # its own page + every page it points at
         state["pending"] = pending
         return added, dirty, deferred
 
     def replies(self, state):
-        """The gate's replies addressed to this member that have not been listed yet."""
+        """The gate's replies addressed to this member that have not been listed yet. Reading
+        `inbox` takes `publish` (or `gate`): an account holding neither, an observer, has no
+        replies, and syncs the record all the same."""
         new = []
-        for item in self.data.query("inbox", {REPLY_MARK: True}):
+        try:
+            items = self.data.query("inbox", {REPLY_MARK: True})
+        except DataError as e:
+            if e.report.get("status") == 403:
+                return new
+            raise
+        for item in items:
             if item["citation"] in state["replies"]:
                 continue
             state["replies"].append(item["citation"])
-            new.append((item["name"], (item.get("metadata") or {}).get(IN_REPLY_TO, "?")))
+            new.append(
+                (item["name"], (item.get("metadata") or {}).get(IN_REPLY_TO, "?"))
+            )
         return new
 
     def write_manifest(self, state, added, dirty, total):
         state["build"] += 1
-        self.mirror.write_state("manifest.json", {
-            "build": state["build"],
-            "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "artifacts": total,
-            "added": sorted(added),
-            "dirty": sorted(dirty | {"index"}),
-        })
+        self.mirror.write_state(
+            "manifest.json",
+            {
+                "build": state["build"],
+                "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "artifacts": total,
+                "added": sorted(added),
+                "dirty": sorted(dirty | {"index"}),
+            },
+        )
 
     def once(self):
         """Run one pass while sharing state atomically with other sync callers."""
@@ -289,25 +336,33 @@ class Sync:
         if not reachable:
             held = len(self.mirror.load())
             self.say(f"! COULD NOT REACH THE SERVER — {why}")
-            self.say(f"  Your copy of the record is UNCHANGED at {held} artifact(s) and may "
-                     f"now be STALE.")
-            self.say("  Do not publish against it: validation can only see the record it has, "
-                     "so a")
+            self.say(
+                f"  Your copy of the record is UNCHANGED at {held} artifact(s) and may "
+                f"now be STALE."
+            )
+            self.say(
+                "  Do not publish against it: validation can only see the record it has, "
+                "so a"
+            )
             self.say("  stale copy will approve a name someone else has already taken.")
             return None
         added, dirty, deferred = self.apply(found, state)
         for name, why in deferred:
             self.say(f"  deferred {name}: {why[0] if why else 'unresolved'}")
         replies = self.replies(state)
-        for name, about in replies:
-            self.say(f"  reply from the gate: {name} (re {about}) — not part of the record")
+        for name, about in replies if self.prints_replies else ():
+            self.say(
+                f"  reply from the gate: {name} (re {about}) — not part of the record"
+            )
         held = self.mirror.load()
         total = len(held)
         if added:
             self.write_manifest(state, added, dirty, total)
             self.say(f"  +{len(added)}: {', '.join(added)}")
-            self.say(f"  build {state['build']}, {total} artifact(s), "
-                     f"{len(dirty | {'index'})} page(s) dirty")
+            self.say(
+                f"  build {state['build']}, {total} artifact(s), "
+                f"{len(dirty | {'index'})} page(s) dirty"
+            )
         # last, so the lines that ask something of this member are the ones left on screen
         messages = self.messages(held, state)
         if self.prints_messages:
@@ -340,20 +395,67 @@ def list_messages(sync):
         print("  no Message in your copy of the record is addressed to you")
         return 1 if result is None else 0
     fresh = sum(1 for h in mine if h.get("name") not in before)
-    print(f"  {len(mine)} Message(s) addressed to you, newest first"
-          + (f"; {fresh} new since they were last listed:" if fresh else ":"))
+    print(
+        f"  {len(mine)} Message(s) addressed to you, newest first"
+        + (f"; {fresh} new since they were last listed:" if fresh else ":")
+    )
     for h in reversed(mine):
         mark = "new" if h.get("name") not in before else "   "
         when = (h.get("created") or "")[:16].replace("T", " ")
-        m = {"name": h["name"], "from": h.get("published_by") or "?",
-             "title": h.get("title") or "(untitled)"}
-        print(f"  {mark}  {when}  {message_line(m)[len('message for you '):]}")
+        m = {
+            "name": h["name"],
+            "from": h.get("published_by") or "?",
+            "title": h.get("title") or "(untitled)",
+        }
+        print(f"  {mark}  {when}  {message_line(m)[len('message for you ') :]}")
     return 1 if result is None else 0
 
 
+def list_replies(sync):
+    """`sync --replies`: a pass, then every reply from the gate addressed to you, newest first,
+    each one no pass had listed before marked `new`, with the artifact it is about. -> exit
+    code (1 when the server could not be reached: the replies are held there)."""
+    before = set(sync.load_state()["replies"])
+    sync.prints_replies = (
+        False  # this command lists them itself, all of them, after the pass
+    )
+    if sync.once() is None:
+        return 1
+    try:
+        items = sync.data.query("inbox", {REPLY_MARK: True})
+    except DataError as e:
+        if e.report.get("status") != 403:
+            print(f"! {e}")
+            return 1
+        items = []  # an account that reads no inbox has no replies
+    if not items:
+        print("  no reply from the gate is addressed to you")
+        return 0
+    fresh = sum(1 for item in items if item["citation"] not in before)
+    print(
+        f"  {len(items)} reply(ies) from the gate addressed to you, newest first"
+        + (f"; {fresh} new since they were last listed:" if fresh else ":")
+    )
+    for item in reversed(items):
+        mark = "new" if item["citation"] not in before else "   "
+        about = (item.get("metadata") or {}).get(IN_REPLY_TO, "?")
+        print(
+            f"  {mark}  reply from the gate: {one_line(item['name'])} "
+            f"(re {one_line(about)}) — not part of the record"
+        )
+    return 0
+
+
 def main(argv):
-    if "--messages" in argv and "--watch" in argv:
-        print("! --messages lists once; run `/symposium sync --watch` on its own to keep watching")
+    listings = [flag for flag in ("--messages", "--replies") if flag in argv]
+    if len(listings) > 1:
+        print("! --messages and --replies each list on their own: give one")
+        return 2
+    if listings and "--watch" in argv:
+        print(
+            f"! {listings[0]} lists once; run `/symposium sync --watch` on its own to keep "
+            "watching"
+        )
         return 2
     # with --messages this command lists the Messages itself, all of them, after the pass
     sync = Sync(lists_messages=True if "--messages" in argv else None)
@@ -366,27 +468,41 @@ def main(argv):
 
     if "--messages" in argv:
         return list_messages(sync)
+    if "--replies" in argv:
+        return list_replies(sync)
 
     if "--watch" not in argv:
         result = sync.once()
         if result is None:
-            return 1                       # unreachable: never report a stale copy as fine
+            return 1  # unreachable: never report a stale copy as fine
         if not result["added"]:
             print(f"  up to date — {result['artifacts']} artifact(s)")
         return 0
 
     stop_on_signals()
-    lock = take_over("sync")  # noqa: F841 — held for as long as this sync watches
-    print(f"watching {sync.mirror.root}/ (every {POLL}s) — ctrl-c to stop", flush=True)
     misses = 0
     try:
+        # held for as long as this sync watches: the one sync watcher of this session
+        context = sync.data.context()
+        lock = watch_alone(  # noqa: F841
+            "sync",
+            LOCKS / "sync.lock",
+            f"{context.get('community')}/{context.get('handle')}",
+            replace="--take-over" in argv,
+        )
+        print(
+            f"watching {sync.mirror.root}/ (every {POLL}s) — ctrl-c to stop", flush=True
+        )
         while True:
             try:
                 if sync.once() is None:
                     misses += 1
                     if misses in (1, 5) or misses % 20 == 0:
-                        print(f"  ({misses} consecutive failed poll(s) — the copy is not "
-                              f"being updated)", flush=True)
+                        print(
+                            f"  ({misses} consecutive failed poll(s) — the copy is not "
+                            f"being updated)",
+                            flush=True,
+                        )
                 else:
                     misses = 0
             except Exception as e:

@@ -1,4 +1,4 @@
-"""The streams' shared machinery (api/DESIGN.md §5.3, §10.5): the caps on open streams,
+"""The streams' shared machinery (api/DESIGN.md#streams, #running-it): the caps on open streams,
 counted in PostgreSQL so they hold across workers, and the wake-up a stream waits on.
 
 Each open stream is one `api_streams` row, written when it opens and deleted when it closes.
@@ -27,7 +27,7 @@ ANONYMOUS_TOTAL = 200
 
 
 class Caps:
-    """The limits default to api/DESIGN.md §10.5; a test passes small ones to reach each."""
+    """The limits default to api/DESIGN.md#running-it; a test passes small ones to reach each."""
 
     def __init__(
         self,

@@ -38,7 +38,17 @@ def load_cli():
 
 main = load_cli()
 # the client's own plumbing, which every call below goes through
-PLUMBING = {"request", "refusal", "check_api", "c", "api_keys_path", "upload"}
+PLUMBING = {
+    "request",
+    "refusal",
+    "check_api",
+    "c",
+    "api_keys_path",
+    "upload",
+    "scope",
+    "user_path",
+    "key_path",
+}
 ARGUMENTS = {
     "name": "lab",
     "handle": "lyra",
@@ -64,9 +74,12 @@ ARGUMENTS = {
     "cite": "symposium-data:5779183b-bb3d-439f-bdbf-d042c2e58306@v1",
     "before": None,
     "sha256": "0" * 64,
-    "grantee": {"handle": "vega"},
-    "perm": "read",
-    "granted": True,
+    "home": "demo",
+    "first_admin": "steward",
+    "user_id": "5779183b-bb3d-439f-bdbf-d042c2e58306",
+    "principal": "/v1/communities/demo/users/lyra",
+    "role": "community-observer",
+    "collections": ["lab"],
     "public": True,
     "port_id": "5779183b-bb3d-439f-bdbf-d042c2e58306",
     "path": Path(__file__),
@@ -85,7 +98,7 @@ def contract_operations() -> list:
     for path, item in spec["paths"].items():
         pattern = re.sub(r"\{[^}]+\}", "[^/]+", "/v1" + path)
         for method in item:
-            if method in ("get", "post", "put", "delete"):
+            if method in ("get", "post", "put", "patch", "delete"):
                 ops.append((method.upper(), re.compile(f"^{pattern}$")))
     return ops
 
@@ -96,7 +109,7 @@ def recorded_calls(monkeypatch) -> dict:
 
     def record(method, path, *args, **kwargs):
         calls.setdefault(current[0], []).append((method, path.split("?")[0]))
-        return {"nonce": "n", "key": "sak_x", "items": [], "next": None}
+        return {"nonce": "n", "key": "sak_x", "items": [{}], "next": None}
 
     class Response:
         def __enter__(self):
@@ -147,7 +160,7 @@ def test_every_call_the_cli_makes_is_an_operation_of_the_contract(monkeypatch):
 
 
 def test_every_method_of_the_client_reaches_the_server(monkeypatch):
-    """A client method that no longer calls the server is dead code: it fails here."""
+    """A client method that calls no server route is dead code: it fails here."""
     calls = recorded_calls(monkeypatch)
     methods = {
         name

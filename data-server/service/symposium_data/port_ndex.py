@@ -1,16 +1,17 @@
-"""The NDEx port (R-M1): copies a Symposium community's record from an NDEx server into an
+"""The NDEx port: copies a Symposium community's record from an NDEx server into an
 existing, empty community on this server.
 
 This is the only NDEx client code in the server, and only the service's port route (app.py)
-imports it. The admin starts a port with `POST /v1/{community}/port-ndex`; it runs in a
-background thread of the service and its outcome is recorded in `ports`. It is not a sync: a
-community that holds files is refused.
+imports it. A `communities` holder starts a port with
+`POST /v1/communities/{community}/ndex-imports`; it runs in a background thread of the service
+and its outcome is recorded in `ports`. It is not a sync: a community that holds files is
+refused.
 
-It ports the admin-owned networks marked `symposium_record` into `record` and those marked
+It ports the NDEx account's networks marked `symposium_record` into `record` and those marked
 `symposium_reply` into `inbox`, keeping each artifact's exact canonical bytes, name, original
-`created` and author. The NDEx admin account becomes this server's admin. Everything is written
-in one transaction (R-A6): any failure writes nothing and removes the bytes again. The NDEx
-password is held in memory only, for the length of the port.
+`created` and author. The NDEx account running the port becomes this server's root user.
+Everything is written in one transaction: any failure writes nothing and removes the bytes
+again. The NDEx password is held in memory only, for the length of the port.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ import re
 import urllib.request
 from datetime import datetime
 
+from .access import rbac
 from .cleanup import Cleanup, PendingBatch
 from .records import COLLECTIONS, Conflict, Records
 from .runtime import Database, PayloadStore
@@ -116,7 +118,7 @@ class Port:
         # NDEx truncates listings silently, so every page of this size is read
         self.page_size = page_size
         self.heartbeat = heartbeat  # how often the pending payloads are touched
-        self.admin = None
+        self.root = None
 
     def run(self, port_id):
         """Port, then record the outcome on the port's row; never raises."""
@@ -165,7 +167,7 @@ class Port:
             self.check_order(collection, found[collection])
         return client, found
 
-    def item(self, attributes: dict, admin_user: str) -> dict:
+    def item(self, attributes: dict, ndex_user: str) -> dict:
         raw = attributes[CANONICAL]
         header = json.loads(raw)["artifact"]
         created = datetime.fromisoformat(header["created"])
@@ -175,16 +177,16 @@ class Port:
             "name": header["name"],
             "bytes": raw.encode(),
             "created": created,
-            "author": self.handle(header["published_by"].lstrip("@"), admin_user),
+            "author": self.handle(header["published_by"].lstrip("@"), ndex_user),
             "metadata": {RECORD_MARK: True},
         }
 
-    def handle(self, user: str, admin_user: str) -> str:
-        """An NDEx account as a handle here: the admin account becomes this server's admin;
-        any other account named like the admin collides with it."""
-        if user == admin_user:
-            return self.admin
-        if user == self.admin:
+    def handle(self, user: str, ndex_user: str) -> str:
+        """An NDEx account as a handle here: the NDEx account running the port becomes this server's
+        root user; any other account named like the root collides with it."""
+        if user == ndex_user:
+            return self.root
+        if user == self.root:
             raise PortRefused(HANDLE_COLLISION)
         if not HANDLE.match(user):
             raise PortRefused(f"'{user}' cannot be a handle here")
@@ -201,7 +203,7 @@ class Port:
     # ── writing ─────────────────────────────────────────────────────────────────────────────
     def port(self) -> dict:
         with self.db.connection() as conn:
-            self.admin = self.records.config(conn, "admin")
+            self.root = self.records.root_user(conn)["handle"]
         client, found = self.read_source()
         items = [("record", x) for x in found["record"]] + [
             ("inbox", x) for x in found["inbox"]
@@ -210,7 +212,7 @@ class Port:
             {x["author"] for _, x in items}
             | {h for x in found["inbox"] for h in x["metadata"]["recipients"]}
         )
-        members = [h for h in members if h != self.admin]
+        members = [h for h in members if h != self.root]
         pending = PendingBatch(self.db, self.records, self.heartbeat)
         duplicates = []
         try:
@@ -235,18 +237,18 @@ class Port:
             self.cleanup.discard_pending(pid)
         return {
             "community": self.community,
-            "admin": self.admin,
+            "root": self.root,
             "pages": client.listing_pages,
             "networks": found["networks"],
             "skipped": found["skipped"],
             "record": len(found["record"]),
             "replies": len(found["inbox"]),
-            "reserved_roster": members,
+            "authors": members,
         }
 
     def write(self, conn, items: list, members: list, duplicates: list):
-        """The one transaction: the roster, every file and version, then the checks. Nothing
-        is visible until it commits."""
+        """The one transaction: the authors as users, every file and version, then the checks.
+        Nothing is visible until it commits."""
         # Lock the community's collections, as every write's clock does, so no file can land
         # between this check and the commit.
         conn.execute(
@@ -256,12 +258,19 @@ class Port:
         if self.records.holds_files(conn, self.community):
             raise PortRefused(f"community '{self.community}' holds files")
         for handle in members:
-            self.records.add_to_roster(conn, self.community, handle)
-        for handle in members:
-            conn.execute(
-                "INSERT INTO owners (community, handle, reserved) VALUES (%s, %s, true) "
-                "ON CONFLICT (community, handle) DO NOTHING",
-                (self.community, handle),
+            # an author is a user of the community, holding community-member on every
+            # collection; one without a key claims its handle later by invite
+            existing = self.records.user_by_handle(conn, self.community, handle)
+            if existing is not None:
+                if existing["removed"] is not None:
+                    raise PortRefused(f"handle '{handle}' belongs to a removed member")
+                continue
+            try:
+                user = self.records.create_user(conn, handle, self.community)
+            except Conflict as e:
+                raise PortRefused(str(e)) from None
+            self.records.assign(
+                conn, rbac.COMMUNITY_MEMBER, [rbac.ALL], self.root, user_id=user["id"]
             )
         written = []
         for collection, item in items:

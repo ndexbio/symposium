@@ -9,7 +9,7 @@ from pathlib import Path
 
 from fixtures.ndex_port.stub import CREDENTIALS, FIXTURES, NdexStub, attributes
 from harness import MAX_WAIT
-from suite import ADMIN, SKILL, community_file
+from suite import ROOT, SKILL, community_file
 
 
 def credentials_file(directory: Path) -> Path:
@@ -41,6 +41,7 @@ def test_bootstrap_then_port_then_bootstrap_invites_the_authors(
     again = bootstrap(skill, tmp_path, server)
     assert sorted(Path(p).name for p in again["invite_files"]) == [
         "demo-lyra.invite",
+        "demo-steward.invite",
         "demo-vega.invite",
     ]
     record = skill.ok(tmp_path, "data", "changes", "--collection", "record")["items"]
@@ -53,7 +54,7 @@ def test_port_refusals_are_reported_with_their_reasons(
     stub = NdexStub()
     try:
         # a session for a community the server does not hold (one since removed)
-        nowhere = suite.home / ".symposium" / "admin" / "nowhere"
+        nowhere = suite.home / ".symposium" / "admin" / "nowhere" / ROOT
         nowhere.mkdir(parents=True)
         cli.ok(
             nowhere,
@@ -80,7 +81,7 @@ def test_a_port_while_another_runs_is_refused(server, skill, tmp_path):
         directory.mkdir()
         bootstrap(skill, directory, server, community)
     stub = NdexStub(hold=True)
-    skill.ok(first_dir, "use", "demo", ADMIN)
+    skill.ok(first_dir, "use", "demo", ROOT)
     first = subprocess.Popen(
         [
             sys.executable,
@@ -97,13 +98,13 @@ def test_a_port_while_another_runs_is_refused(server, skill, tmp_path):
     try:
         assert stub.held.wait(MAX_WAIT), "the first port never reached the listing"
         # switching now changes only the commands after it: the running port keeps demo's
-        skill.ok(other_dir, "use", "other", ADMIN)
+        skill.ok(other_dir, "use", "other", ROOT)
         code, out = skill(other_dir, "port", credentials_file(other_dir), stub.url)
         assert code == 1 and out["status"] == 409
         stub.released.set()
         stdout, _ = first.communicate(timeout=MAX_WAIT)
         ported = json.loads(stdout)
-        assert ported["state"] == "ok" and ported["session"] == f"demo/{ADMIN}"
+        assert ported["state"] == "ok" and ported["session"] == f"demo/{ROOT}"
     finally:
         stub.close()
         first.kill()

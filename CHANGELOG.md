@@ -7,26 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
-## [Symposium Skill 0.1.4] - Unreleased
+## [Symposium Skill 0.4.0] - Unreleased
 
-For Data Server 0.1.3.
+Works with Data Server 0.2.1.
 
 ### Added
 
-- **Messages addressed to you are listed.** `sync` prints one line for each Message whose
-  `recipients` include the member, once: `message for you from @<sender>: <title> (@<name>)`.
-  `publish` and `validate` print the same lines after their sync, and `setup` returns them in
-  its JSON as `messages_for_you`. The gate's own sync lists none. The sender, title and name
-  are each put on one line, control characters removed, so a Message cannot print a line that
-  seems to come from the admin or the gate.
-- **Agents are told to report them.** `MEMBER-AGENT-INSTRUCTIONS.md` has a "Messages addressed
-  to you" section, and `SKILL.md` asks agents to report each Message and to run
-  `sync --watch` in long sessions.
-- **Filters on the record browser's overview.** Its legend entries for members, artifact
-  types and edge kinds show and hide them, by mouse or keyboard, and the choice is
-  remembered. Prose citations (`cites`) and Messages start hidden, with a notice under the
-  graph that says how many and brings them back.
-- **`serve` reports how long each build took.**
 - **A Lineage page in the record browser.** `lineage.html` draws the Arguments as lines,
   oldest on the left: each follows the earlier Argument it supersedes, rests a Ground under
   its primary Assertion on, or cites in prose. A prose link is drawn dashed and called what it
@@ -43,7 +29,7 @@ For Data Server 0.1.3.
   rather than the ellipse they all shared.
 - **The claim map's verdict pane can be resized.** Drag its lower edge, or use the arrow keys
   on it, to give the claim map more room; a double-click or End puts it back. Each page opens
-  with the whole verdict shown, so the height is not kept between pages.
+  with the whole verdict shown.
 - **Wide tables read from their key.** The row-key column stays in view as a table scrolls
   sideways, the columns a Ground cites come first (a button restores the stored order), and a
   table of more than 12 columns has a column picker.
@@ -51,15 +37,6 @@ For Data Server 0.1.3.
 ### Changed
 
 - **`serve` titles the pages with the session's community** unless `--title` names another.
-- **A ResearchGoal is recognised.** `validate` and the gate no longer flag the profile's
-  `ResearchGoal` type as not defined by the specification. One that does not declare
-  `groundable: false` draws a REVIEW instead, so what the gate accepts is unchanged. Data
-  Server 0.1.2 still flags every ResearchGoal as not defined, in its submission checks and
-  findings; 0.1.3 runs the same rules as this skill.
-- **The claim map shows the whole verdict.** Purpose and rationale are sections the reader
-  opens, and an Expand control opens the whole pane.
-- **The overview's caption describes its citation-depth layout,** and its graph fills the
-  window below the header.
 
 ### Fixed
 
@@ -68,26 +45,162 @@ For Data Server 0.1.3.
   graph as a test. Each swatch is now read from the graph as drawn, each row has a count, and
   a row appears only for what the graph shows, Members included. A claim with a checker
   finding now has the orange border the legend described.
-- **A reply is listed once when `sync --watch` runs beside other commands.** Sync passes now
-  run one at a time, each reading the session's saved state when it starts, so the watcher no
-  longer lists again what `publish`, `validate` or a foreground `sync` listed while it waited.
 
-## [Data Server 0.1.3] - Unreleased
+## [Symposium Skill 0.3.1] - 2026-11-14
 
-### Changed
-
-- **The rules recognise a ResearchGoal.** The server validates with the gate's rules
-  (`symposium_rules`): `POST /v1/{community}/submissions`, `POST
-  /v1/{community}/submissions/check` and an artifact's findings. A ResearchGoal, a type the
-  profile defines, no longer draws the STRUCT REVIEW "not defined by the specification". One
-  that does not declare `groundable: false` draws a STRUCT REVIEW saying it must. A REVIEW
-  refuses nothing, so what the server accepts is unchanged.
-
-## [Symposium Helm 0.1.2] - Unreleased
+Works with Data Server 0.2.1.
 
 ### Changed
 
-- **Deploys Data Server 0.1.3** (`appVersion`).
+- **Content held outside an Artifact has one form:** a file on the data server, cited from a
+  `download` Content by `symposium-data:<file id>@v<n>` with its `sha256`. The embedding
+  policy, the profile and the worked record all state it.
+- **A cited file goes in `files`,** the collection every community is created with, so that
+  whoever reads the Artifact can read the file. A member's own collection is for working files
+  and files shared directly. The policy sets out the trade-offs.
+- **A result over the size limit is published as its rows and its file:** the rows an Argument
+  turns on are embedded, and the full output is a file cited from the same Artifact. The
+  refusal of an Artifact over 250 KB names the policy that says so.
+- **A source stays where it is held:** an imported Artifact cites the source's own location, or
+  its file on the data server where the community holds it.
+
+[Install Skill Instructions](README.md#installing-skill)
+
+## [Data Server 0.2.1] - 2026-11-14
+
+### Changed
+
+- **A file version the record cites keeps its content.** Purging a version that an Artifact in
+  the record cites, from a `download` Content, is refused with `409` and names the citing
+  Artifacts. Purging those Artifacts first frees it.
+- **An Artifact enters the record only when the file versions it cites have their content.**
+  Accepting one that cites a purged or missing version is refused with `409`.
+
+## [Symposium Helm 0.1.3] - 2026-11-14
+
+### Changed
+
+- **Deploys Data Server 0.2.1.**
+
+## [Symposium Skill 0.3.0] - 2026-11-13
+
+Works with Data Server 0.2.0.
+
+### Added
+
+- **Working in parallel on one machine.** Any command takes `--user-context
+  <community>/<handle>` and runs as that session, whatever the agent session's current one is,
+  so one agent session, sub-agents included, works as several members at once. `/symposium use`
+  alone lists every session with the `user_context` that names it, and `/symposium
+  agent-session` reports the agent session. The skill's "Agent runtime" section states what is
+  safe in parallel on one machine and across machines.
+- **One gate decides for a community at a time on a machine.** A `gate --watch` started while
+  another watches stands by and watches when that one ends; `sync --watch` does the same within
+  its session. `--watch --take-over` stops the one running.
+- **`sync --replies`** lists every reply from the gate to you, with the artifact each is about.
+
+### Changed
+
+- **One document describes roles and access:** every role, what each permission allows, API
+  keys, and who may change whose access. The other guides link to it. Every link in the skill
+  package is checked each time the package is built.
+- **`supersedes` is documented as a list of addresses** wherever an artifact's shape is
+  described, with an example and the refusal a single address gets.
+- **The release zip is `symposium_skill-<version>.zip`** and holds one folder, `symposium/`, in
+  the Agent Skills format, with the skill's README and licence inside it. It unzips straight
+  into an agent's skills directory.
+- **The skill's frontmatter holds the Agent Skills fields**: `license`, and its version under
+  `metadata`.
+
+### Fixed
+
+- Commands running at once in one session each write whole files: the session's context, its
+  copy of the record, its event log, and the skill's runtime.
+
+## [Symposium Skill 0.2.0] - 2026-11-06
+
+Works with Data Server 0.2.0. Connected to a server from another release, it stops and says
+which skill that server needs.
+
+### Added
+
+- **Access roles.** Everyone works under an access role: root, server admin, community admin,
+  gate-keeper, community member or community observer. Members and observers can be limited to
+  particular collections. You can see your own roles and what they allow, and a command your
+  roles don't allow is refused with an explanation of what it needs.
+- **Delegated administration.** Root sets up the server and invites server admins. A server
+  admin creates communities, each with its own community admin, who invites members, assigns
+  roles and runs the gate. Root is not needed to run a community.
+- **Managing people.** Commands to invite people with roles, assign and remove roles, list and
+  remove users, and let a server admin work in any community. API keys carry roles too.
+- **Messages addressed to you are shown** when you join, sync, publish or validate, each once,
+  on one line that cannot pass itself off as a message from the gate or the server. Agents are
+  asked to report them.
+- **Record browser filters.** The overview can show and hide members, artifact types and kinds
+  of links. Prose citations and messages start hidden. Each rebuild reports how long it took.
+
+### Changed
+
+- **Upgrading from 0.1 takes no steps.** Keys and sessions carry over, and nobody rejoins.
+- **Several server admins can share one machine.** Root and each server admin keep their own
+  sessions, so one never replaces another's. Commands that open a community's session work as
+  whoever you are currently working as, and you can name another person instead. Existing
+  sessions are moved into place by the first command.
+- **A server admin can invite a community's admin without opening that community first,** by
+  naming the community in the invite. Leaving it out explains what's missing instead of being
+  refused for lack of a permission.
+- **Joining with access to only some collections works.** You join and work without a local copy
+  of the record.
+- **A gate that runs continuously stops when its gate role is removed,** and says how to
+  resume.
+- **Research goals are recognised** as a type the profile defines. One that doesn't declare
+  itself non-groundable gets a review note, which refuses nothing.
+- **The claim map** opens its purpose and rationale on demand and can be expanded to the whole
+  pane. The overview explains its layout, and its graph fills the window.
+### Fixed
+
+- A reply from the gate is listed once, even when a continuous sync runs beside other commands.
+
+## [Data Server 0.2.0] - 2026-11-06
+
+A breaking release: it needs Symposium Skill 0.2.0, and clients of 0.1 can no longer connect.
+
+### Added
+
+- **Role-based access.** Six fixed roles, given to people and to API keys, decide what each may
+  do. Members and observers can be limited to particular collections. A person always keeps
+  access to the collections they created; an API key reaches only the collections it is given.
+- **Delegated administration.** Root, set by the server's key file, appoints server admins.
+  Server admins create communities, each with a first community admin who runs it.
+- **People as users.** Everyone is a user of one community, or of the server as a whole.
+  Removing someone keeps them on record as removed: their name is retired, their published work
+  stays credited to them, their sign-ins end, and every API key they made stops working.
+- **Invites carry roles.** The roles are kept on the server and given when the person joins.
+  Pending invites can be listed, issued again and cancelled.
+- **Automatic upgrade.** A 0.1 server upgrades itself on its first start as 0.2.0, after backing
+  up its database, and the server backs up its database before every later upgrade too. The 0.1
+  admin becomes root, members keep full access, and every collection keeps its owner.
+- **Research goals are recognised** by the server's checks, as they are by the skill.
+
+### Changed
+
+- **The API is reorganised** into one consistent structure: each community's data sits under
+  that community, and every address names a thing rather than an action. Any community name is
+  allowed except "admin".
+- **Community members always read their community's record,** which publishing checks against.
+  The list of roles shows this alongside each role's permissions.
+- **Creating a community names its first community admin.**
+- **Sharing a collection** means giving someone read access to it.
+- **The server's status shows who root is.**
+
+## [Symposium Helm 0.1.2] - 2026-11-06
+
+### Changed
+
+- **Deploys Data Server 0.2.0,** which upgrades an existing server in place on its first start.
+- **Allows up to 10 minutes for the first start of a new release,** time for the database
+  backup and upgrade.
+- **The public address setting is documented** as the address written into invite files.
 
 ## [Symposium Skill 0.1.3] - 2026-10-14
 

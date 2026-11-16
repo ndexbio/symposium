@@ -1,13 +1,16 @@
-"""The admin's gate: discover the members' submissions, validate them, accept or reject.
+"""The gate: discover the members' submissions, validate them, accept or reject.
 
-Run it as `/symposium gate`, in the admin's session directory: the context there says which
-community, and `./record` beside it is the gate's copy of the record. One pass per run:
+Run it as `/symposium gate`, in the session of a user holding the `gate` grant (a community admin
+or a gate-keeper): the context there says which community, and `./record` beside it is
+the gate's copy of the record. Each pass first checks the grant, so a gate whose `gate` is
+unassigned stops deciding at its next pass. One pass per run:
 
   1. a sync pass brings the copy up to date from the `record` feed, exactly as a member's;
   2. the `inbox` feed, from the gate's cursor, plus the submissions deferred last pass, gives
      the submissions (marked `symposium_submission`) not decided yet;
   3. a submission is considered only when its inbox name, before the `@`, is the artifact's
-     name, prefixed with its submitter's handle, and the submitter is a member;
+     name, prefixed with its submitter's handle, and the submitter is an active member: a
+     user of the community, not removed, holding `publish`;
   4. `order_submissions` puts them in the order a serial publication needs: an artifact after
      anything it addresses, an output after its Analysis or deferred until it arrives;
   5. each is validated against the record as it stands, with a provisional `created` from
@@ -31,11 +34,20 @@ is sent twice.
                               pass that accepts or rejects something. It runs until stopped,
                               with no time limit of its own: run it in the background. ctrl-c,
                               SIGTERM or (Windows) CTRL_BREAK stops it within a second, with
-                              exit code 0, even mid-pass. A restart resumes where it left off,
-                              and takes over from a gate still watching this session, which it
-                              stops.
+                              exit code 0, even mid-pass. A restart resumes where it left off.
+                              A pass that finds `gate` unassigned stops it, exit code 1.
+  python gate.py --watch --take-over
+                              stop the gate that is watching the community on this machine,
+                              then watch: for a gate that has hung.
 
-Everything goes through the `symposium-data` CLI (R-I1). Exit 0 = the pass ran; 1 = no context
+ONE GATE DECIDES FOR A COMMUNITY AT A TIME, ON ONE MACHINE. Every pass that decides (a watching
+gate's, or a single one) and `--rebuild` hold the community's pass lock for their length, kept
+for the machine under `~/.symposium/gate/`, so a gate run in any session that holds `gate` for
+the community waits its turn. A `--watch` started while another gate watches the community
+stands by: it says which gate is watching, decides nothing, and watches from the moment that one
+ends. `--dry-run` and `--verify` write nothing and take no lock.
+
+Everything goes through the `symposium-data` CLI. Exit 0 = the pass ran; 1 = no context
 in this directory (the message names `/symposium setup` and `bootstrap`), the data server could
 not be reached, or the copy differs from the record (`--verify`); 2 = `--watch` given with
 `--verify` or `--rebuild`.
@@ -49,9 +61,11 @@ import json
 import re
 import sys
 from datetime import timedelta
+from pathlib import Path
 
 import telemetry
 from data_io import (
+    GATE_LOCKS,
     IN_REPLY_TO,
     RECORD_MARK,
     REPLY_MARK,
@@ -60,19 +74,20 @@ from data_io import (
     DataError,
     Mirror,
     SymposiumData,
+    file_lock,
     pause,
+    rbac,
     stop_on_signals,
-    take_over,
     uninterrupted,
+    watch_alone,
 )
-from symposium_rules.checks import skip_reason
+from symposium_rules.checks import cited_files, skip_reason
 from sync import POLL, Sync
 from sync import STATE as SYNC_STATE
-from validate import finding, method_of, parse_instant, passed, validate
+from validate import finding, parse_instant, passed, validate
 
 # the feed cursors, the submissions waiting for their Analysis, and a decision per submission
 STATE = ".gate_state.json"
-DATA_LOCATION = "symposium-data:"
 
 
 def _root(addr):
@@ -89,11 +104,8 @@ def order_submissions(subs, record_names):
     decides only the ORDER in which a pass considers what is pending, so that an artifact is
     stamped after anything it addresses.
 
-    Bundling used to live here. It is gone because it created the one thing spec 1.9 says
-    cannot happen — two artifacts with an identical `created`, which are therefore not
-    earlier than one another and cannot refer to each other. Making that publishable at all
-    required an ordering exemption on `produced_by`, and the exemption then suppressed the
-    ordering check on the very property most in need of it.
+    Two artifacts never share a `created` (spec 1.9), so each one is strictly earlier or
+    later than every other, and `produced_by` is ordered like every other address.
 
     An output names its Analysis with `produced_by` and that address must resolve (spec 2.5).
     An output whose Analysis is neither in the record nor pending in this pass is DEFERRED
@@ -111,7 +123,7 @@ def order_submissions(subs, record_names):
             if h.get(k):
                 out.add(_root(h[k]))
         for k in ("supersedes", "inputs", "recipients"):
-            for v in (h.get(k) or []):
+            for v in h.get(k) or []:
                 out.add(_root(v))
         for o in c.get("objects", []):
             if o.get("type") == "Ground":
@@ -139,7 +151,7 @@ def order_submissions(subs, record_names):
     while pending:
         unplaced = {x["canonical"]["artifact"]["name"] for x in pending} - placed
         ready = [x for x in pending if not (refs(x) & unplaced)]
-        if not ready:                  # a cycle among submissions; fall back to given order
+        if not ready:  # a cycle among submissions; fall back to given order
             ready = pending[:1]
         for x in ready:
             ordered.append(x)
@@ -149,17 +161,24 @@ def order_submissions(subs, record_names):
 
 
 class Gate:
-    def __init__(self, data: SymposiumData | None = None, mirror: Mirror | None = None,
-                 dry: bool = False):
+    def __init__(
+        self,
+        data: SymposiumData | None = None,
+        mirror: Mirror | None = None,
+        dry: bool = False,
+    ):
         self.data = data or SymposiumData()
         self.mirror = mirror or Mirror()
         self.dry = dry
         self.decided = 0  # submissions accepted or rejected since the last look
+        self.refused = False  # a pass found the session without `gate`
+        self.context = None  # this session's context, read once
 
     # ── state: a cache of what the server says ────────────────────────────────────────────
     def load_state(self):
         return self.mirror.read_state(
-            STATE, {"inbox_since": 0, "record_since": 0, "deferred": [], "decisions": {}}
+            STATE,
+            {"inbox_since": 0, "record_since": 0, "deferred": [], "decisions": {}},
         )
 
     def save_state(self, state):
@@ -185,12 +204,27 @@ class Gate:
 
     # ── one pass ──────────────────────────────────────────────────────────────────────────
     def once(self) -> int:
+        """One pass. A pass that decides holds the community's pass lock for its length; a
+        dry run writes nothing and takes none."""
+        if self.dry:
+            return self.decide()
+        with self.alone():
+            return self.decide()
+
+    def decide(self) -> int:
+        try:
+            self.data.require(rbac.GATE, "the gate")
+        except DataError as e:
+            print(f"! {e}")
+            self.refused = True
+            return 1
         sync = Sync(self.data, self.mirror, quiet=True)
         if sync.once() is None:
             print("! the data server could not be reached — nothing was decided")
             return 1
         try:
-            admin = self.data.context()["handle"]
+            gate = self.data.context()["handle"]
+            submitters = self.data.submitters()
             state = self.load_state()
             items, inbox_since = self.refresh(state)
         except DataError as e:
@@ -199,21 +233,25 @@ class Gate:
         record = self.mirror.load()
         names = {r["artifact"]["name"] for r in record}
         members = sync.members | {
-            r["artifact"]["published_by"].lstrip("@") for r in record
+            r["artifact"]["published_by"].lstrip("@")
+            for r in record
             if r["artifact"].get("published_by")
         }
-        print(f"gate: record holds {len(record)} artifact(s); members {sorted(members)}"
-              + ("  [DRY RUN]" if self.dry else ""))
+        print(
+            f"gate: record holds {len(record)} artifact(s); members {sorted(members)}"
+            + ("  [DRY RUN]" if self.dry else "")
+        )
 
         candidates = list(state["deferred"]) + [
-            i for i in items
+            i
+            for i in items
             if (i.get("metadata") or {}).get(SUBMISSION_MARK) and not i.get("deleted")
         ]
         subs = []
         for item in {i["citation"]: i for i in candidates}.values():
             if item["citation"] in state["decisions"]:
                 continue
-            sub = self.admit(item, members, state)
+            sub = self.admit(item, submitters, state)
             if sub:
                 subs.append(sub)
         print(f"gate: {len(subs)} submission(s) to decide\n")
@@ -221,11 +259,19 @@ class Gate:
         ordered, deferred = order_submissions(subs, names)
         state["deferred"] = [waiting["item"] for waiting, _ in deferred]
         for waiting, missing in deferred:
-            print(f"  DEFERRED {waiting['name']}\n    waiting for: {', '.join(missing)} "
-                  f"(an Analysis is published before its outputs, spec 2.5)")
-            telemetry.emit("gate", "gate_defer", "deferred", artifact=waiting["name"],
-                           atype=waiting["canonical"]["artifact"].get("type"),
-                           submitter=waiting["owner"], waiting_for=sorted(missing))
+            print(
+                f"  DEFERRED {waiting['name']}\n    waiting for: {', '.join(missing)} "
+                f"(an Analysis is published before its outputs, spec 2.5)"
+            )
+            telemetry.emit(
+                "gate",
+                "gate_defer",
+                "deferred",
+                artifact=waiting["name"],
+                atype=waiting["canonical"]["artifact"].get("type"),
+                submitter=waiting["owner"],
+                waiting_for=sorted(missing),
+            )
 
         for sub in ordered:
             canonical = sub["canonical"]
@@ -240,22 +286,35 @@ class Gate:
                         print(f"    [REVIEW {x['check']}] {x['msg'][:110]}")
                     stored = self.accept(sub)
                     if stored is None:
-                        continue       # not decided: the next pass tries it again
+                        continue  # not decided: the next pass tries it again
                     record.append(stored)
                     names.add(sub["name"])
                     state["decisions"][sub["citation"]] = f"accepted as {sub['name']}"
                     self.decided += 1
-                    telemetry.emit("gate", "gate_accept", "accepted", artifact=sub["name"],
-                                   atype=canonical["artifact"].get("type"),
-                                   submitter=sub["owner"], findings=findings)
+                    telemetry.emit(
+                        "gate",
+                        "gate_accept",
+                        "accepted",
+                        artifact=sub["name"],
+                        atype=canonical["artifact"].get("type"),
+                        submitter=sub["owner"],
+                        findings=findings,
+                    )
                 else:
-                    if not self.reject(sub, findings, admin):
+                    if not self.reject(sub, findings, gate):
                         continue
                     state["decisions"][sub["citation"]] = "rejected"
                     self.decided += 1
-                    telemetry.emit("gate", "gate_reject", "rejected", artifact=sub["name"],
-                                   atype=canonical["artifact"].get("type"),
-                                   submitter=sub["owner"], findings=findings, refusal=["spec"])
+                    telemetry.emit(
+                        "gate",
+                        "gate_reject",
+                        "rejected",
+                        artifact=sub["name"],
+                        atype=canonical["artifact"].get("type"),
+                        submitter=sub["owner"],
+                        findings=findings,
+                        refusal=["spec"],
+                    )
                 self.save_state(state)  # each decision is cached as soon as it is made
         state["inbox_since"] = inbox_since
         self.save_state(state)
@@ -275,13 +334,21 @@ class Gate:
             canonical = self.data.get_json(item["citation"])
         except (DataError, ValueError) as e:
             return skip(f"not readable as an artifact ({e})")
-        declared = (canonical.get("artifact") or {}).get("name") \
-            if isinstance(canonical, dict) else None
+        declared = (
+            (canonical.get("artifact") or {}).get("name")
+            if isinstance(canonical, dict)
+            else None
+        )
         why = skip_reason(item["name"], owner, declared, members)
         if why:
             return skip(why)
-        return {"item": item, "citation": item["citation"], "name": name, "owner": owner,
-                "canonical": canonical}
+        return {
+            "item": item,
+            "citation": item["citation"],
+            "name": name,
+            "owner": owner,
+            "canonical": canonical,
+        }
 
     def provisional(self, sub, record):
         """The `created` to validate with: the submission's own `created` on the server, or,
@@ -290,8 +357,14 @@ class Gate:
         the stamp the promote assigns, and every check that something is strictly earlier
         holds for the real stamp too."""
         when = parse_instant(sub["item"]["created"])
-        newest = max((t for t in (parse_instant(r["artifact"].get("created")) for r in record)
-                      if t), default=None)
+        newest = max(
+            (
+                t
+                for t in (parse_instant(r["artifact"].get("created")) for r in record)
+                if t
+            ),
+            default=None,
+        )
         if newest is not None and newest >= when:
             when = newest + timedelta(microseconds=1)
         return when.isoformat()
@@ -301,15 +374,10 @@ class Gate:
         declared, and it was stored before the submission (J5). Any other location stays
         unverifiable, and the validator's REVIEW says so."""
         out = []
-        for o in sub["canonical"].get("objects", []):
-            if o.get("type") != "Content" or method_of(o.get("name")) != "download":
-                continue
-            location = str(o.get("location") or "")
-            if not location.startswith(DATA_LOCATION):
-                continue
+        for name, location, sha256 in cited_files(sub["canonical"]):
             args = ["verify", "--cite", location, "--before", sub["item"]["created"]]
-            if o.get("sha256"):
-                args += ["--sha256", o["sha256"]]
+            if sha256:
+                args += ["--sha256", sha256]
             try:
                 checked = self.data.run(*args)
             except DataError as e:
@@ -317,9 +385,13 @@ class Gate:
             if not checked.get("ok"):
                 # the reason first: the console cuts a long line, and the location is the
                 # part the submitter already knows
-                out.append(finding("DOWNLOAD", "FAIL",
-                                   f"Content '{o.get('name')}': {checked.get('reason')} "
-                                   f"({location})"))
+                out.append(
+                    finding(
+                        "DOWNLOAD",
+                        "FAIL",
+                        f"Content '{name}': {checked.get('reason')} ({location})",
+                    )
+                )
         return out
 
     def accept(self, sub):
@@ -330,19 +402,28 @@ class Gate:
             return sub["canonical"]
         try:
             promoted = self.data.run(
-                "promote", sub["citation"], "--collection", "record", "--name", sub["name"],
-                "--metadata", json.dumps({RECORD_MARK: True, SUBMISSION_CITATION: sub["citation"]}),
-                "--stamp-json-pointer", "/artifact/created",
+                "promote",
+                sub["citation"],
+                "--collection",
+                "record",
+                "--name",
+                sub["name"],
+                "--metadata",
+                json.dumps({RECORD_MARK: True, SUBMISSION_CITATION: sub["citation"]}),
+                "--stamp-json-pointer",
+                "/artifact/created",
             )
             stored = self.data.get_json(promoted["citation"])
         except DataError as e:
             print(f"    ! promote failed, left undecided: {e}")
             return None
         self.mirror.write(stored)
-        print(f"    ACCEPTED -> {promoted['citation']}, created {stored['artifact']['created']}")
+        print(
+            f"    ACCEPTED -> {promoted['citation']}, created {stored['artifact']['created']}"
+        )
         return stored
 
-    def reject(self, sub, findings, admin) -> bool:
+    def reject(self, sub, findings, gate) -> bool:
         """A reply in `inbox` that only the submitter reads. -> whether it was sent."""
         fails = [f"{x['check']}: {x['msg']}" for x in findings if x["level"] == "FAIL"]
         print(f"    REJECTED ({len(fails)} failures)")
@@ -350,54 +431,99 @@ class Gate:
             print(f"      - {x[:150]}")
         if self.dry:
             return True
-        reply_name = f"{admin}_REPLY_{sub['item']['name']}"
+        reply_name = f"{gate}_REPLY_{sub['item']['name']}"
         reply = {
             "artifact": {
                 "name": re.sub(r"[^A-Za-z0-9_]", "_", reply_name),
                 "type": "NonGroundable",
                 "specification_version": "1.0",
-                "published_by": f"@{admin}",
+                "published_by": f"@{gate}",
                 "created": None,
-                "text": "REJECTED\n\nin_reply_to: " + sub["name"] + "\n\n"
-                        + "\n".join(f"- {x}" for x in fails),
+                "text": "REJECTED\n\nin_reply_to: "
+                + sub["name"]
+                + "\n\n"
+                + "\n".join(f"- {x}" for x in fails),
             },
             "objects": [],
             "relationships": [],
         }
         try:
-            self.data.put_json(reply, "inbox", reply_name, {
-                REPLY_MARK: True,
-                IN_REPLY_TO: sub["name"],
-                "recipients": [sub["owner"]],
-                SUBMISSION_CITATION: sub["citation"],
-            })
+            self.data.put_json(
+                reply,
+                "inbox",
+                reply_name,
+                {
+                    REPLY_MARK: True,
+                    IN_REPLY_TO: sub["name"],
+                    "recipients": [sub["owner"]],
+                    SUBMISSION_CITATION: sub["citation"],
+                },
+            )
         except DataError as e:
             print(f"    ! reply failed, left undecided: {e}")
             return False
         print(f"    reply sent to {sub['owner']}")
         return True
 
-    def watch(self) -> int:
-        """A pass every POLL seconds until stopped. A pass's report is printed when it accepted
+    # ── one gate decides for a community at a time, on one machine ────────────────────────
+    def who(self) -> str:
+        """This gate's user context, as `/symposium use` lists it."""
+        if self.context is None:
+            self.context = self.data.context()
+        return f"{self.context.get('community')}/{self.context.get('handle')}"
+
+    def locks(self, kind: str) -> Path:
+        """A lock of this community's gate on this machine: `lock`, held for one pass by
+        whichever gate runs it (a watcher's, or a single pass), and `watch.lock`, held by the
+        gate that is watching. Every session on the machine that holds `gate` for the
+        community shares them."""
+        community = self.who().partition("/")[0].lower()
+        return GATE_LOCKS / f"{community}.{kind}"
+
+    def alone(self):
+        """Hold the community's pass lock: this gate decides, and any other waits its turn."""
+        return file_lock(self.locks("lock"))
+
+    def watch(self, take_over: bool = False) -> int:
+        """A pass every POLL seconds until stopped, as the community's one watching gate on
+        this machine: standing by first while another watches, or stopping it with
+        `take_over`. A pass's report is printed when it accepted
         or rejected something; a pass that fails is reported on the 1st, 5th and every 20th
         failure in a row. A stop mid-pass prints what the pass had decided so far: each line
-        is a decision the admin must see."""
+        is a decision the gate's runner must see."""
         stop_on_signals()
-        lock = take_over("gate")  # noqa: F841 — held for as long as this gate watches
-        print(f"watching inbox (every {POLL}s) — ctrl-c to stop", flush=True)
         misses = 0
         report = io.StringIO()
         try:
+            # held for as long as this gate watches: the one watching gate of the community
+            # on this machine, whichever session it runs in
+            lock = watch_alone(  # noqa: F841
+                "gate", self.locks("watch.lock"), self.who(), replace=take_over
+            )
+            print(f"watching inbox (every {POLL}s) — ctrl-c to stop", flush=True)
             while True:
                 report = io.StringIO()
                 with contextlib.redirect_stdout(report):
                     code = self.once()
+                if self.refused:
+                    # the grant is gone: watching on would decide nothing
+                    print(report.getvalue().rstrip(), flush=True)
+                    print(
+                        "stopped: `gate` was unassigned from this session; to resume, a "
+                        "community admin assigns gate-keeper again and the gate is started "
+                        "again",
+                        flush=True,
+                    )
+                    return 1
                 if code:
                     misses += 1
                     if misses in (1, 5) or misses % 20 == 0:
                         print(report.getvalue().rstrip(), flush=True)
-                        print(f"  ({misses} consecutive failed pass(es) — nothing is being "
-                              f"decided)", flush=True)
+                        print(
+                            f"  ({misses} consecutive failed pass(es) — nothing is being "
+                            f"decided)",
+                            flush=True,
+                        )
                 else:
                     misses = 0
                     if self.decided:
@@ -418,37 +544,52 @@ class Gate:
         except DataError as e:
             print(f"! the data server could not be reached: {e}")
             return 1
-        server = {i["name"] for i in feed["items"]
-                  if (i.get("metadata") or {}).get(RECORD_MARK) and not i.get("deleted")}
+        server = {
+            i["name"]
+            for i in feed["items"]
+            if (i.get("metadata") or {}).get(RECORD_MARK) and not i.get("deleted")
+        }
         held = {r["artifact"]["name"] for r in self.mirror.load()}
-        print(f"copy {self.mirror.root}/: {len(held)} artifact(s); record: {len(server)}")
-        print(f"  in the record, missing from the copy: {sorted(server - held) or 'none'}")
-        print(f"  in the copy only, not in the record: {sorted(held - server) or 'none'}")
+        print(
+            f"copy {self.mirror.root}/: {len(held)} artifact(s); record: {len(server)}"
+        )
+        print(
+            f"  in the record, missing from the copy: {sorted(server - held) or 'none'}"
+        )
+        print(
+            f"  in the copy only, not in the record: {sorted(held - server) or 'none'}"
+        )
         same = server == held
-        print("OK" if same else "THE COPY DIFFERS FROM THE RECORD — run `/symposium gate "
-                                "--rebuild`")
+        print(
+            "OK"
+            if same
+            else "THE COPY DIFFERS FROM THE RECORD — run `/symposium gate --rebuild`"
+        )
         return 0 if same else 1
 
     def rebuild(self) -> int:
         """Discard the copy's cursor and the gate's state, and rebuild both from the server.
         Decides nothing: the next pass reads `inbox` from the start, skipping every
         submission the server already holds a decision for."""
-        for name in (SYNC_STATE, STATE):
-            (self.mirror.root / name).unlink(missing_ok=True)
-        sync = Sync(self.data, self.mirror, quiet=True)
-        synced = sync.once()
-        if synced is None:
-            print("! the data server could not be reached — nothing was rebuilt")
-            return 1
-        state = self.load_state()
-        try:
-            self.refresh(state)
-        except DataError as e:
-            print(f"! {e}")
-            return 1
-        self.mirror.write_state(STATE, state)
-        print(f"rebuilt {self.mirror.root}/ from the server: {synced['artifacts']} artifact(s), "
-              f"{len(state['decisions'])} decision(s)")
+        with self.alone():
+            for name in (SYNC_STATE, STATE):
+                (self.mirror.root / name).unlink(missing_ok=True)
+            sync = Sync(self.data, self.mirror, quiet=True)
+            synced = sync.once()
+            if synced is None:
+                print("! the data server could not be reached — nothing was rebuilt")
+                return 1
+            state = self.load_state()
+            try:
+                self.refresh(state)
+            except DataError as e:
+                print(f"! {e}")
+                return 1
+            self.mirror.write_state(STATE, state)
+        print(
+            f"rebuilt {self.mirror.root}/ from the server: {synced['artifacts']} artifact(s), "
+            f"{len(state['decisions'])} decision(s)"
+        )
         return 0
 
 
@@ -459,11 +600,18 @@ def main(argv) -> int:
     except DataError as e:
         print(f"! {e}")
         return 1
+    if "--take-over" in argv and "--watch" not in argv:
+        print(
+            "! --take-over goes with --watch: it stops the gate that is watching and watches"
+        )
+        return 2
     if "--watch" in argv:
         if "--verify" in argv or "--rebuild" in argv:
-            print("! --watch runs passes; it does not combine with --verify or --rebuild")
+            print(
+                "! --watch runs passes; it does not combine with --verify or --rebuild"
+            )
             return 2
-        return gate.watch()
+        return gate.watch(take_over="--take-over" in argv)
     if "--rebuild" in argv:
         return gate.rebuild()
     if "--verify" in argv:

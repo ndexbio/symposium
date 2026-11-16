@@ -10,14 +10,13 @@ The record and its files live on a **Symposium Data server**, which the skill re
 
 [`spec/symposium_specification.md`](spec/symposium_specification.md) is the normative document. [`AGENTS.md`](AGENTS.md) is what an AI assistant reads before working in the repository; `CLAUDE.md` points at it. `make lint`, `make test`, `make build` and `make deploy-local` are the only targets; `make test` builds what the suites share once, then runs every suite side by side.
 
-**[Symposium skill](skills/symposium/README.md)**: the `symposium` skill is how every admin and member works with a Symposium; users activate the skill in agent prompt with `/symposium <command>`, and the skill does the rest. 
+**[Symposium skill](skills/symposium/README.md)**: the `symposium` skill is how root, server admins, community admins and members work with a Symposium; users activate the skill in agent prompt with `/symposium <command>`, and the skill does the rest. 
 
 **[Symposium Data server](data-server/README.md)**: the data file store a Symposium's community record and files live on, a Docker image, deployable with Docker or, on Kubernetes, with its Helm chart. Checkout the [runbook](data-server/RUNBOOK.md), which walks through choosing a deployment and operating it.
 
-## Installing Symposium as agentic Skill
-
-### Requirements
+## Development Requirements
 - **Python 3.9+** is all the installed skill needs.
+- **Docker** required for running test or build-docker make targets
 - **[uv](https://docs.astral.sh/uv/getting-started/installation/)** must be installed on the host to run Makefile targets.
 
 ### From cloned repository
@@ -25,24 +24,33 @@ The record and its files live on a **Symposium Data server**, which the skill re
 ```bash
 git clone https://github.com/ndexbio/symposium.git
 cd symposium
-make deploy-local                  # installs the skill into ~/.claude/skills/symposium
+make build
 ```
 
-`make deploy-local SKILLS=<dir>` installs it into another skills directory.
+### Installing Skill
 
-### From `Symposium_skill.zip`
+The Symposium skill ships as a zip file attached on a Github release. Download
+`symposium_skill-<version>.zip` from the latest Skill release listed on   
+[releases page](https://github.com/ndexbio/symposium/releases). The zip follows the standard
+[Agent Skills](https://agentskills.io) format and is usable by any skills compatible agent.
 
-- **Download it** from the repository's releases page, [github.com/ndexbio/symposium/releases](https://github.com/ndexbio/symposium/releases): every release will have the prebuilt `Symposium_skill.zip` attached as a downloadable artifact.
-- **Unzip it and copy `skills/symposium/`** into your agent's skills directory; for Claude Code that is `~/.claude/skills/`:
+Requirements - **Python 3.9+** the skill will run Python
 
-  ```bash
-  unzip Symposium_skill.zip -d symposium-bundle
-  cp -r symposium-bundle/skills/symposium ~/.claude/skills/
-  ```
+**Machine wide install** - Every agent running in any directory will load the skill. Unzip the skill zip file into the conventional agent sub path under your home directory - `<USER_HOME>/.agents/skills`. If using Claude, then do `<USER_HOME>/.claude/skills` instead.
+
+**Folder only install** - only agents running in this folder will load the skill. Unzip the skill zip file into the conventional agent sub path under that folder - `<FOLDER>/.agents/skills`. If using Claude, then do `<FOLDER>/.claude/skills` instead.
+
+Example to install for Claude:
+```
+ curl -fLO https://github.com/ndexbio/symposium/releases/download/symposium-v0.3.1/symposium_skill-0.3.1.zip
+ unzip symposium_skill-0.3.1.zip -d ~/.claude/skills
+```
 
 ## Participating in a Symposium
 
-Starting a Symposium as its admin, joining one as a member, and step-by-step usage examples for each are in the skill's [`SKILL.md`](skills/symposium/SKILL.md#participating-in-a-symposium), so an agent working with the skill has them in its context.
+Starting a Symposium as a server admin, running one as its community admin, joining one as a member, and step-by-step usage examples for each are in the skill's [`SKILL.md`](skills/symposium/SKILL.md#participating-in-a-symposium), so an agent working with the skill has them in its context.
+
+**Who can do what.** Everyone in a Symposium has a role: root and server admins look after the server, a community admin runs a community, a gate-keeper runs its gate, members publish, and observers read. [Roles and access](data-server/RBAC.md) explains each role and what it allows; the runbook's [Roles and access](data-server/RUNBOOK.md#8-roles-and-access) section walks through inviting people and changing their access.
 
 ## Status
 

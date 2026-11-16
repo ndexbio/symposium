@@ -222,7 +222,9 @@ class RecordState(BaseModel):
     url: AnyUrl
     position: Position
     counts: Counts
-    members: Annotated[int, Field(description="Handles on the roster.")]
+    members: Annotated[
+        int, Field(description="The community's members, removed ones excluded.")
+    ]
     first_created: Optional[AwareDatetime] = None
     specification_versions: List[str]
 
@@ -468,6 +470,12 @@ class MemberResource(BaseModel):
     registered: Annotated[
         bool, Field(description="True once the Member has joined from its invite.")
     ]
+    removed: Annotated[
+        Optional[AwareDatetime],
+        Field(
+            description="When the Member was removed; its record stays under its handle."
+        ),
+    ] = None
     counts: Counts2
     artifacts_url: Optional[AnyUrl] = None
     messages_url: Optional[AnyUrl] = None
@@ -478,25 +486,9 @@ class MemberPage(Page):
     items: List[MemberResource]
 
 
-class KeyRole(StrEnum):
-    non_member = "non-member"
-    member = "member"
-    admin = "admin"
-
-
 class KeyKind(StrEnum):
     session = "session"
     issued = "issued"
-
-
-class Perm(StrEnum):
-    read = "read"
-    write = "write"
-
-
-class Grant(BaseModel):
-    collection: str
-    perm: Perm
 
 
 class SubmissionCheck(BaseModel):
@@ -629,6 +621,21 @@ class SubmissionStreamEvent(RootModel[Union[SubmissionStreamEvent1, HeartbeatEve
     root: Union[SubmissionStreamEvent1, HeartbeatEvent]
 
 
+class AssignedRole(BaseModel):
+    role: str
+    collections: Annotated[Optional[List[str]], Field(...)]
+
+
+class UserContext(BaseModel):
+    principal: Annotated[Optional[str], Field(...)]
+    community: Annotated[Optional[str], Field(...)]
+    via_session: bool
+    grants: Annotated[
+        Dict[str, Any],
+        Field(description="Each grant -> null, or a list of collection names and `*`."),
+    ]
+
+
 class OpenapiJsonGetResponse(BaseModel):
     model_config = ConfigDict(
         extra="allow",
@@ -653,16 +660,16 @@ class Me(BaseModel):
     kind: KeyKind
     handle: Annotated[
         Optional[str],
-        Field(
-            description="The Member the key acts as, or the admin for the admin's session; null for a\n`non-member` key.\n"
-        ),
+        Field(description="The user the key acts as; null for a non-member key."),
     ]
     label: Annotated[
         Optional[str],
-        Field(description="The name the key's owner gave it; null for a session key."),
+        Field(description="The name the key's issuer gave it; null for a session key."),
     ]
-    role: KeyRole
-    community: CommunityName
+    community: Annotated[
+        Optional[str],
+        Field(description="The caller's community; null for a server-level user."),
+    ]
     key_id: UUID
     kid: Annotated[
         Optional[str],
@@ -674,20 +681,23 @@ class Me(BaseModel):
     suspect_after: Annotated[
         Optional[AwareDatetime],
         Field(
-            description='When the admin flagged the key\'s Member: what it writes after this instant reads\n`"suspect": true`. Null when unflagged, and for a key that acts as no Member.\n'
+            description='When the key\'s user was flagged: what it writes after this instant reads\n`"suspect": true`. Null when unflagged, and for a non-member key.\n'
         ),
     ] = None
-    grants: Annotated[
-        List[Grant],
+    roles: Annotated[
+        List[AssignedRole],
         Field(
-            description="The grants the key reads and writes with in this community: its Member's, or the\nones given to a `non-member` key. Public collections are open to it as well.\n"
+            description="The roles the key acts with (its user's for a session key, its own for an issued key)."
         ),
     ]
+    context: UserContext
     member_url: Annotated[
         Optional[AnyUrl],
-        Field(description="The Member this key publishes as, where it holds `member`."),
+        Field(
+            description="The member this key acts as, when it acts as a user of this community."
+        ),
     ] = None
-    position: Position
+    position: Optional[Position] = None
 
 
 class SubmissionResource(BaseModel):

@@ -1,7 +1,7 @@
 """The member's side of the workflow on the data server: `publish.py` submits into the
-community's `inbox` (R-G3), and `sync.py` keeps the session's copy of the record (`./record`)
+community's `inbox`, and `sync.py` keeps the session's copy of the record (`./record`)
 current from the `record` feed and lists the gate's replies. The gate's part (promote, reply)
-is done here by the admin through the CLI, as the gate does it."""
+is done here through root's community session and the CLI, as the gate does it."""
 
 import json
 import subprocess
@@ -56,11 +56,11 @@ def submissions(cli, directory: Path) -> list:
     return cli.ok(directory, "changes", "--collection", "inbox", "--all")["items"]
 
 
-def accept(cli, admin_dir: Path, submission: dict) -> dict:
+def accept(cli, root_dir: Path, submission: dict) -> dict:
     """What the gate does on acceptance: promote into `record`, stamping the server's clock."""
     name = submission["name"].split("@")[0]
     return cli.ok(
-        admin_dir,
+        root_dir,
         "promote",
         submission["citation"],
         "--collection",
@@ -74,9 +74,9 @@ def accept(cli, admin_dir: Path, submission: dict) -> dict:
     )
 
 
-def test_publish_check_needs_the_data_server(suite, admin_dir, cli):
+def test_publish_check_needs_the_data_server(suite, root_dir, cli):
     # nothing validates offline: `--check` syncs first, and stops when the server is unreachable
-    lyra = enroll(cli, admin_dir, "lyra")
+    lyra = enroll(cli, root_dir, "lyra")
     context = lyra / ".symposium" / "context.json"
     unreachable = json.loads(context.read_text())
     unreachable["data-server-url"] = "http://127.0.0.1:9"  # nothing answers there
@@ -86,13 +86,13 @@ def test_publish_check_needs_the_data_server(suite, admin_dir, cli):
     assert "spec ok" not in out
 
 
-def test_publish_validates_against_the_record_as_it_stands_now(suite, admin_dir, cli):
+def test_publish_validates_against_the_record_as_it_stands_now(suite, root_dir, cli):
     # vega never ran sync after lyra's note was accepted; publish syncs first, so vega's note
     # citing it resolves, and vega's copy of the record now holds it
-    lyra = enroll(cli, admin_dir, "lyra")
-    vega = enroll(cli, admin_dir, "vega")
+    lyra = enroll(cli, root_dir, "lyra")
+    vega = enroll(cli, root_dir, "vega")
     assert tool(suite, lyra, "publish.py", note(lyra, "lyra", "seed"))[0] == 0
-    accept(cli, admin_dir, submissions(cli, admin_dir)[0])
+    accept(cli, root_dir, submissions(cli, root_dir)[0])
     citing = note(vega, "vega", "reply")
     artifact = json.loads(citing.read_text())
     artifact["artifact"]["text"] = "Following [lyra's note](@lyra_note_seed_v1)."
@@ -102,14 +102,14 @@ def test_publish_validates_against_the_record_as_it_stands_now(suite, admin_dir,
     assert (vega / "record" / "lyra_note_seed_v1.json").exists()
 
 
-def test_publish_submits_into_inbox_for_the_admin_only(suite, admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra")
-    vega = enroll(cli, admin_dir, "vega")
+def test_publish_submits_into_inbox_for_the_admin_only(suite, root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
+    vega = enroll(cli, root_dir, "vega")
     code, out = tool(suite, lyra, "publish.py", note(lyra, "lyra", "inbox"))
     assert code == 0, out
     assert "submitted  symposium-data:" in out
 
-    [item] = submissions(cli, admin_dir)
+    [item] = submissions(cli, root_dir)
     assert item["name"].startswith("lyra_note_inbox_v1@")
     assert item["metadata"] == {"symposium_submission": True}
     assert item["created_by"] == "lyra"
@@ -123,13 +123,13 @@ def test_publish_submits_into_inbox_for_the_admin_only(suite, admin_dir, cli):
     )
 
 
-def test_sync_applies_the_record_in_order_and_is_idempotent(suite, admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra")
-    vega = enroll(cli, admin_dir, "vega")
+def test_sync_applies_the_record_in_order_and_is_idempotent(suite, root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
+    vega = enroll(cli, root_dir, "vega")
     for topic in ("first", "second"):
         assert tool(suite, lyra, "publish.py", note(lyra, "lyra", topic))[0] == 0
-    for submission in submissions(cli, admin_dir):
-        accept(cli, admin_dir, submission)
+    for submission in submissions(cli, root_dir):
+        accept(cli, root_dir, submission)
 
     code, out = tool(suite, vega, "sync.py")
     assert code == 0, out
@@ -149,13 +149,13 @@ def test_sync_applies_the_record_in_order_and_is_idempotent(suite, admin_dir, cl
     assert code == 0 and "up to date — 2 artifact(s)" in out
 
 
-def test_sync_lists_a_reply_only_to_its_recipient(suite, admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra")
-    vega = enroll(cli, admin_dir, "vega")
-    reply = admin_dir / "reply.json"
+def test_sync_lists_a_reply_only_to_its_recipient(suite, root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
+    vega = enroll(cli, root_dir, "vega")
+    reply = root_dir / "reply.json"
     reply.write_text(json.dumps({"reply": "rejected"}))
     cli.ok(
-        admin_dir,
+        root_dir,
         "put",
         reply,
         "--collection",
@@ -205,13 +205,13 @@ def message(directory: Path, handle: str, topic: str, recipients: list) -> Path:
     return path
 
 
-def test_sync_lists_a_message_only_to_its_recipient_and_once(suite, admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra")
-    vega = enroll(cli, admin_dir, "vega")
-    nova = enroll(cli, admin_dir, "nova")
+def test_sync_lists_a_message_only_to_its_recipient_and_once(suite, root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
+    vega = enroll(cli, root_dir, "vega")
+    nova = enroll(cli, root_dir, "nova")
     sent = message(lyra, "lyra", "kickoff", ["@vega"])
     assert tool(suite, lyra, "publish.py", sent)[0] == 0
-    accept(cli, admin_dir, submissions(cli, admin_dir)[0])
+    accept(cli, root_dir, submissions(cli, root_dir)[0])
 
     code, out = tool(suite, vega, "sync.py")
     assert code == 0, out
@@ -223,8 +223,8 @@ def test_sync_lists_a_message_only_to_its_recipient_and_once(suite, admin_dir, c
         assert code == 0 and "message for you" not in out, out
 
 
-def test_sync_reports_an_unreachable_server_and_keeps_the_copy(suite, admin_dir, cli):
-    lyra = enroll(cli, admin_dir, "lyra")
+def test_sync_reports_an_unreachable_server_and_keeps_the_copy(suite, root_dir, cli):
+    lyra = enroll(cli, root_dir, "lyra")
     assert tool(suite, lyra, "sync.py")[0] == 0
     context = lyra / ".symposium" / "context.json"
     unreachable = json.loads(context.read_text())
@@ -236,15 +236,23 @@ def test_sync_reports_an_unreachable_server_and_keeps_the_copy(suite, admin_dir,
     )
 
 
-def test_setup_syncs_the_record_after_registering(suite, admin_dir, cli, skill):
-    lyra = enroll(cli, admin_dir, "lyra")
+def test_setup_syncs_the_record_after_registering(suite, root_dir, cli, skill):
+    lyra = enroll(cli, root_dir, "lyra")
     assert tool(suite, lyra, "publish.py", note(lyra, "lyra", "seed"))[0] == 0
-    accept(cli, admin_dir, submissions(cli, admin_dir)[0])
+    accept(cli, root_dir, submissions(cli, root_dir)[0])
 
-    cli.ok(admin_dir, "roster", "add", "--handle", "vega")
-    invite = admin_dir / "vega.invite"
-    cli.ok(admin_dir, "invite", "--handle", "vega", "--out", invite)
-    joined = skill.ok(admin_dir, "setup", "--invite-file", invite)
+    invite = root_dir / "vega.invite"
+    cli.ok(
+        root_dir,
+        "invite",
+        "--handle",
+        "vega",
+        "--access",
+        "community-member:*",
+        "--out",
+        invite,
+    )
+    joined = skill.ok(root_dir, "setup", "--invite-file", invite)
     assert joined["registered"] is True and joined["record"]["artifacts"] == 1
     vega = (
         suite.home / ".symposium" / "member" / "demo" / "vega"
@@ -252,32 +260,47 @@ def test_setup_syncs_the_record_after_registering(suite, admin_dir, cli, skill):
     assert (vega / "record" / "lyra_note_seed_v1.json").exists()
 
 
-def send(suite, cli, admin_dir: Path, member: Path, artifact: Path):
+def send(suite, cli, root_dir: Path, member: Path, artifact: Path):
     """Publish `artifact` from `member` and accept it, picking its submission by name: the
     inbox keeps every submission, so the first one is not always this one."""
     assert tool(suite, member, "publish.py", artifact)[0] == 0
     name = json.loads(artifact.read_text())["artifact"]["name"]
-    mine = [s for s in submissions(cli, admin_dir) if s["name"].split("@")[0] == name]
-    accept(cli, admin_dir, mine[-1])
+    mine = [s for s in submissions(cli, root_dir) if s["name"].split("@")[0] == name]
+    accept(cli, root_dir, mine[-1])
 
 
-def test_setup_and_publish_list_a_message_waiting_for_you(suite, admin_dir, cli, skill):
+def test_setup_and_publish_list_a_message_waiting_for_you(suite, root_dir, cli, skill):
     # A member agent asked only to join and publish runs `setup` and `publish`, never `sync`.
     # Both sync first; a Message to the member that those passes bring in must be listed there,
     # once, or the member is never told it is waiting (the F9 scenario: 2 of 5 fresh agents).
-    lyra = enroll(cli, admin_dir, "lyra")
-    cli.ok(admin_dir, "roster", "add", "--handle", "vega")
-    invite = admin_dir / "vega.invite"
-    cli.ok(admin_dir, "invite", "--handle", "vega", "--out", invite)
-    send(suite, cli, admin_dir, lyra, message(lyra, "lyra", "welcome", ["@vega"]))
+    # A Message addresses a member once it has joined: vega joins, lyra writes to it, and
+    # vega's setup is the first pass that brings the Message in.
+    lyra = enroll(cli, root_dir, "lyra")
+    invite = root_dir / "vega.invite"
+    cli.ok(
+        root_dir,
+        "invite",
+        "--handle",
+        "vega",
+        "--access",
+        "community-member:*",
+        "--out",
+        invite,
+    )
+    joining = root_dir / "vega-joining"
+    joining.mkdir()
+    cli.ok(joining, "context", "set", "--invite-file", invite)
+    cli.ok(joining, "owner", "register")
+    send(suite, cli, root_dir, lyra, message(lyra, "lyra", "welcome", ["@vega"]))
 
-    joined = skill.ok(admin_dir, "setup", "--invite-file", invite)
+    joined = skill.ok(root_dir, "setup", "--invite-file", invite)
+    assert joined["registered"] is False  # joined already, with this machine's key
     assert joined["messages_for_you"] == [
         "message for you from @lyra: About welcome (@lyra_msg_welcome_v1)"
     ]
     vega = suite.home / ".symposium" / "member" / "demo" / "vega"
 
-    send(suite, cli, admin_dir, lyra, message(lyra, "lyra", "handoff", ["@vega"]))
+    send(suite, cli, root_dir, lyra, message(lyra, "lyra", "handoff", ["@vega"]))
     code, out = tool(suite, vega, "publish.py", "--check", note(vega, "vega", "intro"))
     assert code == 0, out
     listed = [line.strip() for line in out.splitlines() if "message for you" in line]
@@ -289,14 +312,14 @@ def test_setup_and_publish_list_a_message_waiting_for_you(suite, admin_dir, cli,
     assert code == 0 and "message for you" not in out, out
 
 
-def test_sync_messages_lists_every_message_to_you_newest_first(suite, admin_dir, cli):
+def test_sync_messages_lists_every_message_to_you_newest_first(suite, root_dir, cli):
     # `sync --messages` lists them all again, the one already listed included, and marks
     # `new` only the one no command had listed yet
-    lyra = enroll(cli, admin_dir, "lyra")
-    vega = enroll(cli, admin_dir, "vega")
-    send(suite, cli, admin_dir, lyra, message(lyra, "lyra", "first", ["@vega"]))
+    lyra = enroll(cli, root_dir, "lyra")
+    vega = enroll(cli, root_dir, "vega")
+    send(suite, cli, root_dir, lyra, message(lyra, "lyra", "first", ["@vega"]))
     assert tool(suite, vega, "sync.py")[0] == 0  # lists the first
-    send(suite, cli, admin_dir, lyra, message(lyra, "lyra", "second", ["@vega"]))
+    send(suite, cli, root_dir, lyra, message(lyra, "lyra", "second", ["@vega"]))
 
     code, out = tool(suite, vega, "sync.py", "--messages")
     assert code == 0, out
@@ -306,12 +329,11 @@ def test_sync_messages_lists_every_message_to_you_newest_first(suite, admin_dir,
     assert not lines[1].startswith("new") and "(@lyra_msg_first_v1)" in lines[1], out
 
 
-def test_an_address_to_a_member_who_has_not_published_resolves(suite, admin_dir, cli):
-    # vega is on the roster and invited, but has never published or even joined: `@vega` must
-    # still resolve in `publish --check`, through the live roster, as it will at the gate
-    lyra = enroll(cli, admin_dir, "lyra")
-    cli.ok(admin_dir, "roster", "add", "--handle", "vega")
-    cli.ok(admin_dir, "invite", "--handle", "vega", "--out", admin_dir / "vega.invite")
+def test_an_address_to_a_member_who_has_not_published_resolves(suite, root_dir, cli):
+    # vega has joined but never published: `@vega` must still resolve in `publish --check`,
+    # through the live roster, as it will at the gate
+    lyra = enroll(cli, root_dir, "lyra")
+    enroll(cli, root_dir, "vega")
     message = lyra / "lyra_msg_hello_v1.json"
     message.write_text(
         json.dumps(
@@ -336,11 +358,12 @@ def test_an_address_to_a_member_who_has_not_published_resolves(suite, admin_dir,
     assert not (lyra / "record" / ".roster.json").exists()
 
 
-def test_the_admin_publishes_as_operator_unless_it_lifts_the_limit(
-    suite, admin_dir, cli
+def test_publishing_takes_publish_and_a_member_has_no_type_limit_by_default(
+    suite, root_dir, cli
 ):
-    lyra = enroll(cli, admin_dir, "lyra")
-    admin = cli.ok(admin_dir, "context", "show")["context"]["handle"]
+    lyra = enroll(cli, root_dir, "lyra")
+    olive = enroll(cli, root_dir, "olive", "community-observer:*")
+    root = cli.ok(root_dir, "context", "show")["context"]["handle"]
 
     def goal(directory: Path, handle: str) -> Path:
         path = directory / f"{handle}_goal_{directory.name}_v1.json"
@@ -363,14 +386,11 @@ def test_the_admin_publishes_as_operator_unless_it_lifts_the_limit(
         )
         return path
 
-    # the admin's default role is operator, which does not publish a ResearchGoal
-    code, out = tool(suite, admin_dir, "publish.py", goal(admin_dir, admin))
-    assert code == 1 and "role 'operator' may not publish a ResearchGoal" in out
-    assert submissions(cli, admin_dir) == []
-    code, out = tool(
-        suite, admin_dir, "publish.py", "--role", "none", goal(admin_dir, admin)
-    )
-    assert code == 0 and "submitted  symposium-data:" in out, out
+    # administrative roles hold no publish, and an observer only reads
+    for directory, handle in ((root_dir, root), (olive, "olive")):
+        code, out = tool(suite, directory, "publish.py", goal(directory, handle))
+        assert code == 1 and "takes the `publish` grant" in out, out
+    assert submissions(cli, root_dir) == []
     # a member with no --role publishes with no type limit
     code, out = tool(suite, lyra, "publish.py", goal(lyra, "lyra"))
     assert code == 0 and "submitted  symposium-data:" in out, out

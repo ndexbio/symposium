@@ -6,15 +6,22 @@ boot with owner-only permissions. Nothing secret is ever read from argv.
 
 from __future__ import annotations
 
+import gzip
 import hashlib
+import logging
 import os
+import shutil
+import subprocess
 import time
+from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
 
 import boto3
 from alembic import command
 from alembic.config import Config as AlembicConfig
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 from psycopg.rows import dict_row
@@ -26,6 +33,8 @@ DEFAULT_CONFIG = "/apps/data/config/service.env"
 # Arbitrary but fixed: every process that migrates takes this lock first, so two never run the
 # migrations at the same time (a restarted API and one still shutting down, say).
 MIGRATION_LOCK_ID = 7_301_014
+
+log = logging.getLogger("symposium_data")
 
 
 class Settings:
@@ -46,6 +55,8 @@ class Settings:
         self.s3_secret_key = values["S3_SECRET_KEY"]
         self.s3_bucket = values.get("S3_BUCKET", "symposium-data")
         self.server_id = values["SERVER_ID"]
+        # where the database is dumped before each schema upgrade: beside the config, on the volume
+        self.backup_dir = self.path.parent.parent / "backups"
         # seconds a session key lasts
         self.session_ttl = float(env.get("SYMPOSIUM_SERVER_SESSION_TTL", "900"))
         self.invite_hours = int(env.get("SYMPOSIUM_SERVER_INVITE_HOURS", "72"))
@@ -142,6 +153,10 @@ class Database:
                     location = resources.files("symposium_data") / "migrations"
                     cfg.set_main_option("script_location", str(location))
                     cfg.attributes["connection"] = conn
+                    current = MigrationContext.configure(conn).get_current_revision()
+                    head = ScriptDirectory.from_config(cfg).get_current_head()
+                    if current is not None and current != head:
+                        self.back_up(current)
                     command.upgrade(cfg, "head")
                 finally:
                     conn.exec_driver_sql(
@@ -149,6 +164,31 @@ class Database:
                     )
         finally:
             engine.dispose()
+
+    def back_up(self, revision: str) -> Path:
+        """Dump the database, compressed, before its schema at `revision` is upgraded: with the
+        image that wrote it, the dump restores the server as it was. Files and their content
+        stay as they are in the store. -> the dump's path."""
+        directory = self.settings.backup_dir
+        directory.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        path = directory / f"schema-{revision}-{stamp}.sql.gz"
+        dump = subprocess.Popen(
+            ["pg_dump", "--no-owner", "--dbname", self.settings.database_url],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        with gzip.open(path, "wb") as out:
+            shutil.copyfileobj(dump.stdout, out)
+        _, err = dump.communicate()
+        if dump.returncode != 0:
+            path.unlink(missing_ok=True)
+            raise RuntimeError(f"backing up the database failed: {err.decode()[-500:]}")
+        path.chmod(0o600)
+        log.warning(
+            "database at schema %s backed up to %s before upgrading", revision, path
+        )
+        return path
 
 
 class PayloadStore:

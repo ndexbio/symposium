@@ -1,4 +1,4 @@
-"""The commands that keep running until stopped (R-I3): the skill runs each one's tool under a
+"""The commands that keep running until stopped: the skill runs each one's tool under a
 `LongRunning`, which passes its output through as it is printed and stops it when the agent
 session that started it ends, or when the skill is told to stop. On a stand-in tool and a
 stand-in agent process, real processes on any OS, with no server."""

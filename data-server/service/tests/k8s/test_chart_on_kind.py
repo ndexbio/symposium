@@ -244,7 +244,7 @@ def test_the_chart_installs_takes_its_admin_key_and_keeps_its_data(cluster, tmp_
             lambda s: s.get("mode") == "operational",
             "the server never became operational with its key",
         )
-        assert (status["admin"], status["fingerprint"]) == (HANDLE, fingerprint)
+        assert (status["root"], status["fingerprint"]) == (HANDLE, fingerprint)
     assert first_pod not in cluster.pods()  # a new pod: the key's checksum rolled it
 
     # uninstalled: the volume, and the server on it, are kept; the old pod is gone before
@@ -257,7 +257,7 @@ def test_the_chart_installs_takes_its_admin_key_and_keeps_its_data(cluster, tmp_
     ).stdout
     assert pvc == "Bound"
 
-    # installed again, without the key: the same server, its admin bound from the volume
+    # installed again, without the key: the same server, its root bound from the volume
     values.pop("adminKey")
     values_file.write_text(yaml.safe_dump(values))
     cluster.helm("install", RELEASE, CHART, *install)
@@ -267,4 +267,4 @@ def test_the_chart_installs_takes_its_admin_key_and_keeps_its_data(cluster, tmp_
             lambda s: s.get("mode") == "operational",
             "the reinstalled server lost its data",
         )
-        assert (status["admin"], status["fingerprint"]) == (HANDLE, fingerprint)
+        assert (status["root"], status["fingerprint"]) == (HANDLE, fingerprint)

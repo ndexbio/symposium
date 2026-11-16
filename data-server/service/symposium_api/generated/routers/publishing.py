@@ -20,8 +20,43 @@ from ..sse import SSE_HEADERS, sse_frames
 router = APIRouter(tags=["publishing"])
 
 
+@router.post(
+    "/communities/{community}/submission-checks",
+    response_model=SubmissionCheck,
+    response_model_exclude_unset=True,
+    status_code=200,
+    operation_id="checkSubmission",
+    responses={
+        "400": {
+            "model": Error,
+        },
+        "401": {
+            "model": Error,
+        },
+        "403": {
+            "model": Error,
+        },
+        "404": {
+            "model": Error,
+        },
+        "413": {
+            "model": Error,
+        },
+    },
+)
+def check_submission(
+    community: str,
+    body: SubmittedArtifact = ...,
+    raw: dict = Depends(raw_json),
+    caller: Caller = Depends(authorize("checkSubmission")),
+    service: Service = Depends(service_provider),
+) -> SubmissionCheck:
+    """Validate an Artifact and submit nothing"""
+    return service.check_submission(caller, community=community, body=body, raw=raw)
+
+
 @router.get(
-    "/{community}/submissions",
+    "/communities/{community}/submissions",
     response_model=SubmissionPage,
     response_model_exclude_unset=True,
     status_code=200,
@@ -56,7 +91,7 @@ def list_submissions(
 
 
 @router.post(
-    "/{community}/submissions",
+    "/communities/{community}/submissions",
     response_model=SubmissionResource,
     response_model_exclude_unset=True,
     status_code=201,
@@ -102,43 +137,8 @@ def submit_artifact(
     return result
 
 
-@router.post(
-    "/{community}/submissions/check",
-    response_model=SubmissionCheck,
-    response_model_exclude_unset=True,
-    status_code=200,
-    operation_id="checkSubmission",
-    responses={
-        "400": {
-            "model": Error,
-        },
-        "401": {
-            "model": Error,
-        },
-        "403": {
-            "model": Error,
-        },
-        "404": {
-            "model": Error,
-        },
-        "413": {
-            "model": Error,
-        },
-    },
-)
-def check_submission(
-    community: str,
-    body: SubmittedArtifact = ...,
-    raw: dict = Depends(raw_json),
-    caller: Caller = Depends(authorize("checkSubmission")),
-    service: Service = Depends(service_provider),
-) -> SubmissionCheck:
-    """Validate an Artifact and submit nothing"""
-    return service.check_submission(caller, community=community, body=body, raw=raw)
-
-
 @router.get(
-    "/{community}/submissions/{submission}",
+    "/communities/{community}/submissions/{submission}",
     response_model=SubmissionResource,
     response_model_exclude_unset=True,
     status_code=200,

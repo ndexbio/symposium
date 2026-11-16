@@ -1,4 +1,4 @@
-"""Write atomicity and concurrency (R-A6). Every racing or failing write either fully
+"""Write atomicity and concurrency. Every racing or failing write either fully
 happens or leaves nothing behind: no pending or unreferenced payload, no orphaned S3 object,
 no open multipart upload and no stale name reservation."""
 
@@ -15,7 +15,7 @@ from conftest import (
     assert_consistent,
     b64u_json,
     community_with,
-    init_admin,
+    init_root,
     psql,
     purge,
     repr_digest,
@@ -28,8 +28,8 @@ from harness import HTTP, MAX_WAIT, TEST_ENV
 
 @pytest.fixture
 def demo(server):
-    admin, owners = community_with(server)
-    return server, admin, owners
+    root, owners = community_with(server)
+    return server, root, owners
 
 
 def gated_body(data: bytes, pieces: int, gates: dict[int, threading.Event]):
@@ -74,10 +74,11 @@ def reserved(server, *names: str):
 
 def put_stream(owner, name, data, body):
     return HTTP.put(
-        f"{owner.server.url}/v1/demo/collections/files/files/{name}",
+        f"{owner.server.url}/v1/communities/demo/collections/files/files/{name}",
         content=body,
         headers={
             **owner.headers(),
+            "If-None-Match": "*",
             "Repr-Digest": repr_digest(data),
             "X-Data-Size": str(len(data)),
         },
@@ -94,7 +95,7 @@ def test_a_concurrent_duplicate_name_is_refused_before_it_uploads(demo):
     )
     reserved(server, "contested.bin")  # lyra's upload has begun and holds the name
     second = vega.put("demo", "files", "contested.bin", os.urandom(4 * 1024 * 1024))
-    assert second.status_code == 409, second.text
+    assert second.status_code == 412, second.text
     # refused before it uploaded: lyra's is still the only upload the server has begun
     assert psql(server, "SELECT count(*) FROM payloads") == "1"
     send.set()
@@ -109,9 +110,13 @@ def test_a_failed_upload_releases_the_name_and_leaves_nothing(demo):
     lyra = owners["lyra"]
     data = os.urandom(12 * 1024 * 1024)
     bad = HTTP.put(
-        f"{server.url}/v1/demo/collections/files/files/retry.bin",
+        f"{server.url}/v1/communities/demo/collections/files/files/retry.bin",
         content=data,
-        headers={**lyra.headers(), "Repr-Digest": repr_digest(b"not the body")},
+        headers={
+            **lyra.headers(),
+            "If-None-Match": "*",
+            "Repr-Digest": repr_digest(b"not the body"),
+        },
     )
     assert bad.status_code == 400
     assert_consistent(server)
@@ -192,7 +197,7 @@ def test_if_match_applies_a_write_only_on_the_expected_head(demo):
     created = lyra.put("demo", "files", "edited.txt", b"v1")
     assert created.headers["etag"] == '"v1"'
     fid = created.json()["file_id"]
-    url = f"{server.url}/v1/demo/files/{fid}/versions"
+    url = f"{server.url}/v1/communities/demo/files/{fid}/versions"
 
     def meta_version(if_match, meta):
         return HTTP.post(
@@ -224,12 +229,12 @@ def test_if_match_applies_a_write_only_on_the_expected_head(demo):
     assert stale_content.status_code == 412  # refused before any bytes are stored
 
     stale_delete = HTTP.delete(
-        f"{server.url}/v1/demo/files/{fid}",
+        f"{server.url}/v1/communities/demo/files/{fid}",
         headers={**lyra.headers(), "If-Match": '"v1"'},
     )
     assert stale_delete.status_code == 412
     deleted = HTTP.delete(
-        f"{server.url}/v1/demo/files/{fid}",
+        f"{server.url}/v1/communities/demo/files/{fid}",
         headers={**lyra.headers(), "If-Match": '"v2"'},
     )
     assert deleted.status_code == 200 and deleted.headers["etag"] == '"v3"'
@@ -253,7 +258,7 @@ def test_racing_writers_with_the_same_if_match_produce_exactly_one_version(demo)
 
     def write(i):
         return HTTP.post(
-            f"{server.url}/v1/demo/files/{fid}/versions",
+            f"{server.url}/v1/communities/demo/files/{fid}/versions",
             content=f"edit {i}".encode(),
             headers={
                 **lyra.headers(),
@@ -267,7 +272,7 @@ def test_racing_writers_with_the_same_if_match_produce_exactly_one_version(demo)
     codes = sorted(r.status_code for r in results)
     assert codes == [201] + [412] * 9, codes
     versions = HTTP.get(
-        f"{server.url}/v1/demo/files/{fid}/versions", headers=lyra.headers()
+        f"{server.url}/v1/communities/demo/files/{fid}/versions", headers=lyra.headers()
     )
     assert [v["version"] for v in versions.json()["versions"]] == [1, 2]
     assert_consistent(server)
@@ -282,7 +287,7 @@ def test_the_janitor_expires_stale_reservations(server):
         "VALUES ('22222222-2222-2222-2222-222222222222', 'demo', 'files', 'crashed.bin', "
         "'reserved', 'lyra', now())",
     )
-    assert owners["lyra"].put("demo", "files", "crashed.bin", b"x").status_code == 409
+    assert owners["lyra"].put("demo", "files", "crashed.bin", b"x").status_code == 412
     psql(server, f"UPDATE files SET reserved_at = {EXPIRED} WHERE name = 'crashed.bin'")
     server.sweep()
     assert_consistent(server)
@@ -442,10 +447,11 @@ def test_a_failed_upload_whose_bytes_cannot_be_removed_stays_tracked(faulty):
     s3_deletes_fail(server, True)
     data = os.urandom(12 * 1024 * 1024)  # multipart: an upload and parts to clean up
     bad = HTTP.put(
-        f"{server.url}/v1/demo/collections/files/files/stuck.bin",
+        f"{server.url}/v1/communities/demo/collections/files/files/stuck.bin",
         content=data,
         headers={
             **owners["lyra"].headers(),
+            "If-None-Match": "*",
             "Repr-Digest": repr_digest(b"not the body"),
         },
     )
@@ -482,7 +488,7 @@ def test_a_purge_whose_bytes_cannot_be_freed_stays_purging_until_the_janitor_fre
     server, owners = faulty
     v1 = owners["lyra"].put("demo", "files", "secret.bin", b"purge me").json()
     s3_deletes_fail(server, True)
-    result = purge(init_admin(server), v1["file_id"], 1)
+    result = purge(init_root(server), v1["file_id"], 1)
     assert result.status_code == 200, result.text
     assert result.json()["bytes_freed"] is False
     assert "janitor will retry" in result.json()["note"]

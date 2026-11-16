@@ -1,6 +1,6 @@
 """The contract, `api/openapi.yaml`, as the server reads it: the document it serves, and each
-operation's access rule taken from its `x-roles`, `x-session`, `security` and `x-anonymous`.
-Authorization reads these rules, so no role list is written in Python."""
+operation's access rule taken from its `x-grants`, `x-session`, `security` and `x-anonymous`.
+Authorization reads these rules, so no operation's grants are written in Python."""
 
 from __future__ import annotations
 
@@ -21,7 +21,9 @@ CHECKOUT_CONTRACT = Path(__file__).resolve().parents[4] / "api" / "openapi.yaml"
 class Rule:
     """Who may call one operation."""
 
-    roles: tuple  # in the order the contract lists them
+    # the caller holds at least one of these grants for the request's community; empty: any
+    # caller of that community, or any server-level caller
+    grants: tuple
     # x-anonymous: None; "always", it answers without a key; or "public", it answers without a
     # key while the collection it reads is public
     anonymous: str | None
@@ -51,7 +53,7 @@ class Contract:
                     continue
                 security = operation.get("security", default)
                 rules[operation["operationId"]] = Rule(
-                    roles=tuple(operation["x-roles"]),
+                    grants=tuple(operation["x-grants"]),
                     anonymous=operation.get("x-anonymous") if {} in security else None,
                     session=bool(operation.get("x-session", False)),
                 )

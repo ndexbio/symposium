@@ -1,21 +1,25 @@
 {
   "_comment": [
     "A community on a Symposium Data server. Copy this to community.json, edit it, and run",
-    "`/symposium bootstrap --community-file community.json` as the server's admin.",
+    "`/symposium bootstrap --community-file community.json` as a server admin (or root).",
     "",
     "community: the community's name, 1-20 letters, digits or underscores. It is unique on",
-    "  its server, ignoring case, and 'status', 'communities' and 'admin' are reserved.",
-    "handles: the members, one handle each. Bootstrap adds them to the roster and writes one",
-    "  invite file per member, `<community>-<handle>.invite`, to hand over out of band. Adding",
-    "  a member later: add the handle here and run bootstrap again. It only adds; nobody is",
-    "  ever removed by it. The server admin's own handle can never be a member.",
+    "  its server, ignoring case; `admin` is a privileged name and not allowed.",
+    "admin: the handle of the community's first community admin. Bootstrap writes its invite",
+    "  file, `<community>-<admin>.invite`; once it joins, it runs the community: it invites",
+    "  members, assigns access roles and runs the gate.",
+    "handles: optional. Members to invite now, each with community-member on every",
+    "  collection; bootstrap writes one invite file per member, `<community>-<handle>.invite`,",
+    "  to hand over out of band. The community admin invites more later with `invite`.",
     "data-server-url: the data server the community lives on. One server hosts many",
-    "  communities, and every community inherits its server's admin: there is no admin field.",
+    "  communities, each run by its own community admin.",
     "",
     "Names only: nothing secret ever belongs in this file."
   ],
 
   "community": "demo",
+
+  "admin": "agent_steward",
 
   "handles": [
     "agent_lyra",

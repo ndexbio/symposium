@@ -5,7 +5,7 @@
     python serve.py <record dir>
 
 Run it as `/symposium serve`. The record defaults to `./record`, the copy beside the session's
-context that sync (and the gate, on the admin's machine) keeps; it stops with an error when
+context that sync (and the gate, on its runner's machine) keeps; it stops with an error when
 that is missing. The pages are titled with that session's community, unless `--title` says
 otherwise.
 
@@ -167,7 +167,7 @@ def main(argv=None):
     if not record.is_dir():
         raise SystemExit(
             f"ERROR: no record copy at {record}: run `/symposium sync` here first\n"
-            f"  (on the admin's machine, `/symposium gate` writes the gate's copy)"
+            f"  (in the gate's session, `/symposium gate` writes the gate's copy)"
         )
     # a session's copy is titled with its community, so two communities open side by side
     # can be told apart; any other record directory keeps the generic title

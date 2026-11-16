@@ -20,8 +20,8 @@ One line of JSON per event, append-only.
 
 **There is no shared filesystem between participants.** A session's log is written on
 whatever machine ran it, so member-side refusals — the most valuable half — do not reach the
-admin machine by themselves. They have to be COLLECTED: at the end of a session, the log file
-is handed over alongside the session report, and dropped into the admin's events directory.
+gate runner's machine by themselves. They have to be COLLECTED: at the end of a session, the log file
+is handed over alongside the session report, and dropped into the gate runner's events directory.
 `metrics.py` merges an arbitrary set of collected files and de-duplicates, so collection is
 nothing more than copying files into one place.
 
@@ -56,6 +56,7 @@ Schema — every event carries:
 Attempts-per-artifact is NOT stored. It is derived when the log is read, by counting events
 per (session, artifact) — storing a counter would only be a second thing to get wrong.
 """
+
 from __future__ import annotations
 
 import json
@@ -70,8 +71,11 @@ def _host():
     """Short machine name — the only thing distinguishing two participants who took every
     other default. Deterministic, so every command in a session agrees on it."""
     try:
-        return re.sub(r"[^A-Za-z0-9_-]", "", socket.gethostname().split(".")[0])[:24] or "host"
-    except Exception:                                          # noqa: BLE001
+        return (
+            re.sub(r"[^A-Za-z0-9_-]", "", socket.gethostname().split(".")[0])[:24]
+            or "host"
+        )
+    except Exception:  # noqa: BLE001
         return "host"
 
 
@@ -103,8 +107,18 @@ def split_findings(findings):
     return fail, review
 
 
-def emit(actor, action, outcome, artifact=None, atype=None, role=None,
-         findings=None, refusal=None, session=None, **extra):
+def emit(
+    actor,
+    action,
+    outcome,
+    artifact=None,
+    atype=None,
+    role=None,
+    findings=None,
+    refusal=None,
+    session=None,
+    **extra,
+):
     """Append one event. Never raises: losing the log must not stop the work.
 
     A failure to write is reported once on stderr rather than silently swallowed — a
@@ -128,10 +142,17 @@ def emit(actor, action, outcome, artifact=None, atype=None, role=None,
     event.update(extra)
     try:
         LOG.parent.mkdir(parents=True, exist_ok=True)
-        with LOG.open("a") as fh:
-            fh.write(json.dumps(event) + "\n")
-    except Exception as exc:                                   # noqa: BLE001
+        # one write on a descriptor opened for append: commands logging at once in one
+        # session each add a whole line
+        line = (json.dumps(event) + "\n").encode()
+        descriptor = os.open(LOG, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        try:
+            os.write(descriptor, line)
+        finally:
+            os.close(descriptor)
+    except Exception as exc:  # noqa: BLE001
         import sys
+
         print(f"! telemetry not written to {LOG}: {exc}", file=sys.stderr)
     return event
 

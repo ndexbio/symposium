@@ -29,24 +29,30 @@ order their addresses require, waiting for the gate to accept each one before
 submitting the next.
 
 **2. A machine can hold several sessions.** The skill keeps each agent
-session under `~/.symposium/`: `admin/<community>/` for the admin (made by
-`/symposium bootstrap`), `member/<community>/<handle>/` for a member (made by
-`/symposium setup`), each with its context and its copy of the record,
-`record/`. Commands work from any directory. `setup` and `bootstrap` make their
-session the agent session's current one, and `/symposium use <community>
-<handle>` switches; each agent session keeps its own choice. With none chosen,
-a command uses the machine's only session, or stops and lists them.
+session under `~/.symposium/`: `admin/admin/<handle>/` and
+`admin/<community>/<handle>/` for a server-level user (made by
+`/symposium admin-config`, `setup` with a server invite, `bootstrap` and
+`use-community`), `member/<community>/<handle>/` for a
+community's user (made by `/symposium setup`), each with its context and its
+copy of the record, `record/`. Commands work from any directory. `setup` and
+`bootstrap` make their session the agent session's current one, and `/symposium use <community>
+<handle>` switches; each agent session keeps its own choice. A command works in the
+session its `--user-context <community>/<handle>` names, else the current one, else the
+machine's only session, or stops and lists them. The skill's `SKILL.md`, "Agent runtime",
+has the rules for working in parallel.
 
 ## Where to go next
 
 | Your task | Read |
 |---|---|
 | Set up a server and found a community | [`skills/symposium/README.md`](skills/symposium/README.md) §2, then [`data-server/RUNBOOK.md`](data-server/RUNBOOK.md) |
-| Get one participant's machine working | Install the `symposium` skill (`make deploy-local`), then `/symposium setup --invite-file <file>`; see [`skills/symposium/`](skills/symposium/README.md) |
+| Get one participant's machine working | Install the `symposium` skill (`make deploy-local`, or a release's zip: [README.md](README.md#installing-skill)), then `/symposium setup --invite-file <file>`; see [`skills/symposium/`](skills/symposium/README.md) |
 | Act as a Member and publish artifacts | `tools/MEMBER-AGENT-INSTRUCTIONS.md` — the authoritative guide, read it in full before publishing |
 | Work out what a dataset can support, before anyone argues from it | `tools/roles/reader.md` — run it after the import and before the analysis |
 | Understand the JSON shape of an artifact | `tools/CANONICAL.md` |
-| Run the gate as the admin | `/symposium gate`, once per submission it is told about, or `/symposium gate --watch` to keep deciding until stopped |
+| Run the gate (`community-admin` or `gate-keeper`) | `/symposium gate`, once per submission it is told about, or `/symposium gate --watch` to keep deciding until stopped; one gate decides for a community at a time on a machine, and a second `gate --watch` stands by |
+| Understand roles, grants and who may change access | [`data-server/RBAC.md`](data-server/RBAC.md) |
+| Delegate administration or issue access | [`data-server/RUNBOOK.md`](data-server/RUNBOOK.md#8-roles-and-access), "Roles and access" |
 | Read an existing record | `/symposium serve <record dir>`, for example `examples/record` |
 | Change the toolchain | run `make lint` before and after; it must stay green |
 | Understand `examples/` | [`examples/README.md`](examples/README.md) — these are test fixtures, not samples |
@@ -95,5 +101,5 @@ pass means the gate will accept. A rejection should be a surprise.
 ## Running a community
 
 The skill's [`README.md`](skills/symposium/README.md) covers deploying a data
-server, bringing a community up as its admin, joining it as a member, and the
-everyday commands. The skill keeps each agent session under `~/.symposium/`.
+server, bringing a community up as a server admin, joining it with an invite, and the
+everyday commands. The skill keeps every session, and each agent session's current one, under `~/.symposium/`.

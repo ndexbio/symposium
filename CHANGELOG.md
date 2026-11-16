@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
+## [Symposium Skill 0.4.0] - Unreleased
+
+Works with Data Server 0.2.1.
+
+### Added
+
+- **A Lineage page in the record browser.** `lineage.html` draws the Arguments as lines,
+  oldest on the left: each follows the earlier Argument it supersedes, rests a Ground under
+  its primary Assertion on, or cites in prose. A prose link is drawn dashed and called what it
+  is, context and not evidence. Under the graph, each line lists its Arguments' verdict
+  openings in publication order, with every link each one states.
+- **Contents filters and search.** A chip per type shows or hides it, remembered in the
+  browser. Data, Messages, AnalysisPlans and ResearchGoals start hidden, so the list opens on
+  the Arguments and the work they rest on. A search box finds artifacts by title, name,
+  verdict and the claims of their Assertions, in every type, hidden ones too.
+- **The overview's legend says what each type is.** Each artifact type in the community has a
+  row with its node's shape, its count, what the type is and whether it can be evidence, and
+  still shows or hides the type. Every type now has a shape of its own: a ResearchGoal is a
+  star, and a type neither the specification nor the profile defines takes a spare shape
+  rather than the ellipse they all shared.
+- **The claim map's verdict pane can be resized.** Drag its lower edge, or use the arrow keys
+  on it, to give the claim map more room; a double-click or End puts it back. Each page opens
+  with the whole verdict shown.
+- **Wide tables read from their key.** The row-key column stays in view as a table scrolls
+  sideways, the columns a Ground cites come first (a button restores the stored order), and a
+  table of more than 12 columns has a column picker.
+
+### Changed
+
+- **`serve` titles the pages with the session's community** unless `--title` names another.
+
+### Fixed
+
+- **The claim map's legend matches its graph.** It showed claims in a fixed blue, one Member's
+  colour, while each claim is drawn in its author's, and it showed every grounding in the full
+  graph as a test. Each swatch is now read from the graph as drawn, each row has a count, and
+  a row appears only for what the graph shows, Members included. A claim with a checker
+  finding now has the orange border the legend described.
+
 ## [Symposium Skill 0.3.1] - 2026-11-14
 
 Works with Data Server 0.2.1.

@@ -104,6 +104,50 @@ _MEMBER_PALETTE = [
 # --------------------------------------------------------------------------- #
 
 
+def community_name(record_dir):
+    """The community a record copy belongs to, for the pages' title (R13): the `community` of
+    the session context beside it (`<session>/.symposium/context.json`, which `setup` or
+    `bootstrap` writes), or None for a record directory that is no session's copy, such as
+    `examples/record`. A session's copy is its `record/`: another directory beside the
+    context, such as an export of a different community, is not titled with this one. Read only; nothing here writes a session's files."""
+    record = pathlib.Path(record_dir).resolve()
+    if record.name != "record":  # some other directory beside a session's context
+        return None
+    path = record.parent / ".symposium" / "context.json"
+    try:
+        name = json.loads(path.read_text(encoding="utf-8")).get("community")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return name.strip() if isinstance(name, str) and name.strip() else None
+
+
+#: Abbreviations a sentence does not end at, though a full stop and a space follow.
+_NOT_AN_END = re.compile(
+    r"(?:\b(?:al|Fig|Figs|fig|figs|Eq|Eqs|Ref|Refs|No|vs|cf|ca|approx|resp|e\.g|i\.e|Dr|Prof)"
+    r"|\b[A-Z])\.$"
+)
+
+
+def sentences(text):
+    """`text` as its sentences. One ends at `.`, `!` or `?` before a space, except after an
+    abbreviation or an initial (`et al.`, `Fig.`, `vs.`, `J.`), or where a lower-case letter
+    or a digit follows the full stop (`e.g. the`, `Fig. 2`), so a verdict's opening is a
+    whole sentence and keeps its qualifiers."""
+    text = (text or "").strip()
+    out, start = [], 0
+    for m in re.finditer(r"(?<=[.!?])\s+", text):
+        head, nxt = text[start : m.start()], text[m.end() : m.end() + 1]
+        if head.endswith(".") and (
+            _NOT_AN_END.search(head) or nxt.islower() or nxt.isdigit()
+        ):
+            continue
+        out.append(head)
+        start = m.end()
+    if text[start:]:
+        out.append(text[start:])
+    return out
+
+
 def load_record(record_dir):
     """Every canonical artifact in a directory, oldest first.
 
@@ -702,6 +746,8 @@ def build_claim_graph(doc, index, findings, colors, pages):
                 {"check": f["check"], "level": f["level"], "msg": f["msg"]}
                 for f in per_object.get(an, [])
             ],
+            # drawn with an orange border, so the claim a finding is on can be found
+            "flagged": bool(per_object.get(an)),
             "full": {"claim": a.get("claim"), "scope": a.get("scope")},
             "primary": an == h.get("primary_assertion"),
             "tooltip": (
@@ -916,6 +962,16 @@ def build_claim_graph(doc, index, findings, colors, pages):
             "shared_source_count": shared_count,
             "unverifiable": n_unverifiable,
             "findings": len(findings),
+            # distinct findings that name an Assertion: one naming two claims is on both,
+            # and is still one finding
+            "findings_on_claims": sum(
+                1
+                for f in findings
+                if any(
+                    m in assertions
+                    for m in re.findall(r"'([A-Za-z0-9_]+)'", f.get("msg", ""))
+                )
+            ),
         },
         "full_elements": {"nodes": full_nodes, "edges": full_edges},
         "frag_map": {n["data"]["id"]: n["data"]["id"] for n in nodes},
@@ -1049,7 +1105,81 @@ _SHAPE = {
     "Analysis": "diamond",
     "Model": "pentagon",
     "Message": "tag",
+    "ResearchGoal": "star",
 }
+#: Shapes for the types a community uses that neither the specification nor the profile
+#: defines, given out in the types' alphabetical order, so no two types in one record share a
+#: shape; past the last, ellipse.
+_SPARE_SHAPES = (
+    "rhomboid",
+    "triangle",
+    "vee",
+    "concave-hexagon",
+    "heptagon",
+    "right-rhomboid",
+)
+#: What each artifact type is, in a line, and whether it can be evidence: the overview's legend
+#: (spec §2; ResearchGoal, CANONICAL.md §2.1). A type neither defines is said to be one, with
+#: no guess at what the community meant by it; whether it is evidence is its own declaration.
+TYPE_MEANING = {
+    "Argument": (
+        "evidential reasoning: a claim, the Grounds it rests on, and a verdict",
+        "its claims can be testimony",
+    ),
+    "Data": (
+        "data imported into the record, or produced by an Analysis",
+        "can be evidence",
+    ),
+    "Model": (
+        "a model, with the modeling choices its content depends on",
+        "can be evidence",
+    ),
+    "ScientificPublication": (
+        "a published paper, imported with its authors",
+        "can be evidence",
+    ),
+    "Analysis": (
+        "a procedure performed, set out so the work can be inspected",
+        "never evidence",
+    ),
+    "ResearchGoal": ("what the community is trying to find out", "never evidence"),
+    "Message": ("a communication to the Members it names", "never evidence"),
+    "NonGroundable": ("content its Member marked as never evidence", "never evidence"),
+}
+UNDEFINED_TYPE_MEANING = (
+    "a type this community uses that neither the specification nor its profile defines",
+    "",
+)
+
+
+def type_shapes(types):
+    """type -> the overview's node shape, one shape per type present (see _SPARE_SHAPES)."""
+    out = {t: _SHAPE[t] for t in types if t in _SHAPE}
+    spare = iter(_SPARE_SHAPES)
+    for t in sorted(t for t in types if t not in _SHAPE):
+        out[t] = next(spare, "ellipse")
+    return out
+
+
+def type_legend(by_type, shapes):
+    """The overview's "Artifact types": each type present, in reading order, with its shape,
+    count, meaning and whether it can be evidence."""
+    order = list(TYPE_MEANING)
+    types = sorted(
+        by_type, key=lambda t: (order.index(t) if t in order else len(order), t)
+    )
+    return [
+        {
+            "type": t,
+            "shape": shapes[t],
+            "count": by_type[t],
+            "meaning": TYPE_MEANING.get(t, UNDEFINED_TYPE_MEANING)[0],
+            "evidence": TYPE_MEANING.get(t, UNDEFINED_TYPE_MEANING)[1],
+        }
+        for t in types
+    ]
+
+
 _SESSION_GAP = 20 * 60
 #: Edge kinds the overview starts with hidden. A `cites` edge is a citation in prose: context,
 #: not evidence (spec 2.2.5). On c037_2 it was 323 of 404 edges, and drawn by default it buried
@@ -1354,6 +1484,7 @@ def build_overview(
     links_by_source=None,
 ):
     nodes, edges = [], []
+    shapes = type_shapes({a["artifact"]["type"] for a in artifacts})
     stamps = []
     for a in artifacts:
         t = parse_instant(a["artifact"].get("created"))
@@ -1429,7 +1560,7 @@ def build_overview(
                     "label": title,
                     "member": owner,
                     "owner_color": colors.get(owner, "#9ca3af"),
-                    "shape": _SHAPE.get(typ, "ellipse"),
+                    "shape": shapes[typ],
                     "nav_file": pages.get(name),
                     "page_kind": "claimmap" if typ == ARGUMENT else "evidence",
                     "full": {
@@ -1555,6 +1686,7 @@ def build_overview(
         "default_hidden_rels": list(OVERVIEW_HIDDEN_RELS),
         "default_hidden_types": list(OVERVIEW_HIDDEN_TYPES),
         "members": {m: colors.get(m, "#9ca3af") for m in by_member},
+        "types": type_legend(by_type, shapes),
         "counts": {
             "artifacts": len(artifacts),
             "by_member": dict(by_member),
@@ -2150,8 +2282,7 @@ def contents_entries(artifacts, colors, pages, findings_by):
         name, typ = h["name"], h["type"]
         verdict = ""
         if typ == ARGUMENT and h.get("verdict"):
-            parts = re.split(r"(?<=[.!?])\s+", h["verdict"].strip())
-            verdict = " ".join(parts[:2])
+            verdict = " ".join(sentences(h["verdict"])[:2])
         extra = []
         if typ == ARGUMENT:
             n = sum(1 for o in a.get("objects", []) if o.get("type") == "Ground")
@@ -2173,6 +2304,19 @@ def contents_entries(artifacts, colors, pages, findings_by):
             if typ == ARGUMENT
             else pages[name]
         )
+        # What the Contents search reads (R12): the title and name, the whole verdict (only
+        # its opening is shown), and every Assertion's claim, so a claim made inside an
+        # Argument is found though no title mentions it.
+        claims = [
+            str(o.get("claim") or "")
+            for o in a.get("objects", [])
+            if o.get("type") == "Assertion"
+        ]
+        search = " ".join(
+            x
+            for x in (h.get("title") or "", name, h.get("verdict") or "", *claims)
+            if x
+        )
         rows.append(
             {
                 "name": name,
@@ -2184,6 +2328,7 @@ def contents_entries(artifacts, colors, pages, findings_by):
                 "created": h.get("created") or "",
                 "verdict": verdict,
                 "extra": " · ".join(extra),
+                "search": search,
             }
         )
     return rows
@@ -2223,7 +2368,7 @@ def round_entry(doc, colors, pages, serves, goal_label, this_goal=None):
     owner = h.get("published_by", "").lstrip("@")
     verdict = ""
     if typ == ARGUMENT and h.get("verdict"):
-        verdict = re.split(r"(?<=[.!?])\s+", h["verdict"].strip())[0]
+        verdict = sentences(h["verdict"])[0]
     others = [goal_label[g] for g in serves.get(name, []) if g != this_goal]
     return {
         "group": "result" if typ == "Data" and h.get("produced_by") else typ,
@@ -2359,6 +2504,119 @@ def load_annotations(record_dir):
     return out
 
 
+# --------------------------------------------------------------------------- #
+# Lineage: each Argument and the earlier Arguments it follows
+# --------------------------------------------------------------------------- #
+
+#: What makes one Argument follow an earlier one (R5), strongest first: it supersedes it, a
+#: Ground under its primary Assertion cites it, or its prose cites it. Only the first two are
+#: evidential; a prose citation is context, not evidence (spec §2.2.5).
+LINEAGE_KINDS = ("supersedes", "ground", "cites")
+
+
+def lineage(artifacts, links_by_source):
+    """The Arguments as lines (F3). -> {args, links, drawn, lines, line_of}
+
+    `links` maps (later, earlier) to the kinds of link the later Argument's addresses state,
+    from the derived links, so never from a name (N4). A prose-only link that a longer chain
+    already implies (R1″ citing R1 beside R1′) is not `drawn`, though it stays in `links`.
+    Then each Argument, oldest first, continues the line of one earlier Argument it links to
+    directly whose line it would end: the strongest link wins, then the line holding more of
+    its links, then the most recent. A line never branches, so a second follower starts a
+    line of its own, and links between lines are drawn, never merged away."""
+    args = [a for a in artifacts if a["artifact"]["type"] == ARGUMENT]
+    order = {a["artifact"]["name"]: i for i, a in enumerate(args)}
+    links = defaultdict(set)
+    for a in args:
+        h = a["artifact"]
+        name, prim = h["name"], h.get("primary_assertion")
+        on_primary = {
+            r.get("target")
+            for r in a.get("relationships", [])
+            if (r.get("rel") or r.get("type")) == "grounded_by"
+            and r.get("source") == prim
+        }
+        for link in links_by_source.get(name, []):
+            t = link["target"]
+            if t not in order or order[t] >= order[name]:
+                continue
+            if link["rel"] == "supersedes":
+                kind = "supersedes"
+            elif link.get("ground") is not None:
+                kind = "ground" if link["ground"] in on_primary else None
+            else:
+                kind = "cites" if link["rel"] == "cites" else None
+            if kind:
+                links[(name, t)].add(kind)
+
+    targets = defaultdict(set)
+    for later, earlier in links:
+        targets[later].add(earlier)
+    reach = {}
+    for a in args:
+        n = a["artifact"]["name"]
+        reach[n] = (
+            set().union(*({t} | reach[t] for t in targets[n])) if targets[n] else set()
+        )
+    drawn = {
+        (b, t)
+        for (b, t), kinds in links.items()
+        if kinds - {"cites"} or not any(t in reach[o] for o in targets[b] if o != t)
+    }
+
+    rank = {k: i for i, k in enumerate(LINEAGE_KINDS)}
+    lines, line_of, continued = [], {}, set()
+    for a in args:
+        n = a["artifact"]["name"]
+        open_ends = [t for (b, t) in drawn if b == n and t not in continued]
+        if not open_ends:
+            line_of[n] = len(lines)
+            lines.append([n])
+            continue
+
+        def score(t, n=n):
+            held = sum(1 for x in targets[n] if line_of.get(x) == line_of[t])
+            return (min(rank[k] for k in links[(n, t)]), -held, -order[t])
+
+        best = min(open_ends, key=score)
+        continued.add(best)
+        line_of[n] = line_of[best]
+        lines[line_of[n]].append(n)
+    return {
+        "args": [a["artifact"]["name"] for a in args],
+        "links": dict(links),
+        "drawn": drawn,
+        "lines": lines,
+        "line_of": line_of,
+    }
+
+
+def lineage_nodes(artifacts, colors, pages):
+    """name -> what a Lineage node shows: title, the verdict's first sentence, its Grounds
+    and how many were offered as a test, and where it goes (the Argument as a document)."""
+    out = {}
+    for a in artifacts:
+        h = a["artifact"]
+        if h["type"] != ARGUMENT:
+            continue
+        grounds = [o for o in a.get("objects", []) if o.get("type") == "Ground"]
+        verdict = (h.get("verdict") or "").strip()
+        member = h.get("published_by", "").lstrip("@")
+        out[h["name"]] = {
+            "name": h["name"],
+            "title": h.get("title") or h["name"],
+            "opening": sentences(verdict)[0] if verdict else "",
+            "grounds": len(grounds),
+            "tests": sum(1 for g in grounds if g.get("criterion")),
+            "created": h.get("created") or "",
+            "member": member,
+            "color": colors.get(member, "#9ca3af"),
+            "href": pages[h["name"]].replace(".html", "_reading.html"),
+            "map": pages[h["name"]],
+        }
+    return out
+
+
 def compile_record(
     record_dir,
     out_dir,
@@ -2382,6 +2640,8 @@ def compile_record(
     }
     cited = reverse_index(artifacts, links_by_source)
     goals, serves = goal_membership(artifacts, links_by_source)
+    lines = lineage(artifacts, links_by_source)
+    has_lineage = bool(lines["args"])
 
     out = pathlib.Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -2486,6 +2746,7 @@ def compile_record(
             cyto,
             corpus_title=title or "community record",
             has_rounds=bool(goals),
+            has_lineage=has_lineage,
         ),
         encoding="utf-8",
     )
@@ -2494,6 +2755,7 @@ def compile_record(
             contents_entries(artifacts, colors, pages, findings_by),
             corpus_title=title or "community record",
             has_rounds=bool(goals),
+            has_lineage=has_lineage,
         ),
         encoding="utf-8",
     )
@@ -2504,11 +2766,26 @@ def compile_record(
             T.render_rounds_html(
                 rounds_columns(artifacts, colors, pages, goals, serves),
                 corpus_title=title or "community record",
+                has_lineage=has_lineage,
             ),
             encoding="utf-8",
         )
     elif rounds.exists():
         rounds.unlink()  # left from a build of an earlier record
+    # No Argument, no Lineage page: there would be nothing on it.
+    lineage_page = out / "lineage.html"
+    if has_lineage:
+        lineage_page.write_text(
+            T.render_lineage_html(
+                lines,
+                lineage_nodes(artifacts, colors, pages),
+                corpus_title=title or "community record",
+                has_rounds=bool(goals),
+            ),
+            encoding="utf-8",
+        )
+    elif lineage_page.exists():
+        lineage_page.unlink()
 
     manifest = {
         "artifacts": len(artifacts),
@@ -2517,6 +2794,7 @@ def compile_record(
         "by_member": meta["counts"]["by_member"],
         "findings": meta["counts"]["findings"],
         "goals": len(goals),
+        "lines": len(lines["lines"]),
         "pages": pages,
     }
     (out / "browser_manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -2538,7 +2816,12 @@ def main(argv=None):
         help="directory of canonical JSON (default: ./record)",
     )
     ap.add_argument("--out", default="dist", help="output directory (default: dist)")
-    ap.add_argument("--title", default=None, help="title shown on the overview")
+    ap.add_argument(
+        "--title",
+        default=None,
+        help="title shown on the overview, contents and rounds pages (default: the "
+        "community of the session the record copy belongs to)",
+    )
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument(
         "--figures",
@@ -2557,7 +2840,7 @@ def main(argv=None):
     compile_record(
         args.record_dir,
         args.out,
-        title=args.title,
+        title=args.title or community_name(args.record_dir),
         quiet=args.quiet,
         figures_dir=args.figures,
     )

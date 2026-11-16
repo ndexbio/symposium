@@ -6,7 +6,8 @@
 
 Run it as `/symposium serve`. The record defaults to `./record`, the copy beside the session's
 context that sync (and the gate, on its runner's machine) keeps; it stops with an error when
-that is missing.
+that is missing. The pages are titled with that session's community, unless `--title` says
+otherwise.
 
 It runs until stopped, with no time limit of its own: run it in the background. ctrl-c,
 SIGTERM or (Windows) CTRL_BREAK stops it within a second, with exit code 0. A restart on the same port
@@ -147,7 +148,12 @@ def main(argv=None):
         default=8760,
         help="the port to serve on; 0 takes any free one, and says which",
     )
-    ap.add_argument("--title", default=None)
+    ap.add_argument(
+        "--title",
+        default=None,
+        help="the pages' title (default: the community of the session whose "
+        "record copy this is)",
+    )
     ap.add_argument(
         "--interval",
         type=float,
@@ -163,6 +169,9 @@ def main(argv=None):
             f"ERROR: no record copy at {record}: run `/symposium sync` here first\n"
             f"  (in the gate's session, `/symposium gate` writes the gate's copy)"
         )
+    # a session's copy is titled with its community, so two communities open side by side
+    # can be told apart; any other record directory keeps the generic title
+    args.title = args.title or browse.community_name(record)
 
     stop_on_signals()
     if args.port == 0:

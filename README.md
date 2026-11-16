@@ -42,8 +42,8 @@ Requirements - **Python 3.9+** the skill will run Python
 
 Example to install for Claude:
 ```
- curl -fLO https://github.com/ndexbio/symposium/releases/download/symposium-v0.3.1/symposium_skill-0.3.1.zip
- unzip symposium_skill-0.3.1.zip -d ~/.claude/skills
+ curl -fLO https://github.com/ndexbio/symposium/releases/download/symposium-v0.4.0/symposium_skill-0.4.0.zip
+ unzip symposium_skill-0.4.0.zip -d ~/.claude/skills
 ```
 
 ## Participating in a Symposium

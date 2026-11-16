@@ -3293,6 +3293,22 @@ ARTIFACT_TEMPLATE = """<!doctype html>
       n.textContent = String(1 + d.querySelectorAll('input[data-c]:checked').length);
     }});
   }});
+  // A link to a cell, or a column, the picker has hidden shows that column again: a hidden
+  // cell is out of the page, so the link would otherwise go nowhere and say nothing.
+  function reveal(scroll) {{
+    var id = null;
+    try {{ id = decodeURIComponent(location.hash.slice(1)); }} catch (e) {{ return; }}
+    var t = id && document.getElementById(id);
+    if (!t || !t.hidden || !t.hasAttribute('data-c')) return;
+    var wrap = t.closest('.tablewrap'), tools = wrap && wrap.previousElementSibling;
+    var box = tools && tools.querySelector('.colpick input[data-c="' + t.dataset.c + '"]');
+    if (!box) return;
+    box.checked = true;
+    box.dispatchEvent(new Event('change', {{ bubbles: true }}));
+    if (scroll) t.scrollIntoView();
+  }}
+  reveal(false);
+  window.addEventListener('hashchange', function () {{ reveal(true); }});
   [].forEach.call(document.querySelectorAll('.tablewrap'), function (w) {{
     var key = w.querySelector('table.data tr > :first-child');
     function pad() {{ if (key) w.style.scrollPaddingLeft = (key.offsetWidth + 8) + 'px'; }}

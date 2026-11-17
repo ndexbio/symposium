@@ -35,6 +35,23 @@ The design rule the limit points at stands either way:
 
 > **Design the analysis so the result is one a reader can read.**
 
+## A figure
+
+A figure is a rendering of values, and the values are the result. The Data Artifact that holds
+what the figure plots is what a reader grounds on; the image is held as a file and cited beside
+it:
+
+- the image is stored with `/symposium data put <file> --collection files`;
+- the Data Artifact it plots carries a `download` Content for it, with `groundable: false`, its
+  `sha256`, and a `description` that says what the axes, colours and marks mean and states no
+  result. Several figures of one table take labelled names: `volcano_download`,
+  `forest_download`;
+- a figure whose values are in no Artifact is published with them: the plotted values as an
+  embedded `csv` Content, or as a cited file where they are larger, and the image beside them.
+
+An image embedded in an Artifact as encoded text is content nobody can read or address. An
+image on its own, with no values behind it, is a picture of a result and not the result.
+
 ## Which collection a cited file goes in
 
 **A file an Artifact cites goes in `files`**, the collection every community is created with:

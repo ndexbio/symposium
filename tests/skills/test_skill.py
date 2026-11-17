@@ -7,6 +7,8 @@ directory."""
 import json
 import re
 import shlex
+import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -90,10 +92,71 @@ def test_help_names_the_data_server_image_and_prepares_nothing(skill, suite, tmp
     ).group(1)
     usage = skill.ok(tmp_path, "--help")
     assert usage["data_server_image"] == f"ndexbio/symposium-data:{version}"
+    # the local data server: its container, its directory on this machine, its URL
+    local = suite.home / ".symposium" / "data-server-local"
+    assert usage["data_server_local"] == {
+        "container": "symposium-data-local",
+        "directory": str(local),
+        "url": "http://127.0.0.1:8790",
+    }
     code, _ = skill(tmp_path, "frobnicate")
     assert code == 1
     assert not (tmp_path / ".symposium").exists()  # no runtime prepared for either
     assert not (suite.home / ".symposium" / "admin").exists()  # and no session made
+    assert not local.exists()  # naming the directory does not make it
+
+
+def test_the_local_data_servers_directory_is_no_session(server, skill, suite, tmp_path):
+    skill.ok(
+        tmp_path, "bootstrap", "--community-file", community_file(tmp_path, server)
+    )
+    before = skill.ok(tmp_path, "use")["sessions"]
+    state = suite.home / ".symposium" / "data-server-local"
+    (state / "postgres" / "data").mkdir(parents=True)
+    (state / "admin_pub_root.key").write_text("{}")
+    try:
+        assert skill.ok(tmp_path, "use")["sessions"] == before
+    finally:
+        shutil.rmtree(state)
+
+
+def test_a_servers_status_takes_no_session(server, skill, suite, tmp_path):
+    symposium = suite.home / ".symposium"
+    # no session on this machine
+    assert not (symposium / "admin").exists()
+    status = skill.ok(tmp_path, "data", "status", "--data-server-url", server.url)
+    assert status["version"] == server.status()["version"]
+    assert status["mode"] == "operational"
+    assert "session" not in status
+    assert not (symposium / "admin").exists() and not (symposium / "member").exists()
+    assert not (tmp_path / ".symposium").exists()  # and no runtime prepared
+    # the option's other spelling, and a trailing slash
+    assert skill.ok(tmp_path, "data", "status", f"--data-server-url={server.url}/") == (
+        status
+    )
+    # several sessions and none chosen: a session's command asks for one, this one does not
+    for community in ("demo", "second"):
+        skill.ok(
+            tmp_path,
+            "bootstrap",
+            "--community-file",
+            community_file(tmp_path, server, community),
+        )
+    shutil.rmtree(symposium / "current")
+    code, out = skill(tmp_path, "data", "status")
+    assert code == 1 and "sessions" in out
+    assert skill.ok(tmp_path, "data", "status", "--data-server-url", server.url) == (
+        status
+    )
+
+
+def test_a_server_that_does_not_answer_is_said_so(skill, tmp_path):
+    with socket.socket() as unused:
+        unused.bind(("127.0.0.1", 0))
+        url = f"http://127.0.0.1:{unused.getsockname()[1]}"
+    code, out = skill(tmp_path, "data", "status", "--data-server-url", url)
+    assert code == 1
+    assert out["error"].startswith(f"the data server at {url} does not answer: ")
 
 
 def test_usage_and_an_unknown_command(skill, tmp_path):

@@ -117,3 +117,30 @@ def test_trouble_has_one_rule():
     text = section()
     assert "show the user Docker's message and stop" in " ".join(text.split())
     assert not re.search(r"\bnever\b", text, re.IGNORECASE)
+
+
+def test_the_commands_are_given_once():
+    """Outside the section, no document gives a Docker command for the data server's
+    container. The changelog records what earlier releases said."""
+    inside = section()
+    found = []
+    for name in markdown():
+        if name == "CHANGELOG.md":
+            continue
+        text = (REPO / name).read_text()
+        if name == "skills/symposium/SKILL.md":
+            assert inside in text
+            text = text.replace(inside, "")
+        for number, line in enumerate(text.splitlines(), 1):
+            if DOCKER.search(line) and NAMED.search(line):
+                found.append(f"{name}:{number}: {line.strip()}")
+            if DOCKER.search(line) and "ndexbio/symposium-data:<version>" in line:
+                found.append(f"{name}:{number}: {line.strip()}")
+    assert not found, "Docker commands outside SKILL.md's section:\n" + "\n".join(found)
+
+
+def test_every_other_document_links_the_section():
+    text = SKILL_MD.read_text()
+    assert text.replace(section(), "").count(f"]({ANCHOR})") >= 3
+    for name in LINKING:
+        assert f"SKILL.md{ANCHOR}" in (REPO / name).read_text(), name

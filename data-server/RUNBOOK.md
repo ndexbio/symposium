@@ -29,27 +29,13 @@ One server hosts many communities. If your community lives on NDEx today, deploy
 
 ## 4. Run it with Docker
 
-1. **Run the server,** with its state in a directory of your machine:
+The skill's `SKILL.md` gives the commands, in one place: [Running a local data server](https://github.com/ndexbio/symposium/blob/main/skills/symposium/SKILL.md#running-a-local-data-server). Follow its steps in order. They cover all of it:
 
-   ```bash
-   mkdir -p $HOME/symposium-data
-   docker run -d --name symposium-data --restart unless-stopped \
-     -p 127.0.0.1:8790:8080 -v $HOME/symposium-data:/apps \
-     ndexbio/symposium-data:<version>
-   ```
+1. **Find or run the server:** one container, `symposium-data-local`, of the image `/symposium --help` names, with its state in `~/.symposium/data-server-local/` on your machine. A container of another image version is replaced, on the same state.
+2. **Give it the root key:** `admin-config` against `http://127.0.0.1:8790`, then its public key file copied into the container, and a restart.
+3. **Check it:** `/symposium data status --data-server-url http://127.0.0.1:8790` reports `"mode": "operational"`, `"root"` with your handle, and the fingerprint `admin-config` showed.
 
-   Without the `-v` mount, the data is lost when the container is removed.
-2. **Give it the root key.** Run `admin-config` against `http://127.0.0.1:8790`, then:
-
-   ```bash
-   cp ~/.symposium/admin/admin/<handle>/admin_pub_<handle>.key $HOME/symposium-data/
-   docker restart symposium-data
-   ```
-
-   Without a mount, use `docker cp ~/.symposium/admin/admin/<handle>/admin_pub_<handle>.key symposium-data:/apps/` instead.
-3. **Check it:** `curl -s http://127.0.0.1:8790/v1/status` reports `"mode": "operational"`, `"root"` with your handle, and the fingerprint `admin-config` showed.
-
-**Reachable by other machines.** Publish the port (`-p 8790:8080`), put a TLS-terminating proxy in front of it, and name the proxy in `-e SYMPOSIUM_SERVER_TRUSTED_PROXY=<proxy address>`. Members still join only by invite.
+**Reachable by other machines.** Publish the port on every interface (`-p 8790:8080` in place of `-p 127.0.0.1:8790:8080`), put a TLS-terminating proxy in front of it, and name the proxy in `-e SYMPOSIUM_SERVER_TRUSTED_PROXY=<proxy address>`. Members still join only by invite.
 
 ## 5. Run it on Kubernetes with Helm
 
@@ -203,7 +189,7 @@ The server reads `admin_pub_<handle>.key` at every start-up, from `/apps/` or `/
   - `admin key missing`: on a server already bound, neither the file nor its backup.
 
   Put the right file in place and restart; the data is untouched.
-- **Changing root's key:** place the new file and restart. With Docker that is §4 step 2; on Kubernetes, §5.3. The server rebinds root, refuses the old key from then on, and leaves every other user's keys as they are. Root's handle stays the same for the life of the server: the server ignores a file naming another handle and logs an error.
+- **Changing root's key:** place the new file and restart. With Docker that is §4, step 2; on Kubernetes, §5.3. The server rebinds root, refuses the old key from then on, and leaves every other user's keys as they are. Root's handle stays the same for the life of the server: the server ignores a file naming another handle and logs an error.
 - **A missing key file** on a server already bound keeps the server running: it runs from the backup and logs a warning.
 
 ## 8. Roles and access
@@ -439,8 +425,7 @@ curl -s <url>/v1/status
 
 ## 11. Tear down
 
-- **Docker, keeping the data:** `docker rm -f symposium-data`. The directory, and the key file in it, stay, so the next `docker run` on it starts operational.
-- **Docker, deleting everything:** remove the container, then the directory it mounted.
+- **Docker, keeping the data:** remove the container, as "Running a local data server" says (§4). Its state, and the key file in it, stay in `~/.symposium/data-server-local/`, so the server next started on it is operational.
 - **Kubernetes, keeping the data:** `helm uninstall symposium-data -n symposium`. It keeps the volume (the PVC), which is named after the release. **The release name decides which data a server has:**
   - **Reinstalling with the same release name, in the same namespace,** mounts that kept volume again: it is the same server, with its data, already bound to its root.
   - **A different release name** gets a new, empty volume and a new server; the kept one stays untouched until you delete it.

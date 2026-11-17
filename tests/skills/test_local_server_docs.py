@@ -2,6 +2,7 @@
 the one place that gives its Docker commands, in one order, on the container, directory, URL
 and image the skill names; every other document links there. No container is needed."""
 
+import json
 import re
 import subprocess
 import sys
@@ -51,13 +52,15 @@ def markdown() -> list:
     return [name for name in out.stdout.split() if (REPO / name).is_file()]
 
 
-def skill_main():
-    sys.path.insert(0, str(SKILL_MD.parent / "scripts"))
-    try:
-        import main
-    finally:
-        sys.path.pop(0)
-    return main
+def named_by_the_skill() -> dict:
+    """`data_server_local`, as `/symposium --help` prints it: it needs no session."""
+    result = subprocess.run(
+        [sys.executable, str(SKILL_MD.parent / "scripts" / "main.py"), "--help"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(result.stdout)["data_server_local"]
 
 
 def test_the_section_gives_every_command_in_order():
@@ -98,7 +101,7 @@ def test_the_image_comes_from_help_alone():
 
 
 def test_the_section_names_what_the_skill_names():
-    local = skill_main().data_server_local()
+    local = named_by_the_skill()
     text = section()
     assert local["container"] == CONTAINER
     assert (

@@ -71,7 +71,8 @@ Role charters live in `tools/roles/<name>.md`, standing rules in
   Publish a superseding Artifact instead.
 - **Never edit anything under `~/.symposium/` by hand.** `setup` or
   `bootstrap` writes a session's context, and `sync` (or the gate) keeps its
-  record copy.
+  record copy. `~/.symposium/data-server-local/` is the local data server's
+  state, which its container alone writes.
 - **Never publish to a real community's record to test something.** Use
   `/symposium validate`, which uploads nothing, or a community on a local data
   server.

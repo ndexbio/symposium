@@ -29,7 +29,7 @@ LINKING = (
 
 def section() -> str:
     """SKILL.md's "Running a local data server", up to the next heading of its level."""
-    text = SKILL_MD.read_text()
+    text = SKILL_MD.read_text(encoding="utf-8")
     assert text.count(f"\n{HEADING}\n") == 1
     return text.split(f"\n{HEADING}\n", 1)[1].split("\n## ", 1)[0]
 
@@ -58,6 +58,7 @@ def named_by_the_skill() -> dict:
         [sys.executable, str(SKILL_MD.parent / "scripts" / "main.py"), "--help"],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     )
     return json.loads(result.stdout)["data_server_local"]
@@ -130,7 +131,7 @@ def test_the_commands_are_given_once():
     for name in markdown():
         if name == "CHANGELOG.md":
             continue
-        text = (REPO / name).read_text()
+        text = (REPO / name).read_text(encoding="utf-8")
         if name == "skills/symposium/SKILL.md":
             assert inside in text
             text = text.replace(inside, "")
@@ -143,7 +144,7 @@ def test_the_commands_are_given_once():
 
 
 def test_every_other_document_links_the_section():
-    text = SKILL_MD.read_text()
+    text = SKILL_MD.read_text(encoding="utf-8")
     assert text.replace(section(), "").count(f"]({ANCHOR})") >= 3
     for name in LINKING:
-        assert f"SKILL.md{ANCHOR}" in (REPO / name).read_text(), name
+        assert f"SKILL.md{ANCHOR}" in (REPO / name).read_text(encoding="utf-8"), name

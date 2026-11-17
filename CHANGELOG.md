@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
-## [Symposium Skill 0.5.0] - 2026-11-17
+## [Symposium Skill 0.4.2] - 2026-11-17
 
 Works with Data Server 0.2.1.
 

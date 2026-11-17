@@ -37,12 +37,15 @@ HTML_TEMPLATE = r"""<!doctype html>
   }}
   * {{ box-sizing: border-box; }}
   html, body {{ margin: 0; height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: var(--bg); }}
-  header {{ padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }}
+  /* Header, verdict pane and claim map stack in one column. The pane takes the height its
+     content needs, and the claim map takes the rest, never less than 360px; past that the
+     page scrolls instead of the pane being cut short. */
+  body {{ display: flex; flex-direction: column; }}
+  header {{ flex: none; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }}
   header h1 {{ font-size: 15px; margin: 0 0 2px; font-weight: 650; }}
   header .sub {{ font-size: 12px; color: var(--muted); }}
   header .sub .genre {{ color: var(--ink); font-weight: 600; }}
-  #app {{ display: flex; height: calc(100% - 52px); }}
-  body.has-intro #app {{ height: calc(100% - 52px - var(--introh, 60px)); }}
+  #app {{ display: flex; flex: 1 1 0; min-height: 360px; }}
   #graphwrap {{ position: relative; flex: 1 1 62%; min-width: 0; }}
   /* White behind the graph, not the page grey: a dotted grey citation edge on a grey
      ground was very nearly invisible, and the edge that says 'this is a reference,
@@ -79,13 +82,29 @@ HTML_TEMPLATE = r"""<!doctype html>
   #verdictpanel {{ background: var(--panel); border: 1px solid var(--line);
     border-left: 4px solid var(--accent); border-radius: 6px;
     padding: 10px 14px; margin: 0 0 10px; }}
+  #verdictpanel .vhead {{ display: flex; align-items: center; gap: 12px; }}
   #verdictpanel .vlabel {{ font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
     color: var(--muted); font-weight: 700; }}
-  #verdictpanel .vtext {{ font-size: 14px; font-weight: 600; margin: 2px 0 6px; }}
+  #verdictpanel .vhead a {{ font-size: 12px; }}
+  #verdictpanel .vhead button {{ margin-left: auto; font-size: 12px; padding: 3px 10px; border: 1px solid var(--line);
+    background: #fff; border-radius: 6px; cursor: pointer; }}
+  #verdictpanel .vhead button:hover {{ background: #eef1f5; }}
+  #verdictpanel .vhead button:focus-visible, #verdictpanel summary:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
+  /* The verdict is never height-capped: it is the one thing a reader came for. */
+  #verdictpanel .vtext {{ font-size: 14px; font-weight: 600; line-height: 1.5; margin: 2px 0 6px; }}
+  #verdictpanel details.vsec {{ margin-top: 4px; }}
+  #verdictpanel summary {{ cursor: pointer; font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--muted); font-weight: 700; padding: 2px 0; }}
+  /* An opened section scrolls within a third of the window, so opening one does not push the
+     claim map off the screen; Expand lifts that limit and shows the pane at full height. */
+  #verdictpanel .vbody {{ margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap;
+    max-height: 33vh; overflow-y: auto; }}
   #verdictpanel dl {{ margin: 0; }}
   #verdictpanel dt {{ font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
     color: var(--muted); font-weight: 700; margin-top: 6px; }}
   #verdictpanel dd {{ margin: 2px 0 0; font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }}
+  #intro .intro-prose {{ max-height: 6em; overflow-y: auto; }}
+  body.intro-expanded #verdictpanel .vbody, body.intro-expanded #intro .intro-prose {{ max-height: none; overflow: visible; }}
   /* claim sections in the detail panel */
   #detail .section {{ margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }}
   #detail .section:first-of-type {{ border-top: none; margin-top: 6px; padding-top: 0; }}
@@ -128,8 +147,19 @@ HTML_TEMPLATE = r"""<!doctype html>
   /* The Argument's own framing prose. It carries the author's citations, and a
      citation is the one place nuance goes into prose rather than into vocabulary —
      so it has to be readable and its links have to work. */
-  #intro {{ padding:8px 16px; background:#fbfcfd; border-bottom:1px solid var(--line);
-            font-size:13px; line-height:1.5; max-height:96px; overflow-y:auto; }}
+  #intro {{ flex:none; padding:8px 16px; background:#fbfcfd; border-bottom:1px solid var(--line);
+            font-size:13px; line-height:1.5; }}
+  /* The verdict pane's lower edge: drag it, or use the arrow keys on it, to give the claim map
+     more room. Every page opens with the pane at its full height, so the whole verdict shows
+     until a reader chooses otherwise (F6); a pane made shorter scrolls inside. */
+  #intro.sized {{ overflow-y:auto; }}
+  #introsplit {{ flex:none; height:10px; margin:-5px 0 -5px; position:relative; z-index:3;
+                 cursor:row-resize; touch-action:none; }}
+  #introsplit::after {{ content:""; position:absolute; left:50%; top:3px; width:48px; height:4px;
+                        margin-left:-24px; border-radius:2px; background:#cbd5e1; }}
+  #introsplit:hover::after, #introsplit.dragging::after, #introsplit:focus-visible::after {{
+    background:var(--accent); }}
+  #introsplit:focus-visible {{ outline:2px solid var(--accent); outline-offset:-1px; }}
   #intro p {{ margin:0 0 6px; }} #intro p:last-child {{ margin-bottom:0; }}
   #intro a {{ color:var(--accent); }}
   #intro .cite-dead {{ border-bottom:1px dotted var(--muted); color:var(--muted); cursor:help; }}
@@ -138,7 +168,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 <body>
 <header>
   <h1>{title}</h1>
-  <div class="sub">{arg_label} <code>{review_id}</code> &middot; <span class="mbadge" style="background:{member_color}"></span><b>{member}</b> &middot; {created}{genre_html} &middot; <a href="index.html" class="uplink">&uarr; community overview</a> &middot; <span class="hint">reading runs left &rarr; right into the claim being made &middot; hover = brief &middot; click = full detail &middot; dashed border = has a page of its own</span></div>
+  <div class="sub">{arg_label} <code>{review_id}</code> &middot; <span class="mbadge" style="background:{member_color}"></span><b>{member}</b> &middot; {created}{genre_html} &middot; <a href="index.html" class="uplink">&uarr; community overview</a> &middot; <span class="hint">reading runs left &rarr; right into the claim being made &middot; hover = brief &middot; click = full detail, with a Go to button where the node has a page of its own</span></div>
 </header>
 {intro_html}
 <div id="app">
@@ -225,14 +255,15 @@ HTML_TEMPLATE = r"""<!doctype html>
           'label': 'data(label)', 'font-size': 9, 'color': '#111827',
           'text-wrap': 'wrap', 'text-max-width': 110, 'text-valign': 'bottom',
           'text-margin-y': 3, 'width': 22, 'height': 22,
-          'border-width': 1, 'border-color': 'rgba(0,0,0,0.25)'
+          // black at a quarter strength, given as an opacity so the legend reads it back
+          'border-width': 1, 'border-color': '#000000', 'border-opacity': 0.25
       }} }},
       // Assertion = the claim node. It is the PRIMARY backbone,
       // so it is the largest/boldest. A colored border encodes the folded verdict.
       {{ selector: 'node[ntype="Assertion"]', style: {{
           'shape': 'round-rectangle', 'background-color': 'data(owner_color)',
           'width': 46, 'height': 30, 'font-weight': 600, 'font-size': 10,
-          'text-max-width': 150, 'border-width': 4, 'border-color': '#9ca3af' }} }},
+          'text-max-width': 150, 'border-width': 4, 'border-opacity': 1, 'border-color': '#9ca3af' }} }},
       // A claim that lives in ANOTHER artifact (cross-artifact assess / accept):
       // faded owner-colored fill so it reads as "not authored here".
       {{ selector: 'node[ntype="Assertion"][?external]', style: {{
@@ -242,13 +273,13 @@ HTML_TEMPLATE = r"""<!doctype html>
       {{ selector: 'node[?navigable]', style: {{ 'border-style': 'dashed' }} }},
       // No per-claim verdict encoding: one judgment covers the Argument and
       // is stated in the header. Colouring claims here would imply the author
-      // judged each one separately, which the record no longer says.
+      // judged each one separately, which the record does not say.
       // Source = an evidence element (a figure panel, excerpt, or object). Kept
       // lighter / subordinate to claims: a small slate cut-rectangle, its intuitive
       // name (e.g. "Fig 1C") drawn beside it.
       {{ selector: 'node[ntype="Source"]', style: {{
           'shape': 'cut-rectangle', 'background-color': '#e2e8f0', 'background-opacity': 0.95,
-          'border-color': '#94a3b8', 'border-style': 'solid', 'border-width': 1.2,
+          'border-opacity': 1, 'border-color': '#94a3b8', 'border-style': 'solid', 'border-width': 1.2,
           'color': '#475569', 'width': 30, 'height': 18, 'font-size': 8,
           'text-max-width': 120 }} }},
       // Content the author could NOT address, and asks the community to grant. It is
@@ -256,7 +287,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       // looking for, and hiding it to tidy the picture would defeat the whole exercise.
       {{ selector: 'node[ntype="Assumption"]', style: {{
           'shape': 'vee', 'background-color': '#d97706', 'background-opacity': 0.85,
-          'border-color': '#b45309', 'border-width': 1.5,
+          'border-opacity': 1, 'border-color': '#b45309', 'border-width': 1.5,
           'width': 24, 'height': 22, 'font-size': 8, 'color': '#7c2d12',
           'text-max-width': 130 }} }},
       // (Full-graph mode) the Ground gets its own encoding.
@@ -267,12 +298,15 @@ HTML_TEMPLATE = r"""<!doctype html>
       // peer's conclusion is testimony, and it should not look like a measurement.
       {{ selector: 'node[ntype="External"]', style: {{
           'shape': 'round-rectangle', 'background-color': '#e5e7eb', 'background-opacity': 0.9,
-          'border-color': '#9ca3af', 'border-style': 'dashed', 'border-width': 1.5,
+          'border-opacity': 1, 'border-color': '#9ca3af', 'border-style': 'dashed', 'border-width': 1.5,
           'color': '#4b5563', 'width': 40, 'height': 26, 'text-max-width': 140 }} }},
       // Addressed content the gate could not machine-verify (a `rest` or `download`
       // method): the exact point where verification becomes trust, marked as such.
       {{ selector: 'node[?unverifiable]', style: {{
-          'border-color': '#b45309', 'border-width': 2.5, 'border-style': 'dotted' }} }},
+          'border-opacity': 1, 'border-color': '#b45309', 'border-width': 2.5, 'border-style': 'dotted' }} }},
+      // A claim a checker finding is on: an orange border, so the finding the legend counts
+      // can be found on the graph, then read by clicking the claim.
+      {{ selector: 'node[?flagged]', style: {{ 'border-opacity': 1, 'border-color': '#d97706' }} }},
 
       {{ selector: 'edge', style: {{
           'width': 1.4, 'curve-style': 'bezier', 'line-color': '#94a3b8',
@@ -319,11 +353,14 @@ HTML_TEMPLATE = r"""<!doctype html>
           'label': 'testimony', 'line-style': 'dashed' }} }},
 
       {{ selector: '.faded', style: {{ 'opacity': 0.15 }} }},
-      {{ selector: '.hi', style: {{ 'border-width': 3, 'border-color': '#111827' }} }},
+      {{ selector: '.hi', style: {{ 'border-width': 3, 'border-opacity': 1, 'border-color': '#111827' }} }},
       // a node a person placed by hand, so the reader can tell their arrangement from the
       // computed one
       {{ selector: 'node.moved', style: {{
-          'border-width': 2, 'border-color': '#0f766e', 'border-style': 'dashed' }} }},
+          'border-width': 2, 'border-opacity': 1, 'border-color': '#0f766e', 'border-style': 'dashed' }} }},
+      // a moved claim keeps its finding marker: the dashes say it was moved, the orange that a
+      // finding is on it. Listed after node.moved, whose border colour would otherwise win.
+      {{ selector: 'node.moved[?flagged]', style: {{ 'border-color': '#d97706' }} }},
       // a highlighted edge wins over the flow-mode dimming (listed last)
       {{ selector: 'edge.hi', style: {{ 'width': 3.2, 'opacity': 1 }} }}
     ],
@@ -766,6 +803,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     node.addClass('moved');
     savePos(_savedPos);
     updatePosUI();
+    buildLegend(_layoutMode);
   }});
 
   function runLayout(mode) {{
@@ -786,6 +824,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       // frames what the reader will actually see rather than the computed arrangement.
       applySavedPos(mode);
       updatePosUI();
+      buildLegend(mode);
       cy.fit(undefined, 30);
     }});
     lay.run();
@@ -819,94 +858,151 @@ HTML_TEMPLATE = r"""<!doctype html>
   var c = DATA.meta.counts;
   var legend = document.getElementById('legend');
 
-  function liveTypeCounts() {{
-    var m = {{}};
-    cy.nodes().forEach(function (n) {{
-      var t = n.data('ntype');
-      if (t && t !== 'Annotation' && t !== 'TimeTick') m[t] = (m[t] || 0) + 1;
+  // Every row is read from the graph as drawn: its swatch from the style of an element it
+  // describes, its count from how many there are. A row appears only for what is on the
+  // graph, and anything no row describes is listed as such, so the legend can neither give a
+  // colour the graph does not draw nor leave a mark unexplained. (It once showed claims in a
+  // fixed blue, one Member's colour, while each claim was drawn in its author's.)
+  var NODE_ROWS = [
+    ['node[ntype="Assertion"][!external]', 'Assertion — a claim, in its author\'s colour'],
+    ['node[ntype="Assertion"][?external]', 'Assertion from another artifact — faded, in its author\'s colour'],
+    ['node[ntype="Ground"]', 'Ground — material offered as bearing on a claim'],
+    ['node[ntype="Source"]', 'Addressed content — what a Ground points at'],
+    ['node[ntype="Assumption"]', 'Assumption — granted, not addressed'],
+    ['node[ntype="External"]', 'External — an assertion in another Argument']
+  ];
+  var EDGE_ROWS = [
+    ['edge[rel="depends_on"]', 'depends_on — assertion dependency (backbone)'],
+    ['edge[rel="grounded_by"][kind="test"][!testimony]', 'grounded_by, with a criterion — offered as a TEST'],
+    ['edge[rel="grounded_by"][kind="evidential"][!testimony]', 'grounded_by, no criterion — material built on'],
+    ['edge[rel="grounded_by"][?testimony]', 'grounded_by another Argument\'s assertion — testimony'],
+    ['edge[rel="addresses"]', 'addresses — Ground &rarr; the content it names'],
+    ['edge[rel="assumes"]', 'assumes — rests on something not addressable'],
+    ['edge[rel="cites"]', 'cites — prose citation, never evidence (de-emphasised)']
+  ];
+  function onGraph(e) {{ var t = e.data('ntype'); return t !== 'Annotation' && t !== 'TimeTick'; }}
+  function shapeSvg(shape, fill, op, stroke, sw, dash, sop) {{
+    var pts = {{ 'vee': '-1,-1 0,-.333 1,-1 0,1', 'diamond': '0,-1 1,0 0,1 -1,0',
+      'cut-rectangle': '-.62,-1 .62,-1 1,-.62 1,.62 .62,1 -.62,1 -1,.62 -1,-.62',
+      'tag': '-1,-1 .25,-1 1,0 .25,1 -1,1' }};
+    var paint = ' fill="' + fill + '" fill-opacity="' + op + '" stroke="' + stroke + '" stroke-opacity="'
+      + (sop == null ? 1 : sop) + '" stroke-width="' + sw + '"' + (dash ? ' stroke-dasharray="' + dash + '"' : '')
+      + ' vector-effect="non-scaling-stroke"';
+    var body = pts[shape] ? '<polygon points="' + pts[shape] + '"' + paint + '/>'
+      : shape === 'ellipse' ? '<ellipse cx="0" cy="0" rx="1" ry="1"' + paint + '/>'
+      : '<rect x="-1" y="-1" width="2" height="2" rx="' + (shape === 'round-rectangle' ? 0.4 : 0) + '"' + paint + '/>';
+    return '<svg class="sws" width="22" height="15" viewBox="-1.3 -1.3 2.6 2.6" preserveAspectRatio="none" aria-hidden="true">' + body + '</svg>';
+  }}
+  function nodeSwatch(n) {{
+    var bs = n.style('border-style');
+    return shapeSvg(n.style('shape'), n.style('background-color'), n.style('background-opacity'),
+      n.style('border-color'), Math.max(1, Math.min(3, parseFloat(n.style('border-width')) || 1)),
+      bs === 'dashed' ? '3 2' : bs === 'dotted' ? '1 1.5' : '', n.style('border-opacity'));
+  }}
+  function edgeSwatch(e) {{
+    return '<span class="swl" style="border-top-color:' + e.style('line-color') + ';border-top-style:'
+      + e.style('line-style') + ';border-top-width:' + Math.max(1.5, Math.min(3, parseFloat(e.style('width')) || 1.5))
+      + 'px"></span>';
+  }}
+  // the element a row's swatch is read from: one showing no transient state and, where the
+  // row has one, none of the states `avoid` names, so a row's swatch shows that row's mark alone
+  function sample(els, avoid) {{
+    var calm = els.filter(function (e) {{
+      return !e.hasClass('hi') && !e.hasClass('faded') && !(avoid && avoid(e));
     }});
-    return m;
+    return (calm.length ? calm : els).first();
+  }}
+  function isMoved(e) {{ return e.hasClass('moved'); }}
+  function isFlagged(e) {{ return !!e.data('flagged'); }}
+  function isMarked(e) {{ return isMoved(e) || isFlagged(e); }}
+  function rows(defs, all, isNode) {{
+    var html = '', seen = cy.collection();
+    defs.forEach(function (d) {{
+      var els = cy.$(d[0]).filter(onGraph);
+      seen = seen.union(els);
+      if (!els.length) return;
+      var one = sample(els, isMarked);
+      html += '<span class="lg">' + (isNode ? nodeSwatch(one) : edgeSwatch(one)) + d[1] + ' (' + els.length + ')</span>';
+    }});
+    var rest = all.difference(seen), kinds = {{}};
+    rest.forEach(function (e) {{
+      var k = isNode ? (e.data('ntype') || 'node') : (e.data('rel') || 'edge');
+      (kinds[k] = kinds[k] || []).push(e);
+    }});
+    Object.keys(kinds).sort().forEach(function (k) {{
+      var one = cy.collection(kinds[k]).first();
+      html += '<span class="lg">' + (isNode ? nodeSwatch(one) : edgeSwatch(one)) + esc(k) + ' ('
+        + kinds[k].length + ')</span>';
+    }});
+    return html;
   }}
   function markersLegend() {{
-    var s = '<b>Markers</b>'
-      + '<span class="lg"><span class="sw" style="background:#e2e8f0;border:2.5px dotted #b45309"></span>not machine-verifiable (' + (c.unverifiable||0) + ')</span>';
-    if (c.findings) {{
-      s += '<span class="lg"><span class="sw" style="background:#fff7ed;border-left:3px solid #d97706"></span>'
-        + c.findings + ' checker finding' + (c.findings > 1 ? 's' : '') + ' &mdash; click a claim to read</span>';
-    }}
-    return s;
+    var s = '', flagged = cy.nodes('[?flagged]'), onClaims = 0, moved = cy.nodes('.moved');
+    var movedFlagged = moved.filter(isFlagged).length;
+    // distinct findings, from the build: one that names two claims is on both, and summing
+    // each claim's would count it twice
+    flagged.forEach(function (n) {{ onClaims += (n.data('findings') || []).length; }});
+    if (typeof c.findings_on_claims === 'number') onClaims = c.findings_on_claims;
+    var marks = [
+      [flagged, 'orange border — ' + onClaims + ' checker finding' + (onClaims === 1 ? '' : 's') + ' on '
+        + flagged.length + ' claim' + (flagged.length === 1 ? '' : 's') + '; click a claim to read', isMoved],
+      [cy.nodes('[?unverifiable]'), 'dotted border — not machine-verifiable: content outside the record', isMoved],
+      [moved, 'teal dashed border' + (movedFlagged ? ', orange on a claim with a finding' : '')
+        + ' — a node you moved; Reset positions puts it back', isFlagged]
+    ];
+    marks.forEach(function (m) {{
+      var els = m[0].filter(onGraph);
+      if (els.length) s += '<span class="lg">' + nodeSwatch(sample(els, m[2])) + m[1] + ' (' + els.length + ')</span>';
+    }});
+    // Said in words, with no swatch: no one border marks these. Addressed content with a page
+    // keeps its type's solid border, so a "dashed border" row sat over solid nodes.
+    var nav = cy.nodes('[?navigable]').filter(onGraph).length;
+    if (nav) s += '<span class="lg">' + nav + (nav === 1 ? ' node has a page of its own' : ' nodes have a page of their own')
+      + ' &mdash; click one for its Go to button</span>';
+    var loose = (c.findings || 0) - onClaims;
+    if (loose > 0) s += '<span class="lg">' + loose + ' checker finding' + (loose === 1 ? '' : 's')
+      + ' elsewhere in the Argument: on a Ground, an Assumption or the Argument as a whole</span>';
+    return s ? '<b>Markers</b>' + s : '';
   }}
-  function claimLegend() {{
-    return '<b>Nodes (' + c.nodes_total + ')</b>'
-      + lgNode('#2563eb','round-rectangle','Assertion — a claim (' + (c.nodes_by_type.Assertion||0) + ')')
-      + lgNode('#94a3b8','source','Addressed content — what a Ground points at (' + (c.source_nodes||0) + ')')
-      + lgNode('#d97706','vee','Assumption — granted, not addressed (' + (c.nodes_by_type.Assumption||0) + ')')
-      + lgNode('#9ca3af','round-rectangle','External — an assertion in another Argument (' + (c.nodes_by_type.External||0) + ')')
-      + '<b>Edges (' + c.edges_total + ')</b>'
-      + lgLine('#dc2626','solid','depends_on — assertion dependency (backbone)')
-      + lgLine('#16a34a','solid','grounded_by, with a criterion — offered as a TEST')
-      + lgLine('#64748b','dashed','grounded_by, no criterion — material built on')
-      + lgLine('#7c3aed','dashed','grounded_by another Argument\'s assertion — testimony')
-      + lgLine('#d97706','dotted','assumes — rests on something not addressable')
-      + lgLine('#475569','dotted','cites — prose citation, never evidence (de-emphasised)')
-      + markersLegend()
-      + memberLegend()
-      + '<div class="hint" style="margin-top:6px">'
-        + (c.folded_grounds||0)
-        + ' Ground(s) are folded into the claim and its edges. '
-        + (c.shared_source_count||0) + ' address(es) carry &ge;2 Grounds &mdash; agreement '
-        + 'between them is not independent corroboration. '
-        + ((DATA.meta.navigable_nodes||0) > 0
-            ? (DATA.meta.navigable_nodes + ' node(s) have a page of their own (dashed) &mdash; click to navigate. ')
-            : '')
-        + 'Use <i>Full graph</i> to see the Grounds uncollapsed.</div>';
+  function graphLegend(mode) {{
+    var nodes = cy.nodes().filter(onGraph), edges = cy.edges();
+    var hint = (mode === 'full')
+      ? 'Nothing is folded: a Ground sits directly on the assertion it bears on. Use <i>Claim map</i> to fold the Grounds back in.'
+      : (c.folded_grounds || 0) + ' Ground(s) are folded into the claim and its edges. '
+        + (c.shared_source_count || 0) + ' address(es) carry &ge;2 Grounds &mdash; agreement between them is not '
+        + 'independent corroboration. Use <i>Full graph</i> to see the Grounds uncollapsed.';
+    return '<b>Nodes (' + nodes.length + ')</b>' + rows(NODE_ROWS, nodes, true)
+      + '<b>Edges (' + edges.length + ')</b>' + rows(EDGE_ROWS, edges, false)
+      + markersLegend() + memberLegend()
+      + '<div class="hint" style="margin-top:6px">' + hint + '</div>';
   }}
-  function fullLegend() {{
-    var tc = liveTypeCounts();
-    return '<b>Nodes — every Object as authored (' + cy.nodes().length + ')</b>'
-      + lgNode('#9ca3af','round-rectangle','Assertion — a claim (' + (tc.Assertion||0) + ')')
-      + lgNode('#0d9488','ellipse','Ground — material offered as bearing on a claim (' + (tc.Ground||0) + ')')
-      + lgNode('#d97706','vee','Assumption — granted, not addressed (' + (tc.Assumption||0) + ')')
-      + lgNode('#94a3b8','source','Addressed content (' + (tc.Source||0) + ')')
-      + lgNode('#9ca3af','round-rectangle','External — an assertion elsewhere (' + (tc.External||0) + ')')
-      + '<b>Edges (' + cy.edges().length + ')</b>'
-      + lgLine('#16a34a','solid','grounded_by — assertion &rarr; Ground')
-      + lgLine('#0d9488','dashed','addresses — Ground &rarr; the content it names')
-      + lgLine('#d97706','dotted','assumes — assertion &rarr; assumption')
-      + lgLine('#dc2626','solid','depends_on')
-      + lgLine('#475569','dotted','cites')
-      + markersLegend()
-      + memberLegend()
-      + '<div class="hint" style="margin-top:6px">Nothing is folded. Little is hidden: '
-        + 'there is no Bearing layer, and a Ground sits directly on the assertion it bears on. '
-        + 'Use <i>Claim map</i> to fold the Grounds back in.</div>';
-  }}
-  function buildLegend(mode) {{ legend.innerHTML = (mode === 'full') ? fullLegend() : claimLegend(); }}
-  buildLegend('claim');
+  function buildLegend(mode) {{ legend.innerHTML = graphLegend(mode); }}
 
-  // Members present on this page: the review's author + owners of any external node.
+  // The Members whose colour is on the graph: the author of each node drawn in its author's
+  // colour. Only a node whose fill encodes authorship is counted. A Ground's fill is its
+  // type's, and is the same teal as one Member's colour, so matching on colour alone would
+  // count that Member's Grounds; addressed content is drawn grey.
+  var OWNER_FILLED = 'node[ntype="Assertion"]';  // the nodes whose fill is data(owner_color)
+  function rgb(hex) {{
+    var m = /^#?([0-9a-f]{{2}})([0-9a-f]{{2}})([0-9a-f]{{2}})$/i.exec(hex || '');
+    return m ? 'rgb(' + parseInt(m[1], 16) + ',' + parseInt(m[2], 16) + ',' + parseInt(m[3], 16) + ')' : '';
+  }}
   function memberLegend() {{
-    var mem = DATA.meta.members || {{}};
-    var keys = Object.keys(mem);
+    var mem = DATA.meta.members || {{}}, n = {{}};
+    cy.nodes(OWNER_FILLED).filter(onGraph).forEach(function (x) {{
+      var o = x.data('owner'), drawn = String(x.style('background-color')).replace(/\s+/g, '');
+      if (o && x.data('owner_color') && drawn === rgb(x.data('owner_color'))) n[o] = (n[o] || 0) + 1;
+    }});
+    var keys = Object.keys(n).sort();
     if (!keys.length) return '';
     var s = '<b>Members (' + keys.length + ')</b>';
-    keys.sort().forEach(function (h) {{
-      s += '<span class="lg"><span class="sw" style="border-radius:50%;background:' + mem[h] + '"></span>' + h + '</span>';
+    keys.forEach(function (h) {{
+      s += '<span class="lg"><span class="sw" style="border-radius:50%;background:' + (mem[h] || '#9ca3af')
+        + '"></span>' + esc(h) + ' (' + n[h] + ')</span>';
     }});
     return s;
   }}
-
-  function lgNode(color, shape, text) {{
-    var br = shape === 'ellipse' ? '50%' : '3px';
-    var extra = shape === 'source' ? 'border:1.2px solid #94a3b8;background:#e2e8f0;' : '';
-    return '<span class="lg"><span class="sw" style="background:' + color + ';border-radius:' + br + ';' + extra + '"></span>' + text + '</span>';
-  }}
-  function lgBorder(color, text) {{
-    return '<span class="lg"><span class="sw" style="background:#2563eb;border:3px solid ' + color + '"></span>' + text + '</span>';
-  }}
-  function lgLine(color, style, text) {{
-    return '<span class="lg"><span class="swl" style="border-top-color:' + color + ';border-top-style:' + style + '"></span>' + text + '</span>';
-  }}
+  buildLegend('claim');
 
   // ---- cross-artifact navigation ----
   // A "Go to" button (in the detail panel) deep-links to the target artifact's
@@ -942,6 +1038,91 @@ HTML_TEMPLATE = r"""<!doctype html>
     // re-fit once the container has its final size (avoids an off-frame first paint)
     requestAnimationFrame(function () {{ cy.resize(); cy.fit(undefined, 30); deepLink(); }});
   }});
+
+  // ---- the verdict pane: Expand opens every section at full height ----
+  //
+  // The verdict is always shown whole; purpose and rationale start closed. Expand opens
+  // them all and lifts the height limit on an opened section, so the pane stands at its
+  // full height above the claim map, and Collapse returns it. The choice is one viewer's
+  // reading preference, remembered across Arguments in localStorage; every access is
+  // wrapped, because storage throws outright in some privacy modes.
+  (function () {{
+    var btn = document.getElementById('btn-intro');
+    function refit() {{ requestAnimationFrame(function () {{ cy.resize(); }}); }}
+    document.querySelectorAll('#intro details.vsec').forEach(function (d) {{
+      d.addEventListener('toggle', refit);
+    }});
+    if (!btn) {{ return; }}
+    var KEY = 'symposium:intro-expanded';
+    function setExpanded(open, remember) {{
+      document.body.classList.toggle('intro-expanded', open);
+      document.querySelectorAll('#intro details.vsec').forEach(function (d) {{ d.open = open; }});
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.textContent = open ? 'Collapse' : 'Expand';
+      if (remember) {{ try {{ localStorage.setItem(KEY, open ? '1' : '0'); }} catch (e) {{}} }}
+      refit();
+    }}
+    var saved = null;
+    try {{ saved = localStorage.getItem(KEY); }} catch (e) {{ saved = null; }}
+    setExpanded(saved === '1', false);
+    btn.addEventListener('click', function () {{
+      setExpanded(!document.body.classList.contains('intro-expanded'), true);
+    }});
+  }})();
+
+  // The verdict pane's height, set by dragging its lower edge or with the arrow keys on it.
+  // Not remembered: verdicts differ in length, and a height kept from a short one would cut a
+  // long one short, so every page opens with the whole verdict shown (F6). Expand, and a
+  // double-click on the edge, put the pane back at its full height.
+  (function () {{
+    var pane = document.getElementById('intro'), bar = document.getElementById('introsplit');
+    if (!pane || !bar) {{ return; }}
+    var MIN = 40;
+    function current() {{ return Math.round(pane.getBoundingClientRect().height); }}
+    function setHeight(h) {{
+      if (h === null || h >= pane.scrollHeight - 1) {{
+        pane.style.maxHeight = '';
+        pane.classList.remove('sized');
+      }} else {{
+        pane.style.maxHeight = Math.max(MIN, Math.round(h)) + 'px';
+        pane.classList.add('sized');
+      }}
+      bar.setAttribute('aria-valuenow', String(current()));
+      bar.setAttribute('aria-valuemax', String(pane.scrollHeight));
+      requestAnimationFrame(function () {{ cy.resize(); }});
+    }}
+    bar.setAttribute('aria-valuemin', String(MIN));
+    bar.setAttribute('aria-valuenow', String(current()));
+    bar.setAttribute('aria-valuemax', String(pane.scrollHeight));
+    var startY = 0, startH = 0;
+    bar.addEventListener('pointerdown', function (e) {{
+      startY = e.clientY;
+      startH = current();
+      bar.classList.add('dragging');
+      if (bar.setPointerCapture) bar.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    }});
+    bar.addEventListener('pointermove', function (e) {{
+      if (bar.classList.contains('dragging')) setHeight(startH + (e.clientY - startY));
+    }});
+    function stop() {{ bar.classList.remove('dragging'); }}
+    bar.addEventListener('pointerup', stop);
+    bar.addEventListener('pointercancel', stop);
+    bar.addEventListener('dblclick', function () {{ setHeight(null); }});
+    bar.addEventListener('keydown', function (e) {{
+      var step = e.shiftKey ? 120 : 30;
+      if (e.key === 'ArrowUp') setHeight(current() - step);
+      else if (e.key === 'ArrowDown') setHeight(current() + step);
+      else if (e.key === 'Home') setHeight(MIN);
+      else if (e.key === 'End') setHeight(null);
+      else return;
+      e.preventDefault();
+    }});
+    var expand = document.getElementById('btn-intro');
+    if (expand) expand.addEventListener('click', function () {{
+      if (document.body.classList.contains('intro-expanded')) setHeight(null);
+    }});
+  }})();
   window.__cy = cy; // expose for headless/console verification
 }})();
 </script>
@@ -976,12 +1157,16 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
   * {{ box-sizing:border-box; }}
   html,body {{ margin:0; height:100%; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:var(--ink); background:var(--bg); }}
-  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  /* Header and graph stack in one column, the graph taking whatever height the header
+     leaves. A fixed allowance for the header put the graph's bottom edge, and anything
+     anchored there, below the window whenever the caption wrapped. */
+  body {{ display:flex; flex-direction:column; }}
+  header {{ flex:none; padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
   header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
   header .sub {{ font-size:12px; color:var(--muted); }}
   .uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
   .uplink:hover {{ text-decoration:underline; }}
-  #app {{ display:flex; height:calc(100% - 50px); }}
+  #app {{ display:flex; flex:1 1 0; min-height:360px; }}
   #graphwrap {{ position:relative; flex:1 1 66%; min-width:0; }}
   /* White behind the graph: a grey citation edge on the page grey is invisible. */
   #cy {{ position:absolute; inset:0; background:#ffffff; }}
@@ -992,6 +1177,24 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   .lg.filter {{ cursor:pointer; user-select:none; padding:2px 6px; border-radius:6px; }}
   .lg.filter.off {{ opacity:.35; text-decoration:line-through; }}
   .lg.filter:hover {{ background:#eef1f5; }}
+  .lg.filter:focus-visible {{ outline:2px solid var(--accent); outline-offset:1px; }}
+  /* the artifact types: one row each, the node's shape beside what the type is */
+  .lg.trow {{ display:flex; align-items:flex-start; gap:8px; width:100%; margin:0 0 2px; padding:4px 6px; }}
+  .lg.trow .shpbox {{ flex:none; width:29px; display:flex; justify-content:center; margin-top:1px; }}
+  .lg.trow .tbody {{ display:block; min-width:0; }}
+  .lg.trow .tname {{ display:block; font-size:12px; color:var(--ink); }}
+  .lg.trow .tmean {{ display:block; color:var(--muted); line-height:1.35; margin-top:1px; }}
+  .lg.trow .tev {{ display:inline-block; font-size:10px; padding:0 5px; border-radius:7px; margin-left:3px;
+                   border:1px solid #86efac; color:#166534; background:#f0fdf4; vertical-align:1px; }}
+  .lg.trow .tev.no {{ border-color:#d1d5db; color:#4b5563; background:#f3f4f6; }}
+  /* Says how many links the current filter leaves out, with the one click that restores
+     them: hiding `cites` can hide the only link between two artifacts. */
+  .ctxnote {{ position:absolute; left:8px; bottom:8px; z-index:10; display:none; align-items:center; gap:8px;
+             max-width:calc(100% - 16px); font-size:12px; color:var(--ink); background:#fffbeb;
+             border:1px solid #fcd34d; border-radius:6px; padding:5px 9px; }}
+  .ctxnote.on {{ display:flex; }}
+  .ctxnote button {{ flex:none; white-space:nowrap; font-size:12px; padding:3px 9px; border:1px solid var(--line); background:#fff; border-radius:6px; cursor:pointer; }}
+  .ctxnote button:hover {{ background:#eef1f5; }}
   .sw {{ width:12px; height:12px; border-radius:3px; display:inline-block; border:1px solid rgba(0,0,0,.15); }}
   .swl {{ width:20px; height:0; border-top-width:3px; border-top-style:solid; display:inline-block; }}
   #detail {{ flex:1; overflow:auto; padding:12px 14px; font-size:13px; }}
@@ -1015,10 +1218,11 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 <body>
 <header>
   <h1>Symposium community &middot; {corpus_title}</h1>
-  <div class="sub">{uplink}{exlink}Every artifact is a node (coloured by Member, shaped by type); every edge is a cross-artifact reference, derived from an <b>address</b> held in a property &mdash; a Ground's address, a provenance field, or a citation in prose. Columns run left&rarr;right in <b>publication order</b> (<b>earlier&nbsp;&larr;</b> left), so reference edges point <i>back</i> in time and the record is only ever built on what already existed. Rows group artifacts by type. Click an artifact for detail; open an <b>Argument</b> for its claim map, or any other artifact for the content a claim finally rests on.</div>
+  <div class="sub">{uplink}{exlink}Every artifact is a node (coloured by Member, shaped by type); every edge is a cross-artifact reference, derived from an <b>address</b> held in a property &mdash; a Ground's address, a provenance field, or a citation in prose. Columns run left&rarr;right by <b>citation depth</b>: each artifact stands right of everything it cites or rests on, so edges point <i>left</i>, to what already existed. Prose citations (<code>cites</code>) are context, not evidence, and start hidden, as do Messages, which link to what they discuss only in prose. Click an artifact for detail; open an <b>Argument</b> for its claim map, or any other artifact for the content a claim rests on.</div>
 </header>
 <div id="app">
   <div id="graphwrap">
+    <div id="ctxnote" class="ctxnote" role="status" aria-live="polite"></div>
     <div class="toolbar"><button id="btn-fit">Fit</button><button id="btn-export">Export PNG</button><button id="btn-export-svg" title="Vector, for print. Exports exactly what is on screen now, with hidden nodes left out.">Export SVG</button><button id="btn-hide">Hide node</button><button id="btn-showall">Show all</button><button id="btn-note" title="Place a caption on the graph. Captions are presenter annotations, not part of the record.">Add note</button><button id="btn-savepos" title="Download the current arrangement and captions as .browser_layout.json; drop it beside the record and it survives every rebuild">Save layout</button><button id="btn-resetpos" title="Return every node to its computed position">Reset layout</button><span id="postate" style="font-size:11px;color:var(--muted);align-self:center;user-select:none">alt-click a node to hide it &middot; drag to rearrange</span></div>
     <div id="cy"></div>
     <div id="tip" class="tip"></div>
@@ -1090,8 +1294,8 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
       // Long edges are the ones that were unreadable: a `cites` edge spanning four columns
       // passes near unrelated nodes however the layer ordering is chosen. Bowing it by an
       // amount proportional to its span separates it from both the straight short edges and
-      // from its own neighbours, so two long edges running between the same columns no longer
-      // lie on top of each other.
+      // from its own neighbours, so two long edges running between the same columns lie
+      // apart.
       {{ selector:'edge[span > 1]', style: {{
         'control-point-distances':'data(cpd)', 'control-point-weights':0.5,
         'line-style':'solid', 'opacity':0.75 }} }},
@@ -1217,8 +1421,7 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 
   // ---- manual arrangement, saved beside the record ----
   //
-  // Dragging a node used to be lost on the next build, because the page held the only copy
-  // of where it had been put. The arrangement is a reading aid, not part of the record, so
+  // A dragged node keeps its place across builds. The arrangement is a reading aid, not part of the record, so
   // it is written to a sidecar file the build reads back rather than into any artifact.
   //
   // The page cannot write to the filesystem, so "Save layout" hands over a download; the
@@ -1310,36 +1513,162 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
   }};
   posState();
 
-  // ---- legend + member filter ----
+  // ---- legend: Member, artifact-type and edge-kind filters ----
+  //
+  // Each legend entry is a toggle. A node is hidden when its Member or its type is, and an
+  // edge when its kind is or when either end is hidden. `cites` (a citation in prose) starts
+  // hidden: it is context, not evidence, and at a few dozen artifacts it is most of the
+  // edges, burying the evidential structure the overview is for. Messages start hidden too:
+  // a Message links to what it discusses only in prose, so with `cites` hidden it would be a
+  // node connected to nothing. The defaults come from the build (meta.default_hidden_rels,
+  // meta.default_hidden_types), so the page and the tests read one value, and the notice
+  // under the graph says what they hide and restores it in one click.
+  //
+  // A viewer's choices are a reading preference, not part of the record, so they live in
+  // this browser's localStorage. Every access is wrapped: storage throws outright in some
+  // privacy modes, and the page must then still work, from the defaults.
   var mem=DATA.meta.members||{{}}, c=DATA.meta.counts;
-  var hidden={{}};
+  var FILTER_KEY='symposium:overview-filters:'+(document.title||'');
+  var hidden={{mem:{{}}, type:{{}}, rel:{{}}}};
+  (DATA.meta.default_hidden_rels||[]).forEach(function(r){{ hidden.rel[r]=true; }});
+  (DATA.meta.default_hidden_types||[]).forEach(function(t){{ hidden.type[t]=true; }});
+  function loadFilters(){{
+    var saved=null;
+    try {{ saved=JSON.parse(localStorage.getItem(FILTER_KEY)||'null'); }} catch (e) {{ saved=null; }}
+    if(!saved || typeof saved!=='object') return;
+    ['mem','type','rel'].forEach(function(k){{
+      var m=saved[k]; if(!m || typeof m!=='object') return;
+      Object.keys(m).forEach(function(v){{ hidden[k][v]=!!m[v]; }});
+    }});
+  }}
+  function saveFilters(){{
+    try {{ localStorage.setItem(FILTER_KEY, JSON.stringify(hidden)); }} catch (e) {{}}
+  }}
+  loadFilters();
+  var relCount={{}}; cy.edges().forEach(function(e){{ var r=e.data('rel'); relCount[r]=(relCount[r]||0)+1; }});
+  // what the defaults hide, present in this record, each with the reason it starts hidden
+  var DEFAULTS=[];
+  (DATA.meta.default_hidden_types||[]).forEach(function(t){{
+    var n=(c.by_type||{{}})[t]||0;
+    if(n) DEFAULTS.push({{kind:'type', val:t, n:n, one:t, many:t+'s',
+      why: t==='Message' ? 'a Message links to what it discusses only in prose' : ''}});
+  }});
+  (DATA.meta.default_hidden_rels||[]).forEach(function(r){{
+    var n=relCount[r]||0;
+    if(n) DEFAULTS.push({{kind:'rel', val:r, n:n,
+      one: r==='cites' ? 'context link' : r+' link', many: r==='cites' ? 'context links' : r+' links',
+      why: r==='cites' ? 'prose citations are context, not evidence' : ''}});
+  }});
+  function joined(parts){{
+    return parts.length<2 ? parts.join('') : parts.slice(0,-1).join(', ')+' and '+parts[parts.length-1];
+  }}
+  var ctxnote=document.getElementById('ctxnote');
+  function updateNote(){{
+    if(!DEFAULTS.length){{ ctxnote.className='ctxnote'; ctxnote.innerHTML=''; return; }}
+    ctxnote.className='ctxnote on';
+    var off=DEFAULTS.filter(function(d){{ return hidden[d.kind][d.val]; }});
+    var shown=off.length ? off : DEFAULTS;
+    var counts=joined(shown.map(function(d){{ return '<b>'+d.n+'</b> '+esc(d.n===1?d.one:d.many); }}));
+    var names=joined(shown.map(function(d){{ return esc(d.many); }}));
+    var why=shown.map(function(d){{ return d.why; }}).filter(Boolean);
+    ctxnote.innerHTML = off.length
+      ? '<span>'+counts+' hidden'+(why.length ? ' &mdash; '+esc(why.join('; '))+'.' : '.')+'</span>'
+        +'<button type="button" data-ctx="show">Show '+names+'</button>'
+      : '<span>'+counts+' shown.</span>'
+        +'<button type="button" data-ctx="hide">Hide '+names+'</button>';
+  }}
   function applyFilter(){{
-    cy.nodes().forEach(function(n){{ n.toggleClass('hidden', !!hidden[n.data('member')]); }});
+    cy.nodes().forEach(function(n){{
+      var nt=n.data('ntype');
+      if(nt==='Annotation' || nt==='TimeTick') return;      // never an artifact, never filtered
+      n.toggleClass('hidden', !!(hidden.mem[n.data('member')] || hidden.type[nt]));
+    }});
     cy.edges().forEach(function(e){{
-      e.toggleClass('hidden', e.source().hasClass('hidden')||e.target().hasClass('hidden')); }});
+      e.toggleClass('hidden', !!hidden.rel[e.data('rel')]
+        || e.source().hasClass('hidden') || e.target().hasClass('hidden')); }});
+    legend.querySelectorAll('.filter').forEach(function(el){{
+      var k=el.getAttribute('data-kind'), v=el.getAttribute('data-val'), off=!!hidden[k][v];
+      el.classList.toggle('off', off);
+      el.setAttribute('aria-pressed', off ? 'false' : 'true');
+    }});
+    updateNote();
+  }}
+  function chip(kind, val, swatch, text){{
+    return '<span class="lg filter" role="button" tabindex="0" aria-pressed="true" data-kind="'+kind
+      +'" data-val="'+esc(val).replace(/"/g,'&quot;')+'" title="click, Enter or Space to show or hide">'+swatch+text+'</span>';
   }}
   var legend=document.getElementById('legend');
-  var relsPresent={{}}; cy.edges().forEach(function(e){{ relsPresent[e.data('rel')]=1; }});
   var html='<b>Members ('+Object.keys(mem).length+') — click to filter</b>';
   Object.keys(mem).sort().forEach(function(h){{
-    html+='<span class="lg filter" data-mem="'+esc(h)+'"><span class="sw" style="border-radius:50%;background:'+mem[h]+'"></span>'
-      +esc(h)+' ('+((c.by_member||{{}})[h]||0)+')</span>';
+    html+=chip('mem', h, '<span class="sw" style="border-radius:50%;background:'+mem[h]+'"></span>',
+      esc(h)+' ('+((c.by_member||{{}})[h]||0)+')');
   }});
-  html+='<b>Publication order</b>';
-  html+='<div class="hint" style="margin:0 0 4px">'+esc(c.time_span||'')+' &middot; '+c.sessions+(c.sessions==1?' session':' sessions')+' (earlier &larr; left) &middot; rows = type</div>';
-  html+='<b>Artifact types ('+c.artifacts+')</b>';
-  Object.keys(c.by_type||{{}}).sort().forEach(function(cl){{
-    html+='<span class="lg">'+esc(cl)+' <b style="display:inline;color:var(--ink)">'+c.by_type[cl]+'</b></span>';
+  html+='<b>Layout</b>';
+  html+='<div class="hint" style="margin:0 0 4px">columns = citation depth (cited &larr; left) &middot; shape = type'
+    +(c.time_span ? ' &middot; published '+esc(c.time_span) : '')
+    +' &middot; '+c.sessions+(c.sessions==1?' session':' sessions')+'</div>';
+  // One row per type: the node's shape, the type and its count, what it is, and whether it can
+  // be evidence. The shapes are drawn from Cytoscape's own polygon definitions, so the icon is
+  // the node; colour on the graph is the Member, so the icons are grey.
+  function ngon(n, rot){{
+    var inc=2*Math.PI/n, a0=(n%2===0 ? Math.PI/2+inc/2 : Math.PI/2)+(rot||0), p=[];
+    for(var i=0;i<n;i++){{ p.push(Math.cos(a0+i*inc), -Math.sin(a0+i*inc)); }}
+    return p;
+  }}
+  function fit(p){{
+    var xs=p.filter(function(_,i){{ return i%2===0; }}), ys=p.filter(function(_,i){{ return i%2===1; }});
+    var x0=Math.min.apply(null,xs), x1=Math.max.apply(null,xs), y0=Math.min.apply(null,ys), y1=Math.max.apply(null,ys);
+    return p.map(function(v,i){{ return i%2===0 ? -1+2*(v-x0)/(x1-x0) : -1+2*(v-y0)/(y1-y0); }});
+  }}
+  function starPts(){{
+    var o=ngon(5,0), q=ngon(5,Math.PI/5), r=0.5*(3-Math.sqrt(5)), p=[];
+    for(var i=0;i<5;i++){{ p.push(o[2*i],o[2*i+1],q[2*i]*r,q[2*i+1]*r); }}
+    return fit(p);
+  }}
+  var SHAPE_PTS={{ 'diamond':[0,-1,1,0,0,1,-1,0], 'tag':[-1,-1,.25,-1,1,0,.25,1,-1,1],
+    'rhomboid':[-1,-1,.333,-1,1,1,-.333,1], 'right-rhomboid':[-.333,-1,1,-1,.333,1,-1,1],
+    'vee':[-1,-1,0,-.333,1,-1,0,1], 'concave-hexagon':[-1,-.95,-.75,0,-1,.95,1,.95,.75,0,1,-.95],
+    'triangle':fit(ngon(3)), 'pentagon':fit(ngon(5)), 'hexagon':fit(ngon(6)),
+    'heptagon':fit(ngon(7)), 'octagon':fit(ngon(8)), 'star':starPts() }};
+  function shapeIcon(shape, wide){{
+    var paint=' fill="#cbd5e1" stroke="#475569" stroke-width="1.3" vector-effect="non-scaling-stroke"', body;
+    if(SHAPE_PTS[shape]) body='<polygon points="'+SHAPE_PTS[shape].map(function(v){{ return v.toFixed(3); }}).join(' ')+'"'+paint+'/>';
+    else if(shape==='rectangle' || shape==='round-rectangle') body='<rect x="-1" y="-1" width="2" height="2" rx="'+(shape==='rectangle'?0:0.3)+'"'+paint+'/>';
+    else body='<ellipse cx="0" cy="0" rx="1" ry="1"'+paint+'/>';
+    return '<span class="shpbox"><svg class="shp" width="'+(wide?29:23)+'" height="18" viewBox="-1.15 -1.15 2.3 2.3" preserveAspectRatio="none" aria-hidden="true">'+body+'</svg></span>';
+  }}
+  html+='<b>Artifact types ('+c.artifacts+') — shape on the graph · click to filter</b>';
+  (DATA.meta.types||[]).forEach(function(t){{
+    html+=chip('type', t.type, shapeIcon(t.shape, t.type==='Argument'),
+      '<span class="tbody"><span class="tname">'+esc(t.type)+' <b style="display:inline;color:var(--ink)">'+t.count+'</b>'
+      +(t.evidence ? ' <span class="tev'+(t.evidence==='never evidence'?' no':'')+'">'+esc(t.evidence)+'</span>' : '')+'</span>'
+      +'<span class="tmean">'+esc(t.meaning)+'</span></span>').replace('class="lg filter"','class="lg filter trow"');
   }});
-  html+='<b>Cross-artifact edges ('+c.cross_edges+')</b>';
-  Object.keys(relsPresent).sort().forEach(function(r){{
-    html+='<span class="lg"><span class="swl" style="border-top-color:'+(REL_COLORS[r]||'#94a3b8')+'"></span>'+esc(r)+'</span>';
+  html+='<b>Cross-artifact edges ('+c.cross_edges+') — click to filter</b>';
+  Object.keys(relCount).sort().forEach(function(r){{
+    html+=chip('rel', r, '<span class="swl" style="border-top-color:'+(REL_COLORS[r]||'#94a3b8')+'"></span>',
+      esc(r)+' ('+relCount[r]+')');
   }});
   legend.innerHTML=html;
+  function toggle(el){{
+    var k=el.getAttribute('data-kind'), v=el.getAttribute('data-val');
+    hidden[k][v]=!hidden[k][v]; saveFilters(); applyFilter();
+  }}
   legend.addEventListener('click',function(e){{
-    var el=e.target.closest?e.target.closest('.filter'):null; if(!el) return;
-    var m=el.getAttribute('data-mem'); hidden[m]=!hidden[m]; el.classList.toggle('off',!!hidden[m]); applyFilter();
+    var el=e.target.closest?e.target.closest('.filter'):null; if(el) toggle(el);
   }});
+  legend.addEventListener('keydown',function(e){{
+    if(e.key!=='Enter' && e.key!==' ') return;
+    var el=e.target.closest?e.target.closest('.filter'):null; if(!el) return;
+    e.preventDefault(); toggle(el);
+  }});
+  ctxnote.addEventListener('click',function(e){{
+    var b=e.target.closest?e.target.closest('button[data-ctx]'):null; if(!b) return;
+    var hide=b.getAttribute('data-ctx')==='hide';
+    DEFAULTS.forEach(function(d){{ hidden[d.kind][d.val]=hide; }});
+    saveFilters(); applyFilter();
+  }});
+  applyFilter();
 
   cy.ready(function(){{ cy.fit(undefined,40);
     // re-fit once the container has its final size (avoids an off-frame first paint)
@@ -1372,24 +1701,30 @@ OVERVIEW_TEMPLATE = r"""<!doctype html>
 # Rendering
 # --------------------------------------------------------------------------- #
 
-import csv as _csv            # noqa: E402
-import html as _html          # noqa: E402
-import io as _io              # noqa: E402
-import json as _json          # noqa: E402
-import re as _re              # noqa: E402
+import csv as _csv  # noqa: E402
+import html as _html  # noqa: E402
+import io as _io  # noqa: E402
+import json as _json  # noqa: E402
+import re as _re  # noqa: E402
 
 #: Colours for the DERIVED cross-artifact edges on the overview. The record stores no
 #: cross-artifact relationship, so each of these names a way an address got into a
 #: property value, not an edge anyone authored.
 OVERVIEW_REL_COLORS = {
-    "grounded_by": "#16a34a", "testimony": "#7c3aed", "cites": "#475569",
-    "produced_by": "#0d9488", "outputs": "#0d9488", "inputs": "#0284c7",
-    "used_models": "#6366f1", "extracted_from": "#db2777", "supersedes": "#b45309",
+    "grounded_by": "#16a34a",
+    "testimony": "#7c3aed",
+    "cites": "#475569",
+    "produced_by": "#0d9488",
+    "outputs": "#0d9488",
+    "inputs": "#0284c7",
+    "used_models": "#6366f1",
+    "extracted_from": "#db2777",
+    "supersedes": "#b45309",
     "recipients": "#94a3b8",
 }
 
 
-def _verdict_panel(meta):
+def _verdict_panel(meta, reading_href=None, has_prose=False):
     """The Argument's judgment, rendered once at the top of its page.
 
     A verdict drawn from a closed set could be a colour on a node. The specification
@@ -1398,55 +1733,140 @@ def _verdict_panel(meta):
     header rather than in a click-to-open panel reflects that: a reader should not
     be able to look at an Argument without seeing what its author concluded, and
     for what purpose.
+
+    So the verdict is shown whole and never sits in a height-capped box. The pane once
+    shared one 96px strip between verdict, purpose and rationale, which on c037_2 showed
+    about two lines of a fourteen-line verdict. Purpose and rationale are longer and read
+    second, so they sit in sections that start closed, and one control (Expand) opens them
+    and shows the pane at its full height.
     """
     verdict = (meta.get("verdict") or "").strip()
     purpose = (meta.get("purpose") or "").strip()
     rationale = (meta.get("rationale") or "").strip()
-    if not (verdict or purpose or rationale):
-        return ""
-    out = ['<div id="verdictpanel">']
-    out.append('<div class="vlabel">Verdict</div>')
-    out.append('<div class="vtext">' + (_html.escape(verdict) or
-               '<span style="color:#9ca3af">(none stated)</span>') + '</div>')
-    out.append('<dl>')
-    if purpose:
-        out.append('<dt>Purpose and stakes</dt><dd>' + md_to_html(purpose, meta.get('addr_pages', {})) + '</dd>')
-    if rationale:
-        out.append('<dt>Rationale</dt><dd>' + md_to_html(rationale, meta.get('addr_pages', {})) + '</dd>')
     sup = meta.get("supersedes") or []
+    if not (verdict or purpose or rationale or reading_href):
+        return ""
+    pages = meta.get("addr_pages", {})
+    out = [
+        '<div id="verdictpanel">',
+        '<div class="vhead"><span class="vlabel">Verdict</span>',
+    ]
+    if reading_href:
+        out.append(
+            f'<a href="{_html.escape(reading_href)}"><b>Read this Argument as a document '
+            '&rarr;</b></a><span class="hint">verdict, purpose, rationale and every Ground '
+            "in one place</span>"
+        )
+        n = meta.get("cited_by")
+        if n:
+            out.append(
+                f'<a href="{_html.escape(reading_href)}#cited-by">cited by {n}</a>'
+            )
+    if purpose or rationale or has_prose:
+        out.append(
+            '<button type="button" id="btn-intro" aria-expanded="false" aria-controls="intro" '
+            'title="Open every section and show this pane at its full height">Expand</button>'
+        )
+    out.append("</div>")
+    out.append(
+        '<div class="vtext">'
+        + (_html.escape(verdict) or '<span style="color:#9ca3af">(none stated)</span>')
+        + "</div>"
+    )
+    if purpose:
+        out.append(
+            '<details class="vsec"><summary>Purpose and stakes</summary><div class="vbody">'
+            + md_to_html(purpose, pages)
+            + "</div></details>"
+        )
+    if rationale:
+        out.append(
+            '<details class="vsec"><summary>Rationale</summary><div class="vbody">'
+            + md_to_html(rationale, pages)
+            + "</div></details>"
+        )
     if sup:
-        out.append('<dt>Supersedes</dt><dd>' + _html.escape("; ".join(str(x) for x in sup))
-                   + (' — ' + _html.escape(meta.get("supersedes_rationale", ""))
-                      if meta.get("supersedes_rationale") else "") + '</dd>')
-    out.append('</dl></div>')
+        out.append(
+            "<dl><dt>Supersedes</dt><dd>"
+            + _html.escape("; ".join(str(x) for x in sup))
+            + (
+                " — " + _html.escape(meta.get("supersedes_rationale", ""))
+                if meta.get("supersedes_rationale")
+                else ""
+            )
+            + "</dd></dl>"
+        )
+    out.append("</div>")
     return "".join(out)
 
 
-def render_claim_html(elements, meta, cytoscape_rel_path, intro_html=""):
+#: The verdict pane's resize handle: a separator a reader drags, or moves with the arrow keys
+#: (Shift for bigger steps, Home for the smallest, End or a double-click for full height).
+INTRO_SPLIT = (
+    '<div id="introsplit" role="separator" tabindex="0" aria-orientation="horizontal" '
+    'aria-controls="intro" aria-label="Height of the verdict pane: drag, or use the '
+    'arrow keys" title="Drag to resize the verdict pane; arrow keys work too; '
+    'double-click for full height"></div>'
+)
+
+
+def render_claim_html(
+    elements, meta, cytoscape_rel_path, intro_html="", reading_href=None
+):
+    """`intro_html` is the Argument's own framing prose (its `description` and `text`);
+    `reading_href` is its reading page, linked from the verdict pane."""
     payload = {"elements": elements, "meta": meta}
     genre = meta.get("genre_line", "")
-    intro_html = _verdict_panel(meta) + (intro_html or "")
+    prose = f'<div class="intro-prose">{intro_html}</div>' if intro_html else ""
+    intro_html = _verdict_panel(meta, reading_href, has_prose=bool(prose)) + prose
     return HTML_TEMPLATE.format(
         title=_html.escape(meta["title"]),
         review_id=_html.escape(meta["review_id"]),
         arg_label="Argument",
-        genre_html=(f' &middot; <span class="genre">{_html.escape(genre)}</span>' if genre else ""),
+        genre_html=(
+            f' &middot; <span class="genre">{_html.escape(genre)}</span>'
+            if genre
+            else ""
+        ),
         member=_html.escape(meta["member"]),
         member_color=_html.escape(meta.get("member_color", "#9ca3af")),
         created=_html.escape(meta["created"]),
         cyto_src=_html.escape(cytoscape_rel_path),
         graph_json=_json.dumps(payload, ensure_ascii=False),
-        intro_html=(f'<div id="intro">{intro_html}</div>' if intro_html else ''),
+        intro_html=(
+            f'<div id="intro">{intro_html}</div>{INTRO_SPLIT}' if intro_html else ""
+        ),
     )
 
 
-def render_overview_html(elements, meta, cytoscape_rel_path, corpus_title="community record"):
+#: The header link to the Rounds page, on the pages that link to it: only when the record has
+#: a ResearchGoal, because a community without goals has no rounds to show (plan, risks).
+ROUNDS_LINK = '<a class="uplink" href="rounds.html">rounds &rarr;</a> &middot; '
+#: The header link to the Lineage page: only when the record has an Argument (R5).
+LINEAGE_LINK = '<a class="uplink" href="lineage.html">lineage &rarr;</a> &middot; '
+
+
+def nav_links(has_rounds=False, has_lineage=False):
+    """The header links to the Rounds and Lineage pages, for the pages that exist."""
+    return (ROUNDS_LINK if has_rounds else "") + (LINEAGE_LINK if has_lineage else "")
+
+
+def render_overview_html(
+    elements,
+    meta,
+    cytoscape_rel_path,
+    corpus_title="community record",
+    has_rounds=False,
+    has_lineage=False,
+):
     return OVERVIEW_TEMPLATE.format(
         cyto_src=_html.escape(cytoscape_rel_path),
         corpus_title=_html.escape(corpus_title),
         uplink='<a class="uplink" href="contents.html">contents &rarr;</a> &middot; ',
-        exlink="",
-        graph_json=_json.dumps({"elements": elements, "meta": meta}, ensure_ascii=False),
+        exlink=nav_links(has_rounds, has_lineage),
+        graph_json=_json.dumps(
+            {"elements": elements, "meta": meta}, ensure_ascii=False
+        ),
     )
 
 
@@ -1455,7 +1875,7 @@ CONTENTS_TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Symposium community — contents</title>
+<title>Symposium community — {corpus_title} — contents</title>
 <style>
   :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
   * {{ box-sizing:border-box; }}
@@ -1468,7 +1888,24 @@ CONTENTS_TEMPLATE = """<!doctype html>
   main {{ max-width:1000px; margin:0 auto; padding:18px 16px 60px; }}
   h2 {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
         margin:26px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px; }}
-  h2:first-of-type {{ margin-top:6px; }}
+  details.sec:first-of-type > summary h2 {{ margin-top:6px; }}
+  /* A type's section folds; its marker is a character, not a colour (N6). */
+  details.sec > summary {{ list-style:none; cursor:pointer; }}
+  details.sec > summary::-webkit-details-marker {{ display:none; }}
+  details.sec > summary h2::before {{ content:"\\25B8  "; }}
+  details.sec[open] > summary h2::before {{ content:"\\25BE  "; }}
+  .tools {{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 8px; margin-top:9px; }}
+  .tools input[type=search] {{ flex:1 1 280px; max-width:440px; font:inherit; font-size:13px;
+                               padding:5px 9px; border:1px solid var(--line); border-radius:6px; }}
+  .chip {{ font:inherit; font-size:12px; padding:3px 10px; border:1px solid var(--line);
+           border-radius:12px; background:var(--panel); color:var(--ink); cursor:pointer; }}
+  .chip .n {{ color:var(--muted); }}
+  .chip[aria-pressed="true"]::before {{ content:"\\2713  "; }}
+  .chip[aria-pressed="false"] {{ text-decoration:line-through; color:var(--muted);
+                                 background:transparent; }}
+  .chip:focus-visible, .tools input:focus-visible, details.sec > summary:focus-visible {{
+    outline:2px solid var(--accent); outline-offset:2px; }}
+  #shown {{ font-size:12px; color:var(--muted); }}
   .item {{ background:var(--panel); border:1px solid var(--line); border-radius:8px;
            padding:10px 13px; margin-bottom:7px; }}
   .item a {{ color:var(--accent); text-decoration:none; font-weight:600; line-height:1.35; }}
@@ -1485,12 +1922,83 @@ CONTENTS_TEMPLATE = """<!doctype html>
 <header>
   <h1>Symposium community &middot; {corpus_title}</h1>
   <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
-  Everything in the record, newest first within each type. An <b>Argument</b> is where a claim is
-  made and judged; its verdict opens below it. <b>Data</b> and <b>Model</b> hold what an Argument
-  can stand on. <b>Analysis</b>, <b>Message</b> and <b>NonGroundable</b> are non-groundable by
-  type: they may be read and cited in prose and may never be used as evidence.</div>
+  {roundslink}Everything in the record, newest first within each type.{hidden_note} An
+  <b>Argument</b> is where a claim is made and judged; its verdict opens below it. <b>Data</b> and
+  <b>Model</b> hold what an Argument can stand on. <b>Analysis</b>, <b>Message</b> and
+  <b>NonGroundable</b> are non-groundable by type: they may be read and cited in prose and may
+  never be used as evidence.</div>
+  <div class="tools" role="search">
+    <input type="search" id="q" autocomplete="off" spellcheck="false"
+           placeholder="Search titles, names, verdicts and claims"
+           aria-label="Search titles, names, verdicts and claims">
+    <span role="group" aria-label="Types shown">{chips}</span>
+    <span id="shown" role="status" aria-live="polite"></span>
+  </div>
 </header>
 <main>{sections}</main>
+<script type="application/json" id="search-index">{index}</script>
+<script>
+/* Type chips and search over the list above (R9, R12). Some types start hidden; a chip shows
+   or hides its type, and the reader's own choices are kept in this browser (N5) and win over
+   the defaults. A search looks through every type, hidden or not, so nothing is missed for a
+   chip left off. The index holds, for each artifact, its title, name, whole verdict and
+   Assertion claims; nothing is fetched (N1). Punctuation is ignored on both sides, so
+   "IMR-90" also finds "IMR90". */
+(function () {{
+  var KEY = 'symposium.contents.types';
+  var DEFAULT_HIDDEN = {defaults};
+  var index = {{}}, chosen = {{}}, text = {{}};
+  try {{ index = JSON.parse(document.getElementById('search-index').textContent) || {{}}; }} catch (e) {{ index = {{}}; }}
+  try {{ chosen = JSON.parse(localStorage.getItem(KEY) || '{{}}') || {{}}; }} catch (e) {{ chosen = {{}}; }}
+  function isHidden(t) {{ return t in chosen ? !!chosen[t] : !!DEFAULT_HIDDEN[t]; }}
+  function norm(s) {{ return String(s || '').toLowerCase().replace(/[^\\p{{L}}\\p{{N}}\\s]+/gu, ''); }}
+  Object.keys(index).forEach(function (k) {{ text[k] = norm(index[k]); }});
+  var q = document.getElementById('q'), shown = document.getElementById('shown');
+  var chips = [].slice.call(document.querySelectorAll('.chip'));
+  var secs = [].slice.call(document.querySelectorAll('details.sec'));
+  var searching = false;
+  secs.forEach(function (s) {{
+    s._open = s.open;   // the reader's own choice, restored when a search ends
+    s.querySelector('summary').addEventListener('click', function () {{
+      if (!searching) s._open = !s.open;
+    }});
+  }});
+  function apply() {{
+    var terms = norm(q.value).split(/\\s+/).filter(Boolean);
+    var shownN = 0, total = 0, off = 0;
+    searching = terms.length > 0;
+    secs.forEach(function (s) {{
+      var on = !isHidden(s.dataset.type), n = 0;
+      if (!on) off += 1;
+      [].forEach.call(s.querySelectorAll('.item'), function (it) {{
+        var t = text[it.dataset.name] || '';
+        var hit = searching ? terms.every(function (w) {{ return t.indexOf(w) >= 0; }}) : on;
+        it.hidden = !hit;
+        total += 1;
+        if (hit) n += 1;
+      }});
+      shownN += n;
+      s.hidden = searching ? n === 0 : !on;
+      s.open = searching ? n > 0 : s._open;
+    }});
+    chips.forEach(function (c) {{
+      c.setAttribute('aria-pressed', isHidden(c.dataset.type) ? 'false' : 'true');
+    }});
+    shown.textContent = searching ? shownN + ' of ' + total + ' match, in every type'
+      : (off ? shownN + ' of ' + total + ' shown' : '');
+  }}
+  chips.forEach(function (c) {{
+    c.addEventListener('click', function () {{
+      var t = c.dataset.type;
+      chosen[t] = !isHidden(t);
+      try {{ localStorage.setItem(KEY, JSON.stringify(chosen)); }} catch (e) {{ /* not kept */ }}
+      apply();
+    }});
+  }});
+  q.addEventListener('input', apply);
+  apply();
+}})();
+</script>
 </body>
 </html>
 """
@@ -1551,6 +2059,10 @@ READING_TEMPLATE = """<!doctype html>
   h3.evh {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
             margin:28px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px;
             font-weight:650; }}
+  main > h2#cited-by {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em;
+                        color:var(--muted); margin:28px 0 8px; border-bottom:1px solid var(--line);
+                        padding-bottom:5px; }}
+{cited_css}
 </style>
 </head>
 <body>
@@ -1576,11 +2088,23 @@ def render_reading_html(title, byline, map_href, body):
     The structure is the specialist view and deserves the viewport it has; the prose is what
     a scientist came to read and needs a page that simply scrolls."""
     return READING_TEMPLATE.format(
-        title=_html.escape(title), byline=_html.escape(byline),
-        map_href=_html.escape(map_href), body=body)
+        title=_html.escape(title),
+        byline=_html.escape(byline),
+        map_href=_html.escape(map_href),
+        body=body,
+        cited_css=CITED_CSS,
+    )
 
 
-def render_contents_html(entries, corpus_title="community record"):
+#: The types Contents starts with hidden (R9, as the user chose it on 2026-11-04): the talk
+#: (22 of c037_2's 74 artifacts are Messages), the plans and goals the Rounds page shows, and
+#: the Data the Arguments are read for. A chip shows each; a search looks through all of them.
+CONTENTS_HIDDEN = ("Message", "AnalysisPlan", "ResearchGoal", "Data")
+
+
+def render_contents_html(
+    entries, corpus_title="community record", has_rounds=False, has_lineage=False
+):
     """A plain reading list of the record.
 
     The overview is a reference graph, which answers "how does this record hang together"
@@ -1589,32 +2113,557 @@ def render_contents_html(entries, corpus_title="community record"):
     without first finding the Argument in the picture. Arguments come first because the
     verdict is what a reader came for; everything else follows in the order the type is
     likely to be wanted."""
-    order = ["Argument", "Data", "Model", "ScientificPublication",
-             "Analysis", "Message", "NonGroundable"]
-    seen, out = set(), []
+    order = [
+        "Argument",
+        "Data",
+        "Model",
+        "ScientificPublication",
+        "Analysis",
+        "Message",
+        "NonGroundable",
+    ]
+    out, chips, index = [], [], {}
     types = order + sorted({e["type"] for e in entries} - set(order))
     for t in types:
         rows = [e for e in entries if e["type"] == t]
         if not rows:
             continue
-        seen.add(t)
         items = []
         for e in sorted(rows, key=lambda x: x["created"], reverse=True):
-            verdict = (f'<div class="verdict">{_html.escape(e["verdict"])}</div>'
-                       if e.get("verdict") else "")
-            extra = f' &middot; {_html.escape(e["extra"])}' if e.get("extra") else ""
+            index[e["name"]] = e.get("search") or f"{e['title']} {e['name']}"
+            verdict = (
+                f'<div class="verdict">{_html.escape(e["verdict"])}</div>'
+                if e.get("verdict")
+                else ""
+            )
+            extra = f" &middot; {_html.escape(e['extra'])}" if e.get("extra") else ""
             items.append(
-                '<div class="item"><a href="{href}">{title}</a>'
+                '<div class="item" data-name="{name}"><a href="{href}">{title}</a>'
                 '<div class="meta"><span class="mbadge" style="background:{color}"></span>'
-                '{member} &middot; {created}{extra} &middot; <code>{name}</code></div>'
-                '{verdict}</div>'.format(
-                    href=_html.escape(e["href"]), title=_html.escape(e["title"]),
+                "{member} &middot; {created}{extra} &middot; <code>{name}</code></div>"
+                "{verdict}</div>".format(
+                    href=_html.escape(e["href"]),
+                    title=_html.escape(e["title"]),
                     color=_html.escape(e.get("color", "#9ca3af")),
-                    member=_html.escape(e["member"]), created=_html.escape(e["created"][:16]),
-                    extra=extra, name=_html.escape(e["name"]), verdict=verdict))
-        out.append(f"<h2>{_html.escape(t)} ({len(rows)})</h2>" + "".join(items))
-    return CONTENTS_TEMPLATE.format(corpus_title=_html.escape(corpus_title),
-                                    sections="".join(out))
+                    member=_html.escape(e["member"]),
+                    created=_html.escape(e["created"][:16]),
+                    extra=extra,
+                    name=_html.escape(e["name"]),
+                    verdict=verdict,
+                )
+            )
+        tq = _html.escape(t)
+        out.append(
+            f'<details class="sec" data-type="{tq}" open><summary>'
+            f"<h2>{tq} ({len(rows)})</h2></summary>" + "".join(items) + "</details>"
+        )
+        pressed = "false" if t in CONTENTS_HIDDEN else "true"
+        chips.append(
+            f'<button type="button" class="chip" data-type="{tq}" '
+            f'aria-pressed="{pressed}">'
+            f'{tq} <span class="n">{len(rows)}</span></button>'
+        )
+    # inside a <script>: "<", ">" and "&" become JSON escapes, so no title can end the element
+    # early or open a comment in it, and JSON.parse reads them back unchanged
+    data = (
+        _json.dumps(index, ensure_ascii=False)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+    present = [
+        t
+        for t in types
+        if t in CONTENTS_HIDDEN and any(e["type"] == t for e in entries)
+    ]
+    named = [f"<b>{_html.escape(t)}</b>" for t in present]
+    hidden_note = (
+        (
+            " "
+            + (
+                ", ".join(named[:-1]) + " and " + named[-1]
+                if len(named) > 1
+                else named[0]
+                if named
+                else ""
+            )
+            + " start hidden: a chip shows a type, and a search looks through every type."
+        )
+        if named
+        else ""
+    )
+    return CONTENTS_TEMPLATE.format(
+        corpus_title=_html.escape(corpus_title),
+        sections="".join(out),
+        chips="".join(chips),
+        index=data,
+        roundslink=nav_links(has_rounds, has_lineage),
+        hidden_note=hidden_note,
+        defaults=_json.dumps({t: True for t in CONTENTS_HIDDEN}),
+    )
+
+
+#: The grouping of a Rounds column and of a goal page's "Serving this goal": the goal, the
+#: plan, the material, the work, what the work produced, the judgment, the talk. A Data
+#: artifact whose `produced_by` names something is a result; one without is imported material.
+ROUND_GROUPS = [
+    ("ResearchGoal", "Goals"),
+    ("AnalysisPlan", "Plans"),
+    ("ScientificPublication", "Publications"),
+    ("Data", "Data"),
+    ("Analysis", "Analyses"),
+    ("result", "Results"),
+    ("Model", "Models"),
+    ("Argument", "Arguments"),
+    ("Message", "Messages"),
+]
+
+
+def grouped_entries_html(entries):
+    """A goal's artifacts as groups of entries, in ROUND_GROUPS order, then any other type by
+    name. Each entry: {group, title, href, member, color, created, verdict, shared}."""
+    known = [g for g, _ in ROUND_GROUPS]
+    labels = dict(ROUND_GROUPS)
+    order = known + sorted({e["group"] for e in entries} - set(known))
+    out = []
+    for g in order:
+        rows = [e for e in entries if e["group"] == g]
+        if not rows:
+            continue
+        items = []
+        for e in rows:
+            shared = ""
+            if e.get("shared"):
+                also = ", ".join(e["shared"])
+                shared = (
+                    f' &middot; <span class="shared" title="also serves {_html.escape(also)}">'
+                    f"shared &middot; also {_html.escape(also)}</span>"
+                )
+            verdict = (
+                f'<div class="rverdict">{_html.escape(e["verdict"])}</div>'
+                if e.get("verdict")
+                else ""
+            )
+            items.append(
+                '<li class="ritem"><a href="{href}">{title}</a><div class="rmeta">'
+                '<span class="mbadge" style="background:{color}"></span>{member} &middot; '
+                "{created}{shared}</div>{verdict}</li>".format(
+                    href=_html.escape(e["href"]),
+                    title=_html.escape(e["title"]),
+                    color=_html.escape(e.get("color", "#9ca3af")),
+                    member=_html.escape(e["member"]),
+                    created=_html.escape(e["created"][:16]),
+                    shared=shared,
+                    verdict=verdict,
+                )
+            )
+        out.append(
+            f'<div class="rgroup"><h3>{_html.escape(labels.get(g, g))} ({len(rows)})</h3>'
+            f"<ul>{''.join(items)}</ul></div>"
+        )
+    return "".join(out) or '<p class="hint">Nothing in the record names it yet.</p>'
+
+
+#: Entries in a Rounds column and on a goal page, shared by both pages.
+ROUND_CSS = """
+  .rgroup h3 { font-size:11px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+               margin:12px 0 4px; font-weight:650; }
+  .rgroup ul { list-style:none; margin:0; padding:0; }
+  .ritem { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+           padding:7px 10px; margin-bottom:5px; font-size:13px; line-height:1.35; }
+  .ritem a { color:var(--accent); text-decoration:none; font-weight:600; }
+  .ritem a:hover { text-decoration:underline; }
+  .rmeta { font-size:11px; color:var(--muted); margin-top:3px; }
+  .rverdict { font-size:12px; line-height:1.45; margin-top:5px; padding-left:8px;
+              border-left:3px solid var(--line); color:#374151; }
+  .shared { font-weight:650; color:#7c3aed; }
+"""
+
+
+ROUNDS_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symposium community — {corpus_title} — rounds</title>
+<style>
+  :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
+  * {{ box-sizing:border-box; }}
+  html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+               color:var(--ink); background:var(--bg); font-size:14px; }}
+  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
+  header .sub {{ font-size:12px; color:var(--muted); line-height:1.5; }}
+  a.uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
+  .mbadge {{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px;
+             vertical-align:middle; border:1px solid rgba(0,0,0,.15); }}
+  .hint {{ font-size:12px; color:var(--muted); }}
+  /* One column per goal, side by side, scrolled sideways when they do not fit: the point of the
+     page is to read the rounds against each other. Focusable so the keyboard can scroll it. */
+  .rounds {{ display:grid; grid-auto-flow:column; grid-auto-columns:minmax(260px, 1fr);
+             gap:14px; padding:14px 16px 40px; overflow-x:auto; align-items:start; }}
+  .rounds:focus-visible {{ outline:2px solid var(--accent); outline-offset:-2px; }}
+  .rcol {{ min-width:0; }}
+  .rcol > h2 {{ font-size:14px; margin:0; line-height:1.35; }}
+  .rcol > h2 a {{ color:var(--ink); text-decoration:none; }}
+  .rcol > h2 a:hover {{ text-decoration:underline; }}
+  .rnum {{ display:block; font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+           color:var(--muted); font-weight:650; margin-bottom:2px; }}
+  .rcol.corpus > h2 {{ color:var(--muted); }}
+  .rcount {{ font-size:12px; color:var(--muted); margin:3px 0 6px;
+             border-bottom:1px solid var(--line); padding-bottom:6px; }}
+{round_css}
+</style>
+</head>
+<body>
+<header>
+  <h1>Symposium community &middot; {corpus_title} &middot; rounds</h1>
+  <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
+  <a class="uplink" href="contents.html">contents</a> &middot; {lineagelink}
+  One column per <b>ResearchGoal</b>, oldest first, holding the artifacts whose
+  <code>serves_goals</code> name it, grouped by type. An artifact naming several goals is in each
+  of their columns, marked <span class="shared">shared</span>. The first column holds what names
+  no goal: the corpus the rounds draw on, the goals themselves, and anything unassigned.</div>
+</header>
+<main class="rounds" tabindex="0" aria-label="Research rounds, one column per goal">{columns}</main>
+</body>
+</html>
+"""
+
+
+def render_rounds_html(columns, corpus_title="community record", has_lineage=False):
+    """The Rounds page (R3): `columns` = [{label, title, href, count, entries, corpus}]."""
+    out = []
+    for c in columns:
+        head = (
+            f'<a href="{_html.escape(c["href"])}">{_html.escape(c["title"])}</a>'
+            if c.get("href")
+            else _html.escape(c["title"])
+        )
+        out.append(
+            f'<section class="rcol{" corpus" if c.get("corpus") else ""}" '
+            f'aria-label="{_html.escape(c["label"])}"><h2><span class="rnum">'
+            f"{_html.escape(c['label'])}</span>{head}</h2>"
+            f'<div class="rcount">{c["count"]} artifact{"" if c["count"] == 1 else "s"}'
+            f"{(' &middot; ' + _html.escape(c['created'][:16])) if c.get('created') else ''}</div>"
+            + grouped_entries_html(c["entries"])
+            + "</section>"
+        )
+    return ROUNDS_TEMPLATE.format(
+        corpus_title=_html.escape(corpus_title),
+        columns="".join(out),
+        round_css=ROUND_CSS,
+        lineagelink=LINEAGE_LINK if has_lineage else "",
+    )
+
+
+LINEAGE_TEMPLATE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Symposium community — {corpus_title} — lineage</title>
+<style>
+  :root {{ --bg:#f6f7f9; --panel:#fff; --ink:#1a1f2b; --muted:#6b7280; --line:#d9dee6; --accent:#2563eb; }}
+  * {{ box-sizing:border-box; }}
+  html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+               color:var(--ink); background:var(--bg); font-size:14px; }}
+  header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); }}
+  header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
+  header .sub {{ font-size:12px; color:var(--muted); line-height:1.5; }}
+  a.uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
+  .legend {{ display:flex; flex-wrap:wrap; gap:4px 18px; margin-top:7px; font-size:12px; color:var(--ink); }}
+  .legend span {{ display:inline-flex; align-items:center; gap:6px; }}
+  .graphwrap {{ overflow-x:auto; padding:0 16px; }}
+  .graph {{ position:relative; margin:8px 0 4px; }}
+  .graph svg {{ position:absolute; left:0; top:0; pointer-events:none; }}
+  /* the links only: an arrowhead is a path too, inside <defs>, and must keep its fill */
+  .graph svg > path {{ pointer-events:stroke; fill:none; }}
+  .lane {{ position:absolute; font-size:11px; font-weight:650; color:var(--muted);
+           text-transform:uppercase; letter-spacing:.05em; }}
+  a.lnode {{ position:absolute; display:block; overflow:hidden; background:var(--panel);
+             border:1px solid var(--line); border-radius:8px; padding:8px 10px; color:var(--ink);
+             text-decoration:none; box-shadow:0 1px 2px rgba(0,0,0,.05); }}
+  a.lnode:hover {{ border-color:var(--accent); }}
+  a.lnode:focus-visible {{ outline:2px solid var(--accent); outline-offset:2px; }}
+  .lnode .t {{ font-size:12px; font-weight:650; line-height:1.3; color:var(--accent);
+               display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }}
+  .lnode .o {{ font-size:11.5px; line-height:1.35; margin-top:5px; color:#374151;
+               display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical; overflow:hidden; }}
+  .lnode .m, .lines .meta {{ font-size:11px; color:var(--muted); }}
+  .lnode .m {{ position:absolute; left:10px; right:10px; bottom:7px; white-space:nowrap;
+               overflow:hidden; text-overflow:ellipsis; line-height:1.45; }}
+  .mbadge {{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:4px;
+             vertical-align:middle; border:1px solid rgba(0,0,0,.15); }}
+{link_css}
+  path.cross {{ opacity:.8; }}
+  main.lines {{ max-width:960px; margin:0 auto; padding:6px 16px 60px; }}
+  .lines h2 {{ font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);
+               margin:24px 0 8px; border-bottom:1px solid var(--line); padding-bottom:5px; }}
+  .lines h2 span {{ text-transform:none; letter-spacing:0; font-weight:400; }}
+  .lines ol {{ margin:0; padding-left:22px; }}
+  .lines li {{ background:var(--panel); border:1px solid var(--line); border-radius:8px;
+               padding:9px 12px; margin:0 0 7px; }}
+  .lines li > a {{ color:var(--accent); font-weight:600; text-decoration:none; }}
+  .lines .opening {{ font-size:13px; line-height:1.45; margin-top:5px; padding-left:10px;
+                     border-left:3px solid var(--line); color:#374151; }}
+  .lines .follows {{ font-size:12px; margin-top:4px; color:var(--ink); line-height:1.5; }}
+  .lines .follows:first-of-type {{ margin-top:7px; }}
+  .lines .follows a {{ color:var(--accent); }}
+  .lines li:target {{ border-color:#d97706; box-shadow:0 0 0 2px #fde68a; }}
+</style>
+</head>
+<body>
+<header>
+  <h1>Symposium community &middot; {corpus_title} &middot; lineage</h1>
+  <div class="sub"><a class="uplink" href="index.html">&larr; reference graph</a> &middot;
+  <a class="uplink" href="contents.html">contents</a> &middot; {roundslink}{summary} Each line
+  is a chain of <b>Arguments</b>, oldest on the left, each following the earlier one it
+  supersedes, rests a Ground under its primary Assertion on, or cites in prose. A line never
+  branches: a second follower starts a line of its own, and the link between the two lines is
+  drawn. A prose citation is context, not evidence (spec &sect;2.2.5): a dashed link says one
+  Argument mentions another, not that it rests on it. A link a longer chain already implies is
+  not drawn; every link is listed under the graph.</div>
+  <div class="legend" aria-label="Kinds of link">{legend}</div>
+</header>
+<div class="graphwrap"><div class="graph" style="width:{width}px;height:{height}px">
+<svg width="{width}" height="{height}" viewBox="0 0 {width} {height}" aria-hidden="true">
+<defs>{markers}</defs>{edges}</svg>
+{lanes}{nodes}
+</div></div>
+<main class="lines">{lines}</main>
+</body>
+</html>
+"""
+
+#: How each kind of Lineage link is drawn and said, strongest first (browse.LINEAGE_KINDS).
+#: Each has its own dash pattern and its own words, so colour is never the only sign (N6).
+LINEAGE_LOOK = {
+    "supersedes": ("#1d4ed8", "", "supersedes", "which it supersedes"),
+    "ground": (
+        "#15803d",
+        "10 3 2 3",
+        "a Ground under its primary Assertion cites",
+        "which a Ground under its primary Assertion cites",
+    ),
+    "cites": (
+        "#6b7280",
+        "5 4",
+        "cites in prose (context, not evidence)",
+        "which it cites in prose (context, not evidence)",
+    ),
+}
+#: How wide each kind's link is drawn, px: the stronger the link, the heavier the line.
+LINEAGE_WIDTH = {"supersedes": 2.6, "ground": 2.2, "cites": 1.6}
+
+
+def lineage_link_css():
+    """The links' style rules, from LINEAGE_LOOK and LINEAGE_WIDTH: the same colour and dash
+    the legend's swatches and the arrowheads are drawn with, so the three cannot differ."""
+    return "\n".join(
+        f"  path.lk-{k} {{ stroke:{c}; stroke-width:{LINEAGE_WIDTH[k]};"
+        + (f" stroke-dasharray:{dash};" if dash else "")
+        + " }"
+        for k, (c, dash, _s, _l) in LINEAGE_LOOK.items()
+    )
+
+
+LINEAGE_NODE = (170, 164)  # a node's width and height, px
+LINEAGE_GAP = (26, 46)  # between columns, and between lines (room for a line's label)
+LINEAGE_PAD = 8
+
+
+def render_lineage_html(lin, nodes, corpus_title="community record", has_rounds=False):
+    """The Lineage page (F3): every Argument once, one lane per line, placed left to right
+    by publication time, with every drawn link; then, per line, its Arguments in
+    publication order with their verdict openings and every link each one states."""
+    esc = _html.escape
+    (nw, nh), (gx, gy), pad = LINEAGE_NODE, LINEAGE_GAP, LINEAGE_PAD
+    col = {n: i for i, n in enumerate(lin["args"])}
+    line_of = lin["line_of"]
+    width = pad * 2 + max(1, len(col)) * (nw + gx) - gx
+    height = (
+        pad + len(lin["lines"]) * (nh + gy) + 16
+    )  # room for an arc under the last lane
+    xy = {n: (pad + col[n] * (nw + gx), gy - 6 + line_of[n] * (nh + gy)) for n in col}
+    anchor = {n: "a-" + _re.sub(r"[^A-Za-z0-9_-]", "_", n) for n in col}
+    rank = {k: i for i, k in enumerate(LINEAGE_LOOK)}
+
+    def strongest(kinds):
+        return min(kinds, key=lambda k: rank[k])
+
+    def ordered(kinds):
+        return sorted(kinds, key=lambda k: rank[k])
+
+    def said(kinds):  # "which it supersedes and which it cites in prose …"
+        return " and ".join(LINEAGE_LOOK[k][3] for k in ordered(kinds))
+
+    def named(kinds):  # "supersedes; cites in prose …", for a link's tooltip
+        return "; ".join(LINEAGE_LOOK[k][2] for k in ordered(kinds))
+
+    follows = {}  # an Argument -> the one before it in its line
+    for line in lin["lines"]:
+        for a, b in zip(line, line[1:]):
+            follows[b] = a
+    edges = []
+    for later, earlier in sorted(lin["drawn"], key=lambda e: (col[e[0]], col[e[1]])):
+        kinds = lin["links"][(later, earlier)]
+        (ax, ay), (bx, by) = xy[earlier], xy[later]
+        lane = line_of[later]
+        # A link drawn straight across from card side to card side would run behind any card
+        # in the columns between that sits in its lanes or the lanes between them, and read
+        # as links through it. Within one lane it arcs below the lane instead, card bottom to
+        # card bottom, clear of the next lane's label; between lanes it leaves through the
+        # gap, from the facing edges of its cards.
+        lo, hi = sorted((line_of[earlier], lane))
+        passed = any(
+            lo <= line_of[n] <= hi for n in col if col[earlier] < col[n] < col[later]
+        )
+        below = passed and line_of[earlier] == lane
+        between = passed and not below
+        # Between lanes that are not neighbours a curve would cross the lanes between. Every
+        # Argument has a column to itself, so the link runs straight along its earlier card's
+        # column, clear of every other card, to the gap beside the later card's lane, and
+        # along that gap to the later card.
+        elbow = between and hi - lo > 1
+        if below:
+            x1, x2, low = ax + nw / 2, bx + nw / 2, ay + nh + (gy - 18)
+            d = (
+                f"M{x1:.0f},{ay + nh:.0f} C{x1:.0f},{low:.0f} {x2:.0f},{low:.0f} "
+                f"{x2:.0f},{by + nh + 2:.0f}"
+            )
+        elif elbow:
+            down, r = lane > line_of[earlier], 8
+            x1, x2 = ax + nw / 2, bx + nw / 2
+            y1, g, y2 = (
+                (ay + nh, by - 30, by - 2) if down else (ay, by + nh + 16, by + nh + 2)
+            )
+            s = 1 if down else -1
+            d = (
+                f"M{x1:.0f},{y1:.0f} L{x1:.0f},{g - s * r:.0f} Q{x1:.0f},{g:.0f} "
+                f"{x1 + r:.0f},{g:.0f} L{x2 - r:.0f},{g:.0f} Q{x2:.0f},{g:.0f} "
+                f"{x2:.0f},{g + s * r:.0f} L{x2:.0f},{y2:.0f}"
+            )
+        elif between:
+            down = lane > line_of[earlier]
+            x1, x2 = ax + nw / 2, bx + nw / 2
+            y1, y2 = (ay + nh, by - 2) if down else (ay, by + nh + 2)
+            mid = (y1 + y2) / 2
+            d = f"M{x1:.0f},{y1:.0f} C{x1:.0f},{mid:.0f} {x2:.0f},{mid:.0f} {x2:.0f},{y2:.0f}"
+        else:
+            x1, y1, x2, y2 = ax + nw, ay + nh / 2, bx, by + nh / 2
+            dx = max(24, (x2 - x1) / 2)
+            d = (
+                f"M{x1:.0f},{y1:.0f} C{x1 + dx:.0f},{y1:.0f} {x2 - dx:.0f},{y2:.0f} "
+                f"{x2 - 2:.0f},{y2:.0f}"
+            )
+        cross = "" if follows.get(later) == earlier else " cross"
+        route = (
+            ' data-route="below"'
+            if below
+            else ' data-route="between"'
+            if between
+            else ""
+        )
+        tip = f"{nodes[later]['title']} — {named(kinds)} — {nodes[earlier]['title']}"
+        edges.append(
+            f'<path data-from="{esc(earlier)}" data-to="{esc(later)}" '
+            f'class="lk-{strongest(kinds)}{cross}"{route} '
+            f'marker-end="url(#ah-{strongest(kinds)})" d="{d}">'
+            f"<title>{esc(tip)}</title></path>"
+        )
+    markers = "".join(
+        f'<marker id="ah-{k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
+        f'markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" '
+        f'fill="{c}"/></marker>'
+        for k, (c, _d, _s, _l) in LINEAGE_LOOK.items()
+    )
+    lanes = "".join(
+        f'<div class="lane" style="left:{pad}px;top:{gy - 24 + i * (nh + gy)}px">Line {i + 1}'
+        f" &middot; {len(line)} Argument{'' if len(line) == 1 else 's'}</div>"
+        for i, line in enumerate(lin["lines"])
+    )
+    boxes = []
+    for n in lin["args"]:
+        d, (x, y) = nodes[n], xy[n]
+        tests = (
+            f"{d['tests']} test{'' if d['tests'] == 1 else 's'} &middot; "
+            f"{d['grounds']} Ground{'' if d['grounds'] == 1 else 's'}"
+        )
+        boxes.append(
+            f'<a class="lnode" href="{esc(d["href"])}" style="left:{x}px;top:{y}px;'
+            f'width:{nw}px;height:{nh}px" title="{esc(d["title"])}">'
+            f'<div class="t">{esc(d["title"])}</div>'
+            f'<div class="o">{esc(d["opening"])}</div>'
+            f'<div class="m">{tests}<br><span class="mbadge" style="background:'
+            f'{esc(d["color"])}"></span>{esc(d["member"])} &middot; {esc(d["created"][:10])}'
+            f"</div></a>"
+        )
+    legend = "".join(
+        f'<span><svg width="34" height="8" aria-hidden="true"><line x1="0" y1="4" x2="34" '
+        f'y2="4" stroke="{c}" stroke-width="2.4" stroke-dasharray="{dash}"/></svg>{esc(word)}'
+        f"</span>"
+        for (c, dash, word, _w) in LINEAGE_LOOK.values()
+    )
+
+    sections = []
+    for i, line in enumerate(lin["lines"]):
+        items = []
+        for n in line:
+            d = nodes[n]
+            stated = sorted(
+                ((e, k) for (b, e), k in lin["links"].items() if b == n),
+                key=lambda x: col[x[0]],
+            )
+            said_here = []
+            for e, kinds in stated:
+                where = "" if line_of[e] == i else f" (line {line_of[e] + 1})"
+                lead = "Follows" if follows.get(n) == e else "Also links to"
+                said_here.append(
+                    f'{lead} <a href="#{anchor[e]}">{esc(nodes[e]["title"])}</a>'
+                    f"{where}, {esc(said(kinds))}."
+                )
+            said_here.sort(key=lambda x: not x.startswith("Follows"))
+            items.append(
+                f'<li id="{anchor[n]}"><a href="{esc(d["href"])}">{esc(d["title"])}</a>'
+                f'<div class="meta"><span class="mbadge" style="background:{esc(d["color"])}">'
+                f"</span>{esc(d['member'])} &middot; {esc(d['created'][:16])} &middot; "
+                f"{d['grounds']} Ground(s), {d['tests']} offered as a test &middot; "
+                f'<a href="{esc(d["map"])}">claim map</a></div>'
+                + (
+                    f'<div class="opening">{esc(d["opening"])}</div>'
+                    if d["opening"]
+                    else ""
+                )
+                + "".join(f'<div class="follows">{x}</div>' for x in said_here)
+                + "</li>"
+            )
+        first, last = nodes[line[0]]["created"][:10], nodes[line[-1]]["created"][:10]
+        span = first if first == last else f"{first} to {last}"
+        sections.append(
+            f"<h2>Line {i + 1} <span>&middot; {len(line)} Argument"
+            f"{'' if len(line) == 1 else 's'}, {span}</span></h2>"
+            f"<ol>{''.join(items)}</ol>"
+        )
+    n_args, n_lines = len(lin["args"]), len(lin["lines"])
+    summary = (
+        f"{n_args} Argument{'' if n_args == 1 else 's'} in {n_lines} "
+        f"line{'' if n_lines == 1 else 's'}."
+    )
+    return LINEAGE_TEMPLATE.format(
+        corpus_title=esc(corpus_title),
+        roundslink=ROUNDS_LINK if has_rounds else "",
+        summary=summary,
+        legend=legend,
+        link_css=lineage_link_css(),
+        width=width,
+        height=height,
+        markers=markers,
+        edges="".join(edges),
+        lanes=lanes,
+        nodes="".join(boxes),
+        lines="".join(sections),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -1665,14 +2714,23 @@ def _mark_grounded(escaped, spans):
     `text_span` address resolves to. Two things fall out of this that are worth
     having: a Ground deep-links to the exact sentence, and an imported source shows
     at a glance which of it is load-bearing and which was never used."""
-    for quote, citer in spans or []:
+    for item in spans or []:
+        # (quote, citers) or, from the compiler, (quote, citers, row id in "Cited by", count)
+        quote, citer = item[0], item[1]
+        href, count = (item[2], item[3]) if len(item) > 3 else (None, 1)
         needle = _html.escape(quote)
         if needle and needle in escaped:
             anchor = _html.escape(f'text_span.quote="{quote}"')
+            tip = _html.escape(f"Cited by {citer}")
+            badge = (
+                f'<a class="cmark" href="#{_html.escape(href)}" title="{tip}" '
+                f'aria-label="{tip}">{count}</a>'
+                if href
+                else ""
+            )
             escaped = escaped.replace(
-                needle,
-                f'<mark id="{anchor}" title="grounded on by {_html.escape(citer)}">'
-                f'{needle}</mark>', 1)
+                needle, f'<mark id="{anchor}" title="{tip}">{needle}</mark>{badge}', 1
+            )
     return escaped
 
 
@@ -1682,8 +2740,11 @@ def preformatted(text, spans=None):
     Still passed through `_mark_grounded`, because a Content Object may declare a
     `text_span` method over code and a Ground through it has to land on the line it
     quotes — the same reason every other rendering path marks."""
-    return (f"<pre class='code'><code>"
-            + _mark_grounded(_html.escape(text or ""), spans) + "</code></pre>")
+    return (
+        "<pre class='code'><code>"
+        + _mark_grounded(_html.escape(text or ""), spans)
+        + "</code></pre>"
+    )
 
 
 def md_to_html(md, pages=None, spans=None):
@@ -1703,16 +2764,23 @@ def md_to_html(md, pages=None, spans=None):
             continue
         if all(_re.match(r"^\s*[-*]\s+", ln) for ln in lines):
             items = "".join(
-                "<li>" + _md_inline(
-                    _mark_grounded(_html.escape(_re.sub(r"^\s*[-*]\s+", "", ln)), spans), pages)
-                + "</li>" for ln in lines)
+                "<li>"
+                + _md_inline(
+                    _mark_grounded(
+                        _html.escape(_re.sub(r"^\s*[-*]\s+", "", ln)), spans
+                    ),
+                    pages,
+                )
+                + "</li>"
+                for ln in lines
+            )
             out.append("<ul>" + items + "</ul>")
         else:
             # A heading may open a block without a blank line after it, so headings are
             # split out line by line rather than by testing the block as a whole.
             para = []
 
-            def flush():
+            def flush(para=para):
                 if para:
                     out.append("<p>" + "<br>".join(para) + "</p>")
                     para.clear()
@@ -1722,15 +2790,36 @@ def md_to_html(md, pages=None, spans=None):
                 if m:
                     flush()
                     tag = "h3" if len(m.group(1)) <= 2 else "h4"
-                    out.append(f"<{tag} class='mdh'>" + _md_inline(
-                        _mark_grounded(_html.escape(m.group(2)), spans), pages) + f"</{tag}>")
+                    out.append(
+                        f"<{tag} class='mdh'>"
+                        + _md_inline(
+                            _mark_grounded(_html.escape(m.group(2)), spans), pages
+                        )
+                        + f"</{tag}>"
+                    )
                 else:
-                    para.append(_md_inline(_mark_grounded(_html.escape(ln), spans), pages))
+                    para.append(
+                        _md_inline(_mark_grounded(_html.escape(ln), spans), pages)
+                    )
             flush()
     return "".join(out)
 
 
-def csv_table(text, max_rows=None, method="csv"):
+def _cited_cell(anchor, cited):
+    """(class attribute, badge) for an element whose id is `anchor`: a mark when a Ground on
+    this page's "Cited by" list addresses it, else nothing."""
+    entries = (cited or {}).get(anchor)
+    if not entries:
+        return "", ""
+    tip = _html.escape("Cited by " + "; ".join(t for _i, t in entries))
+    return (
+        ' class="cited"',
+        f'<a class="cmark" href="#{_html.escape(entries[0][0])}" title="{tip}" '
+        f'aria-label="{tip}">{len(entries)}</a>',
+    )
+
+
+def csv_table(text, max_rows=None, method="csv", cited=None):
     """Render an embedded CSV property as a table, with each cell carrying the id a
     `csv` address resolves to — so a Ground's reference deep-links straight to the cell
     it names, and a reader can check the quote against the number.
@@ -1739,7 +2828,18 @@ def csv_table(text, max_rows=None, method="csv"):
     ordinary in these imports — `"19113 genes per arm, identifier sets identical bar one"`
     is one cell of one survey — and splitting it in two shifts every cell to its right by a
     column, so the anchors this function writes would deep-link a Ground to the wrong
-    value while looking perfectly correct."""
+    value while looking perfectly correct.
+
+    Rows and columns carry ids too, `<method>.row=<key>` and `<method>.col=<name>`, because a
+    Ground may address a whole row or column. `cited` (anchor -> the Grounds addressing it)
+    marks each cell, row and column a Ground on the page's "Cited by" list cites.
+
+    A wide table is read from its key and the columns its Grounds cite (R11). So the row key
+    comes first and stays in view as the table scrolls sideways, the columns a Ground cites,
+    whole or by a cell, come next, and the rest follow in their stored order; a button puts
+    the stored order back, and a table of more than 12 columns offers a column picker.
+    Addresses name columns, never positions, so no order breaks a link. Every cell carries
+    `data-c`, its column's place in the stored order, which is what the page script sorts by."""
     src = (text or "").replace("\r\n", "\n")
     try:
         rows = [r for r in _csv.reader(_io.StringIO(src)) if any(c.strip() for c in r)]
@@ -1749,30 +2849,113 @@ def csv_table(text, max_rows=None, method="csv"):
         return "<p class='hint'>(empty)</p>"
     hdr = [c.strip() for c in rows[0]]
     key = hdr[0] if hdr else "row"
+    order = column_order(hdr, method, cited)
     body = []
     limit = len(rows) - 1 if max_rows is None else max_rows
-    for r in rows[1:limit + 1]:
+    for r in rows[1 : limit + 1]:
         cells = [c.strip() for c in r]
         rk = cells[0] if cells else ""
-        tds = "".join(
-            '<td id="{}">{}</td>'.format(
-                _html.escape(f"{method}.row={rk}&col={hdr[i]}" if i < len(hdr) else ""),
-                _html.escape(c))
-            for i, c in enumerate(cells))
-        body.append(f"<tr>{tds}</tr>")
+        row_cls, row_badge = _cited_cell(f"{method}.row={rk}", cited)
+        tds = {}
+        for i, c in enumerate(cells):
+            anchor = f"{method}.row={rk}&col={hdr[i]}" if i < len(hdr) else ""
+            cls, badge = _cited_cell(anchor, cited)
+            if i == 0:
+                badge += row_badge
+            cell_id, value = _html.escape(anchor), _html.escape(c)
+            tds[i] = f'<td data-c="{i}" id="{cell_id}"{cls}>{value}{badge}</td>'
+        # A row shorter than the header gets an empty cell for each column it lacks, so its
+        # values stay under their own headers when cited columns come first; one longer
+        # than the header keeps its extras at the end.
+        placed = [tds.get(i, f'<td data-c="{i}"></td>') for i in order]
+        placed += [tds[i] for i in sorted(tds) if i not in order]
+        body.append(
+            '<tr id="{}"{}>{}</tr>'.format(
+                _html.escape(f"{method}.row={rk}"), row_cls, "".join(placed)
+            )
+        )
     # Every row is rendered by default. A truncated table silently breaks the one thing
     # these ids exist for: a Ground addressing row 400 of a 714-row table would resolve in
     # the validator and land the reader at the top of the page. What bounds the size here
     # is policy/embedding-and-size.md, which bounds the artifact.
-    more = ("<tr><td colspan='%d' class='hint'>… %d further row(s) not shown; an address "
-            "into them will not resolve on this page</td></tr>"
-            % (len(hdr), len(rows) - 1 - limit)) if len(rows) - 1 > limit else ""
-    head = "".join(f"<th>{_html.escape(c)}</th>" for c in hdr)
-    return (f"<p class='hint'>Addressed as <code>#{_html.escape(method)}"
-            f".row=&lt;{_html.escape(key)}&gt;"
-            f"&amp;col=&lt;column&gt;</code></p>"
-            f"<div class='tablewrap'><table class='data'><tr>{head}</tr>"
-            + "".join(body) + more + "</table></div>")
+    more = (
+        (
+            f"<tr><td colspan='{len(hdr)}' class='hint'>… {len(rows) - 1 - limit} further row(s) "
+            "not shown; an address into them will not resolve on this page</td></tr>"
+        )
+        if len(rows) - 1 > limit
+        else ""
+    )
+    head = ""
+    for i in order:
+        c = hdr[i]
+        cls, badge = _cited_cell(f"{method}.col={c}", cited)
+        head += '<th data-c="{}" id="{}"{}>{}{}</th>'.format(
+            i, _html.escape(f"{method}.col={c}"), cls, _html.escape(c), badge
+        )
+    return (
+        f"<p class='hint'>Addressed as <code>#{_html.escape(method)}"
+        f".row=&lt;{_html.escape(key)}&gt;"
+        f"&amp;col=&lt;column&gt;</code></p>"
+        + table_tools(hdr, order, method, cited)
+        + f"<div class='tablewrap'><table class='data' id='{_html.escape('tbl-' + method)}' "
+        f"data-order='{','.join(map(str, order))}'><tr>{head}</tr>"
+        + "".join(body)
+        + more
+        + "</table></div>"
+    )
+
+
+#: A table with more columns than this offers a column picker (R11).
+COLUMN_PICKER_OVER = 12
+
+
+def cited_columns(hdr, method, cited):
+    """Indexes of the columns a Ground on the page cites: the whole column, or a cell in it."""
+    names = set()
+    for anchor in cited or {}:
+        if anchor.startswith(f"{method}.col="):
+            names.add(anchor[len(f"{method}.col=") :])
+        elif anchor.startswith(f"{method}.row=") and "&col=" in anchor:
+            names.add(anchor.rsplit("&col=", 1)[1])
+    return [i for i, c in enumerate(hdr) if i > 0 and c in names]
+
+
+def column_order(hdr, method, cited):
+    """The order a table is shown in: its row key, then the columns a Ground cites, then the
+    rest, each group in its stored order."""
+    first = cited_columns(hdr, method, cited)
+    return (
+        [0, *first, *(i for i in range(1, len(hdr)) if i not in first)] if hdr else []
+    )
+
+
+def table_tools(hdr, order, method, cited):
+    """The controls above a table: "Original column order" when cited columns were moved
+    forward, and a column picker when there are more than COLUMN_PICKER_OVER columns. Both
+    are worked by the page's script; without it the table still reads, cited columns first."""
+    tid = _html.escape("tbl-" + method)
+    parts = []
+    if order != list(range(len(hdr))):
+        named = ", ".join(
+            _html.escape(hdr[i]) for i in cited_columns(hdr, method, cited)
+        )
+        parts.append(
+            f'<button type="button" class="colorder" data-for="{tid}" '
+            f'aria-pressed="false">Original column order</button>'
+            f'<span class="hint">Columns a Ground cites come first: {named}</span>'
+        )
+    if len(hdr) > COLUMN_PICKER_OVER:
+        boxes = "".join(
+            f'<label><input type="checkbox" data-c="{i}" checked> {_html.escape(hdr[i])}</label>'
+            for i in order[1:]
+        )
+        parts.append(
+            f'<details class="colpick" data-for="{tid}"><summary>Columns: '
+            f'<span class="cp-n">{len(hdr)}</span> of {len(hdr)} shown</summary>'
+            f'<div class="cp-list">{boxes}</div></details>'
+        )
+    return f"<div class='tabletools'>{''.join(parts)}</div>" if parts else ""
 
 
 def internal_graph_section(ig, artifact_name, artifact_type):
@@ -1785,27 +2968,33 @@ def internal_graph_section(ig, artifact_name, artifact_type):
     cannot.
     """
     import json as _j
+
     counts = ig["counts"]
     legend = ig["legend"]
     types_html = "".join(
-        '<span class="olg"><span class="osw" style="background:{}"></span>{}</span>'.format(
-            _html.escape(c), _html.escape(t))
-        for t, c in sorted(legend["types"].items()))
+        f'<span class="olg"><span class="osw" style="background:{_html.escape(c)}"></span>{_html.escape(t)}</span>'
+        for t, c in sorted(legend["types"].items())
+    )
     rels_html = "".join(
         '<span class="olg"><span class="oln" style="background:{}"></span>{}</span>'.format(
-            _html.escape(c), _html.escape(r.replace("_", " ")))
-        for r, c in sorted(legend["rels"].items()))
+            _html.escape(c), _html.escape(r.replace("_", " "))
+        )
+        for r, c in sorted(legend["rels"].items())
+    )
     dropped = ""
     if counts.get("dropped"):
-        dropped = ('<div class="hint">{} relationship(s) not drawn: an endpoint is not an Object '
-                   'of this Artifact. All relationships are internal (spec §1.7).</div>'
-                   .format(counts["dropped"]))
+        dropped = (
+            '<div class="hint">{} relationship(s) not drawn: an endpoint is not an Object '
+            "of this Artifact. All relationships are internal (spec §1.7).</div>".format(
+                counts["dropped"]
+            )
+        )
     payload = _j.dumps(ig["elements"], ensure_ascii=False)
     return f"""<h2>Internal structure</h2>
 <p class="hint">The Objects this {_html.escape(artifact_type)} contains and the relationships
 among them. All relationships are internal to one Artifact (spec §1.7) — nothing here reaches
 another artifact. <b>Click a node or an edge</b> for every property its author wrote.
-{counts['objects']} object(s), {counts['relationships']} relationship(s).</p>
+{counts["objects"]} object(s), {counts["relationships"]} relationship(s).</p>
 <div class="oglegend">{types_html}{rels_html}</div>
 {dropped}
 <div class="ogwrap">
@@ -1914,6 +3103,42 @@ another artifact. <b>Click a node or an edge</b> for every property its author w
 </script>"""
 
 
+#: "Cited by" and the marks on cited content (R1, R2), shared by artifact and reading pages. A
+#: cited cell is tinted AND carries a numbered link, so colour is never the only sign (N6).
+CITED_CSS = """
+  td.cited, th.cited { background:#ecfdf5; box-shadow:inset 0 -2px 0 #16a34a; }
+  tr.cited > td { background:#f0fdf4; }
+  h2.cited { color:#166534; }
+  .cmark { display:inline-block; margin-left:5px; padding:0 6px; border-radius:8px; font-size:10px;
+           font-weight:650; line-height:15px; color:#fff; background:#15803d; text-decoration:none;
+           vertical-align:1px; text-transform:none; letter-spacing:0; white-space:nowrap; }
+  .cmark:hover { background:#166534; }
+  .cmark:focus-visible { outline:2px solid #1d4ed8; outline-offset:1px; }
+  table.data tr:target > td, h2:target { background:#fef3c7; }
+  /* the fixed key column is opaque (R11); these keep a cited or targeted key cell's tint */
+  table.data tr.cited > td:first-child { background:#f0fdf4; }
+  table.data tr > td.cited:first-child, table.data tr > th.cited:first-child { background:#ecfdf5; }
+  table.data tr:target > td:first-child, table.data td:target:first-child { background:#fef3c7; }
+  h3.cbh { font-size:13px; margin:16px 0 2px; color:var(--ink); }
+  table.citedby { border-collapse:collapse; width:100%; table-layout:fixed; font-size:13px;
+                  background:var(--panel); border:1px solid var(--line); margin:4px 0; }
+  table.citedby th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+                     color:var(--muted); padding:6px 10px; border-bottom:1px solid var(--line); }
+  table.citedby td { vertical-align:top; padding:7px 10px; border-bottom:1px solid var(--line);
+                     overflow-wrap:anywhere; line-height:1.45; }
+  table.citedby th:nth-child(1) { width:30%; }
+  table.citedby th:nth-child(3) { width:22%; }
+  table.citedby th:nth-child(4) { width:12%; }
+  table.citedby tr:target td { background:#fef9c3; }
+  ul.citedby { background:var(--panel); border:1px solid var(--line); border-radius:8px;
+               padding:8px 12px 8px 30px; margin:4px 0; font-size:13px; line-height:1.45; }
+  ul.citedby li { margin:5px 0; }
+  .badge { display:inline-block; font-size:10px; text-transform:uppercase; letter-spacing:.04em;
+           border:1px solid var(--line); border-radius:9px; padding:0 7px; color:var(--muted); }
+  .badge.test { border-color:#16a34a; color:#166534; background:#f0fdf4; font-weight:650; }
+"""
+
+
 ARTIFACT_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
@@ -1926,6 +3151,10 @@ ARTIFACT_TEMPLATE = """<!doctype html>
   html,body {{ margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
                color:var(--ink); background:var(--bg); }}
   header {{ padding:10px 16px; background:var(--panel); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:5; }}
+  /* The header is sticky, so a link to a place on this page (a Ground's row or cell, Cited by,
+     a mark's badge) would land under it. This keeps the target below a one-line header; the
+     page script below sizes it to the header as it stands. */
+  html {{ scroll-padding-top:68px; }}
   header h1 {{ font-size:15px; margin:0 0 2px; font-weight:650; }}
   header .sub {{ font-size:12px; color:var(--muted); }}
   .uplink {{ color:var(--accent); text-decoration:none; font-weight:600; }}
@@ -1947,7 +3176,24 @@ ARTIFACT_TEMPLATE = """<!doctype html>
   table.data {{ border-collapse:collapse; font-size:13px; width:100%; }}
   table.data th, table.data td {{ padding:5px 10px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }}
   table.data th {{ background:#f1f5f9; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }}
+  /* The row key stays in view while a wide table scrolls sideways (R11); opaque, so the cells
+     passing under it do not show through. */
+  table.data tr > :first-child {{ position:sticky; left:0; z-index:1; background:var(--panel);
+                                  box-shadow:inset -1px 0 0 var(--line); }}
+  table.data tr > th:first-child {{ background:#f1f5f9; z-index:2; }}
   table.data td:target {{ background:#fef3c7; outline:2px solid #d97706; }}
+  .tabletools {{ display:flex; flex-wrap:wrap; align-items:center; gap:6px 10px; margin:4px 0 6px; }}
+  .tabletools button {{ font:inherit; font-size:12px; padding:3px 9px; border:1px solid var(--line);
+                        border-radius:6px; background:var(--panel); color:var(--ink); cursor:pointer; }}
+  .tabletools button[aria-pressed="true"] {{ background:#e0e7ff; border-color:#6366f1; }}
+  .tabletools button[aria-pressed="true"]::before {{ content:"\\2713  "; }}
+  .tabletools button:focus-visible, .colpick summary:focus-visible,
+  .colpick input:focus-visible {{ outline:2px solid var(--accent); outline-offset:2px; }}
+  .colpick {{ font-size:12px; }}
+  .colpick summary {{ cursor:pointer; color:var(--accent); }}
+  .colpick .cp-list {{ display:flex; flex-wrap:wrap; gap:4px 12px; margin-top:6px; padding:8px 10px;
+                        background:var(--panel); border:1px solid var(--line); border-radius:6px; }}
+  .colpick label {{ white-space:nowrap; }}
   table.methods {{ border-collapse:collapse; font-size:13px; background:var(--panel);
                    border:1px solid var(--line); border-radius:8px; width:100%; }}
   table.methods th, table.methods td {{ padding:6px 10px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }}
@@ -1997,6 +3243,8 @@ ARTIFACT_TEMPLATE = """<!doctype html>
   mark {{ background:#dcfce7; border-bottom:2px solid #16a34a; padding:1px 0; }}
   mark:target {{ background:#fef08a; border-bottom-color:#d97706; }}
   ul {{ padding-left:20px; }}
+{cited_css}
+{round_css}
 </style>
 </head>
 <body>
@@ -2013,6 +3261,90 @@ ARTIFACT_TEMPLATE = """<!doctype html>
 <script src="{cyto_src}"></script>
 <script src="vendor/cytoscape-svg.js"></script>
 <script>
+/* Wide tables (R11): put the stored column order back, or the cited-first one; hide columns
+   from the picker; and keep a cell a link lands on clear of the fixed key column. Cells are
+   sorted by data-c, their column's place in the stored order. Runs before the header's
+   script below, which re-places a link target with both paddings in force. */
+(function () {{
+  function cells(tr) {{
+    return [].filter.call(tr.children, function (c) {{ return c.hasAttribute('data-c'); }});
+  }}
+  function arrange(table, order) {{
+    var rank = {{}};
+    order.forEach(function (c, i) {{ rank[c] = i; }});
+    function at(c) {{ var r = rank[c.dataset.c]; return r === undefined ? 1e6 + +c.dataset.c : r; }}
+    [].forEach.call(table.rows, function (tr) {{
+      var cs = cells(tr);
+      if (cs.length < 2) return;
+      cs.sort(function (a, b) {{ return at(a) - at(b); }});
+      cs.forEach(function (c) {{ tr.appendChild(c); }});
+    }});
+  }}
+  // A control's table is the one right after it. Two tables share an id when properties
+  // share one Content method, so the id cannot be trusted to find the right one.
+  function tableAfter(el) {{
+    var tools = el.closest('.tabletools'), wrap = tools && tools.nextElementSibling;
+    return wrap ? wrap.querySelector('table.data') : null;
+  }}
+  [].forEach.call(document.querySelectorAll('button.colorder'), function (b) {{
+    var table = tableAfter(b);
+    if (!table) return;
+    var shown = table.dataset.order.split(',').map(Number);
+    var stored = shown.slice().sort(function (x, y) {{ return x - y; }});
+    b.addEventListener('click', function () {{
+      var original = b.getAttribute('aria-pressed') !== 'true';
+      arrange(table, original ? stored : shown);
+      b.setAttribute('aria-pressed', original ? 'true' : 'false');
+    }});
+  }});
+  [].forEach.call(document.querySelectorAll('details.colpick'), function (d) {{
+    var table = tableAfter(d), n = d.querySelector('.cp-n');
+    if (!table) return;
+    d.addEventListener('change', function (e) {{
+      var box = e.target;
+      if (!box.matches || !box.matches('input[data-c]')) return;
+      [].forEach.call(table.querySelectorAll('[data-c="' + box.dataset.c + '"]'), function (c) {{
+        c.hidden = !box.checked;
+      }});
+      n.textContent = String(1 + d.querySelectorAll('input[data-c]:checked').length);
+    }});
+  }});
+  // A link to a cell, or a column, the picker has hidden shows that column again: a hidden
+  // cell is out of the page, so the link would otherwise go nowhere and say nothing.
+  function reveal(scroll) {{
+    var id = null;
+    try {{ id = decodeURIComponent(location.hash.slice(1)); }} catch (e) {{ return; }}
+    var t = id && document.getElementById(id);
+    if (!t || !t.hidden || !t.hasAttribute('data-c')) return;
+    var wrap = t.closest('.tablewrap'), tools = wrap && wrap.previousElementSibling;
+    var box = tools && tools.querySelector('.colpick input[data-c="' + t.dataset.c + '"]');
+    if (!box) return;
+    box.checked = true;
+    box.dispatchEvent(new Event('change', {{ bubbles: true }}));
+    if (scroll) t.scrollIntoView();
+  }}
+  reveal(false);
+  window.addEventListener('hashchange', function () {{ reveal(true); }});
+  [].forEach.call(document.querySelectorAll('.tablewrap'), function (w) {{
+    var key = w.querySelector('table.data tr > :first-child');
+    function pad() {{ if (key) w.style.scrollPaddingLeft = (key.offsetWidth + 8) + 'px'; }}
+    pad();
+    window.addEventListener('resize', pad);
+  }});
+}})();
+/* Keep link targets clear of the sticky header: size the scroll padding to the header, which
+   grows when a long title wraps, and re-place a target the page was opened at, since the
+   browser scrolled to it before this ran. */
+(function () {{
+  var header = document.querySelector('header'), root = document.documentElement;
+  function pad() {{ root.style.scrollPaddingTop = (header.offsetHeight + 12) + 'px'; }}
+  pad();
+  window.addEventListener('resize', pad);
+  var id = null;
+  try {{ id = decodeURIComponent(location.hash.slice(1)); }} catch (e) {{ /* malformed */ }}
+  var target = id && document.getElementById(id);
+  if (target) target.scrollIntoView();
+}})();
 /* Live reload while the record is growing. serve.py answers /__build with the current
    build number; a static host does not, and the fetch simply fails and stops. Nothing
    about the page depends on this — the compiled HTML is complete on its own. */

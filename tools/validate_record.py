@@ -12,6 +12,7 @@ been accepted one Artifact at a time.
 
 Exit status is 0 when nothing FAILs. REVIEW findings are printed and never gate.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,26 +44,37 @@ def load(record_dir: Path):
             if p.name.startswith("."):
                 continue
             print(f"{p.name}: NOT JSON — {e}")
-            raise SystemExit(2)
+            raise SystemExit(2) from e
         h = doc.get("artifact") if isinstance(doc, dict) else None
         if isinstance(h, dict) and h.get("name") and h.get("type"):
             arts.append((p, doc))
+
     def key(item):
         t = parse_instant(item[1].get("artifact", {}).get("created"))
         return (t is None, t, item[0].name)
+
     return sorted(arts, key=key)
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("record_dir")
-    ap.add_argument("--verbose", action="store_true", help="print REVIEW findings for every Artifact")
+    ap.add_argument(
+        "--verbose",
+        action="store_true",
+        help="print REVIEW findings for every Artifact",
+    )
     a = ap.parse_args(argv)
 
     arts = load(Path(a.record_dir))
-    members = {h["artifact"]["published_by"].lstrip("@")
-               for _, h in arts if h.get("artifact", {}).get("published_by")}
-    print(f"{len(arts)} artifacts, {len(members)} members: {', '.join(sorted(members))}\n")
+    members = {
+        h["artifact"]["published_by"].lstrip("@")
+        for _, h in arts
+        if h.get("artifact", {}).get("published_by")
+    }
+    print(
+        f"{len(arts)} artifacts, {len(members)} members: {', '.join(sorted(members))}\n"
+    )
 
     accepted, n_fail, n_review = [], 0, 0
     for path, cand in arts:

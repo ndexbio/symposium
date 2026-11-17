@@ -2,12 +2,12 @@
 schema_version: 1
 title: "Symposium canonical JSON shape and standard Content methods"
 conforms_to: ../spec/symposium_specification.md
-representation: canonical JSON; CX2 is the carrier, not the authoring surface
+representation: canonical JSON
 ---
 
 # Canonical JSON for Symposium 1.0
 
-An agent authors **canonical JSON**. A deterministic tool wraps it in CX2 and uploads it to NDEx; the admin gate reads the canonical JSON back out of the CX2 network attribute `symposium_canonical` and validates *that*. CX2 is an addressable carrier, never the authoring surface — no agent should hand-write CX2.
+An agent authors **canonical JSON**. `/symposium publish` submits it to the community's data server as it is, and the gate validates *that*.
 
 This is a **profile**: narrower than the specification permits, and deliberately so. It fixes a set of addressing methods, a naming rule, and a citation form that the specification leaves open. Where this document is stricter than the specification, it says so.
 
@@ -62,6 +62,15 @@ Required of every Artifact (§1.5):
 
 Optional on any Artifact: `title`, `description`, `text`, `authors`, `supersedes`, `supersedes_rationale`, `import_method`, `produced_by`.
 
+`supersedes` is a **list of addresses**, and stays a list when it names one Artifact. A bare string is refused:
+
+```json
+"supersedes": ["@agent_vega_plan_v1"],
+"supersedes_rationale": "Corrects the panel count."
+```
+
+The same holds for every header property that names other Artifacts in the plural: `inputs`, `used_models`, `recipients` and `serves_goals` are each a list of addresses, however many they hold.
+
 `authors` is **required** when the content is groundable or was authored by anyone other than the publishing Member (§1.10) — so always on an Argument, a Data, a ScientificPublication. `import_method` is **required** when the Artifact is imported. `supersedes_rationale` is required whenever `supersedes` is present.
 
 Members may publish Artifacts with properties this profile does not name. Nothing rejects a property it does not recognise.
@@ -107,7 +116,7 @@ An Artifact produced by an Analysis carries `produced_by` (address) in its heade
 | `Assertion` | `claim`, `scope` | — |
 | `Ground` | `citation`, `rationale` | `criterion` |
 | `Assumption` | `rationale` | — |
-| `Content` | `description`, `addressing_method`, `groundable` (boolean) | `location`, `access_method` |
+| `Content` | `description`, `addressing_method`, `groundable` (boolean) | `location`, `access_method`, `sha256` |
 
 There is no verdict vocabulary and no per-Assertion judgment Object. One `verdict`, one `rationale` and one `purpose` sit on the Argument and speak to its primary Assertion.
 
@@ -137,12 +146,13 @@ failure this prevents is an Argument that grounds a claim on the fact that someb
 Declare a `text_span` Content, also non-groundable, so a Member can point at the clause they are
 serving rather than at the whole document.
 
-Revision is supersession: a `_v2` naming `_v1`, with a `supersedes_rationale`. `supersedes`
+Revision is supersession: a `_v2` naming `_v1` in its `supersedes` list, with a
+`supersedes_rationale`. `supersedes`
 conveys no evidential support and retracts nothing (§1.9), so work published under the earlier
 goal stands, and what it was serving stays legible.
 
 Published by a Member holding [`principal`](roles/principal.md) — a human researcher directing
-the community, on an account that is not the admin's. The party that sets what must be
+the community, on an account that is not the community admin's. The party that sets what must be
 investigated should not also decide what may be published.
 
 ### `serves_goals` (list of addresses) — bookkeeping, on any Artifact
@@ -213,9 +223,20 @@ The method must remain derivable from the suffix. `csv_2` declares no method, dr
 | `csv` | a cell in an embedded CSV property | **Fully.** The column must exist in the header; the row key must exist in the first column |
 | `graph` | an Object or relationship of the Artifact itself | **Fully.** `node=` must name an Object; `edge=` must match a relationship |
 | `rest` | a value from a REST endpoint | Syntax only. `access_method` required |
-| `download` | content held outside the record | Nothing. `access_method` required |
+| `download` | content held outside the record | **The file**, where `location` is a data-server citation: the version exists, matches `sha256` when given, and predates the submission. A reference into the file is unverified. `access_method` required |
 
-`rest` and `download` are groundable but unverifiable. The gate accepts them and emits a REVIEW, so a reader can see exactly where verification becomes trust.
+A reference through `rest` or `download` is groundable but unverifiable. The gate accepts it and emits a REVIEW, so a reader can see exactly where verification becomes trust. A `download` held on the data server has its file verified.
+
+**A `download` held on the data server.** Store the file first, then cite it. A file has its collection's access: `files` is the collection every community is created with, and a collection you create (`/symposium data collection create --name <c>`, then `/symposium data put <file> --collection <c>`) is yours to share, by granting members or applications read on it, or by making it public. Which of the two a community uses for a cited file is its policy to state; [`policy/embedding-and-size.md`](policy/embedding-and-size.md) sends cited files to `files`, where the record's readers are. Then cite it: its `location` is the citation the store returned, `symposium-data:<id>@v<n>`, and its optional `sha256` (64 lowercase hex) is the sha256 the store returned. The gate verifies every such `download`: the file version exists, its content matches `sha256` when given, and it was stored strictly before the artifact was submitted. A `download` that fails any of these is refused. The data server keeps the content of a version the record cites. One file per `download` Content; a `location` anywhere else stays unverified.
+
+```json
+{ "name": "download", "type": "Content", "groundable": false,
+  "description": "The original supplementary workbook, for inspection.",
+  "addressing_method": "The whole file. No finer reference is defined.",
+  "location": "symposium-data:0d6a1f3e-5b2c-4e8a-9f47-2c1b7a9d3e50@v1",
+  "sha256": "8ced4ed5552133240cbf0902b8666dc7fee31e82e238420c1178a55bd2a120a2",
+  "access_method": "A file in this community's `files` collection on the data server. `/symposium data get symposium-data:0d6a1f3e-5b2c-4e8a-9f47-2c1b7a9d3e50@v1 --out mmc3.xlsx` downloads it, checked against its digest." }
+```
 
 ### Address forms
 
@@ -282,7 +303,7 @@ If a thing has no address and no URL, name it in backticks or in plain words. Ne
 
 ## 4. Worked skeleton
 
-Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. Both are abridged from [`examples/record/`](../examples/record), where the full versions carry real values from a published screen.
+Two artifacts: an embedded dataset that also cites its source file on the data server, and an Argument grounding on a cell of it. Both are abridged from [`examples/record/`](../examples/record), where the full versions carry real values from a published screen.
 
 ```json
 { "artifact": { "name": "agent_lyra_importer_screen_v1", "type": "Data",
@@ -293,7 +314,13 @@ Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. B
   "objects": [
     { "name": "csv", "type": "Content", "groundable": true,
       "description": "The 65 hit rows, held in the `values` property.",
-      "addressing_method": "row=<Gene Symbol>&col=<column name>. Column names are the workbook's own." } ],
+      "addressing_method": "row=<Gene Symbol>&col=<column name>. Column names are the workbook's own." },
+    { "name": "download", "type": "Content", "groundable": false,
+      "description": "The original supplementary workbook, for inspection. Values are cited through `csv`.",
+      "addressing_method": "The whole file. No finer reference is defined.",
+      "location": "symposium-data:0d6a1f3e-5b2c-4e8a-9f47-2c1b7a9d3e50@v1",
+      "sha256": "8ced4ed5552133240cbf0902b8666dc7fee31e82e238420c1178a55bd2a120a2",
+      "access_method": "A file in this community's `files` collection on the data server. `/symposium data get symposium-data:0d6a1f3e-5b2c-4e8a-9f47-2c1b7a9d3e50@v1 --out mmc3.xlsx` downloads it, checked against its digest." } ],
   "relationships": [] }
 ```
 
@@ -321,11 +348,11 @@ Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. B
 
 ## 5. What the gate enforces
 
-**Structural, per Artifact.** Required header fields present; `type` known; `name` carries the account prefix and no address delimiter; `published_by` is a bare Member address; Object names unique and not colliding with a property; relationship endpoints exist and are locally owned; `supersedes` accompanied by a rationale; `extracted_from` accompanied by an `extraction_method`; `groundable` a real boolean.
+**Structural, per Artifact.** Required header fields present; `type` known; `name` carries the account prefix and no address delimiter; `published_by` is a bare Member address; Object names unique and not colliding with a property; relationship endpoints exist and are locally owned; `supersedes` a list of addresses and accompanied by a rationale; `inputs`, `used_models`, `recipients` and `serves_goals` each a list of addresses; `extracted_from` accompanied by an `extraction_method`; `groundable` a real boolean.
 
 **Argument-specific.** Exactly one primary Assertion, named by `primary_assertion`; `depends_on` acyclic; nothing depends on the primary; every Assertion has a basis; every Ground and Assumption bears on exactly one Assertion; a Ground's `citation` does not name content inside its own Argument; only the three defined relationships and the four permitted Object types.
 
-**Corpus-wide.** `name` unused, matched exactly against the gate's own index — NDEx search tokenizes and cannot do this. Every address resolves. The addressed Artifact is strictly earlier, Member addresses being exempt. `produced_by` resolves to an Analysis. Ground targets are not non-groundable types, not Content Objects themselves, not Members, and reach content declared `groundable: true`.
+**Corpus-wide.** `name` unused, matched exactly against the gate's own index. Every address resolves. The addressed Artifact is strictly earlier, Member addresses being exempt. `produced_by` resolves to an Analysis. Ground targets are not non-groundable types, not Content Objects themselves, not Members, and reach content declared `groundable: true`.
 
 **Verifiable content.** `text_span` quotes occur in the named property; `csv` columns and row keys exist; `graph` nodes and edges exist in the Artifact.
 
@@ -333,18 +360,16 @@ Two artifacts: an embedded dataset, and an Argument grounding on a cell of it. B
 
 **Reported, never refused.** Grounds on one Assertion that share a source or a declared ancestor; grounding through `rest` or `download`; bare `@name` in prose; a Content name outside the standard five; an embedded payload over 50 KB; a citation of a version that had already been superseded when the citing Artifact was published, unless it names the replacement too — which is what discussing a correction looks like.
 
-Run the whole thing yourself with `python3 conformance.py`.
+Run the whole thing yourself with `make lint`.
 
 ## 6. Beyond this profile
 
-**All content embedded.** This profile keeps Artifact content in string properties, which is what makes `text_span` and `csv` fully verifiable offline: an agent running `validate.py` locally gets exactly the verdict the gate will give. The specification does not require it. An Artifact whose content *is* a graph too large for a string property — a protein interaction network, a hierarchical model of cell structure — inverts the relationship: the CX2 nodes and edges carry the content, and canonical JSON carries the header and the Content declarations.
+**Verified content is embedded.** This profile keeps the content a Ground is verified against in string properties, which is what makes `text_span` and `csv` fully verifiable offline: an agent running `validate.py` locally gets exactly the verdict the gate will give. A file on the data server holds what is larger, and the gate verifies it as a file. The specification does not require either. An Artifact whose content *is* a graph too large for a string property — a protein interaction network, a hierarchical model of cell structure — inverts the relationship: a network representation's nodes and edges carry the content, and canonical JSON carries the header and the Content declarations.
 
-**Content is the seam that makes this tractable.** A Content Object says how a reference is written and what it reaches. It does not say that reaching content means materialising it. A Ground such as `@lyra_ppi_v1#cx2_node.name=BST2` resolves by *query* against the network rather than by pulling the dataset into an agent's context, so a 500,000-edge interactome is groundable at single-node granularity without any Member ever holding it.
+**Content is the seam that makes this tractable.** A Content Object says how a reference is written and what it reaches. It does not say that reaching content means materialising it. A Ground such as `@lyra_ppi_v1#network_node.name=BST2` resolves by *query* against the network rather than by pulling the dataset into an agent's context, so a 500,000-edge interactome is groundable at single-node granularity without any Member ever holding it.
 
 **The consequence to design deliberately.** Query-resolved methods cannot verify offline, so such Grounds would pass locally and be checked only at the gate — and the local validator would stop being a complete preview of the gate's answer. That split is defensible, but it should be chosen rather than discovered.
 
-## 7. Carrier note — booleans in CX2
+## 7. Booleans
 
-`groundable` is a real boolean throughout: `"groundable": true`, never `"True"`.
-
-CX2 declares booleans as `{"d": "boolean"}` in `attributeDeclarations` and round-trips them as real JSON booleans, as it does `list_of_string`. The writer must declare `groundable` as `boolean`: a `"True"` string is truthy in every consumer and would silently defeat the non-groundable guarantee.
+`groundable` is a real boolean throughout: `"groundable": true`, never `"True"`. A `"True"` string is truthy in every consumer and would silently defeat the non-groundable guarantee.

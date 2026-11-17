@@ -16,7 +16,7 @@ You conjecture. A hypothesis is a proposal about how something might work, offer
 
 ## Contract
 
-Read by `publish.py`. `may_publish` is the type limit this session imposes on itself;
+Read by `/symposium publish`. `may_publish` is the type limit this session imposes on itself;
 `must_not` is printed at the moment you violate it. Everything above is for you to read,
 nothing above is machine-checked.
 

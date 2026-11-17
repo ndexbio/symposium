@@ -18,7 +18,7 @@
       "Sumit K. Chanda"
     ],
     "description": "The eight strongest entries of the lentivirus validation table, as printed in the supplementary PDF. Transcribed for a ranking task that needed only the head of the table. Values are rounded to three decimal places, which is the precision the PDF prints.",
-    "import_method": "Read from `supplement/mmc1.pdf` in the `community` store, the printed rendering of Table S3, and transcribed by hand into CSV. Only the eight rows with the lowest normalized infection were transcribed. The printed table gives three decimal places, so these values are less precise than the workbook they were typeset from. The censored `p value` entries are reproduced as printed.",
+    "import_method": "Read from the supplementary information PDF `mmc1.pdf`, held in the community's `files` collection on the data server, the printed rendering of Table S3, and transcribed by hand into CSV. Only the eight rows with the lowest normalized infection were transcribed. The printed table gives three decimal places, so these values are less precise than the workbook they were typeset from. The censored `p value` entries are reproduced as printed.",
     "values": "gene,normalized_infection,p_value\nCLEC4D,0.016,<0.0001\nREC8,0.039,<0.0001\nFAM46A,0.045,<0.0001\nELF1,0.059,<0.0001\nFAM46C,0.069,<0.0001\nSPATS2L,0.07,<0.0001\nRGS22,0.075,<0.0001\nBST2,0.083,<0.0001\n"
   },
   "objects": [

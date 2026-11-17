@@ -9,10 +9,10 @@ refused for the wrong reason is a failure, not a pass — otherwise a validator
 that rejected everything would score full marks.
 
 ```bash
-cd tools && python3 check_refused.py ../examples/refused ../examples/record
+make lint
 ```
 
-`record/` is passed in as well because some fixtures are only refusable in the
+It checks them against `record/` as well, because some fixtures are only refusable in the
 presence of another Artifact — a duplicate name needs the original to collide
 with, and a citation of a superseded version needs the supersession to exist.
 
@@ -38,6 +38,6 @@ with, and a citation of a superseded version needs the supersession to exist.
 A new fixture needs an entry in `EXPECTED.json` giving its `case`, its
 `check`, and an `msg` fragment the validator's finding must contain — plus
 `with` if it only fails alongside another fixture. The check has to be one the
-validator actually emits. Run `conformance.py`
+validator actually emits. Run `make lint`
 afterwards: a fixture nothing refuses, or one refused for a different reason
 than declared, fails the suite.

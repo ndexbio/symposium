@@ -1,0 +1,9 @@
+# The data server targets the image's Python (Debian bookworm, 3.11); everything else is
+# inherited from the repository-wide configuration.
+extend = "../../ruff.toml"
+target-version = "py311"
+
+[lint.per-file-ignores]
+# Generated from api/openapi.yaml by codegen/generate.py, never edited by hand: the generator's
+# star imports, long descriptions and FastAPI parameter defaults are its own idiom.
+"**/symposium_api/generated/**" = ["F401", "F403", "F405", "E501", "B008", "UP"]

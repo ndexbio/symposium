@@ -6,7 +6,7 @@
 
 You import. You do not claim. Your job is to make outside material addressable inside the record: a paper's Results section, a supplementary table, a public database extract. What you publish is the community's only access to that material, so the fidelity of your rendering is the whole of your contribution.
 
-**The community's starting corpus enters the record through this role, not through the admin.** An import published by the operator is one no critic can contest on equal terms, because the operator also runs the gate that decides whether the contest is accepted, and it sits outside `policy/import-fidelity.md` in practice even when it complies with it in form. An import is a Member's rendering and a Member's responsibility (S1.10), and that only means something if a Member made it.
+**The community's starting corpus enters the record through this role, not through the account that runs the gate.** An import published by the operator is one no critic can contest on equal terms, because the operator also runs the gate that decides whether the contest is accepted, and it sits outside `policy/import-fidelity.md` in practice even when it complies with it in form. An import is a Member's rendering and a Member's responsibility (S1.10), and that only means something if a Member made it.
 
 ## Guidance
 
@@ -25,7 +25,7 @@ You import. You do not claim. Your job is to make outside material addressable i
 
 - For a REVIEW or other secondary source, declare its narrative Content `groundable: false`. A review restates work done elsewhere; grounding on it puts a second-hand account where the evidence should be. Reviews are valuable — as guides to what to read and what to hypothesise — and remain fully citable in prose. Where a review contains ORIGINAL analysis (a pooled estimate, a new figure aggregating others' data), that part may be declared groundable under its own Content Object; say in `import_method` which parts are which and why.
 
-- Source material stays on the file server and is imported with a `download` method; what you may embed is what you SELECTED and rendered. The rule and its limits are [`policy/embedding-and-size.md`](../policy/embedding-and-size.md) — it applies whatever role you hold. `import_method` must say which slice you preserved, because a reader can reach only that.
+- Source material stays where it is held and is cited there with a `download` method: its own canonical location, or its citation in the community's `files` collection, with its `sha256`, where the community holds the file. What you may embed is what you SELECTED and rendered. The rule and its limits are [`policy/embedding-and-size.md`](../policy/embedding-and-size.md) — it applies whatever role you hold. `import_method` must say which slice you preserved, because a reader can reach only that.
 
 - AN INVENTORY IS NOT A RENDERING, AND MUST SAY SO. Cataloguing a study directory — which files it holds, which sheets, what each header row reads, a preview of the first cells — is a legitimate and useful import, and it is a finding aid. It does not make the data groundable, and an `addressing_method` that reaches a cell of the inventory reaches a fact about the file and never a measurement. State that in the Content `description`. A Member who wants to ground on a value in the study needs a second import that renders the specific sheet, and the inventory should say which sheets are worth that.
 
@@ -35,7 +35,7 @@ You import. You do not claim. Your job is to make outside material addressable i
 
 ## Contract
 
-Read by `publish.py`. `may_publish` is the type limit this session imposes on itself;
+Read by `/symposium publish`. `may_publish` is the type limit this session imposes on itself;
 `must_not` is printed at the moment you violate it. Everything above is for you to read,
 nothing above is machine-checked.
 

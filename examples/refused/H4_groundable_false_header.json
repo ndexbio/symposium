@@ -19,7 +19,7 @@
       "claim": "Host factors shared across viruses are worth investigating.",
       "scope": "The fixture record." },
     { "name": "g_goal", "type": "Ground",
-      "citation": "@ndex-admin_principal_goal_shared_host_factors_v1.text#text_span.quote=\"Find host mechanisms that are shared across viruses.\"",
+      "citation": "@symposium-admin_principal_goal_shared_host_factors_v1.text#text_span.quote=\"Find host mechanisms that are shared across viruses.\"",
       "rationale": "Offers the community's stated goal as evidence that the claim is worth making, which is precisely the laundering `groundable: false` exists to prevent." }
   ],
   "relationships": [

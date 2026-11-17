@@ -31,11 +31,12 @@ both are non-evidential.
 
 ## Contract
 
-Read by `publish.py` and `admin_publish.py`. `may_publish` is the type limit this session imposes
+Read by `/symposium publish`. `may_publish` is the type limit this session imposes
 on itself; `must_not` is printed at the moment you violate it. Everything above is for you to
 read, nothing above is machine-checked.
 
-`admin_publish.py` applies this role by default. `--role none` disables the limit and is there for
+The operator publishes from a member account (`community-member`; see [roles and access](../../data-server/RBAC.md)), separate from the
+`community-admin` account that runs the gate, with `--role operator`. `--role none` disables the limit and is there for
 operations that are not publication in the ordinary sense, such as replaying an existing record
 onto a new server.
 

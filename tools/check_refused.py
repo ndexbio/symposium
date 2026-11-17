@@ -15,6 +15,7 @@ is not in the record.
 
 Exit status is 0 when every fixture is refused for its stated reason.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -45,8 +46,9 @@ def main(argv=None):
         extra = [json.loads((fdir / w).read_text()) for w in exp.get("with", [])]
         findings = validate(cand, record + extra, members)
         fails = [f for f in findings if f["level"] == "FAIL"]
-        hit = [f for f in fails
-               if f["check"] == exp["check"] and exp["msg"] in f["msg"]]
+        hit = [
+            f for f in fails if f["check"] == exp["check"] and exp["msg"] in f["msg"]
+        ]
         if hit:
             status = "refused"
         elif fails:
@@ -64,8 +66,10 @@ def main(argv=None):
             print(f"       [wanted {exp['check']}] ...{exp['msg']}...")
 
     cases = sorted({e["case"] for e in expected.values()})
-    print(f"\n{'=' * 70}\n{len(expected)} fixtures over {len(cases)} cases: "
-          f"{', '.join(cases)}\n{'all refused as stated' if ok else 'SUITE FAILED'}")
+    print(
+        f"\n{'=' * 70}\n{len(expected)} fixtures over {len(cases)} cases: "
+        f"{', '.join(cases)}\n{'all refused as stated' if ok else 'SUITE FAILED'}"
+    )
     return 0 if ok else 1
 
 

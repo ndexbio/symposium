@@ -3,8 +3,8 @@
 
     python test_gate.py
 
-No network and no credentials: `ndex_io.auth` is stubbed before `gate` is imported, because
-the gate authenticates at module scope. Nothing here uploads, and nothing here needs a server.
+No server and no credentials: `order_submissions` is pure, and importing the gate contacts
+nothing. Nothing here uploads, and nothing here needs a server.
 
 Publication is strictly serial (spec 1.9). Every artifact gets its own `created` and is
 validated against the record as it stands, so `order_submissions` returns a FLAT list: what
@@ -25,54 +25,80 @@ before the Data it grounds on, and the member is told their citation does not re
 Case F guards the regression this file was rewritten for: an output submitted BEFORE its
 Analysis must still be ordered after it, never beside it.
 """
+
 from __future__ import annotations
 
 import sys
 
 sys.path.insert(0, ".")
-import ndex_io                                                        # noqa: E402
-
-ndex_io.auth = lambda prefix: ("ndex-admin", "stub-token")            # noqa: E731
-
-import gate                                                           # noqa: E402
+import gate  # noqa: E402
 
 
 def art(name, typ, objs=(), **header):
-    return {"canonical": {"artifact": dict(name=name, type=typ, **header),
-                          "objects": list(objs), "relationships": []}, "uuid": name}
+    return {
+        "canonical": {
+            "artifact": dict(name=name, type=typ, **header),
+            "objects": list(objs),
+            "relationships": [],
+        },
+        "uuid": name,
+    }
 
 
 def names(ordered):
     return [m["canonical"]["artifact"]["name"] for m in ordered]
 
 
-GROUND = {"name": "g", "type": "Ground", "rationale": "r",
-          "citation": "@a_data_v1.values#csv.row=X&col=Y"}
+GROUND = {
+    "name": "g",
+    "type": "Ground",
+    "rationale": "r",
+    "citation": "@a_data_v1.values#csv.row=X&col=Y",
+}
 
 CASES = [
-    ("an Analysis alone is accepted; it names no outputs to wait for",
-     [art("a_an_v1", "Analysis")], set(),
-     ["a_an_v1"], []),
-
-    ("an Analysis and its output pending together are ordered serially, Analysis first",
-     [art("a_an_v1", "Analysis"), art("a_out_v1", "Data", produced_by="@a_an_v1")], set(),
-     ["a_an_v1", "a_out_v1"], []),
-
-    ("an output alone stands when its Analysis is already in the record",
-     [art("a_out_v1", "Data", produced_by="@a_an_v1")], {"a_an_v1"},
-     ["a_out_v1"], []),
-
-    ("an output whose Analysis is nowhere is deferred, waiting for exactly one thing",
-     [art("a_out_v1", "Data", produced_by="@a_an_v1")], set(),
-     [], [["a_an_v1"]]),
-
-    ("acceptance order follows a Ground's `citation`, so evidence is stamped first",
-     [art("a_arg_v1", "Argument", objs=[GROUND]), art("a_data_v1", "Data")], set(),
-     ["a_data_v1", "a_arg_v1"], []),
-
-    ("an output submitted before its Analysis is ordered after it, not beside it",
-     [art("a_out_v1", "Data", produced_by="@a_an_v1"), art("a_an_v1", "Analysis")], set(),
-     ["a_an_v1", "a_out_v1"], []),
+    (
+        "an Analysis alone is accepted; it names no outputs to wait for",
+        [art("a_an_v1", "Analysis")],
+        set(),
+        ["a_an_v1"],
+        [],
+    ),
+    (
+        "an Analysis and its output pending together are ordered serially, Analysis first",
+        [art("a_an_v1", "Analysis"), art("a_out_v1", "Data", produced_by="@a_an_v1")],
+        set(),
+        ["a_an_v1", "a_out_v1"],
+        [],
+    ),
+    (
+        "an output alone stands when its Analysis is already in the record",
+        [art("a_out_v1", "Data", produced_by="@a_an_v1")],
+        {"a_an_v1"},
+        ["a_out_v1"],
+        [],
+    ),
+    (
+        "an output whose Analysis is nowhere is deferred, waiting for exactly one thing",
+        [art("a_out_v1", "Data", produced_by="@a_an_v1")],
+        set(),
+        [],
+        [["a_an_v1"]],
+    ),
+    (
+        "acceptance order follows a Ground's `citation`, so evidence is stamped first",
+        [art("a_arg_v1", "Argument", objs=[GROUND]), art("a_data_v1", "Data")],
+        set(),
+        ["a_data_v1", "a_arg_v1"],
+        [],
+    ),
+    (
+        "an output submitted before its Analysis is ordered after it, not beside it",
+        [art("a_out_v1", "Data", produced_by="@a_an_v1"), art("a_an_v1", "Analysis")],
+        set(),
+        ["a_an_v1", "a_out_v1"],
+        [],
+    ),
 ]
 
 

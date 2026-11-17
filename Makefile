@@ -34,7 +34,7 @@ DOCKER ?= true
 MAX_PER_TEST_WAIT ?= 120
 NO_DOCKER_SUITES := tests/skills/test_agent_process.py tests/skills/test_sessions.py \
 	tests/skills/test_long_running.py tests/skills/test_watch_primitives.py \
-	tests/skills/test_runtime.py tests/api
+	tests/skills/test_runtime.py tests/skills/test_local_server_docs.py tests/api
 # The OpenAPI linter for the API contract (api/openapi.yaml), pinned; it runs through npx.
 REDOCLY := 2.59.0
 # names the zip and is stamped into skills/symposium/SKILL.md's frontmatter by the build;

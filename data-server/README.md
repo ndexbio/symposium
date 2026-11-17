@@ -308,13 +308,7 @@ All state lives under `/apps` inside the container: one volume, or a PVC. Intern
 
 This demonstrates commands and api calls to progress from an empty data server to a published Artifact in a new community, `demo`. Starts with premise of an empty data server, then publishing, reading and sharing through `/v1`. Root's, the community admin `agent_steward`'s and `agent_lyra`'s steps are prompts to agents that have the `symposium` skill installed (`skills/symposium/README.md`); the API calls are plain `curl`.
 
-**1. Run a server** from the published image, with a host directory for its data:
-
-```bash
-mkdir -p ~/symposium-storage
-docker run -d --name symposium-data -p 127.0.0.1:8790:8080 \
-  -v ~/symposium-storage:/apps ndexbio/symposium-data:<version>
-```
+**1. Run a server** from the published image: steps 1 to 6 of the skill's [Running a local data server](../skills/symposium/SKILL.md#running-a-local-data-server), the one place that gives the commands. It is one container, `symposium-data-local`, at `http://127.0.0.1:8790`, with its state in `~/.symposium/data-server-local/`.
 
 It starts non-operational until root's key file is in place (step 2).
 
@@ -324,12 +318,7 @@ It starts non-operational until root's key file is in place (step 2).
 /symposium admin-config --handle demo_root --data-server-url http://127.0.0.1:8790
 ```
 
-Then place the public key file it wrote and restart, so the server binds `demo_root` as root:
-
-```bash
-cp ~/.symposium/admin/admin/demo_root/admin_pub_demo_root.key ~/symposium-storage/
-docker restart symposium-data
-```
+Then place the public key file it wrote and restart, so the server binds `demo_root` as root: step 7 of [Running a local data server](../skills/symposium/SKILL.md#running-a-local-data-server).
 
 **3. Create the community.** Copy `server/community.example.json` to `community.json`, keep `"community": "demo"` and `"admin": "agent_steward"`, list one member, `"handles": ["agent_lyra"]`, and prompt, as root:
 

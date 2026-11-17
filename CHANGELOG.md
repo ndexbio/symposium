@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
+## [Symposium Skill 0.4.1] - 2026-11-16
+
+Works with Data Server 0.2.1.
+
+### Added
+
+- **`/symposium --help` names the local data server.** `data_server_local` gives its
+  container (`symposium-data-local`), the directory of the machine that keeps its state
+  (`~/.symposium/data-server-local/`) and its URL (`http://127.0.0.1:8790`), beside
+  `data_server_image`.
+- **A server's status takes no session.** `/symposium data status --data-server-url <url>`
+  asks the server itself, so it answers on a machine with no session yet, or with several and
+  none chosen.
+
+### Changed
+
+- **One procedure for a local data server.** SKILL.md's "Running a local data server" is the
+  one place that gives its Docker commands, in order: read the image from `/symposium --help`,
+  look for the container `symposium-data-local`, compare the image it was created from with
+  the skill's, replace it on a mismatch, start it if it is stopped, run it if there is none,
+  confirm its version, and place its root key. Its state is in
+  `~/.symposium/data-server-local/` on every machine. The skill's README, the runbook and the
+  data server's README link that section in place of commands of their own.
+
 ## [Symposium Skill 0.4.0] - 2026-11-16
 
 Works with Data Server 0.2.1.

@@ -50,6 +50,7 @@ the `symposium-data` CLI. What a person may run follows from their access roles
                                            API keys, as 0600 files in the session's api-keys/,
                                            each carrying access roles (`--access`)
     data <symposium-data command …>        direct data work: put, get, collection, find, …
+    data status --data-server-url <url>    a server's status, in either mode: it takes no session
 
 `publish`, `validate`, `sync`, `gate` and `serve` print a free-text report, and their exit
 code is the result (0 = done); every other command prints one JSON object. Any command that
@@ -76,6 +77,8 @@ import os
 import re
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from long_running import LongRunning
@@ -136,6 +139,46 @@ def data_server_image() -> str:
     return f"ndexbio/symposium-data:{version}"
 
 
+# The local data server: one Docker container of the image above, by this name, with its state
+# in this directory of the skill's own, answering at this URL. SKILL.md, "Running a local data
+# server", is the one place that says how it is started.
+LOCAL_CONTAINER = "symposium-data-local"
+LOCAL_DIRECTORY = "data-server-local"
+LOCAL_URL = "http://127.0.0.1:8790"
+
+
+def data_server_local() -> dict:
+    """The local data server's container, the directory of this machine it keeps its state in,
+    and its URL. Nothing is created."""
+    return {
+        "container": LOCAL_CONTAINER,
+        "directory": str(Sessions().root / LOCAL_DIRECTORY),
+        "url": LOCAL_URL,
+    }
+
+
+def server_status(rest: list) -> tuple | None:
+    """`data status --data-server-url <url>`, which asks a server rather than a session: ->
+    (exit code, the JSON object to print), from `/v1/status`, answered in either mode. None for
+    any other command, which works in its session."""
+    if rest[:1] != ["status"]:
+        return None
+    url = Sessions.option(rest[1:], "--data-server-url")
+    if url is None:
+        return None
+    url = url.rstrip("/")
+    try:
+        with urllib.request.urlopen(url + "/v1/status", timeout=30) as response:
+            return 0, json.loads(response.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 503:  # a dependency is down: the body still says which
+            return 0, json.loads(e.read())
+        reason = f"HTTP {e.code}"
+    except (urllib.error.URLError, ValueError) as e:
+        reason = getattr(e, "reason", e)
+    return 1, {"error": f"the data server at {url} does not answer: {reason}"}
+
+
 def command_line(command: str, rest: list, cli: list) -> list | None:
     """The process a /symposium command runs, or None for an unknown command."""
     if command == "setup":
@@ -171,10 +214,14 @@ def main(argv=None) -> int:
                     "usage": USAGE,
                     "instructions": str(SKILL / "README.md"),
                     "data_server_image": data_server_image(),
+                    "data_server_local": data_server_local(),
                 }
             )
         )
         return 0
+    if argv[0] == "data" and (answer := server_status(argv[1:])) is not None:
+        print(json.dumps(answer[1]))
+        return answer[0]
     command, sessions = argv[0], Sessions()
     sessions.settle()
     if command in ("use", "agent-session"):

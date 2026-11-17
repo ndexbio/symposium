@@ -11,7 +11,9 @@ metadata:
 Symposium is a specification and toolchain for a **community record**: an append-only graph in
 which members of a scientific community publish immutable artifacts, each connected to the
 material it rests on. The record and its files live on a **Symposium Data server**; this skill
-reaches it only through the `symposium-data` CLI, which ships inside it. The skill runs the CLI
+reaches it only through the `symposium-data` CLI, which ships inside it. A data server on your
+own machine is started only as [Running a local data server](#running-a-local-data-server)
+says. The skill runs the CLI
 in its own Python environment, which the first command of a session prepares; the host needs
 only Python 3.9+.
 
@@ -69,6 +71,7 @@ Every command names the session it worked in: `session` in its JSON, or a first 
 | An agent session's current context | `~/.symposium/current/<pid>.json` | one agent session |
 | A community's gate locks | `~/.symposium/gate/` | the machine: one gate decides for a community at a time |
 | Keys | `~/.symposium/keys/` | the machine |
+| The local data server's state: its database, its files and root's public key file | `~/.symposium/data-server-local/` | the machine: the one container `symposium-data-local` ([Running a local data server](#running-a-local-data-server)) |
 
 Commands work from any directory. Two callers using one user context are one member working from one folder.
 
@@ -142,6 +145,94 @@ with no time limit of its own. For each one:
 Each one also stops on its own, with a last line saying so, when the agent session that started
 it ends.
 
+## Running a local data server
+
+A local data server is one Docker container of the published image, and these four values are
+fixed on every machine. `/symposium --help` prints them (`data_server_image`,
+`data_server_local`).
+
+| | Value |
+|---|---|
+| Container | `symposium-data-local` |
+| Its state, mounted on `/apps` | `~/.symposium/data-server-local/`, written `$HOME/.symposium/data-server-local` in a command |
+| URL | `http://127.0.0.1:8790` |
+| Image | `data_server_image`, the version this skill was built for |
+
+This section is the one place that gives the Docker commands for it. Whenever a task needs the
+local data server (starting a Symposium on your machine, or a command answering that the server
+at `http://127.0.0.1:8790` does not answer), follow these steps in order, running each command
+exactly as written. Each is one line, the same in bash, zsh and PowerShell.
+
+1. **Get the image.** Run `/symposium --help`. Its `data_server_image` value is the complete
+   image reference, repository and tag together, for example `ndexbio/symposium-data:0.2.1`.
+   Call it `<IMAGE>`. Its tag is the data server version this skill was built for. Use the
+   value exactly as printed.
+2. **Look for the container, and only that one:**
+
+   ```bash
+   docker container inspect --format '{{.Config.Image}}' symposium-data-local
+   ```
+
+   - It fails with `No such container`: go to step 5.
+   - Otherwise it prints the image reference the container was created from, for example
+     `ndexbio/symposium-data:0.2.0`. Call it `<FOUND>`.
+3. **Compare `<FOUND>` with `<IMAGE>`, character for character.** Any difference is a
+   mismatch: another tag, no tag, a digest, another repository.
+   - **Mismatch:** remove the container, then go to step 5. This kills and removes the
+     container alone: its state stays in the directory, and the new image upgrades it in place
+     on its first start.
+
+     ```bash
+     docker rm -f symposium-data-local
+     ```
+
+   - **Match:** go to step 4.
+4. **Is it running?**
+
+   ```bash
+   docker container inspect --format '{{.State.Running}}' symposium-data-local
+   ```
+
+   - `true`: use it as it is. Go to step 6.
+   - `false`: start it, then go to step 6.
+
+     ```bash
+     docker start symposium-data-local
+     ```
+
+5. **Run a new container,** with `<IMAGE>` as its last argument. Docker creates the directory.
+
+   ```bash
+   docker run -d --name symposium-data-local --restart unless-stopped -p 127.0.0.1:8790:8080 -v $HOME/.symposium/data-server-local:/apps <IMAGE>
+   ```
+
+6. **Confirm it answers, at the right version.** Run
+   `/symposium data status --data-server-url http://127.0.0.1:8790`, which takes no session.
+   While it reports that the server does not answer, run it again every few seconds, for up to
+   60 seconds: a server takes a moment to start, and longer when a new image upgrades its
+   state. It is ready when `version` equals the tag of `<IMAGE>`. If it still does not answer,
+   or `version` differs, show the user the output of this command and stop:
+
+   ```bash
+   docker logs --tail 50 symposium-data-local
+   ```
+
+7. **Give it its root key, when step 6 reports `"mode": "non-operational"`.** A new server
+   starts that way. Run `/symposium admin-config --handle <root> --data-server-url http://127.0.0.1:8790`,
+   then copy the file it names in `public_key_file` into the container and restart it, and
+   repeat step 6, which then reports `"mode": "operational"`:
+
+   ```bash
+   docker cp <public_key_file> symposium-data-local:/apps/
+   docker restart symposium-data-local
+   ```
+
+**If a `docker` command fails in any way these steps do not name, show the user Docker's
+message and stop.**
+
+To take the server down and keep its state, `docker rm -f symposium-data-local`; the steps
+above start it again on the same state.
+
 ## Participating in a Symposium
 
 **Are you starting a new Symposium?**
@@ -151,7 +242,7 @@ it ends.
 ### Starting a Symposium (root and server admins)
 
 1. **Where will the data server run?**
-   - **On your machine:** `docker run` of the `ndexbio/symposium-data` image ([local deployment](README.md#2-deploying-a-data-server)).
+   - **On your machine:** follow [Running a local data server](#running-a-local-data-server), every step of it.
    - **On your machine's Kubernetes (Docker Desktop), or hosted remotely:** the data server's Helm chart, `oci://registry-1.docker.io/ndexbio/symposium-helm` ([Kubernetes deployment](README.md#2-deploying-a-data-server)).
 2. **Root, once per data server:** `/symposium admin-config` makes root's key on your machine and writes its public key file; place the public key file on the server ([root setup](README.md#2-deploying-a-data-server)). Root can then invite server admins: `/symposium invite --handle <h> --access server-admin --out <h>.invite`.
 3. **A server admin creates each community:** write `community.json` (its name, its first community admin's handle in `admin`, optionally members' `handles`, the server's URL) and run `/symposium bootstrap`. It writes the community admin's invite file, and one per member listed: hand each over out of band ([community setup](README.md#2-deploying-a-data-server)).
@@ -183,16 +274,9 @@ Terminal 1 sets up the server and the community as root; the community admin joi
 
 Terminal 1, root setting up:
 ```bash
-# a directory that keeps the server's data locally
-$ mkdir -p $HOME/symposium-data
-# start the data server; the compliant <version> provided by `/symposium --help`
-# the image is pulled from Docker Hub (ndexbio/symposium-data): nothing is built locally
-$ docker run -d --name symposium-data --restart unless-stopped \
-  -p 127.0.0.1:8790:8080 -v $HOME/symposium-data:/apps ndexbio/symposium-data:<version>
-
-# one time root config
+# start the data server and give it its root key: every step of "Running a local data server",
+# above. Its step 7 is the one time root config:
 agent> /symposium admin-config --handle <root> --data-server-url http://127.0.0.1:8790
-$ cp ~/.symposium/admin/admin/<root>/admin_pub_<root>.key $HOME/symposium-data/ && docker restart symposium-data
 
 # the community, its first community admin and, optionally, its first members
 $ echo '{"community": "<name>", "admin": "<steward>", "handles": ["lyra"], "data-server-url": "http://127.0.0.1:8790"}' > community.json

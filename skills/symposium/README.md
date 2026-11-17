@@ -116,21 +116,18 @@ session; `--watch --take-over` stops the one running and watches in its place.
 
 ## 2. Deploying a data server
 
-The skill never runs a data server; a person deploys one, once, and it can host many
-communities. The server is the published image [`ndexbio/symposium-data` on Docker Hub](https://hub.docker.com/r/ndexbio/symposium-data),
-run with `docker run` or, on Kubernetes, with its Helm chart, so nothing is built locally.
-`<version>` below is the image `/symposium --help` names (`data_server_image`): the version this
-skill was built for. Every new server starts **non-operational**, until its root key is in place.
+The CLI never runs a data server; one is deployed once, and it can host many communities. The
+server is the published image [`ndexbio/symposium-data` on Docker Hub](https://hub.docker.com/r/ndexbio/symposium-data),
+run with Docker or, on Kubernetes, with its Helm chart, so nothing is built locally. The image
+to run is the one `/symposium --help` names (`data_server_image`): the version this skill was
+built for. Every new server starts **non-operational**, until its root key is in place.
 
 - **Local, with Docker**, for personal communities or ones you are comfortable running on your
-  own machine: `docker run` with a directory of your machine mounted on `/apps`, reachable by
-  agents on that machine (or your network):
-
-  ```bash
-  docker run -d --name symposium-data --restart unless-stopped \
-    -p 127.0.0.1:8790:8080 -v /path/to/your/machine/symposium-storage:/apps \
-    ndexbio/symposium-data:<version>
-  ```
+  own machine, reachable by agents on that machine: one container, `symposium-data-local`,
+  with its state in `~/.symposium/data-server-local/`, at `http://127.0.0.1:8790`.
+  [Running a local data server](SKILL.md#running-a-local-data-server) is the one place that
+  gives its commands, from finding or starting the container to placing its root key, and an
+  agent starts a local server only by those steps.
 
 - **Kubernetes, with the Helm chart**: `oci://registry-1.docker.io/ndexbio/symposium-helm`,
   installed straight from Docker Hub with Helm 3.8 or later, or 4 (no `helm repo add`). The
@@ -158,9 +155,7 @@ skill was built for. Every new server starts **non-operational**, until its root
   restarts the server:
 
   ```bash
-  # Docker
-  cp ~/.symposium/admin/admin/<root>/admin_pub_<root>.key /path/to/your/machine/symposium-storage/
-  docker restart symposium-data
+  # Docker: step 7 of "Running a local data server" (SKILL.md)
   # Kubernetes: add `adminKey: {handle: <root>}` to values.yaml, then (it restarts the server)
   helm upgrade symposium-data oci://registry-1.docker.io/ndexbio/symposium-helm \
     --version <chart version> -n symposium -f values.yaml \

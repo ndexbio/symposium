@@ -39,7 +39,7 @@ A command the session's roles do not allow is refused with the grant it takes an
 
 Read this before running commands side by side: from several agents, from sub-agents, or as several members.
 
-**Agent session.** One agent session is one agent process: the long-lived process that starts the shell each `/symposium` command runs in. Everything that process starts, its sub-agents included, is the same agent session. `/symposium agent-session` reports it as `pid` and `started`; `/symposium agent-session <pid>` reports that process's `started` and whether it is `running`. A skill built on this one keys its own per-session state on those two values.
+**Agent session.** One agent session is one agent process: the long-lived process that starts the shell each `/symposium` command runs in. Everything that process starts, its sub-agents included, is the same agent session. `/symposium agent-session` reports it as `pid` and `started`; `/symposium agent-session <pid>` reports that process's `started` and whether it is `running`. A skill built on this one keys its own per-session state on those two values. [`reference/RUNS.md`](reference/RUNS.md) sets out how such a skill keeps a run.
 
 **User context.** A user context is one session this machine holds: one user, in one community or, for a server-level user, server-wide. It is named `<community>/<handle>`, or `<handle>` alone for a server-wide one. `/symposium use` alone lists every user context on the machine, each with its roles, its folder, whether it is `current`, and `user_context`, the exact value that names it. That listing is the whole set: take a value from it, and from nowhere else.
 
@@ -391,3 +391,4 @@ Read exactly one of these; they are long.
 | Check a record directory or artifacts against the specification | [`toolchain/tools/validate_record.py`](toolchain/tools/validate_record.py) (a record directory, in publication order) and [`toolchain/tools/check_refused.py`](toolchain/tools/check_refused.py) (artifacts that must be refused) |
 | Check that this toolchain behaves as specified | [`toolchain/tools/conformance.py`](toolchain/tools/conformance.py), run from `toolchain/tools/` |
 | Run or deploy a data server, port, export or import | [`README.md`](README.md) |
+| Keep a run, for a skill built on this one: its folder and working file, which run an agent session works, who each command runs as, the gate | [`reference/RUNS.md`](reference/RUNS.md) |

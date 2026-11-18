@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The Symposium Data server, its Helm chart (Symposium Helm) and the Symposium Skill are
 versioned and released separately, each under its own heading.
 
+## [Symposium Skill 0.4.2] - 2026-11-17
+
+Works with Data Server 0.2.1.
+
+### Added
+
+- **How a skill built on this one keeps a run.** `reference/RUNS.md` states once what every
+  such skill needs: the run's folder and working file under `~/.symposium-<skill>/`, one writer,
+  which run an agent session is working and how a run is held in use, a run belonging to the
+  machine it was started on, every command naming its user context, the watching gate for the
+  whole of publishing and stopped once publishing is done, and sub-agents publishing side by side. A skill built on Symposium says
+  what its run is named, what its working file holds and which user contexts it works as, and
+  leaves the rest to this document. SKILL.md's "What to read for the task in front of you"
+  routes to it.
+- **How a figure is held.** The embedding policy (`policy/embedding-and-size.md`) has a section
+  on figures: the Data Artifact holding what the figure plots is what a reader grounds on, and
+  the image is a file in `files`, cited beside it from a non-groundable `download` Content whose
+  description says how to read the figure and states no result. A diagram that plots no
+  values is held the same way, cited from the Argument or report it illustrates, and is never
+  what a Ground cites.
+
 ## [Symposium Skill 0.4.1] - 2026-11-16
 
 Works with Data Server 0.2.1.

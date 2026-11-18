@@ -89,7 +89,8 @@ for a community on a machine: where another is already watching, yours stands by
 from the moment that one ends, so start yours without looking for another.
 
 - **Which context**: from the listing, the contexts in the publishing community whose roles are
-  `community-admin` or `gate-keeper`. One: use it, and record it. Several: ask the user, as a
+  `community-admin` or `gate-keeper` ([roles and access](../toolchain/data-server/RBAC.md#roles)).
+  One: use it, and record it. Several: ask the user, as a
   pick list. None: the gate runs from another machine; say so, publish, and wait for its
   decisions.
 - **A community's gate runs from one machine.** Where the user says it already runs elsewhere,
@@ -100,6 +101,9 @@ from the moment that one ends, so start yours without looking for another.
   `sync --replies` lists, each with the artifact it is about.
 - **An artifact cites only what the gate has accepted**, so a run publishes in layers and
   releases each layer once what it cites is in the record.
+- **Stop the gate when publishing is done.** Once the run's last artifact is accepted and
+  nothing it submitted waits for a decision, stop the gate it started, and say so. Leave
+  running a gate the run did not start: it is another's.
 
 ## Where sub-agents publish side by side
 

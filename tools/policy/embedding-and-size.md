@@ -49,6 +49,12 @@ it:
 - a figure whose values are in no Artifact is published with them: the plotted values as an
   embedded `csv` Content, or as a cited file where they are larger, and the image beside them.
 
+**A diagram that plots no values** (a schematic of a mechanism, a workflow, a study design) has
+no table to sit beside. It is held the same way, as a file in `files`, cited from a `download`
+Content with `groundable: false` on the Artifact it illustrates: the Argument whose reasoning it
+draws, or the report that shows it. Its `description` says how to read it. A diagram shows a
+reading; it is never what a Ground cites.
+
 An image embedded in an Artifact as encoded text is content nobody can read or address. An
 image on its own, with no values behind it, is a picture of a result and not the result.
 
